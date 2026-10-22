@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import copy
 import functools
-import inspect
 import os
 import re
 import ssl
@@ -1057,6 +1056,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # Only options passed here are recorded: handlers configured on a pre-built `fastmcp.Client`
         # are stored in a private attribute with no public accessor, so that path stays silent.
         self._server_initiated_handlers = []
+        # Assigned before the client is built: `_build_client` reads it to install the sampling handler.
+        self.sampling_model = sampling_model
         if isinstance(client, FastMCPClient):
             forwarded_values: dict[str, Any] = {
                 'sampling_handler': sampling_handler,
@@ -1136,7 +1137,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 verify=verify,
                 http_client=http_client,
             )
-            self.sampling_model = sampling_model
             # Kept so a per-run copy also connects with whichever of the two isn't a function.
             self._static_auth = static_auth
             self._static_headers = static_headers
@@ -1157,7 +1157,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self.cache_prompts = cache_prompts
         self.include_instructions = include_instructions
         self.include_return_schema = include_return_schema
-        self.sampling_model = sampling_model
         self.log_level = log_level
 
         self._server_info = None
@@ -1292,8 +1291,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             return self
         auth = self._static_auth
         if self._auth_func is not None:
-            resolved_auth = self._auth_func(ctx)
-            auth = await resolved_auth if inspect.isawaitable(resolved_auth) else resolved_auth
+            auth = await _utils.await_maybe(self._auth_func(ctx))
             if auth == 'oauth':
                 # FastMCP's OAuth flow signs in through a browser, which a per-user run can't do.
                 raise exceptions.UserError(
@@ -1301,8 +1299,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 )
         headers = self._static_headers
         if self._headers_func is not None:
-            resolved_headers = self._headers_func(ctx)
-            headers = await resolved_headers if inspect.isawaitable(resolved_headers) else resolved_headers
+            headers = await _utils.await_maybe(self._headers_func(ctx))
         # A shallow copy keeps a subclass's type and every setting, including ones changed since
         # `__init__`; only the client and the per-session state are the run's own.
         run_toolset = copy.copy(self)

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, TypeAlias
 from urllib.parse import urlparse
 
+from pydantic_ai import _utils
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
@@ -17,16 +17,13 @@ from .native_or_local import NativeOrLocalTool
 if TYPE_CHECKING:
     # Imported lazily at runtime: `pydantic_ai.mcp` pulls in `fastmcp` and `mcp`, which would
     # otherwise dominate the time it takes to `import pydantic_ai`.
-    from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
+    from pydantic_ai.mcp import MCPHeadersFunc, MCPToolset, MCPToolsetClient
 
 
 _DEFAULT_PORTS = {'http': 80, 'https': 443}
 
 MCPAuthorizationTokenFunc: TypeAlias = Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]]
 """A sync/async function that takes the run context and returns the `authorization_token` for that run."""
-
-MCPHeadersFunc: TypeAlias = Callable[[RunContext[AgentDepsT]], dict[str, str] | None | Awaitable[dict[str, str] | None]]
-"""A sync/async function that takes the run context and returns the HTTP `headers` for that run."""
 
 
 @dataclass(init=False)
@@ -198,30 +195,23 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             )
         return resolved
 
-    @property
-    def _credentials_per_run(self) -> bool:
-        """Whether `authorization_token` or `headers` is a function of the run context."""
-        return callable(self.authorization_token) or callable(self.headers)
-
     async def _resolve_credentials(self, ctx: RunContext[AgentDepsT]) -> tuple[str | None, dict[str, str] | None]:
         """Call whichever of `authorization_token` and `headers` is a function, for this run."""
         token = self.authorization_token
         if callable(token):
-            resolved_token = token(ctx)
-            token = await resolved_token if inspect.isawaitable(resolved_token) else resolved_token
+            token = await _utils.await_maybe(token(ctx))
         headers = self.headers
         if callable(headers):
-            resolved_headers = headers(ctx)
-            headers = await resolved_headers if inspect.isawaitable(resolved_headers) else resolved_headers
+            headers = await _utils.await_maybe(headers(ctx))
         return token, headers
 
     def _default_native(self) -> MCPServerTool | Callable[[RunContext[AgentDepsT]], Awaitable[MCPServerTool]]:
         # `native is True` requires `url is not None` (enforced in `__init__`).
         url = self.url
         assert url is not None
-        if not self._credentials_per_run:
-            assert not callable(self.authorization_token) and not callable(self.headers)
-            return self._native_tool(url, self.authorization_token, self.headers)
+        token, headers = self.authorization_token, self.headers
+        if not callable(token) and not callable(headers):
+            return self._native_tool(url, token, headers)
 
         async def native_for_run(ctx: RunContext[AgentDepsT]) -> MCPServerTool:
             token, headers = await self._resolve_credentials(ctx)
@@ -268,15 +258,15 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
 
     def _build_local(self, url: str) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
         local_headers: dict[str, str] | Callable[[RunContext[AgentDepsT]], Awaitable[dict[str, str] | None]] | None
-        if self._credentials_per_run:
+        token, headers = self.authorization_token, self.headers
+        if not callable(token) and not callable(headers):
+            local_headers = _local_headers(token, headers)
+        else:
             # The toolset resolves these for each run, so each run connects with its own session.
             async def local_headers_for_run(ctx: RunContext[AgentDepsT]) -> dict[str, str] | None:
                 return _local_headers(*await self._resolve_credentials(ctx))
 
             local_headers = local_headers_for_run
-        else:
-            assert not callable(self.authorization_token) and not callable(self.headers)
-            local_headers = _local_headers(self.authorization_token, self.headers)
 
         try:
             # `MCPToolset` infers SSE vs Streamable HTTP from the URL.
