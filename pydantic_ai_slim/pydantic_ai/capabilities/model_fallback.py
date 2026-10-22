@@ -79,8 +79,6 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     _chain: FallbackChain = field(repr=False)
     """This step's way down the chain. Its attempt log stays empty: the agent records the attempts."""
     _pin_checked: bool = field(repr=False)
-    _unpinned_model: Model | str | None = field(repr=False)
-    """The step's own model, when a resumed continuation was routed away from it to the pinned candidate."""
 
     def __init__(
         self,
@@ -120,7 +118,6 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         self._attempted_ids = set()
         self._chain = self._new_chain()
         self._pin_checked = False
-        self._unpinned_model = None
 
     def get_ordering(self) -> CapabilityOrdering:
         # Innermost so a rejected attempt is judged before any other capability's
@@ -162,7 +159,6 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             _attempted_ids=set(),
             _chain=self._new_chain(),
             _pin_checked=False,
-            _unpinned_model=None,
         )
 
     async def prepare_model_request(
@@ -180,9 +176,12 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             self._pin_checked = True
             if (pinned := self._pinned_candidate(request_context)) is not None:
                 # The step would continue a provider-side job on a model other than the one that
-                # started it; send it to that model instead, before anything is sent.
-                self._unpinned_model = request_context.model_id or request_context.model
-                raise RetryModelRequest(pinned)
+                # started it; send it to that model instead, before anything is sent. Should that
+                # continuation fail, the chain moves on from there, like it would have when the job
+                # was started, instead of starting over with a model that would just start another.
+                index, candidate = pinned
+                self._cursor = index + 1
+                raise RetryModelRequest(candidate)
         self._attempted_models.append(request_context.model)
         if request_context.model_id is not None:
             self._attempted_ids.add(request_context.model_id)
@@ -241,33 +240,28 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             self._attempted_ids = set()
             self._chain = self._new_chain()
             self._pin_checked = False
-            self._unpinned_model = None
 
-    def _pinned_candidate(self, request_context: ModelRequestContext) -> Model | str | None:
-        """The candidate a resumed suspended response is pinned to, if that isn't the step's model."""
+    def _pinned_candidate(self, request_context: ModelRequestContext) -> tuple[int, Model | str] | None:
+        """The candidate a resumed suspended response is pinned to, and its index, if that isn't the step's model."""
         messages = request_context.messages
         if not (messages and isinstance(last := messages[-1], ModelResponse) and last.state == 'suspended'):
             return None
         pin = continuation_pin(last, key=FALLBACK_CAPABILITY_PIN_KEY)
         if pin is None or pin == _pin_id(request_context.model_id or request_context.model):
             return None
-        candidate = next((candidate for candidate in self.models if _pin_id(candidate) == pin), None)
-        if candidate is None:
+        pinned = next(
+            ((index, candidate) for index, candidate in enumerate(self.models) if _pin_id(candidate) == pin), None
+        )
+        if pinned is None:
             raise UserError(
                 f'Cannot resume this suspended response: it was started by {pin!r}, which is neither the '
                 "model selected for this step nor one of `ModelFallback`'s models. Pass that model explicitly to "
                 '`run(model=...)` when resuming.'
             )
-        return candidate
+        return pinned
 
     def _advance(self) -> RetryModelRequest:
         """Return the exception that moves to the next untried candidate, or the aggregated failure."""
-        if (unpinned := self._unpinned_model) is not None:
-            # The step's own model was passed over for a pinned continuation that then failed: it
-            # comes first when the chain starts over.
-            self._unpinned_model = None
-            if not self._already_attempted(unpinned):
-                return RetryModelRequest(unpinned)
         while self._cursor < len(self.models):
             candidate = self.models[self._cursor]
             self._cursor += 1

@@ -169,20 +169,44 @@ async def test_resumed_continuation_goes_to_the_pinned_model():
     assert result.usage.requests == 1
 
 
-async def test_failed_pinned_continuation_rewinds_to_the_step_model():
-    """A pinned continuation that fails is dropped, and the turn is generated afresh from the chain's start."""
-    step_saw: list[bool] = []
+async def test_failed_pinned_continuation_moves_on_to_the_next_model():
+    """A pinned continuation that fails is dropped, and the turn is generated afresh by the model after the pinned one.
+
+    Not by the chain's first model: when checking on a batch fails, that would submit a new batch to the model the
+    chain had already moved on from, so the run would never reach the fallback.
+    """
 
     def step_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        step_saw.append(_ends_suspended(messages))
+        raise AssertionError('the chain must not start over at the step model')  # pragma: no cover
+
+    next_saw: list[bool] = []
+
+    def next_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        next_saw.append(_ends_suspended(messages))
         return ModelResponse(parts=[TextPart('fresh')])
 
     pinned = FunctionModel(failure, model_name='pinned')
-    agent = Agent(FunctionModel(step_model, model_name='step'), capabilities=[ModelFallback(pinned)])
+    agent = Agent(
+        FunctionModel(step_model, model_name='step'),
+        capabilities=[ModelFallback(pinned, FunctionModel(next_model, model_name='next'))],
+    )
     result = await agent.run(message_history=_suspended_history(pinned.model_id))
     assert result.output == 'fresh'
-    assert step_saw == [False]
+    assert next_saw == [False]
     assert not any(isinstance(m, ModelResponse) and m.state == 'suspended' for m in result.all_messages())
+
+
+async def test_failed_pinned_continuation_on_the_last_model_exhausts_the_chain():
+    """The models before the pinned one aren't attempted when its continuation fails, so a last pinned model ends the chain."""
+
+    def step_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('the chain must not start over at the step model')  # pragma: no cover
+
+    pinned = FunctionModel(failure, model_name='pinned')
+    agent = Agent(FunctionModel(step_model, model_name='step'), capabilities=[ModelFallback(pinned)])
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await agent.run(message_history=_suspended_history(pinned.model_id))
+    assert [attempt.model_name for attempt in exc_info.value.attempts] == ['pinned']
 
 
 async def test_streamed_resumed_continuation_goes_to_the_pinned_model():
@@ -203,18 +227,25 @@ async def test_streamed_resumed_continuation_goes_to_the_pinned_model():
     assert continued == [True]
 
 
-async def test_streamed_failed_pinned_continuation_rewinds_to_the_step_model():
-    step_saw: list[bool] = []
-
+async def test_streamed_failed_pinned_continuation_moves_on_to_the_next_model():
     async def step_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-        step_saw.append(_ends_suspended(messages))
+        raise AssertionError('the chain must not start over at the step model')  # pragma: no cover
+        yield ''  # pragma: no cover
+
+    next_saw: list[bool] = []
+
+    async def next_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        next_saw.append(_ends_suspended(messages))
         yield 'fresh'
 
     pinned = FunctionModel(stream_function=failure_stream, model_name='pinned')
-    agent = Agent(FunctionModel(stream_function=step_stream, model_name='step'), capabilities=[ModelFallback(pinned)])
+    agent = Agent(
+        FunctionModel(stream_function=step_stream, model_name='step'),
+        capabilities=[ModelFallback(pinned, FunctionModel(stream_function=next_stream, model_name='next'))],
+    )
     async with agent.run_stream(message_history=_suspended_history(pinned.model_id)) as stream:
         assert await stream.get_output() == 'fresh'
-    assert step_saw == [False]
+    assert next_saw == [False]
 
 
 async def test_suspended_response_is_pinned_to_the_model_that_served_it():
@@ -422,7 +453,10 @@ async def test_a_failed_pinned_continuation_cancels_its_job():
             cancelled.append(response.provider_response_id)
 
     pinned = CancellingModel(failure, model_name='pinned')
-    agent = Agent(FunctionModel(success, model_name='step'), capabilities=[ModelFallback(pinned)])
+    agent = Agent(
+        FunctionModel(success, model_name='step'),
+        capabilities=[ModelFallback(pinned, FunctionModel(success, model_name='next'))],
+    )
     assert (await agent.run(message_history=_suspended_history(pinned.model_id))).output == 'hello'
     assert cancelled == ['job-1']
 
@@ -1099,39 +1133,6 @@ async def test_stream_spans_match_fallback_model(capfire: CaptureLogfire):
             ]
         )
     )
-
-
-async def test_the_step_model_another_capability_already_retried_is_not_attempted_again():
-    """When a pinned continuation is routed away from the step's model, the chain only starts over from it if no
-    other capability has attempted it since."""
-    step_calls = 0
-
-    def step_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal step_calls
-        step_calls += 1
-        raise ModelAPIError(model_name='step', message='boom')
-
-    step = FunctionModel(step_model, model_name='step')
-    pinned = FunctionModel(success, model_name='pinned')
-
-    @dataclass
-    class RedirectPinnedOnce(AbstractCapability[Any]):
-        """Sends the first attempt at the pinned model back to the step's model, before it's sent."""
-
-        redirected: bool = False
-
-        async def prepare_model_request(
-            self, ctx: RunContext[Any], request_context: ModelRequestContext
-        ) -> ModelRequestContext:
-            if request_context.model is pinned and not self.redirected:
-                self.redirected = True
-                raise RetryModelRequest(step)
-            return request_context
-
-    agent = Agent(step, capabilities=[RedirectPinnedOnce(), ModelFallback(pinned)])
-    result = await agent.run(message_history=_suspended_history(pinned.model_id))
-    assert result.output == 'hello'
-    assert step_calls == 1
 
 
 async def test_a_run_timeout_is_not_fallen_back_from():

@@ -66,7 +66,7 @@ Response handlers aren't consulted for a streamed response, which is accepted as
 
 ## Continuing suspended responses
 
-Some providers suspend a response and continue it on a later request, like Anthropic's `pause_turn` or OpenAI's background mode. A suspended response `ModelFallback` accepts is pinned to the model that started it, so when a later run resumes it, the continuation goes to that model rather than to the first model in the chain. If that continuation fails, the suspended response is dropped and the turn is generated again from the start of the chain.
+Some providers suspend a response and continue it on a later request, like Anthropic's `pause_turn` or OpenAI's background mode. A suspended response `ModelFallback` accepts is pinned to the model that started it, so when a later run resumes it, the continuation goes to that model rather than to the first model in the chain. If that continuation fails, the suspended response is dropped and the turn is generated again by the next model in the chain after the one it was pinned to, as it would have been had the response failed in the run that started it. The chain doesn't start over: with [batching](../batch.md), the first model would only accept a new batch, and the request would never reach the models after it.
 
 ## `ModelFallback` or `FallbackModel`
 
