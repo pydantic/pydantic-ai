@@ -50,7 +50,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     ModelResponseStreamEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
@@ -1398,10 +1399,10 @@ async def test_parallel_tool_enqueues_land_after_their_own_returns():
         assert isinstance(request, ModelRequest)
         return [
             f'{part.part_kind}:{part.tool_name}'
-            if isinstance(part, ToolReturnPart | RetryPromptPart)
+            if isinstance(part, ToolReturnPart)
             else f'{part.part_kind}:{part.content}'
             for part in request.parts
-            if isinstance(part, ToolReturnPart | RetryPromptPart | UserPromptPart)
+            if isinstance(part, ToolReturnPart | UserPromptPart)
         ]
 
     assert describe(result.all_messages()[2]) == snapshot(
@@ -1411,7 +1412,7 @@ async def test_parallel_tool_enqueues_land_after_their_own_returns():
             'tool-return:tool_a',
             'user-prompt:a1',
             'user-prompt:a2',
-            'retry-prompt:tool_c',
+            'tool-return:tool_c',
         ]
     )
     # One event per `enqueue` call, in the order the content lands in history.
@@ -1424,7 +1425,7 @@ async def test_parallel_tool_enqueues_land_after_their_own_returns():
         [
             'tool-return:tool_b',
             'tool-return:tool_a',
-            'retry-prompt:tool_c',
+            'tool-return:tool_c',
             'user-prompt:b1',
             'user-prompt:a1',
             'user-prompt:a2',
@@ -1707,7 +1708,13 @@ async def test_enqueue_from_tool_renders_like_its_own_request():
     [
         pytest.param([UserPromptPart('Then this.'), ToolReturnPart('tool_a', 'a', 'call-a')], id='prompt-first'),
         pytest.param([ToolReturnPart('tool_a', 'a', 'call-a'), UserPromptPart('Then this.')], id='prompt-last'),
-        pytest.param([RetryPromptPart('Try again.'), ToolReturnPart('tool_a', 'a', 'call-a')], id='plain-retry-first'),
+        pytest.param(
+            [
+                RetryFeedbackPart('Try again.', retry=RetryInfo(cause='model_retry')),
+                ToolReturnPart('tool_a', 'a', 'call-a'),
+            ],
+            id='plain-retry-first',
+        ),
         pytest.param(
             [
                 ToolReturnPart('tool_a', 'a', 'call-a'),
@@ -1980,7 +1987,7 @@ async def test_enqueue_asap_with_rich_message_history_tail():
     The history keeps the un-merged view (drain's request is a separate `ModelRequest`
     after the rich tail) so `all_messages()` reflects per-call structure. On the wire,
     `_clean_message_history` merges the two adjacent `ModelRequest`s and sorts
-    `ToolReturnPart`/`RetryPromptPart` first — non-tool parts keep arrival order, so the
+    `ToolReturnPart`s first — non-tool parts keep arrival order, so the
     enqueued content lands at the *end* of the merged turn (not interleaved between
     existing parts). Captures the `messages` arg `FunctionModel` actually received to
     validate the wire-level merge through the public path.
