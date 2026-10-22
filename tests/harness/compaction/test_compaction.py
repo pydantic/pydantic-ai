@@ -40,6 +40,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     RetryFeedbackPart,
     RetryInfo,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -2215,7 +2216,7 @@ def _orphan_free(messages: list[ModelMessage]) -> bool:
             for p in m.parts:
                 # TODO(v3): drop the legacy `RetryPromptPart` case
                 if isinstance(p, ToolReturnPart) or (
-                    p.part_kind == 'retry-prompt' and getattr(p, 'tool_name', None) is not None
+                    isinstance(p, RetryPromptPart) and p.tool_name is not None  # pyright: ignore[reportDeprecated]
                 ):
                     return_ids.add(p.tool_call_id)
     return return_ids <= call_ids
