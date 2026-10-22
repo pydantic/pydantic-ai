@@ -1164,7 +1164,8 @@ async def test_a_leader_stop_reaches_a_command_that_left_its_group(fake_e2b: Fak
     fake_e2b.host_root = tmp_path
     path = _path_without_ps(tmp_path)
     for tool in ('perl', 'ps'):
-        if (source := shutil.which(tool)) is not None:  # pragma: no branch - both are on every test host
+        # Both are on every test host.
+        if (source := shutil.which(tool)) is not None:  # pragma: no branch
             (Path(path) / tool).symlink_to(source)
     # A custom template is probed for `setsid`, which this `PATH` lacks.
     backend = await started(template='minimal', env={'PATH': path})
@@ -1230,6 +1231,8 @@ async def _exited(pid: int) -> None:
             state = stat.read_bytes().rsplit(b') ', 1)[1].split()[0] if has_proc else b''  # pragma: lax no cover
         except (ProcessLookupError, FileNotFoundError):
             return
-        if state == b'Z':  # pragma: lax no cover - only where nothing reaps orphans
+        # Only where nothing reaps orphans.
+        if state == b'Z':  # pragma: lax no cover
             return
-        await anyio.sleep(0.01)  # pragma: lax no cover - the process is often already gone
+        # The process is often already gone.
+        await anyio.sleep(0.01)  # pragma: lax no cover

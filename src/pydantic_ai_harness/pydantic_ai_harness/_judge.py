@@ -10,7 +10,7 @@ import html
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -18,7 +18,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     TextContent,
     TextPart,
@@ -27,9 +28,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.tools import RunContext
-
-if TYPE_CHECKING:
-    from pydantic_ai.usage import UsageLimits
+from pydantic_ai.usage import UsageLimits
 
 JudgeAnswer: TypeAlias = Literal['yes', 'no', 'unsure']
 """The answer to a yes/no risk question about one tool call."""
@@ -105,10 +104,19 @@ def _render_transcript(messages: Sequence[ModelMessage]) -> str:
                 if text:
                     lines.append(f'user: {text}')
             elif isinstance(part, ToolReturnPart):
-                lines.append(f'tool {part.tool_name} returned: {part.model_response_str()}')
+                lines.append(
+                    f'retry ({part.tool_name}): {part.model_response_str(wrap_if_error=False)}'
+                    if part.outcome == 'retried'
+                    else f'tool {part.tool_name} returned: {part.model_response_str()}'
+                )
             elif isinstance(part, NativeToolReturnPart):
                 lines.append(f'native tool {part.tool_name} returned: {part.model_response_str()}')
-            elif isinstance(part, RetryPromptPart):
+            elif isinstance(part, RetryFeedbackPart):
+                lines.append(f'retry (output): {part.model_response()}')
+            # TODO(v3): remove RetryPromptPart
+            elif isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+                # A hand-built history passed as `message_history` can still hold one; the model
+                # translates it only when the request goes out.
                 lines.append(f'retry ({part.tool_name or "output"}): {part.model_response()}')
             elif isinstance(part, TextPart):
                 if part.content:
@@ -149,3 +157,17 @@ def claim_offset_limits(limits: UsageLimits | None) -> UsageLimits | None:
     if limits is None or limits.request_limit is None:
         return limits
     return replace(limits, request_limit=limits.request_limit + 1)
+
+
+def claimed_request_limits(limits: UsageLimits | None) -> UsageLimits:
+    """The run's limits for a one-request nested run whose request `claim_request` already admitted.
+
+    The claim is the request check, so `request_limit` is lifted and only the token limits apply. Use this
+    instead of `claim_offset_limits` where judgments start while others are finishing, as through a
+    concurrency gate. There the shared `usage.requests` counts other judgments' claims and their nested
+    runs' own requests at once, so a preflight against the offset limit refuses requests the claims
+    admitted, and the `UsageLimitExceeded` fails the host run. Only for a judge that makes exactly one
+    request, with no retries, since nothing else bounds its requests. With no limits it lifts the request
+    limit too, as the nested run would otherwise apply the default one to the shared usage.
+    """
+    return replace(limits or UsageLimits(), request_limit=None)
