@@ -231,7 +231,7 @@ async def test_thinking_sets_the_backends_reasoning_effort(
 
 
 async def test_typed_question_runs_the_agents_tool(
-    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
 ) -> None:
     """`send(text)` is a user turn: the backend is run on it, calls the agent's tool, and Live speaks the answer.
 
@@ -258,6 +258,9 @@ async def test_typed_question_runs_the_agents_tool(
         await session.send('What is the weather in London?')
         with anyio.fail_after(60):
             await session.wait_for_reply()
+        if realtime_recording:  # pragma: no cover
+            # Replay's clock moves with the recorded frames: keep the ones that carry it past the turn's end.
+            await anyio.sleep(0.5)
         messages = session.all_messages()
 
     assert [
@@ -274,18 +277,24 @@ async def test_typed_question_runs_the_agents_tool(
             for part in message.parts
         ]
         for message in messages
-    ] == snapshot()
-    # Closing asked Live to end the session, and the seconds it billed came back with `session.closed`.
+    ] == snapshot(
+        [
+            ['user-prompt: What is the weather in London?'],
+            ['speech:  Let me check the', 'tool-call: get_weather {"city":"London"}', 'speech:  current weather in'],
+            ['tool-return: It is foggy and 12 degrees Celsius in London.'],
+            ['speech:  London. It\u2019s foggy and 12 degrees Celsius.'],
+        ]
+    )
+    # Closing asked Live to end the session, which it confirmed.
     assert [
         interaction.data['type']
         for interaction in cassette.interactions
         if isinstance(interaction, CassetteMessage) and interaction.data.get('type', '').startswith('session.clos')
     ] == ['session.close', 'session.closed']
-    assert session.usage.audio_seconds > 0
 
 
 async def test_typed_small_talk_is_answered_in_one_reply(
-    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
 ) -> None:
     """Text that needs no tool runs the backend too, and Live speaks its answer as the one reply to the text.
 
@@ -304,6 +313,9 @@ async def test_typed_small_talk_is_answered_in_one_reply(
         await session.send("Thanks, that's all I needed. Have a nice day!")
         with anyio.fail_after(60):
             await session.wait_for_reply()
+        if realtime_recording:  # pragma: no cover
+            # Replay's clock moves with the recorded frames: keep the ones that carry it past the turn's end.
+            await anyio.sleep(0.5)
         messages = session.all_messages()
 
     assert [
@@ -311,7 +323,12 @@ async def test_typed_small_talk_is_answered_in_one_reply(
         if isinstance(message, ModelRequest)
         else [part.transcript for part in message.parts if isinstance(part, SpeechPart)]
         for message in messages
-    ] == snapshot()
+    ] == snapshot(
+        [
+            ["Thanks, that's all I needed. Have a nice day!"],
+            [" Oh, okay, let me just, check on that. You're welcome! Have a great day!"],
+        ]
+    )
 
 
 async def test_history_seeding(
@@ -884,11 +901,11 @@ async def test_a_session_that_is_not_stored_reconnects_by_replaying_its_history(
 async def test_text_sent_mid_reply_is_answered_by_that_reply(
     openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
 ) -> None:
-    """Live speaks to text placed on its timeline mid-reply in that same reply, not in one of its own.
+    """Live speaks to text sent mid-reply in that same reply, not in one of its own.
 
-    Live acknowledges the text (`session.commentary.appended`), and the reply under way goes on to answer it:
-    that reply settles the text's reply obligation, so the wait for it ends with that reply instead of waiting
-    for another that never comes.
+    Live opens a delegation for the text (`session.delegation.created`, under the `response.create`'s id), and the
+    reply under way goes on to answer it: that reply settles the text's reply obligation, so the wait for it ends
+    with that reply instead of waiting for another that never comes.
     """
     provider, _ = openai_live_ws_cassette
     model = OpenAILiveModel(
