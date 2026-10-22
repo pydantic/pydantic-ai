@@ -241,7 +241,7 @@ first pre-agent step, before any workspace script runs:
   acted on. The monitor never reads a failure of these steps as a setup failure. A recheck
   that errors opens no incident, like an error in the `provider_health` job.
 - A blocked decision fails the agent job before the engine step. Do not write a `noop`
-  instead: `detection` runs on any agent output and would send one more request to the
+  instead: `detection` runs on any agent output and would still send requests to the
   blocked provider.
 
 A blocked recheck concludes the run as `failure`. For **CI Review**, `flag_failed_review`
