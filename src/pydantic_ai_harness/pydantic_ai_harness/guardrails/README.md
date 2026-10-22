@@ -491,7 +491,7 @@ ToolGuardrail(
 )
 ```
 
-A hidden tool is dropped from the definitions sent to the model, so it costs no tokens and the model never attempts it; a blocked tool stays visible and the model learns it was refused. Hiding takes a static list of names -- for policy that depends on `deps` or on the arguments, use `guard`.
+A hidden tool is dropped from the definitions sent to the model, so it costs no tokens and the model is not offered it (a call to it is rejected as an unknown tool); a blocked tool stays visible and the model learns it was refused. Hiding takes a static list of names -- for policy that depends on `deps` or on the arguments, use `guard`.
 
 Configured `hidden` names are checked when a run completes successfully. Configured
 `tools` names are checked then only when `guard` or `result_guard` is set. A dynamic
@@ -512,11 +512,11 @@ A `ToolGuardrail` is a control over tools this run executes. For the ones it doe
 
 ## Streaming
 
-`OutputGuardrail` inspects the **final** output only -- during `run_stream()` partial chunks reach the caller before the guard runs, so a `block` or `replace` verdict cannot un-send content already streamed. Use `run()` / `run_sync()` when the output must be screened before any of it is exposed. `GuardrailResult.retry()` is **not** supported under `run_stream()` -- pydantic-ai does not retry output during streaming, and a `retry` verdict there surfaces as `UnexpectedModelBehavior`. `InputGuardrail` works the same in streamed and non-streamed runs, with one caveat for `parallel=True`: the model streams while the guard runs, so chunks sent before the guard blocks still reach the caller, before the block message replaces them. If the guard blocks only after the whole response has streamed, the run raises `SkipModelRequest` instead.
+`OutputGuardrail` inspects the final output only -- during `run_stream()` partial chunks reach the caller before the guard runs, so a `block` or `replace` verdict cannot un-send content already streamed. Use `run()` / `run_sync()` when the output must be screened before any of it is exposed. `GuardrailResult.retry()` is not supported under `run_stream()` -- pydantic-ai does not retry output during streaming, and a `retry` verdict there surfaces as `UnexpectedModelBehavior`. `InputGuardrail` works the same in streamed and non-streamed runs, with one caveat for `parallel=True`: the model streams while the guard runs, so chunks sent before the guard blocks still reach the caller, before the block message replaces them. If the guard blocks only after the whole response has streamed, the run raises `SkipModelRequest` instead.
 
 ## Tracing
 
-`replace` and `block` are recorded as spans on the active OpenTelemetry tracer, so a redaction or refusal shows up in Logfire traces (`guardrail redacted input`, `guardrail blocked output`, and so on) with `guardrail.*` attributes. Content attributes -- the replacement value for a redaction and the refusal `message` for a block -- are attached **only** when `RunContext.trace_include_content` is enabled, since these can quote the content the guard exists to keep out of traces. The value a redaction removed is never recorded, so content capture does not put a redacted secret into the trace. `retry` records no guardrail span: the retry request it causes appears in the trace as a normal model request.
+`replace` and `block` are recorded as spans on the active OpenTelemetry tracer, so a redaction or refusal shows up in Logfire traces (`guardrail redacted input`, `guardrail blocked output`, and so on) with `guardrail.*` attributes. Content attributes -- the replacement value for a redaction and the refusal `message` for a block -- are attached only when `RunContext.trace_include_content` is enabled, since these can quote the content the guard exists to keep out of traces. The value a redaction removed is never recorded, so content capture does not put a redacted secret into the trace. `retry` records no guardrail span: the retry request it causes appears in the trace as a normal model request.
 
 Tool spans add a `guardrail.tool` attribute naming the tool. `approve` records `guardrail deferred tool args`, which always carries `guardrail.tool_call_id` so the span can be correlated with the `DeferredToolRequests` the application answers, and carries `guardrail.arguments` under the same `trace_include_content` rule as the other content attributes. A deferred call never executes, so there is no `execute_tool` span recording what was asked for.
 
@@ -553,7 +553,7 @@ ToolResultGuardrailFunc = (
 class GuardrailResult:
     action: Literal['allow', 'block', 'replace', 'retry', 'approve']
     message: str | None = None
-    replacement: object = _UNSET  # a private sentinel, so `replace(None)` is valid
+    replacement: object = ...  # unset by default, so `replace(None)` is valid
     # classmethods: allow(), block(message=None), replace(value), retry(message), approve()
 
 
