@@ -72,10 +72,12 @@ validation/retry. `Coder` already includes it.
 `ToolBlocked`, `ToolCallInfo`, `ToolResultInfo`, `detectors` live in `pydantic_ai_harness.guardrails`.
 
 A guard is a sync or async callable taking the value, optionally preceded by `RunContext` (taken
-when a second positional parameter is required, or the first is annotated `RunContext`). It returns
-`bool` (`True` = allow) or a `GuardrailResult`: `allow()`, `block(message=None)`, `replace(value)`,
-`retry(message)`, `approve()`. Any other return value (a `'safe'` label, `None`, a `numpy.bool_`)
-raises `UserError`.
+when a second positional parameter is required, or has a default and the first is annotated
+`RunContext`; an unannotated first parameter still gets it, with a `HarnessDeprecationWarning`). It
+returns `bool` (`True` = allow) or a `GuardrailResult`: `allow()`, `block(message=None)`,
+`replace(value)`, `retry(message)`, `approve()`. Any other return value (a `'safe'` label, `None`, a
+`numpy.bool_`) is read for truthiness with a `HarnessDeprecationWarning` (a truthy label allows the
+value); return `bool(...)` instead.
 
 | Verdict | `InputGuardrail` | `OutputGuardrail` | `ToolGuardrail.guard` (args) | `ToolGuardrail.result_guard` |
 |---|---|---|---|---|

@@ -110,23 +110,36 @@ def _find_prompt_part(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessa
     screens nor overwrites the added part. A prompt an outer capability rewrote in place is still
     the same object, so the guard reads the rewritten text.
 
-    When a capability replaced the prompt with a copy, the copy is the part at the prompt's
-    position: the same part index in the message the same distance from the end. Parts appended
-    after it and earlier turns are not taken for it. Only when that position holds no user prompt,
-    because the request was rebuilt, is the most recent part in `messages` used.
+    When a capability replaced the prompt with a copy, the copy is found in the message the same
+    distance from the end by `_find_copy`, wherever other parts were put around it. Only when
+    no part there can be told to be the copy, because the request was rebuilt, is the most recent
+    part in `messages` used.
     """
     for from_end, message in enumerate(reversed(ctx.messages), start=1):
-        prompts = [(index, part) for index, part in enumerate(message.parts) if isinstance(part, UserPromptPart)]
-        if prompts:
-            index, prompt = prompts[-1]
+        prompt = next((part for part in reversed(message.parts) if isinstance(part, UserPromptPart)), None)
+        if prompt is not None:
             break
     else:
         return _latest_prompt_part(messages)
     if any(part is prompt for request in messages for part in request.parts):
         return prompt
-    parts = messages[-from_end].parts if from_end <= len(messages) else ()
-    copy = parts[index] if index < len(parts) else None
-    return copy if isinstance(copy, UserPromptPart) else _latest_prompt_part(messages)
+    copy = _find_copy(prompt, messages[-from_end].parts if from_end <= len(messages) else ())
+    return copy if copy is not None else _latest_prompt_part(messages)
+
+
+def _find_copy(prompt: UserPromptPart, parts: Sequence[object]) -> UserPromptPart | None:
+    """The copy of `prompt` among `parts`, told apart by its timestamp, or `None`.
+
+    A copy made with `dataclasses.replace` keeps the prompt's timestamp, even when its text was
+    changed, while a part an outer capability creates for this request gets its own, so neither
+    the copy's position nor its text decides. When several parts carry the timestamp, one with the
+    prompt's text is taken; when none of them has it, the copy cannot be told apart.
+    """
+    candidates = [part for part in parts if isinstance(part, UserPromptPart) and part.timestamp == prompt.timestamp]
+    same_text = [part for part in candidates if part.content == prompt.content]
+    if same_text:
+        return same_text[0]
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _latest_prompt_part(messages: Sequence[ModelMessage]) -> UserPromptPart | None:
