@@ -51,7 +51,7 @@ agent = Agent(
 )
 ```
 
-A guard returns a bare `bool` (`True` = allow, `False` = block) for the simple case, or a `GuardrailResult` for the richer outcomes. Any other return value raises `UserError`, so a classifier label such as `'unsafe'` is not read as `True`; wrap a comparison on a NumPy or tensor score in `bool()`. Guards may also be async -- return an awaitable `bool`/`GuardrailResult`, for example to call a moderation API.
+A guard returns a bare `bool` (`True` = allow, `False` = block) for the simple case, or a `GuardrailResult` for the richer outcomes. Any other return value is read for truthiness, as in earlier releases, and emits a `HarnessDeprecationWarning`: a classifier label such as `'unsafe'` is truthy and lets the value through, and a future release will raise `UserError` instead. Return `bool(...)`, for example around a comparison on a NumPy or tensor score. Guards may also be async -- return an awaitable `bool`/`GuardrailResult`, for example to call a moderation API.
 
 `OutputGuardrail` receives the output unchanged -- no automatic stringification. For a string output the guard reads it directly; for a typed (Pydantic model) output the guard gets the model instance, so pick the serialization that fits the check (read a field, or call `output.model_dump_json()` for JSON text). This avoids the trap of `str(MyModel(...))` producing a `MyModel(field=...)` repr that hides field contents from regex-based checks.
 
@@ -263,7 +263,7 @@ OutputGuardrail(guard=must_cite_sources)
 
 ## Accessing run context
 
-A guard may take a `RunContext` as its first parameter when it needs run state -- `deps` for tenant- or role-aware policy, message history for conversation-aware checks. The parameter is detected from the signature. A guard with a second positional parameter takes `RunContext` first when that parameter is required, or when the first one is annotated `RunContext`. Keyword-only parameters are left to the guard, so prompt-only guards need not declare anything:
+A guard may take a `RunContext` as its first parameter when it needs run state -- `deps` for tenant- or role-aware policy, message history for conversation-aware checks. The parameter is detected from the signature. A guard with a second positional parameter takes `RunContext` first when that parameter is required. So does a `*args` parameter alongside another parameter. When the second parameter has a default, the first parameter's annotation decides: `RunContext` (also in a union or `Annotated`) means the run context, and any other type means the guarded value. A first parameter with no annotation, `Any`, `object`, or a type that cannot be resolved still gets `RunContext`, as in earlier releases, with a `HarnessDeprecationWarning`. Keyword-only parameters are left to the guard, so prompt-only guards need not declare anything:
 
 ```python
 from dataclasses import dataclass

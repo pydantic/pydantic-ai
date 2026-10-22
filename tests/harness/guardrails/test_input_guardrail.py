@@ -7,7 +7,8 @@ import dataclasses
 import functools
 import inspect
 from collections.abc import AsyncIterator, Sequence
-from typing import Any
+from datetime import UTC, datetime
+from typing import Annotated, Any, Optional
 
 import anyio
 import pytest
@@ -44,11 +45,15 @@ from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import BackgroundTools, GuardrailResult, InputBlocked, InputGuardrail
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.guardrails._capability import (
     _find_prompt_part,  # pyright: ignore[reportPrivateUsage]
     _prompt_text,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai_harness.guardrails._shared import _annotated_as_run_context  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai_harness.guardrails._shared import (
+    _is_run_context,  # pyright: ignore[reportPrivateUsage]
+    takes_ctx,
+)
 from pydantic_ai_harness.guardrails.detectors import redact_secrets
 from pydantic_ai_harness.system_reminders import Reminder, SystemReminders
 
@@ -370,27 +375,46 @@ class TestInputGuardrail:
 
         assert seen == ['hello', 'hello', 'hello']
 
-    @pytest.mark.parametrize('verdict', ['unsafe', None, 1, {'action': 'block'}])
-    async def test_a_verdict_that_is_not_a_bool_or_result_is_a_usage_error(self, verdict: object):
-        """A truthy label read as `True` would let the prompt through, so the verdict is refused instead."""
+    @pytest.mark.parametrize(
+        ('verdict', 'allowed'), [('unsafe', True), (None, False), (1, True), ({'action': 'block'}, True)]
+    )
+    async def test_a_verdict_that_is_not_a_bool_or_result_is_deprecated(self, verdict: object, allowed: bool):
+        """Read for truthiness as before, so existing guards keep working, with a warning that a label can fail open."""
         seen, model = _recording_model()
         agent = Agent(model, capabilities=[InputGuardrail(guard=lambda _: verdict)])  # pyright: ignore[reportArgumentType]
 
-        with pytest.raises(UserError, match=f'returned {type(verdict).__name__}'):
+        with pytest.warns(
+            HarnessDeprecationWarning, match=f'returned {type(verdict).__name__}, which is read for truthiness'
+        ):
             await agent.run('hello')
 
-        assert seen == []
+        assert seen == (['hello'] if allowed else [])
 
-    async def test_a_wrong_verdict_error_does_not_show_bound_guard_arguments(self):
+    async def test_a_wrong_verdict_warning_does_not_show_bound_guard_arguments(self):
         def check(prompt: str, *, api_key: str) -> object:
             return 'unsafe'
 
         agent = Agent(TestModel(), capabilities=[InputGuardrail(guard=functools.partial(check, api_key='sk-bound'))])  # pyright: ignore[reportArgumentType]
 
-        with pytest.raises(UserError, match='partial returned str') as exc_info:
+        with pytest.warns(HarnessDeprecationWarning, match='partial returned str') as record:
             await agent.run('hello')
 
-        assert 'sk-bound' not in str(exc_info.value)
+        assert not any('sk-bound' in str(warning.message) for warning in record)
+
+    async def test_an_unannotated_context_parameter_still_receives_the_context(self):
+        """`(ctx, prompt=None)` received `RunContext` first before, so it still does, with a warning."""
+        seen: list[object] = []
+
+        def guard(ctx: object, prompt: object = None) -> bool:
+            seen.extend([type(ctx).__name__, prompt])
+            return True
+
+        del guard.__annotations__['ctx']
+        agent = Agent(TestModel(custom_output_text='ok'), capabilities=[InputGuardrail(guard=guard)])
+        with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
+            await agent.run('hello')
+
+        assert seen == ['RunContext', 'hello']
 
     async def test_retry_action_is_a_usage_error(self):
         agent = Agent(
@@ -1426,14 +1450,14 @@ class TestFindPromptPart:
     def test_skips_a_part_that_is_not_in_the_history(self):
         prompt = UserPromptPart(content='the prompt')
         history: list[ModelMessage] = [ModelRequest(parts=[prompt])]
-        request: list[ModelMessage] = [ModelRequest(parts=[prompt, UserPromptPart(content='reminder')])]
+        request: list[ModelMessage] = [ModelRequest(parts=[prompt, _added('reminder')])]
         run_ctx, _ = _build_ctx_and_req(messages=history)
         part, original = _find_prompt_part(run_ctx, request)
         assert part is prompt
         assert original is None
 
     def test_a_copied_prompt_is_not_mistaken_for_an_earlier_turn(self):
-        earlier = UserPromptPart(content='earlier turn')
+        earlier = UserPromptPart(content='earlier turn', timestamp=_EARLIER)
         prompt = UserPromptPart(content='current turn')
         history: list[ModelMessage] = [
             ModelRequest(parts=[earlier]),
@@ -1451,20 +1475,50 @@ class TestFindPromptPart:
         prompt = UserPromptPart(content='the prompt')
         copied = dataclasses.replace(prompt)
         history: list[ModelMessage] = [ModelRequest(parts=[prompt])]
-        request: list[ModelMessage] = [ModelRequest(parts=[copied, UserPromptPart(content='reminder')])]
+        request: list[ModelMessage] = [ModelRequest(parts=[copied, _added('reminder')])]
         run_ctx, _ = _build_ctx_and_req(messages=history)
         part, original = _find_prompt_part(run_ctx, request)
         assert part is copied
         assert original is prompt
 
-    def test_falls_back_to_the_latest_part_when_the_prompt_position_is_gone(self):
+    def test_a_copied_prompt_is_found_after_a_part_put_in_front_of_it(self):
+        """Position does not decide: a part an outer capability puts before the copy is not taken for it."""
+        prompt = UserPromptPart(content='the prompt')
+        copied = dataclasses.replace(prompt)
+        history: list[ModelMessage] = [ModelRequest(parts=[prompt])]
+        request: list[ModelMessage] = [ModelRequest(parts=[_added('reminder'), copied])]
+        run_ctx, _ = _build_ctx_and_req(messages=history)
+        part, original = _find_prompt_part(run_ctx, request)
+        assert part is copied
+        assert original is prompt
+
+    def test_a_copy_with_changed_text_is_found_by_its_timestamp(self):
+        prompt = UserPromptPart(content='the prompt')
+        changed = dataclasses.replace(prompt, content='the prompt\ncontext')
+        history: list[ModelMessage] = [ModelRequest(parts=[prompt])]
+        request: list[ModelMessage] = [ModelRequest(parts=[_added('reminder'), changed, _added('note')])]
+        run_ctx, _ = _build_ctx_and_req(messages=history)
+        part, original = _find_prompt_part(run_ctx, request)
+        assert part is changed
+        assert original is prompt
+
+    def test_falls_back_to_the_latest_part_when_the_copy_cannot_be_told_apart(self):
+        prompt = UserPromptPart(content='the prompt')
+        first = dataclasses.replace(prompt, content='one')
+        second = dataclasses.replace(prompt, content='two')
+        history: list[ModelMessage] = [ModelRequest(parts=[prompt])]
+        request: list[ModelMessage] = [ModelRequest(parts=[first, second])]
+        run_ctx, _ = _build_ctx_and_req(messages=history)
+        assert _find_prompt_part(run_ctx, request) == (second, None)
+
+    def test_falls_back_to_the_latest_part_when_the_request_was_rebuilt(self):
         prompt = UserPromptPart(content='the prompt')
         history: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart(content='earlier')]),
+            ModelRequest(parts=[UserPromptPart(content='earlier', timestamp=_EARLIER)]),
             ModelResponse(parts=[TextPart(content='assistant')]),
             ModelRequest(parts=[prompt]),
         ]
-        rebuilt = UserPromptPart(content='rebuilt')
+        rebuilt = _added('rebuilt')
         request: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart(content='sys'), rebuilt])]
         run_ctx, _ = _build_ctx_and_req(messages=history)
         part, original = _find_prompt_part(run_ctx, request)
@@ -1486,27 +1540,108 @@ class TestFindPromptPart:
         assert _prompt_text(['multimodal', 'content']) == str(['multimodal', 'content'])
 
 
-class TestAnnotatedAsRunContext:
-    """`_annotated_as_run_context` reads an annotation without resolving it."""
+class TestIsRunContext:
+    """`_is_run_context` reads an annotation, matching an unresolved string by name."""
 
     @pytest.mark.parametrize(
         ('annotation', 'expected'),
         [
             (RunContext, True),
             (RunContext[object], True),
+            (RunContext[object] | None, True),
+            (Optional[RunContext[object]], True),  # noqa: UP045
+            (Annotated[RunContext[object], 'meta'], True),
             ('RunContext', True),
             ('RunContext[MyDeps]', True),
             ('pydantic_ai.RunContext[MyDeps]', True),
             ("'RunContext[MyDeps]'", True),
+            ('RunContext[MyDeps] | None', True),
+            ('Optional[RunContext[MyDeps]]', True),
             ('NotRunContext', False),
             ('str', False),
             (str, False),
+            (int | None, False),
+            (Annotated[str, 'meta'], False),
             (inspect.Parameter.empty, False),
         ],
     )
     def test_annotation(self, annotation: object, expected: bool):
-        parameter = inspect.Parameter('ctx', inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=annotation)
-        assert _annotated_as_run_context(parameter) is expected
+        assert _is_run_context(annotation) is expected
+
+
+class TestTakesCtx:
+    """`takes_ctx` with a defaulted second positional parameter, where the first one's annotation decides."""
+
+    def test_a_first_parameter_typed_as_the_value_is_the_value(self):
+        def guard(prompt: str, threshold: float = 0.5) -> bool: ...  # pragma: no cover
+
+        assert takes_ctx(guard) is False
+
+    def test_an_optional_run_context_first_parameter_is_the_context(self):
+        def guard(ctx: RunContext[None] | None, prompt: str = '') -> bool: ...  # pragma: no cover
+
+        assert takes_ctx(guard) is True
+
+    def test_an_unannotated_first_parameter_keeps_the_context_with_a_warning(self):
+        def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
+
+        del guard.__annotations__['ctx']
+        with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
+            assert takes_ctx(guard) is True
+
+    @pytest.mark.parametrize('annotation', [Any, object])
+    def test_a_first_parameter_that_fits_either_keeps_the_context_with_a_warning(self, annotation: object):
+        def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
+
+        guard.__annotations__['ctx'] = annotation
+        with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
+            assert takes_ctx(guard) is True
+
+    def test_a_guard_taking_args_receives_the_context(self):
+        """A wrapper written without `functools.wraps` passes `(ctx, value)` on, as it always has."""
+
+        def wrapper(*args: object, **kwargs: object) -> bool: ...  # pragma: no cover
+
+        def with_rest(ctx: object, *rest: object) -> bool: ...  # pragma: no cover
+
+        def only_args(*values: object) -> bool: ...  # pragma: no cover
+
+        assert takes_ctx(wrapper) is True
+        assert takes_ctx(with_rest) is True
+        assert takes_ctx(only_args) is False
+
+    def test_only_the_first_annotation_is_resolved(self):
+        """A later annotation that cannot be resolved does not stop the first one reading as the value."""
+
+        def guard(prompt: str, policy: object = None) -> bool: ...  # pragma: no cover
+
+        guard.__annotations__.update(prompt='str', policy='UndefinedPolicy | None')
+        assert takes_ctx(guard) is False
+
+    def test_a_partial_and_a_callable_instance_resolve_in_their_module(self):
+        def check(ctx: object, prompt: str = '', *, key: str) -> bool: ...  # pragma: no cover
+
+        check.__annotations__['ctx'] = 'RunContext[None]'
+
+        class Guard:
+            def __call__(self, prompt: object, threshold: float = 0.5) -> bool: ...  # pragma: no cover
+
+        Guard.__call__.__annotations__['prompt'] = 'str'
+        assert takes_ctx(functools.partial(check, key='k')) is True
+        assert takes_ctx(Guard()) is False
+
+    def test_an_unresolvable_annotation_naming_run_context_is_the_context(self):
+        def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
+
+        guard.__annotations__['ctx'] = 'RunContext[UndefinedDeps]'
+        assert takes_ctx(guard) is True
+
+    def test_an_unresolvable_annotation_keeps_the_context_with_a_warning(self):
+        def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
+
+        guard.__annotations__['ctx'] = 'UndefinedAlias'
+        with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
+            assert takes_ctx(guard) is True
 
 
 class TestInputGuardrailOrdering:
@@ -1635,6 +1770,14 @@ class _FlattenPrompt(AbstractCapability[Any]):
             ],
         )
         return await handler(request_context)
+
+
+_EARLIER = datetime(2000, 1, 1, tzinfo=UTC)
+
+
+def _added(content: str) -> UserPromptPart:
+    """A part an outer capability creates for this request, with a timestamp of its own."""
+    return UserPromptPart(content=content, timestamp=datetime(2001, 1, 1, tzinfo=UTC))
 
 
 async def _unreachable_handler(_: ModelRequestContext) -> ModelResponse:  # pragma: no cover - never awaited
