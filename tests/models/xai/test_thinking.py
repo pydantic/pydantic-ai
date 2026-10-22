@@ -225,16 +225,17 @@ async def test_xai_grok_43_explicit_reasoning_effort_takes_precedence(allow_mode
 @pytest.mark.parametrize(
     ('thinking', 'expected_reasoning_effort'),
     [
-        # Grok 3 Mini takes Grok 4.3's efforts, `'none'` included, so `thinking=False` turns reasoning off.
+        # Grok 3 Mini accepts `'none'`, so `thinking=False` turns reasoning off; the other levels keep
+        # mapping onto its `low`/`high`.
         (False, 'none'),
-        (True, None),
+        (True, 'high'),
         ('minimal', 'low'),
-        ('medium', 'medium'),
+        ('medium', 'high'),
         ('xhigh', 'high'),
     ],
 )
 async def test_xai_grok_3_mini_unified_thinking_reasoning_effort(
-    allow_model_requests: None, model_name: str, thinking: ThinkingLevel, expected_reasoning_effort: str | None
+    allow_model_requests: None, model_name: str, thinking: ThinkingLevel, expected_reasoning_effort: str
 ) -> None:
     response = create_response(content='ok')
     mock_client = MockXai.create_mock([response])
@@ -245,10 +246,7 @@ async def test_xai_grok_3_mini_unified_thinking_reasoning_effort(
 
     assert result.output == 'ok'
     kwargs = get_mock_chat_create_kwargs(mock_client)[0]
-    if expected_reasoning_effort is None:
-        assert 'reasoning_effort' not in kwargs
-    else:
-        assert kwargs['reasoning_effort'] == expected_reasoning_effort
+    assert kwargs['reasoning_effort'] == expected_reasoning_effort
 
 
 @pytest.mark.parametrize(

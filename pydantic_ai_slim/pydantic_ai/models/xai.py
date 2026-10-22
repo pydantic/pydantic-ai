@@ -187,11 +187,10 @@ def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) ->
         # A model that can't turn reasoning off (e.g. Grok 4.5, which 400s on `'none'`) reasons as little as it can.
         thinking = 'minimal'
     if thinking is True:
-        # `True` requests reasoning at the model's default level rather than a specific effort.
-        # Grok 4.3 accepts `'none'`; Grok 4.7's profile also records that its documented `high` default
-        # applies when `reasoning_effort` is omitted. Other always-on models fall back to `'medium'`
-        # (consistent with OpenAI), normalized to the nearest supported value below.
-        if 'none' in supported_efforts or profile.get('grok_default_effort_omitted', False):
+        # `True` requests reasoning at the model's default level rather than a specific effort. Grok 4.3's and
+        # Grok 4.7's profiles record that their default applies when `reasoning_effort` is omitted. Other models
+        # fall back to `'medium'` (consistent with OpenAI), normalized to the nearest supported value below.
+        if profile.get('grok_default_effort_omitted', False):
             return None
         thinking = 'medium'
 

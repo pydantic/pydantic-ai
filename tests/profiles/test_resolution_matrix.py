@@ -778,8 +778,9 @@ def test_xai_grok_3_mini():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
-            'grok_reasoning_efforts': frozenset({'none', 'low', 'medium', 'high'}),
+            'grok_reasoning_efforts': frozenset({'high', 'low', 'none'}),
             'supported_native_tools': frozenset(),
+            'thinking_enabled_by_default': True,
         }
     )
 
@@ -1975,8 +1976,9 @@ def test_xai_provider_grok_3_mini():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
-            'grok_reasoning_efforts': frozenset({'none', 'low', 'medium', 'high'}),
+            'grok_reasoning_efforts': frozenset({'high', 'low', 'none'}),
             'supported_native_tools': frozenset(),
+            'thinking_enabled_by_default': True,
         }
     )
 

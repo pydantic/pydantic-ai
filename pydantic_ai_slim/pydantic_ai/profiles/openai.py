@@ -348,7 +348,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
 
     The GPT-5.1+ mainline models support turning reasoning off via `effort='none'`, and sampling params are
     accepted in that mode. When reasoning is enabled (low/medium/high/xhigh), sampling params are not supported.
-    Whether the model reasons by default is tracked separately by `thinking_enabled_by_default`."""
+    Whether the model reasons by default is tracked separately by `thinking_enabled_by_default`.
+
+    Ignored when `openai_supported_reasoning_efforts` is set: `'none'` in that sequence decides it instead."""
 
     openai_supports_minimal_reasoning_effort: bool
     """Whether the model accepts `reasoning_effort='minimal'`. Default: `True`.
@@ -369,8 +371,10 @@ class OpenAIModelProfile(ModelProfile, total=False):
     reasons (`thinking_always_enabled`) thinks as little as it can. An empty sequence means the model has no
     effort knob, so the unified setting sends nothing.
 
-    When unset, unified levels map one-to-one (see `openai_supports_minimal_reasoning_effort`), and
-    `thinking=False` sends nothing on a model that always reasons.
+    When set, it also decides whether the model takes `'none'` and `'minimal'`, in place of
+    `openai_supports_reasoning_effort_none` and `openai_supports_minimal_reasoning_effort`. When unset, unified
+    levels map one-to-one (see `openai_supports_minimal_reasoning_effort`), and `thinking=False` sends nothing on a
+    model that always reasons.
     Explicit `openai_reasoning_effort` settings are passed through unchanged."""
 
     openai_responses_supports_reasoning_mode: bool

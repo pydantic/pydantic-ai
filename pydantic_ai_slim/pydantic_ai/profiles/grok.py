@@ -13,6 +13,8 @@ GrokReasoningEffort: TypeAlias = Literal['none', 'low', 'medium', 'high']
 
 _GROK_BASIC_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('low', 'high'))
 _GROK_43_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('none', 'low', 'medium', 'high'))
+# Grok 3 Mini keeps its documented `low`/`high` set for the effort levels, plus `none` to turn reasoning off.
+_GROK_3_MINI_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('none', 'low', 'high'))
 # Grok 4.5 and 4.6 accept `low`/`medium`/`high` but reject `none` (unlike Grok 4.3), so they always
 # reason. Grok 4.7 also supports `xhigh`; its mapping is tracked separately in issue #9744, so this
 # profile keeps the existing high fallback. https://docs.x.ai/developers/model-capabilities/text/reasoning
@@ -38,11 +40,11 @@ _GROK_43_REASONING_MODELS = frozenset(
         'grok-3',
     )
 )
-# Grok 3 Mini takes Grok 4.3's `reasoning_effort` values, including `none`, though xAI's retirement guide
-# doesn't list it: verified live 2026-10-22, `grok-3-mini` and `grok-3-mini-fast` accept all four, with no
-# reasoning tokens for `none`. They stay out of `_GROK_43_REASONING_MODELS`, which also grants builtin
-# tools. Other `grok-3-mini` ids keep the `low`/`high` set it documented.
-_GROK_3_MINI_43_REASONING_MODELS = frozenset(('grok-3-mini', 'grok-3-mini-fast'))
+# Grok 3 Mini accepts `reasoning_effort='none'`, though xAI's retirement guide doesn't list it: verified live
+# 2026-10-22, `grok-3-mini` and `grok-3-mini-fast` return no reasoning tokens for `none`, so `thinking=False`
+# turns reasoning off. The other levels keep mapping onto its documented `low`/`high`. They stay out of
+# `_GROK_43_REASONING_MODELS`, which also grants builtin tools. Other `grok-3-mini` ids keep the `low`/`high` set.
+_GROK_3_MINI_DISABLEABLE_MODELS = frozenset(('grok-3-mini', 'grok-3-mini-fast'))
 _GROK_45_REASONING_MODELS = (
     frozenset(
         (
@@ -96,8 +98,10 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         or model_name in _GROK_43_REASONING_MODELS
     )
     grok_reasoning_efforts: frozenset[GrokReasoningEffort]
-    if model_name in _GROK_43_REASONING_MODELS or model_name in _GROK_3_MINI_43_REASONING_MODELS:
+    if model_name in _GROK_43_REASONING_MODELS:
         grok_reasoning_efforts = _GROK_43_REASONING_EFFORTS
+    elif model_name in _GROK_3_MINI_DISABLEABLE_MODELS:
+        grok_reasoning_efforts = _GROK_3_MINI_REASONING_EFFORTS
     elif model_name in _GROK_45_REASONING_MODELS:
         grok_reasoning_efforts = _GROK_45_REASONING_EFFORTS
     elif model_name.startswith('grok-3-mini'):
@@ -121,8 +125,11 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         grok_reasoning_efforts=grok_reasoning_efforts,
         supported_native_tools=supported_native_tools,
     )
-    if model_name in _GROK_47_REASONING_MODELS:
+    if model_name in _GROK_43_REASONING_MODELS or model_name in _GROK_47_REASONING_MODELS:
         profile['grok_default_effort_omitted'] = True
+    if model_name in _GROK_3_MINI_DISABLEABLE_MODELS:
+        # Grok 3 Mini reasons unless told not to.
+        profile['thinking_enabled_by_default'] = True
     return profile
 
 

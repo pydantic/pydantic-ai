@@ -639,6 +639,13 @@ def _resolve_openai_thinking_effort(thinking: ThinkingLevel, profile: OpenAIMode
     return active[-1] if active else None
 
 
+def _supports_reasoning_effort_none(profile: OpenAIModelProfile) -> bool:
+    """Whether the model accepts `reasoning_effort='none'`, read from its accepted efforts where they're pinned."""
+    if (supported := profile.get('openai_supported_reasoning_efforts')) is not None:
+        return 'none' in supported
+    return profile.get('openai_supports_reasoning_effort_none', False)
+
+
 def _reasoning_active(
     profile: OpenAIModelProfile,
     model_settings: OpenAIChatModelSettings | OpenAIResponsesModelSettings,
@@ -677,7 +684,7 @@ def _drop_sampling_params_for_reasoning(
         return
 
     # When the model can turn reasoning off, sampling params are allowed while reasoning is inactive.
-    if profile.get('openai_supports_reasoning_effort_none', False) and not _reasoning_active(
+    if _supports_reasoning_effort_none(profile) and not _reasoning_active(
         profile, model_settings, model_request_parameters
     ):
         return

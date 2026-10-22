@@ -349,7 +349,11 @@ _QWEN_REASONING_CONFIG_MAP: dict[ThinkingLevel, str] = {
     'high': 'high',
     'xhigh': 'high',
 }
-"""Maps unified thinking values to Qwen's `reasoning_config` on Converse, which takes `none`, `low`, `medium`, or `high`."""
+"""Maps unified thinking values to Qwen's `reasoning_config` on Converse.
+
+Converse accepts `none`, `low`, `medium`, and `high`, but only `high` produced reasoning in live checks, so `medium`
+folds up to it rather than sending a level that doesn't reason.
+"""
 
 _GROK_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     # Grok always reasons on Converse and accepts `low`/`medium`/`high`/`xhigh`, so `thinking=False` and `minimal`
