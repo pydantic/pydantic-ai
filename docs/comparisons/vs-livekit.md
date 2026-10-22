@@ -22,12 +22,12 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 
 ## Realtime, side by side
 
-Our realtime support means speech-to-speech models: one persistent connection, audio in and audio out, on the five providers below. LiveKit also runs a cascaded pipeline you compose from plugins; we don't build one in, though [ElevenLabs Agents](../realtime/elevenlabs.md#elevenlabs-agents) runs a hosted one. If you are choosing a voice stack, these are the rows that decide it:
+Our realtime support means speech-to-speech models: one persistent connection, audio in and audio out, on the five providers below. LiveKit also runs a cascaded pipeline you compose from plugins; we don't build one in, though [ElevenLabs Agents](../realtime/elevenlabs.md#elevenlabs-agents) and [Azure AI Voice Live](../realtime/azure.md#azure-ai-voice-live)'s cascade models run hosted ones. If you are choosing a voice stack, these are the rows that decide it:
 
 | | LiveKit Agents | Pydantic AI |
 |---|---|---|
 | Speech-to-speech providers | Plugins for several providers | [Five](../realtime/overview.md#provider-support) behind one API: OpenAI, Azure OpenAI, Gemini Live, xAI, ElevenLabs |
-| Cascaded STT + LLM + TTS | Yes, the default; dozens of STT and TTS plugins | Hosted only, via [ElevenLabs Agents](../realtime/elevenlabs.md#elevenlabs-agents); otherwise [compose it yourself](../realtime/overview.md#other-ways-to-build-voice) around a text agent |
+| Cascaded STT + LLM + TTS | Yes, the default; dozens of STT and TTS plugins | Hosted only, via [ElevenLabs Agents](../realtime/elevenlabs.md#elevenlabs-agents) or [Azure AI Voice Live](../realtime/azure.md#azure-ai-voice-live); otherwise [compose it yourself](../realtime/overview.md#other-ways-to-build-voice) around a text agent |
 | Audio transport | WebRTC rooms via LiveKit server or Cloud | Yours: [browser WebRTC sideband or WebSocket relay](../realtime/deployment.md) |
 | Telephony | SIP in and out, DTMF, transfers; numbers on Cloud | [Bridge a provider](../realtime/deployment.md#siptelephony-bridge) such as Twilio |
 | Turn detection | Silero VAD, own turn-detector model, adaptive interruption | [Provider turn detection, barge-in, push-to-talk](../realtime/turns.md) |
