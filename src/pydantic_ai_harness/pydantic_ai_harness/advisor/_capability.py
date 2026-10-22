@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import inspect
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -20,6 +21,24 @@ from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 _LIMIT_REACHED = 'Advisor consultation limit reached for this model request. Continue without further advice.'
+
+
+def _caller_stacklevel() -> int:
+    """The `warnings.warn` stacklevel, from `Advisor.combine`, of the nearest frame in the user's code.
+
+    Skips this module, Pydantic AI, Pydantic Graph, and the `asyncio` and `contextlib` frames a run
+    goes through, so the warning points at the caller whether they call `combine` directly, build an
+    `Agent`, or pass capabilities to a run.
+    """
+    frame = inspect.currentframe()
+    stacklevel = 0
+    while frame is not None and (
+        (module := frame.f_globals.get('__name__', '')) == __name__
+        or module.partition('.')[0] in {'pydantic_ai', 'pydantic_graph', 'asyncio', 'contextlib'}
+    ):
+        frame = frame.f_back
+        stacklevel += 1
+    return stacklevel
 
 
 @dataclass(init=False)
@@ -224,8 +243,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
                 "which OpenRouter's native advisor does not support, so `max_uses` is ignored. "
                 "This will raise `ValueError` in a future release: remove `max_uses`, or use `mode='auto'`.",
                 HarnessDeprecationWarning,
-                # Past `_combine_duplicate_capabilities` and `Agent.__init__`, to the user's `Agent(...)`.
-                stacklevel=4,
+                stacklevel=_caller_stacklevel(),
             )
             max_uses = None
         return merged._rebuilt(max_uses=max_uses)

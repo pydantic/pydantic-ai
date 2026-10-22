@@ -538,6 +538,31 @@ class TestAdvisor:
         assert warned[0].filename == __file__
         assert seen[0].native_tools == [AdvisorTool(model='anthropic/claude-opus-4.8')]
 
+    def test_merge_warning_points_at_the_run_call(self) -> None:
+        def executor(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(_ProviderFunctionModel('openrouter', executor, supports_advisor=True))
+        with pytest.warns(HarnessDeprecationWarning, match=r'`max_uses=2`, .* is ignored') as warned:
+            agent.run_sync(
+                'Review this plan.',
+                capabilities=[
+                    Advisor('openrouter:anthropic/claude-opus-4.8', max_uses=2),
+                    Advisor('openrouter:anthropic/claude-opus-4.8', mode='native'),
+                ],
+            )
+        assert warned[0].filename == __file__
+
+    def test_merge_warning_points_at_a_direct_combine_call(self) -> None:
+        with pytest.warns(HarnessDeprecationWarning, match=r'`max_uses=2`, .* is ignored') as warned:
+            Advisor[None].combine(
+                [
+                    Advisor('openrouter:anthropic/claude-opus-4.8', max_uses=2),
+                    Advisor('openrouter:anthropic/claude-opus-4.8', mode='native'),
+                ]
+            )
+        assert warned[0].filename == __file__
+
     async def test_rebuilt_advisor_keeps_fields_set_after_construction(self) -> None:
         earlier = Advisor[None]('test', max_uses=2)
         earlier.description = 'Ask the senior engineer.'
