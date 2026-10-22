@@ -42,6 +42,14 @@ WireT = TypeVar('WireT')
 ResultT = TypeVar('ResultT')
 
 
+registered_child_workflow_names: set[str] = set()
+"""Child workflow types that a worker was configured with, by name.
+
+`worker_registrations` adds to it when a plugin configures a worker. It lives at module level, in a module the
+workflow sandbox passes through, because the sandbox re-imports the user's workflow module and so runs calls on
+re-created agents whose backends never saw the worker being configured.
+"""
+
 TemporalOperationConfigValue = ActivityConfig | ChildWorkflowOperationConfig
 
 
@@ -102,14 +110,12 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
         operation: DurableOperation[ParamsT, WireT, ResultT],
         *,
         registration: Callable[..., Awaitable[ResultT]],
-        child_workflow_registration: type | None = None,
-        registered_child_workflow_toolset_ids: set[str] | None = None,
+        child_workflow: tuple[type, str] | None = None,
         config: TemporalOperationConfigValue,
     ) -> None:
         self._operation = operation
         self.registration = registration
-        self.child_workflow_registration = child_workflow_registration
-        self._registered_child_workflow_toolset_ids = registered_child_workflow_toolset_ids or set()
+        self.child_workflow = child_workflow
         self._config = config
 
     @property
@@ -121,10 +127,7 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
         resolved_config = cast(TemporalOperationConfigValue, config or self._config)
         if is_child_workflow_metadata(resolved_config):
             toolset_id = cast(Any, self._operation.operation_id).toolset_id
-            if (
-                self.child_workflow_registration is None
-                or toolset_id not in self._registered_child_workflow_toolset_ids
-            ):
+            if self.child_workflow is None or self.child_workflow[1] not in registered_child_workflow_names:
                 raise UserError(
                     f'Toolset {toolset_id!r} has a tool configured to run as a Temporal child workflow, but its '
                     'child workflow was not registered with the worker, because no tool in the toolset had '
@@ -136,7 +139,7 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
             child_config.setdefault('id', f'{workflow.info().workflow_id}--{workflow.uuid4()}')
             transport = cast(TemporalParameterTransport[ParamsT, WireT], self._operation.parameter_transport)
             return await execute_child_workflow(
-                cast(Any, self.child_workflow_registration).run,
+                cast(Any, self.child_workflow[0]).run,
                 args=cast(Sequence[Any], payload),
                 result_type=transport.result_type,
                 **child_config,
@@ -215,10 +218,9 @@ class TemporalOperationBackend(RegisteredOperationBackend[TemporalOperationConfi
         self._non_retryable_model_errors = non_retryable_model_errors
         self._runtime = runtime
         # Every function toolset gets a child workflow definition, but a worker only registers the ones whose toolset
-        # selects a child workflow when it's configured (see `worker_registrations`), recorded here so a call can
-        # fail clearly instead of starting a child workflow type no worker knows.
-        self.child_workflow_toolset_ids: dict[type, str] = {}
-        self.registered_child_workflow_toolset_ids: set[str] = set()
+        # selects a child workflow when it's configured (see `worker_registrations`).
+        self.child_workflow_toolsets: dict[type, tuple[str, str]] = {}
+        """Each child workflow definition's toolset id and workflow name."""
 
     def move_registration_to_end(self, registration: Callable[..., object]) -> None:
         self._registrations.remove(registration)
@@ -256,7 +258,7 @@ class TemporalOperationBackend(RegisteredOperationBackend[TemporalOperationConfi
             'return': transport.result_type,
         }
         registration = activity.defn(name=name)(activity_handler)
-        child_workflow_registration: type | None = None
+        child_workflow: tuple[type, str] | None = None
         registrations: list[Callable[..., object]] = [registration]
         operation_id = operation.operation_id
         if isinstance(operation_id, ToolsetCallToolId) and operation_id.toolset_kind == 'function':
@@ -283,17 +285,18 @@ class TemporalOperationBackend(RegisteredOperationBackend[TemporalOperationConfi
             class_name = f'_{encoded_name}__child_workflow'
             run.__qualname__ = f'{class_name}.run'
             run.__annotations__ = activity_handler.__annotations__
-            child_workflow_registration = workflow.defn(name=f'{name}__child_workflow')(
+            child_workflow_name = f'{name}__child_workflow'
+            child_workflow_registration = workflow.defn(name=child_workflow_name)(
                 type(class_name, (), {'run': workflow.run(run)})
             )
             globals()[class_name] = child_workflow_registration
-            self.child_workflow_toolset_ids[child_workflow_registration] = operation_id.toolset_id
+            child_workflow = (child_workflow_registration, child_workflow_name)
+            self.child_workflow_toolsets[child_workflow_registration] = (operation_id.toolset_id, child_workflow_name)
             registrations.append(cast(Callable[..., object], child_workflow_registration))
         bound = TemporalBoundOperation(
             operation,
             registration=cast(Callable[..., Awaitable[ResultT]], registration),
-            child_workflow_registration=child_workflow_registration,
-            registered_child_workflow_toolset_ids=self.registered_child_workflow_toolset_ids,
+            child_workflow=child_workflow,
             config=config,
         )
         return bound, tuple(registrations)

@@ -145,7 +145,14 @@ async def test_child_workflow_metadata_added_after_worker_configured(client: Cli
     plugin = AgentPlugin(late_agent)
     late_child_toolset.add_function(late_child_tool, metadata={'temporal': {'child_workflow': _CHILD_WORKFLOW}})
     try:
-        async with Worker(client, task_queue=TASK_QUEUE, workflows=[MetadataErrorWorkflow], plugins=[plugin]):
+        # Unsandboxed, since the sandbox would re-import this module without the tool added here.
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[MetadataErrorWorkflow],
+            plugins=[plugin],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
             with pytest.raises(WorkflowFailureError) as exc_info:
                 await client.execute_workflow(
                     MetadataErrorWorkflow.run,

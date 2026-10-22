@@ -58,6 +58,7 @@ from ._operation_backend import (
     TemporalBoundOperation,
     TemporalOperationBackend,
     TemporalOperationConfigValue,
+    registered_child_workflow_names,
 )
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
@@ -387,11 +388,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         """
         if self._child_workflow_metadata_capability:
             return True
-        wrapper = self._toolsets_by_id.get(toolset_id)
-        toolset = wrapper.wrapped if wrapper is not None else None
-        return isinstance(toolset, FunctionToolset) and any(
-            is_child_workflow_metadata((tool.metadata or {}).get('temporal')) for tool in toolset.tools.values()
-        )
+        toolset = self._toolsets_by_id[toolset_id].wrapped
+        assert isinstance(toolset, FunctionToolset)
+        return any(is_child_workflow_metadata((tool.metadata or {}).get('temporal')) for tool in toolset.tools.values())
 
     def _workspace_call_transport(self) -> _WorkspaceCallTransport:
         return _WorkspaceCallTransport(self)
@@ -817,8 +816,8 @@ def worker_registrations(durability: TemporalDurability[Any]) -> tuple[list[Call
     for registration in registrations:
         if not isinstance(registration, type):
             continue
-        toolset_id = backend.child_workflow_toolset_ids[registration]
+        toolset_id, workflow_name = backend.child_workflow_toolsets[registration]
         if durability._selects_child_workflow(toolset_id):  # pyright: ignore[reportPrivateUsage]
             workflows.append(registration)
-            backend.registered_child_workflow_toolset_ids.add(toolset_id)
+            registered_child_workflow_names.add(workflow_name)
     return activities, workflows
