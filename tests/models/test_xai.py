@@ -1479,13 +1479,16 @@ async def test_xai_inline_citation_mapping(
 
 
 async def test_xai_collection_citation_ids_stay_in_raw_data(allow_model_requests: None) -> None:
-    """The chunk and collection IDs and the score of a collection citation stay in the raw citation data.
+    """The raw citation data keeps every inline citation's fields, such as a collection citation's IDs and score.
 
-    Unit test: no recorded xAI answer has a collection citation.
+    Unit test: no recorded xAI answer has a collection citation, or a citation without a source.
     """
     response = create_response(content=_CITED_TEXT)
-    response.proto.outputs[0].message.citations.append(
-        chat_pb2.InlineCitation(start_index=_START, end_index=_END, collections_citation=_COLLECTION_CITATION)
+    response.proto.outputs[0].message.citations.extend(
+        [
+            chat_pb2.InlineCitation(start_index=_START, end_index=_END, collections_citation=_COLLECTION_CITATION),
+            chat_pb2.InlineCitation(start_index=_START, end_index=_END),
+        ]
     )
     mock_client = MockXai.create_mock([response])
     agent = Agent(XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client)))
@@ -1502,7 +1505,8 @@ async def test_xai_collection_citation_ids_stay_in_raw_data(allow_model_requests
                 'start_index': _START,
                 'end_index': _END,
                 'collections_citation': {**_COLLECTION_CITATION, 'score': pytest.approx(0.8)},
-            }
+            },
+            {'id': '', 'start_index': _START, 'end_index': _END},
         ]
     }
 
