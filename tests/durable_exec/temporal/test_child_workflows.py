@@ -512,7 +512,10 @@ def _scheduled_activity_types(history: WorkflowHistory) -> list[str]:
 
 async def test_child_workflow_runs_nested_durable_agent(client: Client) -> None:
     workflow_id = 'test_child_workflow_runs_nested_durable_agent'
-    async with Worker(client, task_queue=TASK_QUEUE, workflows=[DelegatingAgentWorkflow]):
+    # The agent is also listed in `__pydantic_ai_agents__`; its child workflow is registered once.
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[DelegatingAgentWorkflow], plugins=[AgentPlugin(delegating_agent)]
+    ):
         result = await client.execute_workflow(DelegatingAgentWorkflow.run, id=workflow_id, task_queue=TASK_QUEUE)
 
     assert 'success (no tool calls)' in result

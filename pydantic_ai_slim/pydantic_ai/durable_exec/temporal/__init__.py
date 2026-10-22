@@ -259,7 +259,7 @@ class PydanticAIPlugin(SimplePlugin):
         config['activities'] = activities
         config['workflows'] = [*workflows, *child_workflows]
 
-        return config
+        return _dedupe_registrations(config)
 
 
 class AgentPlugin(SimplePlugin):
@@ -289,3 +289,15 @@ class AgentPlugin(SimplePlugin):
             activities=activities,
             workflows=workflows,
         )
+
+    def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
+        return _dedupe_registrations(super().configure_worker(config))
+
+
+def _dedupe_registrations(config: WorkerConfig) -> WorkerConfig:
+    # An agent can be listed on several workflows, or also registered via `AgentPlugin`, contributing the same
+    # activity callables and child workflow classes more than once; Temporal rejects duplicate names, so keep each
+    # registration once.
+    config['activities'] = list(dict.fromkeys(config.get('activities', [])))  # type: ignore[reportUnknownMemberType]
+    config['workflows'] = list(dict.fromkeys(config.get('workflows', [])))  # type: ignore[reportUnknownMemberType]
+    return config

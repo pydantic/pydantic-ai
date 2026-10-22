@@ -359,6 +359,42 @@ async def test_durability_simple_agent_run_in_workflow(client: Client):
         assert output == 'Echo: What is the capital of Mexico?'
 
 
+@workflow.defn
+class FirstSharedAgentWorkflow:
+    __pydantic_ai_agents__ = [simple_durable_agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await simple_durable_agent.run(prompt)).output
+
+
+@workflow.defn
+class SecondSharedAgentWorkflow:
+    __pydantic_ai_agents__ = [simple_durable_agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await simple_durable_agent.run(prompt)).output
+
+
+async def test_durability_agent_shared_by_workflows_and_agent_plugin(client: Client):
+    """An agent listed on several workflows and also passed to `AgentPlugin` registers its activities once."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FirstSharedAgentWorkflow, SecondSharedAgentWorkflow],
+        plugins=[AgentPlugin(simple_durable_agent)],
+    ):
+        outputs = [
+            await client.execute_workflow(
+                workflow_class.run, args=['Hi'], id=workflow_class.__name__, task_queue=TASK_QUEUE
+            )
+            for workflow_class in (FirstSharedAgentWorkflow, SecondSharedAgentWorkflow)
+        ]
+
+    assert outputs == ['Echo: Hi', 'Echo: Hi']
+
+
 # --- Model errors reach workflow code with their original type ---
 
 
@@ -1763,12 +1799,13 @@ def test_durability_activity_config_tolerates_unschemable_annotations(monkeypatc
         temporalize_toolset_func=temporalize_toolset,
     )
     assert sentinel_activity in custom_agent.temporal_activities
+    # Both of each agent's toolsets return the same sentinel, which the plugin registers once.
     assert AgentPlugin(custom_agent).configure_worker({}) == {
-        'activities': custom_agent.temporal_activities,
+        'activities': list(dict.fromkeys(custom_agent.temporal_activities)),
         'workflows': [],
     }
     assert AgentPlugin(existing_agent).configure_worker({}) == {
-        'activities': existing_agent.temporal_activities,
+        'activities': list(dict.fromkeys(existing_agent.temporal_activities)),
         'workflows': [],
     }
 

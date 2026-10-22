@@ -6,14 +6,15 @@ claim their request on the run's usage the same way. They differ only in what an
 
 from __future__ import annotations
 
-import html
 import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any, Literal, TypeAlias
 
 from pydantic import TypeAdapter, ValidationError
 
+from pydantic_ai._framing import neutralize_tags
 from pydantic_ai.messages import (
     ModelMessage,
     NativeToolCallPart,
@@ -41,6 +42,14 @@ SerializableToolSelector: TypeAlias = Literal['all'] | Sequence[str] | dict[str,
 # id and splits the transcript; fold them together if a shared transcript helper lands.
 _CHARS_PER_TOKEN = 4
 
+# The `<` of every opening or closing `tool_call` or `conversation` tag, the two blocks this prompt is
+# built from. Pydantic AI's own framing tags (`<system>` and the rest) are neutralized by
+# `pydantic_ai._framing.neutralize_tags`, which doesn't know these two. Backslashes before the slash count,
+# since the arguments are JSON, where `\/` is a standard escape for `/`. For the same reason a tag name
+# followed by `"` or `\` counts as cut off: in JSON that is the end of the string or the start of an
+# escape such as `\n`, either of which a reader may take as the tag's end.
+_BLOCK_TAG_OPENER = re.compile(r'<(?=\s*(?:\\*/\s*)?(?:tool_call|conversation)(?=[\s/>"\\]|$))', re.IGNORECASE)
+
 _CONFIDENCE_ADAPTER = TypeAdapter(dict[str, float])
 
 
@@ -65,16 +74,34 @@ def tool_call_prompt(
     include_conversation: bool,
     conversation_window: int,
 ) -> str:
-    """Build the prompt: the call, and the conversation clamped to its most recent tokens when asked for."""
-    payload = json.dumps({'tool_name': tool_name, 'arguments': args}, default=str)
-    tool_call = f'<tool_call>\n{html.escape(payload, quote=False)}\n</tool_call>'
+    """Build the prompt: the call, and the conversation clamped to its most recent tokens when asked for.
+
+    The arguments go in as JSON and the transcript as rendered, with nothing HTML-escaped, so `>`
+    and `&` in a command reach the second model as they would reach a person. Only the `<` of an
+    opening or closing framework tag is escaped: `tool_call`, `conversation`, and Pydantic AI's own
+    framing tags such as `system`. So the call's arguments or a tool result can neither end their
+    block early nor forge another block or the framework's voice.
+    """
+    payload = json.dumps({'tool_name': tool_name, 'arguments': args}, default=str, ensure_ascii=False)
+    tool_call = f'<tool_call>\n{_neutralize_tags(payload)}\n</tool_call>'
     if not include_conversation:
         return tool_call
-    transcript = html.escape(_render_transcript(messages), quote=False)
+    # Neutralize before clamping, so escaping can't push the transcript past its window. A cut that
+    # lands inside an escaped `&lt;` leaves no `<` behind, so it can't make a closing tag either.
+    transcript = _neutralize_tags(_render_transcript(messages))
     max_chars = conversation_window * _CHARS_PER_TOKEN
     if len(transcript) > max_chars:
         transcript = transcript[-max_chars:]
     return f'<conversation>\n{transcript}\n</conversation>\n\n{tool_call}'
+
+
+def _neutralize_tags(text: str) -> str:
+    r"""Escape the `<` of every opening or closing framework tag as `&lt;`, and leave everything else.
+
+    That covers `tool_call` and `conversation`, including a closer with backslashes before its slash
+    (`<\/tool_call>`), and every Pydantic AI framing tag.
+    """
+    return _BLOCK_TAG_OPENER.sub('&lt;', neutralize_tags(text))
 
 
 def _prompt_text(content: str | Sequence[object]) -> str:

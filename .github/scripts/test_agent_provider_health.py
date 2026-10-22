@@ -1014,7 +1014,8 @@ def test_result_parser_rejects_ambiguous_agent_artifacts(tmp_path: Path) -> None
     ('failure', 'expected_scope', 'expected_kind'),
     [
         ({'kind': 'timeout'}, None, None),
-        ({'kind': 'rate_limit', 'http_status': 429}, 'provider', 'rate_limit'),
+        ({'kind': 'rate_limit', 'http_status': 429}, None, None),
+        ({'kind': 'plan_limit', 'http_status': 429}, 'provider', 'plan_limit'),
     ],
 )
 def test_monitor_selects_current_attempt_before_resolving_agent_artifacts(
@@ -1236,7 +1237,7 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
         'task_key': task_key,
         'trigger_event': trigger_event,
         'run_attempt': 1,
-        'failure': {'kind': 'rate_limit', 'http_status': 429},
+        'failure': {'kind': 'plan_limit', 'http_status': 429},
     }
     usage = result_event['usage']
     assert isinstance(usage, dict)
@@ -1245,7 +1246,7 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
     assert usage['cache_read_input_tokens'] == 4
     assert usage['cache_creation_input_tokens'] == 2
     assert health.parse_run_result(agent_artifact) == health.RunResult(
-        workflow, task_key, trigger_event, 1, health.Failure('rate_limit', 429, None)
+        workflow, task_key, trigger_event, 1, health.Failure('plan_limit', 429, None)
     )
 
     health_artifact = tmp_path / 'provider-health.json'
@@ -1295,7 +1296,7 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
     assert len(client.posts) == 1
     issue = client.issues[0]
     marker = _marker_from_body(issue.body)
-    assert marker == health.IncidentMarker('provider', 'zai', 'rate_limit', '70', None, run_attempt=1)
+    assert marker == health.IncidentMarker('provider', 'zai', 'plan_limit', '70', None, run_attempt=1)
     assert 'private provider detail' not in issue.body
     monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_WORKFLOW', 'Another workflow')
@@ -2157,7 +2158,7 @@ def test_retired_provider_configuration_skips_without_an_incident(
 def test_current_configuration_with_missing_credentials_still_creates_an_incident(
     zai_key: str | None, minimax_key: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Missing current credentials remain an outage even when a retired key is available."""
+    """Missing current credentials on an event that receives secrets remain an outage."""
     client = FakeGitHub()
     monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     for name, value in [('ZAI_API_KEY', zai_key), ('MINIMAX_API_KEY', minimax_key)]:
@@ -2167,9 +2168,37 @@ def test_current_configuration_with_missing_credentials_still_creates_an_inciden
             monkeypatch.setenv(name, value)
     monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
     monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
-    monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI UI Security Review')
-    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'current-head')
-    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'pull_request')
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'CI Review')
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'CI Review:workflow_run:pr-123:head-a1b2:')
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'workflow_run')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    monkeypatch.delenv('GITHUB_OUTPUT', raising=False)
+    monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
+    artifact = tmp_path / 'provider-health.json'
+
+    assert health.main(['check', '--output', str(artifact)]) == 0
+    assert _health_from_json(json.loads(artifact.read_text())).quota.diagnostic == 'missing_api_key'
+    assert health.main(['monitor', '--run-id', '43', '--run-attempt', '1', '--health-artifact', str(artifact)]) == 0
+    assert len(client.posts) == 1
+    assert 'quota diagnostic: missing_api_key' in str((_mapping(client.posts[0]) or {}).get('body'))
+    assert _marker_from_payload(client.posts[0]) == health.IncidentMarker(
+        'provider', 'zai', 'quota_unknown', '43', None
+    )
+
+
+@pytest.mark.parametrize('trigger_event', ['pull_request', 'pull_request_review', 'pull_request_review_comment'])
+def test_missing_credentials_on_secretless_pull_request_events_leave_the_alert_to_the_scheduled_check(
+    trigger_event: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GitHub withholds secrets from fork and Dependabot pull request events, so their blocked gate opens nothing."""
+    client = FakeGitHub()
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.delenv('ZAI_API_KEY', raising=False)
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'CI Review')
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', f'CI Review:{trigger_event}:10979:head-a1b2:')
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', trigger_event)
     monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
     monkeypatch.delenv('GITHUB_OUTPUT', raising=False)
     monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
@@ -2181,13 +2210,17 @@ def test_current_configuration_with_missing_credentials_still_creates_an_inciden
     assert decision.reason == 'Z.ai quota health is unknown'
     assert decision.quota.diagnostic == 'missing_api_key'
     assert health.main(['monitor', '--run-id', '43', '--run-attempt', '1', '--health-artifact', str(artifact)]) == 0
+    assert client.posts == []
+
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'Agent Provider Health')
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'schedule')
+    assert health.main(['monitor', '--repository', 'org/repo']) == 0
     assert len(client.posts) == 1
     post_data = _mapping(client.posts[0])
     assert post_data is not None
-    incident_body = str(post_data.get('body'))
-    assert 'quota diagnostic: missing_api_key' in incident_body
+    assert 'quota diagnostic: missing_api_key' in str(post_data.get('body'))
     assert _marker_from_payload(client.posts[0]) == health.IncidentMarker(
-        'provider', 'zai', 'quota_unknown', '43', None
+        'provider', 'zai', 'quota_unknown', None, None
     )
 
 
@@ -2203,8 +2236,8 @@ def test_scope_rules_for_typed_and_untyped_failures() -> None:
         'zai',
         'other',
     )
-    rate_limited = health.RunResult('w', 't', 'workflow_dispatch', 1, health.Failure('rate_limit', 429, None))
-    assert _scope_for(rate_limited) == ('provider', 'zai', 'rate_limit')
+    plan_limited = health.RunResult('w', 't', 'workflow_dispatch', 1, health.Failure('plan_limit', 429, None))
+    assert _scope_for(plan_limited) == ('provider', 'zai', 'plan_limit')
     scheduled_timeout = health.RunResult('w', 'target-head-a1b2', 'schedule', 1, health.Failure('timeout', None, None))
     repeated_scheduled_timeout = health.RunResult(
         'w', 'target-head-a1b2', 'schedule', 1, health.Failure('timeout', None, None)
@@ -2537,7 +2570,7 @@ def test_scheduled_recovery_closes_only_elapsed_known_window(monkeypatch: pytest
     assert client.closed == [1]
 
 
-@pytest.mark.parametrize('kind', ['rate_limit', 'quota_exhausted', 'quota_unknown'])
+@pytest.mark.parametrize('kind', ['rate_limit', 'plan_limit', 'quota_exhausted', 'quota_unknown'])
 def test_scheduled_recovery_closes_null_reset_incident_after_cool_down(
     kind: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

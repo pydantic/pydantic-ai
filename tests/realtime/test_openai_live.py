@@ -3108,6 +3108,26 @@ async def test_unsupported_settings_raise_before_answering_an_offer() -> None:
         await _webrtc_model(handler).answer_webrtc_offer('v=0', model_settings=OpenAILiveModelSettings(max_tokens=10))
 
 
+async def test_the_auto_transcription_default_can_be_set_explicitly() -> None:
+    """Live always transcribes with its own model, which is what `'auto'` asks for.
+
+    So settings shared across providers can spell out the default and start the same session as leaving
+    it out; a pinned model still raises (`test_unsupported_settings_raise_before_connecting`).
+    """
+    sent: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        return _created()
+
+    model = _webrtc_model(handler)
+    await model.answer_webrtc_offer('v=0')
+    await model.answer_webrtc_offer('v=0', model_settings=OpenAILiveModelSettings(input_transcription_model='auto'))
+
+    default, explicit_auto = sent
+    assert explicit_auto == default
+
+
 async def test_there_are_no_client_secrets(model: OpenAILiveModel) -> None:
     with pytest.raises(UserError, match=r'has no ephemeral client secrets.*answer_webrtc_offer'):
         await model.create_client_secret()
