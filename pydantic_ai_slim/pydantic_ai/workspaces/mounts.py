@@ -21,7 +21,7 @@ class MountError(WorkspaceError):
 class Mount:
     """A filesystem shown as a folder in a workspace.
 
-    ```python {test="skip"}
+    ```python {test="skip" lint="skip"}
     from pydantic_ai.workspaces import Mount
 
     Mount('data', s3)  # file tools see `data/`

@@ -8,6 +8,8 @@ from typing import Any
 
 import pytest
 
+pytest.importorskip('obstore')
+
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
