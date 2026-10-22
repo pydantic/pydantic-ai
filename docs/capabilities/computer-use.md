@@ -59,13 +59,14 @@ OpenAI can attach safety checks to a call; they are acknowledged automatically w
 | Setting | Default | What it does |
 |---|---|---|
 | `require_approval` | `False` | Ask before any call that does more than look or wait; the run needs a [deferred tool handler](../deferred-tools.md#human-in-the-loop-tool-approval). Turn it on for anything you'd regret an agent clicking. |
-| `keep_screenshots` | `None` | How many recent screenshots each model request carries; older ones become a short note in the request, and the run's history keeps them all. Bounds a long run's input tokens, but restarts the provider's prompt cache on every call, so leave it off while caching keeps screenshots cheap. |
+| `keep_screenshots` | `None` | The fewest recent screenshots each model request carries; older ones become a short note in the request, 25 at a time so the prompt cache keeps working in between. The run's history keeps them all. Use it to bound a long run; a short run costs the same either way. |
 | `settle_seconds` | `0.5` | Pause after acting before the screenshot, so animations and page loads can finish. |
 
 ## Limits
 
-- Each screenshot costs about 1,000 to 3,000 input tokens, and every later request carries it again unless
-  `keep_screenshots` is set.
+- A 1280x800 screenshot costs about 1,200 input tokens on GPT-5.5 and 1,340 on Claude Sonnet 5.5, and every later
+  request carries it again. With [prompt caching](caching.md) (Claude needs `Caching()`; OpenAI caches on its own),
+  screenshots already sent cost about a tenth of that.
 - Under [durable execution](../durable_execution/overview.md), each action and screenshot is its own durable
   workspace operation, so a retry repeats only that one, which may already have taken effect, such as a click.
   Every screenshot in the history rides in each model request's payload, so long runs can reach Temporal's payload
