@@ -21,10 +21,13 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapSandbox
+from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend, _backend as ssh_backend
 from pydantic_ai_harness.ssh_workspace._backend import _STOP  # pyright: ignore[reportPrivateUsage]
 
 from .._fake_remote_tools import FakeRemoteTools, install_fake_remote_tools
+from .._tool_calls import call_tool
 
 pytestmark = [
     pytest.mark.anyio,
@@ -208,6 +211,30 @@ async def test_a_background_child_cannot_replace_the_exit_code(tools: FakeRemote
 
     assert result.exit_code == 7
     assert '__pydantic_ai_ssh_done__0' in result.stderr
+
+
+@pytest.mark.parametrize('sandboxed', [False, True], ids=['ssh', 'bubblewrap'])
+async def test_a_long_quote_heavy_shell_command_starts(tools: FakeRemoteTools, tmp_path: Path, sandboxed: bool) -> None:
+    """A model's 60 KB inline script full of single quotes runs (#10758).
+
+    Shell-quoting turns every `'` into `'"'"'`, and Linux caps one argument at 128 KiB (macOS caps all of them
+    together at 1 MiB), so the script must not reach `ssh` as an argument, nor the host as a quoted one.
+    """
+    remote = SSHWorkspace[None]('box', working_dir=str(tmp_path))
+    output = await call_tool(
+        [BubblewrapSandbox[None](remote) if sandboxed else remote, Shell[None](tools=['shell'])],
+        'shell',
+        {'command': ': ' + "'a' " * 15_000 + '\necho started'},
+    )
+
+    assert output.startswith('started\n')
+
+
+async def test_a_command_reading_stdin_sees_eof_not_the_rest_of_the_script(tools: FakeRemoteTools) -> None:
+    """The script reaches the host on stdin, but the command reads none of it."""
+    result = await SSHWorkspaceBackend('box').run('cat; printf after', shell=True)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, 'after', '')
 
 
 async def test_a_timeout_used_up_while_connecting_never_starts_the_command(

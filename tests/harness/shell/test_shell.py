@@ -802,11 +802,33 @@ class TestSpawnFailures:
         self, toolset: ShellToolset[None], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         # E2BIG does not identify whether the model's command or the
-        # application's environment crossed the combined platform limit. An
+        # application's environment crossed the combined platform limit. When a
+        # short command can't start either, it is the environment, and an
         # application configuration error must not become an unwinnable retry.
         monkeypatch.setattr(anyio, 'open_process', _raise_oserror(errno.E2BIG, 'Argument list too long'))
         with pytest.raises(OSError, match='Argument list too long'):
             await toolset.run_command(_ctx(tmp_path), 'echo hello')
+
+    @pytest.mark.parametrize('tool', ['run_command', 'shell'])
+    async def test_a_command_too_long_to_start_goes_back_to_the_model(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tool: str
+    ) -> None:
+        # Only the model's long command is refused, so a short one starts and the model is asked to send less;
+        # `call_tool` finishing the run shows the run goes on.
+        long_command = 'echo ' + 'a' * 100_000
+        spawn = anyio.open_process
+
+        async def refuse_long(command: str | Sequence[str], **kwargs: Any) -> anyio.abc.Process:
+            if long_command in (command if isinstance(command, str) else command[-1]):
+                raise OSError(errno.E2BIG, 'Argument list too long')
+            return await spawn(command, **kwargs)
+
+        monkeypatch.setattr(anyio, 'open_process', refuse_long)
+        output = await call_tool(
+            [Shell[None](tools=[tool])], tool, {'command': long_command}, workspace=LocalWorkspaceBackend(tmp_path)
+        )
+
+        assert output == 'The command is too long to start; write the script to a file and run the file instead.'
 
     async def test_non_recoverable_errno_propagates(
         self, toolset: ShellToolset[None], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -1705,10 +1727,11 @@ class _NeverReady(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        if isinstance(command, str):
-            command = command.replace(': > "$dir/launch.ready"\n', '')
+        if not isinstance(command, str) and command[:2] == ['sh', '-c']:  # the launcher is the `sh -c` script
+            script = command[2].replace(': > "$dir/launch.ready"\n', '')
             if self.launcher_alive:
-                command = command.replace('"$limit" $$ <', f'"$limit" {os.getpid()} <')
+                script = script.replace('"$limit" $$ <', f'"$limit" {os.getpid()} <')
+            command = [*command[:2], script, *command[3:]]
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
@@ -1863,9 +1886,8 @@ class _KillGroupOnExit(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        assert isinstance(command, str) and shell
         async with await anyio.open_process(
-            ['/bin/sh', '-c', command],
+            ['/bin/sh', '-c', command] if isinstance(command, str) else command,
             cwd=await self.working_dir(),
             env={**self._env, **(env or {})},
             start_new_session=True,
@@ -1948,8 +1970,8 @@ class _RemovesFileOnReadCheck(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        assert isinstance(command, str)
-        command = 'test() { if [ "$1" = -r ]; then rm -f "$2"; fi; command test "$@"; }\n' + command
+        if isinstance(command, str):  # the log reads; the launch is an argv
+            command = 'test() { if [ "$1" = -r ]; then rm -f "$2"; fi; command test "$@"; }\n' + command
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 

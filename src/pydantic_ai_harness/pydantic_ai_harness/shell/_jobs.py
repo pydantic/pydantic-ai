@@ -25,6 +25,7 @@ import anyio
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.workspaces import Workspace, WorkspaceError
 from pydantic_ai_harness.shell._limits import LIMIT_FUNCTION
+from pydantic_ai_harness.shell._policy import run_model_command
 
 CONTROL_TIMEOUT = 30.0
 """Deadline in seconds for one control command (launch, read, signal).
@@ -114,6 +115,10 @@ echo "$pid $group"
 """
 """Start the wrapper detached and print `<pid> <process group or ->`, also kept in the job's `handle` file.
 
+The command is the launcher's argument `$1` rather than quoted into the script, so it reaches the
+wrapper as itself: quoting turns each `'` into `'"'"'`, and a command full of them could pass the
+operating system's limit on the size of one argument (128 KiB on Linux).
+
 It first checks for `_REQUIRED_TOOLS` with the shell's `command -v` builtin, which costs no extra
 process, and prints the missing ones and exits `_MISSING_TOOLS` instead of launching.
 
@@ -164,13 +169,15 @@ class Job:
                 ('dir', directory),
                 ('exclusive', '1' if job_id is not None else '0'),
                 ('mode', mode),
-                ('cmd', command),
                 ('limit', '' if file_limit is None else str(file_limit)),
                 ('wrapper', _WRAPPER),
             )
         )
-        result = await workspace.run(
-            f'cd {shlex.quote(cwd)} || exit\n{assignments}\n{_LAUNCHER}', shell=True, env=env, timeout=CONTROL_TIMEOUT
+        result = await run_model_command(
+            workspace,
+            ['sh', '-c', f'cd {shlex.quote(cwd)} || exit\n{assignments} cmd=$1\n{_LAUNCHER}', 'sh', command],
+            env=env,
+            timeout=CONTROL_TIMEOUT,
         )
         if result.exit_code == _MISSING_TOOLS:
             # Without these the launcher would wait out `CONTROL_TIMEOUT` for a status that is never

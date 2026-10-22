@@ -5,11 +5,11 @@ from __future__ import annotations
 import errno
 import functools
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Concatenate, ParamSpec, TypeVar
 
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.workspaces import WorkspaceError
+from pydantic_ai.workspaces import CommandResult, Workspace, WorkspaceCommand, WorkspaceError
 from pydantic_ai_harness._workspace import raise_tool_failure
 
 _P = ParamSpec('_P')
@@ -20,7 +20,7 @@ _ToolsetT = TypeVar('_ToolsetT')
 # causes that do. The errno says whose fault it is: these are the model's, and
 # it can act on them. Every other errno (EMFILE, ENOMEM) is the host's, and must
 # keep aborting the run rather than sending the model into a retry loop it
-# can't win.
+# can't win. E2BIG can be either's, so `run_model_command` tells them apart.
 #
 # ENOENT and ENOTDIR reach here only from the working directory, since the
 # command string is handed to a shell that always exists -- a command whose own
@@ -31,6 +31,36 @@ _RECOVERABLE_ERRNOS: dict[int | None, str] = {
     errno.ENOENT: 'The working directory no longer exists.',
     errno.ENOTDIR: 'The working directory is no longer a directory.',
 }
+
+_TOO_LONG = 'The command is too long to start; write the script to a file and run the file instead.'
+
+
+async def run_model_command(
+    workspace: Workspace,
+    command: WorkspaceCommand,
+    *,
+    shell: bool = False,
+    env: Mapping[str, str] | None,
+    timeout: float | None,
+) -> CommandResult:
+    """Run a command that carries the model's, and ask the model to shorten it when it is too long to start.
+
+    The OS refuses to start a command whose arguments and environment together are too large (`E2BIG`),
+    so the errno alone does not say whether the model's command or the application's environment is to
+    blame. A short command started with the same environment does: when it starts, the model can fix the
+    failure by sending less. When it fails as well, the original error propagates, as an unwinnable retry
+    would only postpone the end of the run.
+    """
+    try:
+        return await workspace.run(command, shell=shell, env=env, timeout=timeout)
+    except OSError as error:
+        if error.errno != errno.E2BIG:
+            raise
+        try:
+            await workspace.run(['true'], env=env, timeout=timeout)
+        except OSError:
+            raise error from None
+        raise ModelRetry(_TOO_LONG) from error
 
 
 def recoverable(
