@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -655,6 +656,30 @@ class TestDefaultClient:
         assert [len(client.loops) for client in built] == [1, 1]
         assert built[0].loops[0] is not built[1].loops[0]
         assert {client.api_key for client in built} == {'test-key'}
+
+    def test_kept_while_the_previous_event_loop_is_running(self, built: list[_LoopRecordingExa]) -> None:
+        """A run still going on the loop the client was last used on, e.g. in another thread, keeps it."""
+        toolset = ExaSearch[None]().get_toolset()
+        searched = threading.Event()
+        release = threading.Event()
+
+        async def search_and_hold() -> None:
+            await toolset.web_search('a')
+            searched.set()
+            await asyncio.to_thread(release.wait)
+
+        async def search() -> None:
+            await toolset.web_search('b')
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            held = pool.submit(asyncio.run, search_and_hold())
+            try:
+                assert searched.wait(5)
+                asyncio.run(search())
+            finally:
+                release.set()
+            held.result()
+        assert [len(client.loops) for client in built] == [2]
 
     async def test_reused_on_the_same_event_loop(self, built: list[_LoopRecordingExa]) -> None:
         toolset = ExaSearch[None]().get_toolset()
