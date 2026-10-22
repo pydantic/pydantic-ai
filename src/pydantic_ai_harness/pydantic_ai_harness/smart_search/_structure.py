@@ -21,6 +21,14 @@ from typing import Protocol, TypeVar
 
 SPLIT_LINES = 24
 _MAX_DEPTH = 3
+_BLOCK_LINES = 6
+"""A statement this long is a block of its own when a long body is split."""
+_GROUP_LINES = 20
+"""Shorter statements group into one range until it would pass this many lines."""
+_MERGE_LINES = 12
+"""Short neighbors merge only while the merged range spans fewer lines than this."""
+_MERGE_SYMBOL_CHARS = 60
+"""Short neighbors merge only while their joined symbol names stay shorter than this."""
 
 NodeT = TypeVar('NodeT')
 
@@ -84,10 +92,10 @@ def _partition(
     for index, stmt in enumerate(body):
         first, last = syntax.span(stmt)
         span = last - first + 1
-        if group and (span >= 6 or last - cursor + 1 > 20):
+        if group and (span >= _BLOCK_LINES or last - cursor + 1 > _GROUP_LINES):
             flush(last=False)
         group.append(stmt)
-        if span >= 6 and index != len(body) - 1:
+        if span >= _BLOCK_LINES and index != len(body) - 1:
             flush(last=False)
     flush(last=True)
     return out if len(out) > 1 else None
@@ -134,8 +142,8 @@ def _merge_short_neighbors(ranges: list[Range]) -> list[Range]:
             and mergeable(last)
             and mergeable(r)
             and r.start <= last.end + 1
-            and r.end - last.start < 12
-            and len(f'{last.symbol} {r.symbol}') < 60
+            and r.end - last.start < _MERGE_LINES
+            and len(f'{last.symbol} {r.symbol}') < _MERGE_SYMBOL_CHARS
         ):
             names = dict.fromkeys(s for s in (last.symbol, r.symbol) if s)
             last.end, last.symbol = r.end, ', '.join(names) or None
@@ -145,6 +153,8 @@ def _merge_short_neighbors(ranges: list[Range]) -> list[Range]:
 
 
 _Declaration = ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+_Block = _Declaration | ast.If | ast.For | ast.AsyncFor | ast.While | ast.With | ast.AsyncWith | ast.Try | ast.TryStar
+"""The statements with a `body` of statements to split into blocks; `match` has none, so it stays whole."""
 
 
 class PythonSyntax:
@@ -161,10 +171,7 @@ class PythonSyntax:
         return node.body if isinstance(node, ast.ClassDef) else None
 
     def statements(self, node: ast.stmt) -> Sequence[ast.stmt] | None:
-        body: list[object] | None = getattr(node, 'body', None)
-        if not isinstance(body, list):
-            return None
-        return [s for s in body if isinstance(s, ast.stmt)]
+        return node.body if isinstance(node, _Block) else None
 
 
 def python_ranges(text: str) -> list[Range]:
