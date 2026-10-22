@@ -41,7 +41,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -333,7 +332,7 @@ def _shell_model() -> FunctionModel:
         request = messages[-1]
         assert isinstance(request, ModelRequest)
         for part in request.parts:
-            if isinstance(part, (ToolReturnPart, RetryPromptPart)):
+            if isinstance(part, ToolReturnPart):
                 return ModelResponse(parts=[TextPart(str(part.content))])
         prompt = next(part.content for part in request.parts if isinstance(part, UserPromptPart))
         assert isinstance(prompt, str)

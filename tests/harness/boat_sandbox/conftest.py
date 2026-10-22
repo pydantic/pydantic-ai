@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
@@ -15,6 +16,9 @@ from .fake_boat import FakeBoat
 # create sandboxes that Boat stops this many seconds after they start, so one left behind that way
 # stops running instead of waiting for Boat's default hour.
 LIVE_AUTO_STOP = 900
+# Boat refuses sandbox starts over the account's per-minute limit (12 on its smallest plan) with
+# `429 rate_limited`; a live test starts at most this many.
+LIVE_STARTS_PER_TEST = 4
 
 
 def pytest_runtest_setup(item: pytest.Item) -> None:
@@ -36,6 +40,18 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     pytest.skip(reason)
 
 
+def _wait_for_start_budget() -> None:  # pragma: no cover - live tier
+    """Wait, up to about a minute, until Boat's start limit leaves room for one live test's sandboxes."""
+    headers = {'Authorization': f'Bearer {os.environ["BOAT_API_KEY"]}'}
+    deadline = time.monotonic() + 65
+    while time.monotonic() < deadline:
+        response = httpx.get('https://boat.dev/api/v1/limits', headers=headers, timeout=30)
+        # A key without `account.read` cannot read its limits: start anyway.
+        if not response.is_success or response.json()['starts']['minute']['remaining'] >= LIVE_STARTS_PER_TEST:
+            return
+        time.sleep(5)
+
+
 # A tripwire, hit only by a misbehaving test.
 def _real_client(api_key: str) -> httpx.AsyncClient:  # pragma: no cover
     raise AssertionError(
@@ -53,6 +69,7 @@ def _no_real_boat(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatc
     """
     # The live tier runs without coverage.
     if 'boat_live' in request.keywords:  # pragma: no cover
+        _wait_for_start_budget()
         yield
         return
     monkeypatch.setattr('pydantic_ai_harness.boat_sandbox._api.open_client', _real_client)
