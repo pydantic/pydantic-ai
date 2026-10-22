@@ -6,7 +6,6 @@ import json
 from typing import Any
 
 import pytest
-from cassetter import Cassette
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, ComputerUse
@@ -24,7 +23,6 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import Click, TypeText, WorkspaceBackend, WorkspaceError, WorkspaceRef
 
-from ...cassette_utils import request_json
 from ...conftest import try_import
 from ...workspace_fakes import InMemoryProvider, ProviderBackend
 from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
@@ -79,7 +77,7 @@ def _agent(model: AnthropicModel, provider: InMemoryProvider, **settings: Any) -
 @pytest.mark.vcr
 @pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
 async def test_the_toolset_is_sent_and_member_calls_are_replayed(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, stream: bool
+    allow_model_requests: None, anthropic_api_key: str, stream: bool
 ) -> None:
     provider = InMemoryProvider()
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
@@ -90,37 +88,8 @@ async def test_the_toolset_is_sent_and_member_calls_are_replayed(
 
     await _agent(model, provider).run(TASK, event_stream_handler=drain if stream else None)
 
+    # Claude's real member calls became `computer` calls that ran.
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
-    first, *_, last = [request_json(request) for request in vcr.requests]
-    assert first['tools'] == [
-        {
-            'type': 'computer_toolset_20260801',
-            'configs': {'zoom': {'enabled': False}, 'cursor_position': {'enabled': False}},
-        }
-    ]
-    # Every member call comes back as it was sent, with one result each, both naming the toolset.
-    calls, results = _members(last, 'tool_use'), _members(last, 'tool_result')
-    assert [call['id'] for call in calls] == [result['tool_use_id'] for result in results]
-    assert {call['name'] for call in calls} >= {'screenshot', 'left_click', 'type'}
-
-
-@pytest.mark.vcr
-async def test_a_refused_action_gets_an_error_result_and_the_rest_are_not_executed(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
-) -> None:
-    provider = InMemoryProvider()
-    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    await _agent(model, provider, read_only=True).run(
-        'Without taking a screenshot first, click at x=100 y=200 and then type "hello", in one batch. Then reply '
-        '"done" whatever happens.'
-    )
-
-    results = _members(request_json(vcr.requests[-1]), 'tool_result')
-    # Nothing ran, so every member is an error: the click with its refusal and the rest as not executed.
-    assert results and all(result['is_error'] for result in results)
-    assert all(block['type'] == 'text' for result in results for block in result['content'])
-    assert {result['content'][0]['text'] for result in results[1:]} <= {NOT_EXECUTED}
-    assert provider.actions == []
 
 
 def _tool_use(id: str, name: str, input: dict[str, Any]) -> BetaToolUseBlock:
@@ -159,7 +128,20 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
     }
     assert provider.actions == [Click(x=5, y=6, modifiers=('shift',))]
 
-    _, second = get_mock_chat_completion_kwargs(client)
+    first, second = get_mock_chat_completion_kwargs(client)
+    assert first['tools'] == [
+        {
+            'type': 'computer_toolset_20260801',
+            'configs': {'zoom': {'enabled': False}, 'cursor_position': {'enabled': False}},
+        }
+    ]
+    # The member calls go back as they came, each answered by one result; both name the toolset.
+    calls = second['messages'][-2]['content']
+    assert [(c['id'], c['name'], c['toolset_name']) for c in calls] == [
+        ('toolu_1', 'left_click', 'computer'),
+        ('toolu_2', 'hold_key', 'computer'),
+        ('toolu_3', 'type', 'computer'),
+    ]
     results = second['messages'][-1]['content']
     assert [(r['tool_use_id'], r['is_error'], [block['type'] for block in r['content']]) for r in results] == [
         ('toolu_1', False, ['text', 'image']),

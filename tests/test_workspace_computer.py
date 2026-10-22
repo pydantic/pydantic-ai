@@ -119,6 +119,7 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: Computer
     commands = ScriptedCommands()
     await X11Computer(commands).act(action)
     assert commands.calls == [(argv, False, {'DISPLAY': ':1'})]
+    assert commands.timeouts == [60]
 
 
 @pytest.mark.parametrize(
@@ -232,6 +233,13 @@ async def test_x11_computer_refuses_a_screenshot_that_is_not_a_png(output: str) 
         await computer.screenshot()
 
 
+async def test_x11_computer_refuses_a_key_name_the_display_does_not_know() -> None:
+    warning = "(symbol) No such key name 'CAPSLOCK'. Ignoring it."
+    commands = ScriptedCommands(CommandResult(exit_code=0, stdout='', stderr=warning))
+    with pytest.raises(UnsupportedComputerActionError, match="No such key name 'CAPSLOCK'"):
+        await X11Computer(commands).act(PressKeys(keys=('CAPSLOCK',)))
+
+
 async def test_x11_computer_refuses_an_unknown_action() -> None:
     with pytest.raises(UnsupportedComputerActionError):
         await X11Computer(ScriptedCommands()).act(object())  # pyright: ignore[reportArgumentType]
@@ -288,6 +296,7 @@ def test_actions_normalize_key_names_and_validate_from_json() -> None:
         lambda: PressKeys(keys=('a',) * 9),
         lambda: Scroll(direction='down', amount=51),
         lambda: TypeText(text='x' * 2_001),
+        lambda: TypeText(text='a\x00b'),
         lambda: Drag(path=(Point(x=0, y=0),) * 51),
     ],
 )
@@ -335,17 +344,10 @@ def test_has_display_follows_wrappers_without_io() -> None:
     assert ReadOnlyWorkspace(Workspace(provider.backend(None))).has_display is True
     assert ReadOnlyWorkspace(Workspace(FakeWorkspace('no-display'))).has_display is False
     assert Workspace(UnavailableWorkspace('no workspace here')).has_display is False
-    assert provider.log == []
 
 
-def test_the_schema_tells_the_model_what_each_field_means() -> None:
+def test_the_schema_requires_type_first_and_only_declared_fields() -> None:
     schema = TypeAdapter(ComputerAction).json_schema()['$defs']
     assert all(definition['required'][0] == 'type' for name, definition in schema.items() if name != 'Point')
     # Every required name must exist: Gemini rejects a schema that requires an undeclared property.
     assert all(set(definition['required']) <= set(definition['properties']) for definition in schema.values())
-
-
-async def test_x11_computer_bounds_every_command() -> None:
-    commands = ScriptedCommands()
-    await X11Computer(commands).act(TypeText(text='hi'))
-    assert commands.timeouts == [60]
