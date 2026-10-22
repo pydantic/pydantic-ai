@@ -15,7 +15,7 @@ from tests.batch_vcr_utils import batch_poll_interval, wait_for_batch
 from tests.conftest import IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
 
@@ -195,7 +195,7 @@ async def test_openai_batch_usage_has_reasoning_tokens(
     request = BatchRequest(
         custom_id='usage',
         messages=[ModelRequest(parts=[UserPromptPart('What is 17 squared? Reply with the number.')])],
-        model_settings={'openai_reasoning_effort': 'low'},
+        model_settings=OpenAIResponsesModelSettings(openai_reasoning_effort='low'),
     )
     batch = await wait_for_batch(model, await model.batch_create([await model.batch_encode(request)]), vcr)
     [result] = await model.batch_results(batch)

@@ -42,9 +42,9 @@ with try_import() as imports_successful:
     from anthropic import (
         AsyncAnthropic,
         AsyncAnthropicBedrock,
-        AsyncAnthropicBedrockMantle,  # pyright: ignore[reportPrivateImportUsage]
+        AsyncAnthropicBedrockMantle,
         AsyncAnthropicFoundry,
-        AsyncAnthropicVertex,  # pyright: ignore[reportPrivateImportUsage]
+        AsyncAnthropicVertex,
     )
 
     from pydantic_ai.models import _anthropic_batch as anthropic_batch
@@ -485,7 +485,9 @@ async def test_anthropic_batches_are_grouped_by_beta_flags(allow_model_requests:
     api = _FakeBatchAPI(results=[{}, {}])
     model = _fake_model(api)
     plain = await model.batch_encode(_request('plain'))
-    beta = await model.batch_encode(_request('beta', {'anthropic_betas': ['interleaved-thinking-2025-05-14']}))
+    beta = await model.batch_encode(
+        _request('beta', AnthropicModelSettings(anthropic_betas=['interleaved-thinking-2025-05-14']))
+    )
     assert json.loads(plain.group)['betas'] == []
     assert json.loads(beta.group)['betas'] == ['interleaved-thinking-2025-05-14']
     with pytest.raises(UserError, match='must share a `group`'):

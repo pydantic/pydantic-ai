@@ -22,7 +22,7 @@ from tests.conftest import IsStr, RequestCapture, try_import
 from tests.models.conftest import AnthropicModelFactory
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 
@@ -209,7 +209,9 @@ async def test_anthropic_batches_split_by_beta_flags(
         model,
         [
             _request('no-betas'),
-            _request('with-betas', {'max_tokens': 8, 'anthropic_betas': ['interleaved-thinking-2025-05-14']}),
+            _request(
+                'with-betas', AnthropicModelSettings(max_tokens=8, anthropic_betas=['interleaved-thinking-2025-05-14'])
+            ),
         ],
         poll_interval=batch_poll_interval(vcr),
         max_poll_interval=batch_poll_interval(vcr),
@@ -251,11 +253,11 @@ async def test_anthropic_batch_usage_has_cache_and_thinking_tokens(
                     instructions=LONG_INSTRUCTIONS,
                 )
             ],
-            model_settings={
-                'max_tokens': 2048,
-                'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024},
-                'anthropic_cache_instructions': '1h',
-            },
+            model_settings=AnthropicModelSettings(
+                max_tokens=2048,
+                anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024},
+                anthropic_cache_instructions='1h',
+            ),
         )
         batch = await wait_for_batch(model, await model.batch_create([await model.batch_encode(request)]), vcr)
         [result] = await model.batch_results(batch)

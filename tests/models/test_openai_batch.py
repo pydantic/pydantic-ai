@@ -11,6 +11,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -884,8 +885,8 @@ async def test_batch_usage_has_cached_and_reasoning_tokens(allow_model_requests:
     )
     # `genai-prices` has batch prices for uncached input and output; cached input costs the same either way.
     batch_price, standard_price = response.cost().model_price, standard.cost().model_price
-    assert batch_price.input_mtok is not None and standard_price.input_mtok is not None
-    assert batch_price.output_mtok is not None and standard_price.output_mtok is not None
+    assert isinstance(batch_price.input_mtok, Decimal) and isinstance(standard_price.input_mtok, Decimal)
+    assert isinstance(batch_price.output_mtok, Decimal) and isinstance(standard_price.output_mtok, Decimal)
     assert (batch_price.input_mtok * 2, batch_price.output_mtok * 2) == (
         standard_price.input_mtok,
         standard_price.output_mtok,
