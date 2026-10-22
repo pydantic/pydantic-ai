@@ -29,7 +29,7 @@ from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
 from ...workspaces import WorkspaceError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
-from ._durability import TemporalDurability
+from ._durability import ContinueAsNewHandler, TemporalDurability
 from ._event_stream import (
     AgentEventStream,
     DurableAgentRunEvents,
@@ -47,6 +47,7 @@ from ._workflow import PydanticAIWorkflow
 __all__ = [
     'TemporalAgent',
     'TemporalDurability',
+    'ContinueAsNewHandler',
     'PydanticAIPlugin',
     'LogfirePlugin',
     'AgentPlugin',
