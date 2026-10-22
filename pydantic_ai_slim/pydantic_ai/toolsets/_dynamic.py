@@ -129,6 +129,15 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
             return None
         return await self._toolset.get_instructions(ctx)
 
+    def _instruction_children(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        return () if self._toolset is None else (self._toolset,)
+
+    def _authors_own_instructions(self) -> bool:
+        # With an `id`, the built toolset's instructions are keyed by it, as they always were. Without
+        # one there's nothing to key them by here, so they keep the keys the built toolset gives them,
+        # such as an `MCPToolset`'s server host, the way a wrapper passes its wrapped toolset's along.
+        return self.id is not None or type(self).get_instructions is not DynamicToolset.get_instructions
+
     async def get_tool_for_tool_def(
         self, tool_def: ToolDefinition, ctx: RunContext[AgentDepsT]
     ) -> ToolsetTool[AgentDepsT]:

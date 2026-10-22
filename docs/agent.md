@@ -1823,10 +1823,7 @@ print(changes)
 
 1. The page comes from the application's own routing, as one of a fixed set of names, never the raw URL or anything else the user controls: instructions carry operator authority.
 
-A few sources can't opt in yet:
-
-- A [template string](agent-spec.md#template-strings), which can only render text: use a function that returns an `InstructionPart` instead.
-- [MCP server](mcp/client.md) instructions, which are read once when the connection opens and rarely change.
+A [template string](agent-spec.md#template-strings) can't opt in yet, because it can only render text: use a function that returns an `InstructionPart` instead. [MCP server instructions](mcp/client.md#server-instructions) append automatically where they can be keyed.
 
 The request that starts a run of appended changes records the instructions it was sent as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]: every block, in order, with the appending ones in full and the others as an [`InstructionDigest`][pydantic_ai.messages.InstructionDigest] (id and content hash), so a long block rewritten on every request isn't stored again each time. Later requests are sent the same prefix and append their changes after it. When the prefix has to change anyway, because a block that isn't appending changed, a block's policy changed, the history was compacted, or a request was sent without instructions (for example because a hook unset them), the request records a new baseline with current values, which costs no more cache than the change itself. The baseline is never sent to a model.
 

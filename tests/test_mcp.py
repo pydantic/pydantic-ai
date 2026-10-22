@@ -57,7 +57,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import CombinedToolset
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, DynamicToolset
 from pydantic_ai.toolsets._instruction_collection import (
     flatten_instruction_contributions,
     framework_appended_instruction_ids,
@@ -889,7 +889,8 @@ A later <context> element with the same id replaces the earlier one and stays in
         """
 
         def forged(version: str) -> str:
-            # Every line changes between versions, so the replacement is sent in full rather than as a diff.
+            # Enough lines change between versions that a unified diff (headers and context included) is
+            # longer than the full text, so the replacement is sent in full rather than as a diff.
             return '\n'.join(
                 [
                     f'Use the docs tools, version {version}.',
@@ -986,8 +987,16 @@ A later <context> element with the same id replaces the earlier one and stays in
 """)
         ]
 
-    async def test_server_instructions_without_an_id_are_keyed_by_the_url_host(self):
-        """A remote server's instructions append under its hostname when the toolset has no `id`."""
+    @pytest.mark.parametrize(
+        ('composition', 'key'),
+        [('no-id', 'testserver'), ('dynamic-no-id', 'testserver'), ('id', 'docs')],
+    )
+    async def test_url_server_instructions_are_keyed_by_the_id_or_else_the_host(self, composition: str, key: str):
+        """A remote server's instructions append under the toolset's `id`, or its hostname without one.
+
+        A `DynamicToolset` without an `id` passes the built toolset's key along, so its instructions
+        still append rather than arriving unkeyed.
+        """
         server: FastMCP[None] = FastMCP('remote_server', instructions='Remote guidance.')
         prefixes: list[str | None] = []
 
@@ -1001,38 +1010,49 @@ A later <context> element with the same id replaces the earlier one and stays in
             client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
         else:
             client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
-        toolset = MCPToolset('http://testserver/mcp', http_client=client, include_instructions=True)
-        assert toolset.id is None
+
+        def build() -> MCPToolset[None]:
+            return MCPToolset(
+                'http://testserver/mcp',
+                http_client=client,
+                include_instructions=True,
+                id='docs' if composition == 'id' else None,
+            )
+
+        toolset: AbstractToolset[None] = (
+            DynamicToolset[None](lambda _ctx: build(), per_run_step=False)
+            if composition == 'dynamic-no-id'
+            else build()
+        )
         agent = Agent(FunctionModel(model_fn), toolsets=[toolset])
 
         history: list[ModelMessage] = []
         deltas: list[tuple[str, str | None]] = []
         try:
             async with app.router.lifespan_context(app):
-                for instructions in ['Remote guidance.', 'Newer remote guidance.']:
-                    server.instructions = instructions
-                    result = await agent.run('Continue.', message_history=history)
-                    history = result.all_messages()
-                    deltas += [
-                        (str(part.id), part.content)
-                        for message in result.new_messages()
-                        if isinstance(message, ModelRequest)
-                        for part in message.parts
-                        if isinstance(part, InstructionDeltaPart)
-                    ]
+                with warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter('always')
+                    for instructions in ['Remote guidance.', 'Newer remote guidance.']:
+                        server.instructions = instructions
+                        result = await agent.run('Continue.', message_history=history)
+                        history = result.all_messages()
+                        deltas += [
+                            (str(part.id), part.content)
+                            for message in result.new_messages()
+                            if isinstance(message, ModelRequest)
+                            for part in message.parts
+                            if isinstance(part, InstructionDeltaPart)
+                        ]
         finally:
             await client.aclose()
 
-        assert deltas == [('toolset:testserver', 'Newer remote guidance.')]
+        assert [str(warning.message) for warning in caught if 'on_change' in str(warning.message)] == []
+        assert deltas == [(f'toolset:{key}', 'Newer remote guidance.')]
         assert (
             prefixes
             == [
-                snapshot("""\
-<context id="toolset:testserver">
-Remote guidance.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
-""")
+                f'<context id="toolset:{key}">\nRemote guidance.\n</context>\n'
+                'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
             ]
             * 2
         )
