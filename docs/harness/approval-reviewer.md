@@ -81,7 +81,7 @@ Only calls that need approval reach the reviewer. A call needs approval when its
 | `{'risk': 'low'}` | tools whose metadata includes those pairs |
 | `lambda ctx, tool_def: ...` | whatever the predicate returns |
 
-Approval requests for tools the selector does not match go to the person unreviewed.
+Approval requests for tools the selector does not match go to the person unreviewed. `'all'` also covers the requests a `ToolGuardrail` or a `ToolCallJudge` raises and any approval-required tool added later, all answered by the one `question`, so name the tools the question was written for.
 
 ## What happens to the rest
 
@@ -114,7 +114,7 @@ def ask_in_terminal(ctx: RunContext[None], requests: DeferredToolRequests) -> De
 agent = Agent(
     '{{ anthropic:xlarge }}',
     capabilities=[
-        ApprovalReviewer('{{ anthropic:small }}', question='Could this destroy data or leak secrets?'),
+        ApprovalReviewer('{{ anthropic:small }}', tools=['run_shell'], question='Could this destroy data or leak secrets?'),
         HandleDeferredToolCalls(handler=ask_in_terminal),
     ],
 )
@@ -137,7 +137,7 @@ The outer agent's conversation, instructions, and tool results are not forwarded
 
 Set `include_conversation=True` when the question needs the conversation that led to the call, such as "does this go beyond what the user asked for?". The reviewer then also receives a `<conversation>` block: user messages, assistant messages, tool calls, and tool results, clamped to the most recent `conversation_window` tokens (estimated at ~4 characters per token). System prompts and thinking parts are left out.
 
-Turning it on widens the reviewer's own prompt-injection surface, because the transcript includes third-party content, and a reviewer that is talked into answering `no` approves the call. The instructions label both blocks as untrusted data and both are escaped before they are embedded, which reduces the risk rather than removing it.
+Turning it on widens the reviewer's own prompt-injection surface, because the transcript includes third-party content, and a reviewer that is talked into answering `no` approves the call. The instructions label both blocks as untrusted data, and the `<` of every opening or closing framework tag inside either block is escaped (`<tool_call>`, `<conversation>`, and Pydantic AI framing tags such as `<system>`), so content cannot end its block or forge another. Everything else is embedded as written. That reduces the risk rather than removing it.
 
 Either way, what the reviewer is shown leaves the process: a call's arguments go to the reviewing model's provider, including for calls the reviewer then leaves for the person. Where a tool's arguments can carry credentials or customer data, scope `tools` away from it, or route the reviewer to a provider you already trust with that data.
 
@@ -266,10 +266,13 @@ from pydantic_ai_harness.approval_reviewer import ApprovalReview, ApprovalReview
 reviews: list[ApprovalReview] = []
 reviewer = ApprovalReviewer(
     '{{ anthropic:small }}',
+    tools=['run_shell'],
     question='Could this destroy data or leak secrets?',
     on_review=reviews.append,
 )
 ```
+
+An exception raised by `on_review` is not caught: it ends the run, and approvals already made in the same batch are not applied.
 
 ## Safety boundary
 

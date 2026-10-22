@@ -120,6 +120,8 @@ print([t.name for t in test_model.last_model_request_parameters.function_tools])
 
 _(This example is complete, it can be run "as is")_
 
+A tool that joins the run after its first model request, however it got there, is recorded in the message history as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart], unless no plainly visible tool from before is still present to keep stable. A new tool with `defer_loading=True` joins the [tool search](tools-advanced.md#tool-search) corpus instead. See [Tools that appear mid-run](tools-advanced.md#mid-run-tool-additions) for how each provider delivers it.
+
 ### Toolset Instructions
 
 A [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] can provide instructions that are automatically included in the model request. This lets each toolset carry its own usage guidance alongside its tools, so you don't need to duplicate instructions on every agent that uses the toolset.
@@ -941,6 +943,8 @@ You can also override the [`get_instructions()`][pydantic_ai.toolsets.AbstractTo
 
 If the toolset has an [`id`][pydantic_ai.toolsets.AbstractToolset.id] and contributes instructions, that id must be unique among the toolsets registered with an agent, counting the ones a [capability](capabilities/overview.md) contributes. Its instructions reach the model as [instruction parts](agent.md#instruction-parts) identified by `'toolset:<toolset id>'`, so an application can address them by a key that outlives their wording. Every part the toolset returns carries that one key; if you want a part to be addressable on its own, return an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with a `name` relative to your toolset (`'limits'`), which the framework qualifies to `'toolset:weather:limits'`. Don't spell out your own id — you'd be repeating what the framework already knows, and a name of your own can't be mistaken for a top-level key.
 
+A [wrapper toolset](#changing-tool-execution) with an `id` that overrides `get_instructions()` can pass on what it wraps by returning the very part objects `super().get_instructions(ctx)` gave it, unchanged: those keep the ids of the toolsets that wrote them, or no id if their toolset has none. Every other part is keyed by the wrapper's own id: the ones it adds, the ones it changes in place, and copies, even an unchanged copy such as `replace(part)` that still carries the id of the part it came from. A toolset that a [dynamic toolset](#dynamically-building-a-toolset) builds isn't wrapped this way, so everything it says is keyed by the dynamic toolset's id.
+
 `get_instructions()` is called before each model request. If what it returns can change during a conversation, set `on_change='append'` on the `InstructionPart` so changes are [appended](agent.md#appending-instruction-changes) to the history instead of rewriting the cached prefix; see [Toolset instructions that change](#toolset-instructions-that-change).
 
 !!! tip
@@ -961,34 +965,11 @@ Toolsets support lifecycle hooks for per-run isolation and per-step state manage
 
 ## Third-Party Toolsets
 
-Third-party toolsets can also be wrapped as [capabilities](capabilities/overview.md), which bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem.
+Third-party toolsets can also be wrapped as [capabilities](capabilities/overview.md), which bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem. For skills, planning, file system and shell access, sandboxed code execution, and more, see the [capability index](capabilities/overview.md#available-capabilities), which covers Pydantic AI and [Pydantic AI Harness](harness/index.md).
 
 ### MCP Servers
 
 Pydantic AI provides [`MCPToolset`][pydantic_ai.mcp.MCPToolset] for connecting to and calling tools on local and remote MCP servers, with the [`MCP` capability](capabilities/mcp.md) as the recommended higher-level entry point. See the [MCP overview](./mcp/overview.md) and [MCP client](./mcp/client.md) documentation for details.
-
-### Agent Skills
-
-[Agent Skills](https://agentskills.io) are loaded as [on-demand capabilities](capabilities/on-demand.md) rather than as toolsets, so each skill can stay collapsed to a catalog entry until the model needs it. See [Agent Skills](capabilities/third-party.md#agent-skills) on the third-party capabilities page.
-
-### Task Management
-
-Toolsets for task planning and progress tracking help agents organize complex work and provide visibility into agent progress:
-
-* [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) - `TodoToolset` with `read_todos` and `write_todos` tools. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
-
-### File Operations
-
-Toolsets for file operations help agents read, write, and edit files:
-
-* [`pydantic-ai-filesystem-sandbox`](https://github.com/zby/pydantic-ai-filesystem-sandbox) - `FileSystemToolset` with a sandbox and LLM-friendly errors
-* [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) — Deep agent framework that includes a `FilesystemToolset` with multiple backends (in-memory, real filesystem, Docker sandbox).
-
-### Code Execution
-
-Toolsets for sandboxed code execution help agents run code in a sandboxed environment:
-
-* [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPToolset(StdioTransport(command='uv', args=['run', 'mcp-run-python', 'stdio']))`.
 
 ### LangChain Tools {#langchain-tools}
 

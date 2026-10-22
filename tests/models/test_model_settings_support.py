@@ -93,7 +93,6 @@ with try_import() as openai_available:
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTCredentials, OpenAIChatGPTProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
-    from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
     from pydantic_ai.providers.zai import ZaiProvider
@@ -682,7 +681,7 @@ def _system_one(client: httpx2.AsyncClient) -> Model:
 
 
 def _openai_decisions(client: httpx2.AsyncClient) -> Model:
-    return OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIDecisionsProvider(api_key=PROBE_KEY, http_client=client))
+    return OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
 
 
 DECISION_HOLDS_WITHOUT_SENDING = frozenset({'max_tokens', 'stop_sequences', 'parallel_tool_calls'})

@@ -372,7 +372,7 @@ class PollsForever(Model):
     poll_time = SHORT_TIMEOUT / 5
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(settings={'request_timeout': SHORT_TIMEOUT})
         self.cancelled = False
 
     @property
@@ -428,7 +428,7 @@ async def test_fallback_keeps_the_picked_models_deadline_across_continuations(st
     """Each poll of a background job is a fresh call to the `FallbackModel`, but the same request to the model it
     picked: its deadline carries over, so a job that keeps running times out and falls back."""
     model = FallbackModel(PollsForever(), FunctionModel(answer, stream_function=stream_answer, model_name='fallback'))
-    agent = Agent(model, model_settings={'request_timeout': SHORT_TIMEOUT})
+    agent = Agent(model)
 
     if stream:
         async with agent.run_stream('hello') as result:

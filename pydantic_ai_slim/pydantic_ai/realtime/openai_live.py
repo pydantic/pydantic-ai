@@ -6,11 +6,13 @@ model served by it, so none of its event mapping is shared: what it borrows from
 the WebSocket URL, resolving authentication, and mapping handshake failures). The differences that
 shape the adapter:
 
-- **Audio drives the session.** Live has no user-turn event for text: text arrives as *context*
-  through `session.commentary.append` (speakable) and `session.thinking.append` (silent), each
-  capped at 500 tokens. Both are placed on the session's audio timeline, which only advances while
-  audio flows — so a session whose microphone isn't streaming defers everything sent to it, unless
-  `openai_live_idle_audio` has the connection stream silence in the microphone's place.
+- **Audio drives the session.** Live has no user-turn event for text: a typed turn goes to the
+  Responses backend as the user's message, with `response.create` to run it, and, if it fits, to the
+  Live model as silent context (`session.thinking.append`, capped at 500 tokens), which is also how
+  context sent without asking for a reply arrives. Context is placed on the session's audio timeline, and
+  Live only speaks onto it, which only advances while audio flows — so a session whose microphone
+  isn't streaming says nothing, unless `openai_live_idle_audio` has the connection stream silence in
+  the microphone's place.
 - **There is no turn terminal.** Live has no `response.done` equivalent and no transcript-done
   event; transcripts arrive as timeline fragments. The connection synthesizes
   [`ResponseDone`][pydantic_ai.realtime.codec.ResponseDone] once the model has been quiet for
@@ -108,6 +110,7 @@ from ..usage import RequestUsage
 from ._inferred_lifecycle import InferredLifecycle
 from ._lifecycle import AnswersRevised, InputId, LifecycleEvent, RealtimeFrame, ResponseStatus, ToolCallsAbandoned
 from ._openai_protocol import (
+    AUTO_TRANSCRIPTION_MODEL,
     RealtimeHandshakeError,
     _without_media as without_media,  # pyright: ignore[reportPrivateUsage]
     expect_event,
@@ -119,6 +122,7 @@ from ._openai_protocol import (
 from ._openai_webrtc import HANG_UP_MAX_RETRIES, HANG_UP_TIMEOUT, ignore_ended_call
 from ._utils import (
     DEFAULT_MAX_RECONNECTS,
+    SystemPromptText,
     inject_trace_context,
     reconnect_with_backoff,
     resolve_advertised_tools,
@@ -151,7 +155,6 @@ try:
     import websockets
     from openai import AsyncOpenAI
     from openai.types.live import (
-        CommentaryAppendedEvent,
         DataChannelConfigParam,
         DelegationCreatedEvent,
         ErrorEvent,
@@ -233,10 +236,12 @@ _VOICE_FLOOR = 64
 #: tool call's quiet wait would arrive as a spoken part with nothing in it.
 _MAX_FORWARDED_PAUSE_MS = 500
 
-#: The most tokens Live accepts in one `session.commentary.append` or `session.thinking.append`.
+#: The most tokens Live accepts in one `session.thinking.append`.
 _CONTEXT_TOKEN_LIMIT = 500
 #: The tokenizer Live counts that limit in. Checked live: 500 `o200k_base` tokens are accepted, 501 refused.
 _CONTEXT_ENCODING = 'o200k_base'
+#: How a user's typed turn is put to Live as silent context, while the backend gets it as the user's message.
+_TYPED_TEXT_PREFIX = 'The user typed: '
 
 #: The most history items and tokens a session can start with (checked live: 129 items, or 20 items of 422
 #: tokens, are refused). Each item costs a few tokens beyond its text: 20 items of 402 text tokens start.
@@ -255,7 +260,6 @@ _ActedOnEvent = Annotated[
     OutputAudioDeltaEvent
     | OutputTranscriptDeltaEvent
     | InputTranscriptDeltaEvent
-    | CommentaryAppendedEvent
     | DelegationCreatedEvent
     | ResponseEvent
     | SessionUsageUpdatedEvent
@@ -270,7 +274,6 @@ _ACTED_ON_EVENT_TYPES = frozenset(
         'session.output_audio.delta',
         'session.output_transcript.delta',
         'session.input_transcript.delta',
-        'session.commentary.appended',
         'session.delegation.created',
         'response.event',
         'session.usage.updated',
@@ -425,8 +428,8 @@ class OpenAILiveModelSettings(RealtimeModelSettings, total=False):
     openai_live_idle_audio: bool
     """Whether to stream silence to Live while the application sends no audio. Defaults to `False`.
 
-    Live's timeline only advances while it receives audio, so text sent to a session with no microphone
-    streaming waits until audio flows again. With this on, the session streams silence in real time
+    Live only speaks while its timeline advances, which takes audio: without it, a typed turn still runs the
+    backend (and its tools), but nothing is said until audio flows again. With this on, the session streams silence in real time
     whenever `send_audio()` has been quiet for a moment, and stops as soon as the application sends
     audio again, so a text-only session works. Live bills the audio it receives by the second, silence
     included, so this bills the whole time the session is open."""
@@ -641,9 +644,10 @@ class _LiveLifecycle(InferredLifecycle):
     a continuous audio track, silent between replies: the connection says where the model takes the turn instead
     (`turn_taken`).
 
-    Text reaches Live as commentary, which it places on its timeline (`session.commentary.appended`) and answers in
-    the speech under way, if any, rather than in a reply of its own: text placed while a reply goes on is answered by
-    that reply once it says anything more (`AnswersRevised.claimed`), and by the next reply otherwise.
+    A text turn runs the backend, and Live takes it up as it opens the delegation that answers it
+    (`session.delegation.created`), in the speech under way, if any, rather than in a reply of its own: text taken up
+    while a reply goes on is answered by that reply once it says anything more (`AnswersRevised.claimed`), and by the
+    next reply otherwise.
 
     The tool calls a delegated backend response asks for are the reply's, but the reply doesn't end with them: Live
     goes on speaking while the backend waits for their results ("Okay, checking the forecast ... now."), and only the
@@ -661,8 +665,8 @@ class _LiveLifecycle(InferredLifecycle):
         super().__init__()
         self.turn_taken = False
         """The provider message being mapped has the model take the turn (see `_open_response()`)."""
-        self._placed_text: list[InputId] = []
-        """Text placed on Live's timeline while the reply under way goes on, which its next output answers."""
+        self._taken_up_text: list[InputId] = []
+        """Text Live took up while the reply under way goes on, which its next output answers."""
         self._round_reported = False
         """The backend response that asked for the open response's tool calls reported its usage: it is over, and a
         call that comes now is a continuation's."""
@@ -710,19 +714,19 @@ class _LiveLifecycle(InferredLifecycle):
         """The delegated backend that asked for these calls gave up: no reply will answer their results."""
         self._pending.append(ToolCallsAbandoned(tool_call_ids=tuple(call_ids)))
 
-    def text_placed(self, input_id: InputId) -> None:
-        """Live acknowledged a text input, placing it on its timeline where the conversation now is."""
+    def text_taken_up(self, input_id: InputId) -> None:
+        """Live took up a text input, opening the delegation that answers it where the conversation now is."""
         if self._open is not None and input_id in self._unanswered:
-            self._placed_text.append(input_id)
+            self._taken_up_text.append(input_id)
 
     def _output(self, event: RealtimeCodecEvent, before: list[LifecycleEvent], after: list[LifecycleEvent]) -> None:
         if isinstance(event, ToolCall) and self._round_reported and self._open is not None:
             # A continuation's call, made with the results of the open response's: a response of its own.
             self._end(before, status='completed', finish_reason='tool_call')
         super()._output(event, before, after)
-        if (response_id := self._open) is not None and (claimed := tuple(self._placed_text)):
+        if (response_id := self._open) is not None and (claimed := tuple(self._taken_up_text)):
             # The reply goes on past the text: Live speaks to it here, not in a reply of its own.
-            self._placed_text.clear()
+            self._taken_up_text.clear()
             self._unanswered = [input_id for input_id in self._unanswered if input_id not in claimed]
             before.append(AnswersRevised(response_id=response_id, claimed=claimed))
 
@@ -735,7 +739,7 @@ class _LiveLifecycle(InferredLifecycle):
         provider_details: dict[str, Any] | None = None,
     ) -> None:
         # Text the reply never spoke past is the next reply's to answer.
-        self._placed_text.clear()
+        self._taken_up_text.clear()
         self._round_reported = False
         super()._end(events, status=status, finish_reason=finish_reason, provider_details=provider_details)
 
@@ -839,7 +843,7 @@ class OpenAILiveConnection(RealtimeConnection):
         # Which response, user turn, and input each frame is about (see `frames()`). Live always
         # transcribes, and closes the user's turn as the model's reply starts.
         self._lifecycle = _LiveLifecycle()
-        # The text inputs sent as commentary that Live hasn't acknowledged yet, by the `event_id` they went out under.
+        # The text turns Live hasn't opened a delegation for yet, by the `event_id` of the `response.create` that asked.
         self._unacknowledged_text: dict[str, InputId] = {}
 
     @property
@@ -911,21 +915,36 @@ class OpenAILiveConnection(RealtimeConnection):
     async def _send_input(self, content: RealtimeInput, input_index: InputId) -> bool:
         """Send one input; `False` if it goes nowhere."""
         if isinstance(content, str):
-            # A soliciting text turn. Live has no user-message event, so this goes in as speakable
-            # context: the model relays or answers it rather than hearing it as the user's own words.
-            await _check_context_length(content)
-            # Live acknowledges it under this id once it places it on the timeline (`session.commentary.appended`).
-            event_id = f'pydantic_ai.commentary.{input_index}'
+            # A user turn. Live has no user-message event of its own, so the text goes to the backend as the
+            # user's message and the backend is run on it, the way Live takes typed input. Live itself hears what
+            # was asked as silent context: without it, it often leaves a terse answer unsaid, not knowing the
+            # question (checked live: a bare "20" was spoken in none of six runs without it, and all six with it).
+            # The backend takes text of any length, so text too long for that context goes without it.
+            # System-prompt text is the operator's, not the user's: Live hears it as it is (`<system>`-tagged), and
+            # the backend as a developer message. Framed as typed, Live took it for something the caller had said
+            # (checked live: asked to list what they had said, 5 of 5 runs included it, and none of 5 this way).
+            operator = isinstance(content, SystemPromptText)
+            thinking = content if operator else _TYPED_TEXT_PREFIX + content
+            tells_live = await _context_tokens_over_cap(thinking) is None
+            # Live opens the delegation that answers it under this id (`session.delegation.created`).
+            event_id = f'pydantic_ai.text.{input_index}'
             self._unacknowledged_text[event_id] = input_index
             try:
+                if tells_live:
+                    await self._send_event(
+                        {'type': 'session.thinking.append', 'delegation_id': None, 'content': thinking}
+                    )
                 await self._send_event(
                     {
-                        'type': 'session.commentary.append',
-                        'event_id': event_id,
-                        'delegation_id': None,
-                        'content': content,
+                        'type': 'response.item.create',
+                        'item': {
+                            'type': 'message',
+                            'role': 'developer' if operator else 'user',
+                            'content': [_text_part(content)],
+                        },
                     }
                 )
+                await self._send_event({'type': 'response.create', 'event_id': event_id})
             except BaseException:
                 del self._unacknowledged_text[event_id]
                 raise
@@ -1437,13 +1456,6 @@ class OpenAILiveConnection(RealtimeConnection):
             self._input_open = True
             self._heard_voice()
             return [InputTranscript(self._fragment('input', event.delta))]
-        if isinstance(event, CommentaryAppendedEvent):
-            if (
-                event.client_event_id is not None
-                and (input_index := self._unacknowledged_text.pop(event.client_event_id, None)) is not None
-            ):
-                self._lifecycle.text_placed(input_index)
-            return []
         if isinstance(event, DelegationCreatedEvent):
             return self._map_delegation(event)
         if isinstance(event, ResponseEvent):
@@ -1578,6 +1590,12 @@ class OpenAILiveConnection(RealtimeConnection):
                 )
             ]
         self._delegations[delegation.id] = _Delegation(id=delegation.id)
+        if (
+            event.client_event_id is not None
+            and (input_index := self._unacknowledged_text.pop(event.client_event_id, None)) is not None
+        ):
+            # The delegation a text turn's `response.create` asked for: Live speaks to the text from here on.
+            self._lifecycle.text_taken_up(input_index)
         return self._open_response()
 
     def _map_response_event(self, nested: dict[str, Any], *, delegation_id: str | None) -> list[RealtimeCodecEvent]:
@@ -1864,24 +1882,33 @@ def _is_audio_or_video_url(item: DocumentUrl) -> bool:
     return media_type.startswith(('audio/', 'video/'))
 
 
-async def _check_context_length(text: str) -> None:
-    """Refuse context text over Live's cap before it is sent, rather than after Live rejects it.
+async def _context_tokens_over_cap(text: str) -> int | None:
+    """How many tokens context text is, in the tokenizer Live counts with, if that is over Live's cap; else `None`.
 
-    A rejected append arrives as a recoverable error well after `send()` has returned and the text has
-    been recorded as sent, so it is checked here, in the tokenizer Live counts with. A token spans at
-    least one byte, so text that short can't be over and skips loading it.
+    A token spans at least one byte, so text that short can't be over and skips loading the tokenizer.
     """
     if len(text.encode()) <= _CONTEXT_TOKEN_LIMIT:
-        return
+        return None
     # Loading an encoding can download it on first use, so it stays off the event loop. tiktoken caches
     # the loaded encoding under a lock, so concurrent first sends load it once.
     encoding = await _utils.run_in_executor(tiktoken.get_encoding, _CONTEXT_ENCODING)
     # Special-token text such as `<|endoftext|>` is counted as the one token it is, as Live counts it
     # (checked live), rather than refused as tiktoken does by default.
-    if (tokens := len(encoding.encode(text, allowed_special='all'))) > _CONTEXT_TOKEN_LIMIT:
+    tokens = len(encoding.encode(text, allowed_special='all'))
+    return tokens if tokens > _CONTEXT_TOKEN_LIMIT else None
+
+
+async def _check_context_length(text: str) -> None:
+    """Refuse context text over Live's cap before it is sent, rather than after Live rejects it.
+
+    A rejected append arrives as a recoverable error well after `send()` has returned and the text has
+    been recorded as sent, so it is checked here.
+    """
+    if (tokens := await _context_tokens_over_cap(text)) is not None:
         raise UserError(
-            f'OpenAI GPT-Live accepts at most {_CONTEXT_TOKEN_LIMIT} tokens of text per `send()`, and this is '
-            f'{tokens}. Send it in shorter pieces, or give longer material to the agent as a tool result.'
+            f'OpenAI GPT-Live accepts at most {_CONTEXT_TOKEN_LIMIT} tokens of context per `send(..., respond=False)`, '
+            f'and this is {tokens}. Send it in shorter pieces, send it as a typed turn for the backend, or give longer '
+            'material to the agent as a tool result.'
         )
 
 
@@ -2088,7 +2115,13 @@ class OpenAILiveModel(RealtimeModel):
         messages: Sequence[ModelMessage],
         settings: OpenAILiveModelSettings,
         native_tools: Sequence[AbstractNativeTool],
+        audio_format: bool = True,
     ) -> dict[str, Any]:
+        """The configuration Live starts the session with.
+
+        `audio_format=False` leaves out the audio format, which WebRTC negotiates on the media transport
+        (Live rejects one set there), so the profile's sample rates aren't consulted at all.
+        """
         delegation_settings = settings.get('openai_live_delegation', OpenAILiveResponsesDelegation())
         backend_instructions = '\n\n'.join(
             text for text in (instructions, delegation_settings.get('instructions')) if text
@@ -2136,19 +2169,26 @@ class OpenAILiveModel(RealtimeModel):
         if (verbosity := delegation_settings.get('verbosity')) is not None:
             responses['text'] = {'verbosity': verbosity}
 
+        audio = self._audio_config(settings, audio_format=audio_format)
         config: dict[str, Any] = {
             'model': self.model,
             'instructions': settings.get('openai_live_instructions', DEFAULT_LIVE_INSTRUCTIONS),
-            'audio': {'format': {'type': 'audio/pcm', 'rate': self._audio_rate()}},
+            **({'audio': audio} if audio else {}),
             'delegation': {'type': 'responses', 'responses': responses},
         }
-        if voice := settings.get('openai_voice'):
-            config['audio']['output'] = {'voice': voice}
         if settings.get('openai_live_store'):
             config['store'] = True
         if seed := seed_input_items(messages, provider_name=self.system):
             config['input'] = seed
         return config
+
+    def _audio_config(self, settings: OpenAILiveModelSettings, *, audio_format: bool) -> dict[str, Any]:
+        audio: dict[str, Any] = {}
+        if audio_format:
+            audio['format'] = {'type': 'audio/pcm', 'rate': self._audio_rate()}
+        if voice := settings.get('openai_voice'):
+            audio['output'] = {'voice': voice}
+        return audio
 
     def _audio_rate(self) -> int:
         """The PCM16 sample rate to run the session at, from the profile's audio rates.
@@ -2172,10 +2212,15 @@ class OpenAILiveModel(RealtimeModel):
         for setting, feature in (
             ('turn_detection', 'turn detection: Live owns turn-taking and exposes no VAD configuration'),
             ('max_tokens', 'a token limit on the spoken conversation'),
-            ('input_transcription_model', 'choosing a transcription model'),
         ):
             if settings.get(setting) is not None:
                 raise UserError(f'OpenAI GPT-Live does not support {feature}, so `{setting}` cannot be set.')
+        # Live always transcribes with its own model, which is what the `'auto'` default asks for.
+        if (transcription_model := settings.get('input_transcription_model')) not in (AUTO_TRANSCRIPTION_MODEL, None):
+            raise UserError(
+                'OpenAI GPT-Live does not support choosing a transcription model, so `input_transcription_model` '
+                f"can only be `'auto'`; got {transcription_model!r}."
+            )
 
     def _live_url(self) -> str:
         return realtime_websocket_url(self._provider.base_url, path=_LIVE_WEBSOCKET_PATH)
@@ -2237,11 +2282,8 @@ class OpenAILiveModel(RealtimeModel):
             native_tools=[],
             messages=message_history or [],
             settings=settings,
+            audio_format=False,
         )
-        # WebRTC negotiates the audio format on the media transport, and Live rejects one set here.
-        del session_config['audio']['format']
-        if not session_config['audio']:
-            del session_config['audio']
         session_config['client'] = {'data_channel': settings.get('openai_live_data_channel', _CLOSED_DATA_CHANNEL)}
         with map_openai_api_errors(self.model_name):
             created = await self.client.live.create(

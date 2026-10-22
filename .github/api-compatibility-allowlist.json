@@ -1,3 +1,58 @@
 {
-  "allowed_breakages": []
+  "allowed_breakages": [
+    {
+      "against": "v2.59.0",
+      "fingerprint": "ca884de6c28ed4e97d48cd6c522936a934a38a929e25cb3440f903884b53d9c8",
+      "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `inputs=inputs`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "e728299e8b022b01f0a06b3eb8cf95974e2e124d4408d8933c3b0b1485596485",
+      "reason": "Adds `QueueChanged` to the web plugin's `ServerMessage` union; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "f7079c197a72ddfbdce33497a8729dae68f70b5456ebaa87d968ccd05ed8ae8a",
+      "reason": "Adds `QueueChanged` to the web plugin's `SessionMessage` union; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "b881938683d7a5ced698e9551495f8a1098fce10d9c64642076231d15d211336",
+      "reason": "Adds `RunInstructionSource` to the `InstructionSource` union; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10789"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "4c68f760f7da49fd330ae6ec1c15bf49951de8ed4ff692e0de9509b451b3336c",
+      "reason": "Adds `RetryFeedbackPart` and the legacy retry translations to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8094"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "05907702fc1a6791d1a91c17069ed3bb3a21212936176b789fdeb4c53f9c31ae",
+      "reason": "Adds input-support profile flags to `DEFAULT_PROFILE`; every existing key and value is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10476"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "c4aa7c8b9e94bd5ada5a90325d99ca764fed5f8bd156d31ef511842e4d854f3a",
+      "reason": "False positive: `BackgroundTools` still inherits `prepare_tools` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; the tool preparation moved into the wrapper toolset.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10613"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "679024394731649b9cd4c4300679de05df481ee1512142e772055756302b9541",
+      "reason": "Adds the xAI Grok 4.6 and 4.7 Bedrock ids to `LatestBedrockModelNames`; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8639"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "1b295e087b0c5d9ce099eef747012b54cb660fed111f5b9c051942f8c5ed9d9f",
+      "reason": "Adds `FileUnderstanding` to `CAPABILITY_TYPES`; every existing capability type is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8453"
+    }
+  ]
 }
