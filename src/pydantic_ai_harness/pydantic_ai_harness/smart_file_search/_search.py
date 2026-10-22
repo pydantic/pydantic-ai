@@ -41,7 +41,7 @@ class SmartFileSearchMatch:
     symbol: str | None = None
     """The declaration the snippet belongs to, such as `Cache.get`, when the file was parsed."""
     kind: Literal['test'] | None = None
-    """`'test'` when the file looks like a test; tests are labelled, not demoted."""
+    """`'test'` when the file looks like a test; tests are labeled, not demoted."""
     score: float
     """The judge's relevance score, in `[0, 1]`."""
     text: str

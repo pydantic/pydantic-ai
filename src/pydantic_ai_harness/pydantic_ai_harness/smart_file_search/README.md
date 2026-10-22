@@ -38,9 +38,24 @@ a key); TypeSafe's Jev is `'typesafe:jev-latest'`. Each judged snippet counts as
 128-snippet searches.
 
 A search sends the query, the shortlisted snippets and their paths to the judge model's provider, and only searches
-inside the workspace's working directory. If no source may leave the machine, judge with a local model. With
-instrumentation on, each search is a `smart file search` span with the judge model and coverage figures as
-attributes; the judge runs themselves are not traced, as their prompts carry source.
+inside the workspace's working directory. If no source may leave the machine, judge with a local model.
+
+## Telemetry
+
+Each search opens a `smart file search` span under its tool call, on the run's tracer:
+
+| Attribute | Value |
+|---|---|
+| `smart_file_search.judge_model` | the judge model |
+| `smart_file_search.files`, `.skipped_files`, `.snippets`, `.evaluated` | the coverage figures |
+| `smart_file_search.selection_complete` | whether every snippet was judged |
+| `smart_file_search.indexed_files` | files the search chunked and indexed; with `cache_index`, only new and changed ones |
+| `smart_file_search.matches`, `.omitted_matches` | matches returned, and matches cut by `limit` |
+| `smart_file_search.query` | the query, only when the run includes content in traces |
+
+A failed search records no exception on this span; the enclosing tool span reports it, redacted by the run's
+`include_content`. The judge runs themselves are not instrumented, as their prompts carry source, but their usage
+is added to the run's.
 
 See the [Smart File Search docs](https://pydantic.dev/docs/ai/harness/smart-file-search/) for the search
 pipeline, the result shape, choosing the judge and tuning `threshold`.

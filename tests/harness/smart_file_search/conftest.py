@@ -6,6 +6,7 @@ judge whose requests show which snippets (`path:line-end (symbol)`) it was asked
 
 from __future__ import annotations
 
+import html
 import re
 import textwrap
 from collections.abc import Callable, Mapping, Sequence
@@ -129,17 +130,21 @@ class Judged:
         return self.line, self.end_line, self.symbol
 
 
-_HEADER = re.compile(r'(?P<path>.+):(?P<line>\d+)-(?P<end>\d+)(?: \((?P<symbol>.+)\))?')
+_FRAME = re.compile(
+    r'<tool_result name="snippet" path="(?P<path>[^"]*)" lines="(?P<line>\d+)-(?P<end>\d+)"'
+    r'(?: symbol="(?P<symbol>[^"]*)")?>(?P<text>.*)</tool_result>',
+    re.DOTALL,
+)
 
 
 def judged(model: FakeJev) -> list[Judged]:
     """Every snippet `model` judged, in file and line order."""
     out: list[Judged] = []
     for request in model.requests:
-        header, _, text = str(request.state).partition('\n\n')
-        match = _HEADER.fullmatch(header)
-        assert match is not None, header
-        out.append(Judged(match['path'], int(match['line']), int(match['end']), match['symbol'], text))
+        match = _FRAME.fullmatch(str(request.state))
+        assert match is not None, request.state
+        symbol = html.unescape(match['symbol']) if match['symbol'] is not None else None
+        out.append(Judged(html.unescape(match['path']), int(match['line']), int(match['end']), symbol, match['text']))
     return sorted(out, key=lambda s: (s.path, s.line, s.end_line))
 
 

@@ -69,7 +69,7 @@ A search runs in four steps:
 
 The result is a `SmartFileSearchResult`: the matches, how many passed but were cut by `limit`, coverage figures
 (files seen and skipped, snippets built and judged, and whether the shortlist was complete) and warnings, so
-the model can tell an empty result from a complete search that found nothing. Matches in test files are labelled
+the model can tell an empty result from a complete search that found nothing. Matches in test files are labeled
 `kind='test'` rather than demoted.
 
 A failed judgment fails the whole search, and the error is reported to the model as a tool failure, so it
@@ -154,9 +154,10 @@ attributes:
 - `smart_file_search.matches` and `.omitted_matches`: how many matches were returned and cut.
 - `smart_file_search.query`: the query, only when the run includes content in traces.
 
-The judge runs themselves are not instrumented. Their prompts carry source snippets, so global
-instrumentation must not export them past the host agent's own `instrument` or `include_content`
-settings.
+A failed search records no exception on this span; the enclosing tool span reports it, redacted by the run's
+`include_content`. The judge runs themselves are not instrumented. Their prompts carry source snippets, so global
+instrumentation must not export them past the host agent's own `instrument` or `include_content` settings. Their
+usage is still added to the run's.
 
 ## Agent spec (YAML/JSON)
 

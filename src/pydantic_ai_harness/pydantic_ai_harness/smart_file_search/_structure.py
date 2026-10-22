@@ -6,9 +6,9 @@ implements over the stdlib `ast`:
 * containers (classes) are split into a header plus one
   range per member, named `Container.member`;
 * declarations of `SPLIT_LINES` or more are split into the blocks inside
-  them, so each range is one behaviour. Splits cover every line of the
+  them, so each range is one behavior. Splits cover every line of the
   original range, so coverage is unchanged;
-* runs of short neighbours (imports, one-liners) merge into one range,
+* runs of short neighbors (imports, one-liners) merge into one range,
   since each range costs a relevance judgment.
 """
 
@@ -113,14 +113,14 @@ def structure_ranges(nodes: Sequence[NodeT], syntax: Syntax[NodeT]) -> list[Rang
 
     for node in nodes:
         walk(node, None)
-    return _merge_short_neighbours(ranges)
+    return _merge_short_neighbors(ranges)
 
 
-def _merge_short_neighbours(ranges: list[Range]) -> list[Range]:
+def _merge_short_neighbors(ranges: list[Range]) -> list[Range]:
     """Fold runs of imports/one-liners into one target (each costs a judgment).
 
     Members (dotted symbols) never merge, so a method is never folded into its
-    container's header or a neighbour.
+    container's header or a neighbor.
     """
 
     def mergeable(r: Range) -> bool:
