@@ -735,11 +735,11 @@ class Session(Generic[DepsT, OutputT]):
         self._monty_notes.append((self.summary.id, cell.note()))
         return cell
 
-    async def prompt_task(self, *, agent_name: str, task_id: str, text: str) -> str:
+    async def prompt_task(self, *, agent_name: str, task_id: str, text: str) -> None:
         """Resume a finished task with `text` as the user's message, outside the conversation; see `task_prompts`.
 
-        Returns the task's report once it settles, and raises `ValueError` with the delegate tool's reason
-        when it refuses to resume the task. The conversation's history and turns are left as they are, so
+        Returns once the task settles, and raises `ValueError` with the delegate tool's reason when it
+        refuses to resume the task. The conversation's history and turns are left as they are, so
         this may run beside a turn.
         """
         if self.delegations is None:
@@ -763,7 +763,6 @@ class Session(Generic[DepsT, OutputT]):
             )
         if script.refused is not None:
             raise ValueError(script.refused)
-        return script.reply or ''
 
     def _add_local_workspace(self, capabilities: list[AgentCapability[DepsT]]) -> bool:
         """Add CLAI's `LocalWorkspace` to a run's `capabilities` unless a configured one supplies it; whether it did."""

@@ -848,14 +848,14 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         self.editor.submit(resume_prompt(record))
         return f'Resume requested for task {record.id[:8]}.'
 
-    async def prompt_task(self, record: DelegationTask, text: str) -> str:
+    async def prompt_task(self, record: DelegationTask, text: str) -> None:
         """Resume `record` with `text` as the user's message, outside the conversation, with this session's plugins.
 
         A turn running meanwhile keeps the plugins it bound, which the task gets too.
         """
         if not self.turning:
             self.session.plugins = self.run_plugins()
-        return await self.session.prompt_task(agent_name=record.agent_name, task_id=record.id, text=text)
+        await self.session.prompt_task(agent_name=record.agent_name, task_id=record.id, text=text)
 
     def submit_prompt(self, text: str) -> None:
         """Queue `text` to run as a turn once the running `/command` returns."""
