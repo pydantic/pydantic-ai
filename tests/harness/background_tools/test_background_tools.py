@@ -7,10 +7,12 @@ import re
 import threading
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 import anyio
 import pytest
+from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, AgentRunResultEvent, CancellationToken, RunCancelled, UsageLimits
 from pydantic_ai.capabilities import AbstractCapability, SetToolMetadata
@@ -53,7 +55,7 @@ from pydantic_ai.realtime.codec import (
 )
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import DeferredToolRequests, RunContext, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import BackgroundTools, CodeMode
 from tests.harness.conftest import IsStr
@@ -106,6 +108,39 @@ def _model_calling(
         return ModelResponse(parts=[ToolCallPart(tool_name=tool_name, args=args)])
 
     return FunctionModel(model_fn)
+
+
+@dataclass
+class _ExecuteHookGuard(AbstractCapability[AgentDepsT]):
+    """Raises from `before_tool_execute` or `after_tool_execute`, like a policy guard rejecting a call."""
+
+    stage: Literal['before', 'after']
+    error_factory: Callable[[], Exception]
+
+    async def before_tool_execute(
+        self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        if self.stage == 'before':
+            raise self.error_factory()
+        return args
+
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        result: Any,
+    ) -> Any:
+        raise self.error_factory()
+
+
+def _validation_error() -> ValidationError:
+    """A real `ValidationError`, like one a hook validating the call's arguments against a model raises."""
+    with pytest.raises(ValidationError) as exc_info:
+        TypeAdapter(int).validate_python('not a number')
+    return exc_info.value
 
 
 class _BackgroundRealtimeConnection(InferredConnection):
@@ -385,6 +420,62 @@ class TestBackgroundTools:
             raise ModelRetry('try again')
 
         with pytest.raises(UnexpectedModelBehavior, match="Tool 'broken' exceeded max retries count of 0"):
+            await agent.run('go')
+
+    @pytest.mark.parametrize(
+        ('stage', 'error_factory', 'expected'),
+        [
+            (
+                'before',
+                lambda: ModelRetry('use different arguments'),
+                'outcome="failed">\nuse different arguments\n</tool_result>',
+            ),
+            ('after', lambda: ModelRetry('result rejected'), 'outcome="failed">\nresult rejected\n</tool_result>'),
+            ('before', lambda: ToolFailed('not allowed'), 'outcome="failed">\nnot allowed\n</tool_result>'),
+            ('after', lambda: ToolFailed('result withheld'), 'outcome="failed">\nresult withheld\n</tool_result>'),
+            ('before', lambda: ModelRetry(''), 'outcome="failed">\nModelRetry\n</tool_result>'),
+            ('before', _validation_error, '"type":"int_parsing"'),
+            ('after', _validation_error, 'Input should be a valid integer'),
+        ],
+        ids=[
+            'before-retry',
+            'after-retry',
+            'before-failed',
+            'after-failed',
+            'empty-retry',
+            'before-invalid',
+            'after-invalid',
+        ],
+    )
+    async def test_execute_hook_errors_have_readable_follow_ups(
+        self, stage: Literal['before', 'after'], error_factory: Callable[[], Exception], expected: str
+    ) -> None:
+        guard = _ExecuteHookGuard[object](stage=stage, error_factory=error_factory)
+        agent = Agent(_model_calling('guarded'), capabilities=[BackgroundTools(), guard])
+
+        @agent.tool_plain(metadata={'background': True})
+        async def guarded() -> str:
+            return 'value'
+
+        result = await agent.run('go')
+
+        assert _follow_up_seen(result.all_messages(), expected)
+        assert result.output == 'done'
+
+    @pytest.mark.parametrize(
+        'error_factory', [lambda: ModelRetry('try again'), _validation_error], ids=['retry', 'invalid']
+    )
+    async def test_execute_hook_retry_exhaustion_terminates_run(self, error_factory: Callable[[], Exception]) -> None:
+        guard = _ExecuteHookGuard[object](stage='before', error_factory=error_factory)
+        agent = Agent(_model_calling('guarded'), capabilities=[BackgroundTools(), guard])
+
+        @agent.tool_plain(metadata={'background': True}, retries=0)
+        async def guarded() -> str:
+            return 'unreachable'  # pragma: no cover -- the guard rejects every call
+
+        # Core's wording, so the condition reads the same as for a sequential tool.
+        message = "Tool 'guarded' exceeded max retries count of 0. Consider raising the retry limit, or see the docs"
+        with pytest.raises(UnexpectedModelBehavior, match=re.escape(message)):
             await agent.run('go')
 
     async def test_completed_background_call_is_counted_once(self) -> None:
@@ -1476,10 +1567,9 @@ class TestBackgroundTools:
         with pytest.raises(UserError, match='already has a'):
             await agent.run('go')
 
-    # The nested case is deep enough to raise `RecursionError` on 3.14+ too, where `json` limits depth by C stack size.
     @pytest.mark.parametrize(
         'args',
-        ['{', '[' * 100_000 + ']' * 100_000, '[]', '{"run_in_background": "yes"}'],
+        ['{', '[' * 300 + ']' * 300, '[]', '{"run_in_background": "yes"}'],
         ids=['not-json', 'too-deeply-nested', 'not-object', 'flag-not-boolean'],
     )
     async def test_invalid_args_for_optional_tool_are_retried(self, args: str) -> None:
@@ -1511,6 +1601,43 @@ class TestBackgroundTools:
         await agent.run('go')
 
         assert retry_seen
+
+    async def test_flag_beside_deeply_nested_args_is_not_dropped(self) -> None:
+        """Arguments too deep to read the flag back from are retried, not silently run in the foreground."""
+        deep = '[' * 300 + ']' * 300
+        retry_seen = False
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal retry_seen
+            retry_seen = retry_seen or any(
+                isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+                for message in messages
+                for part in message.parts
+            )
+            if retry_seen or any(
+                isinstance(part, ToolReturnPart) and part.outcome != 'retried'
+                for message in messages
+                for part in message.parts
+            ):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='research', args=f'{{"run_in_background": true, "data": {deep}}}')]
+            )
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
+
+        @agent.tool_plain(metadata={'background': 'optional'})
+        async def research(data: Any) -> str:
+            return 'researched'  # pragma: no cover -- the call is retried instead
+
+        result = await agent.run('go')
+
+        assert retry_seen
+        assert not any(
+            isinstance(part, ToolReturnPart) and part.outcome != 'retried'
+            for message in result.all_messages()
+            for part in message.parts
+        )
 
     @pytest.mark.parametrize(
         ('background', 'code'),

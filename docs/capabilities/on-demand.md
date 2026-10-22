@@ -149,7 +149,7 @@ A capability-owned tool is hidden until its capability loads, and it is never se
 
 - **Anthropic `tool_addition_mode='by_reference'`** references the revealed name in a `tool_addition` block. A capability-only run pre-advertises the definition with `defer_loading=True`; a mixed run with a search surface withholds it, then appends the deferred definition in the same request as the reveal.
 - **OpenAI Responses `tool_addition_mode='with_definitions'`** carries the full revealed definition in an appended `additional_tools` input item and leaves it out of `tools`.
-- **No provider-native reveal-item support (`tool_addition_mode=None`)** announces `The following tool(s) are now available: {names}` when the schema is visible. It synthesizes a `search_tools` exchange only when a result must reveal a schema that is still withheld.
+- **No provider-native reveal-item support (`tool_addition_mode=None`)** announces `The following tool(s) are now available: {names}` when the schema is visible. A remote MCP server chooses its own tool names, so a tool whose name contains a framing tag such as `</system>` is still sent but not named in the announcement. It synthesizes a `search_tools` exchange only when a result must reveal a schema that is still withheld.
 
 Add a standalone `defer_loading=True` tool to the same run and tool search comes back for it, since that one genuinely is searchable. Capability-owned tools stay off the wire entirely while a search surface is present, so search remains fully native — server-executed where the model supports it — and no query can surface a tool whose capability has not loaded.
 
