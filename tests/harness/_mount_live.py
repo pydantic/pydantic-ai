@@ -8,13 +8,15 @@ proves what differs per sandbox (FUSE, running as root with stdin, the agent's u
 from __future__ import annotations
 
 import posixpath
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 import anyio
 import pytest
 
-from pydantic_ai.workspaces import Mount, SupportsCommands, SupportsMounts, Workspace, WorkspaceBackend
+from pydantic_ai.workspaces import CommandResult, Mount, SupportsCommands, SupportsMounts, Workspace, WorkspaceBackend
+from pydantic_ai_harness._mounts import Mounter
 from pydantic_ai_harness.cloud_storage import S3Filesystem
 
 _SERVER = '/var/tmp/pydantic-ai-s3'
@@ -38,7 +40,11 @@ os.chmod(sys.argv[1], 0o755)
 
 
 class MountingBackend(WorkspaceBackend, SupportsCommands, SupportsMounts, Protocol):
-    pass
+    """A harness sandbox backend: these mount through the shared rclone code."""
+
+    _mounter: Mounter
+
+    async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult: ...
 
 
 def _keys() -> Any:
@@ -62,7 +68,7 @@ async def check_bucket_mounts(backend: MountingBackend) -> None:
             await anyio.sleep(0.5)
 
     data = S3Filesystem('s3://live/data', endpoint='http://127.0.0.1:8333', region='us-east-1', credentials=_keys)
-    mount = Mount('data', data, shell=True)
+    mount = Mount('data', data, commands=True)
     workspace = Workspace(backend, mounts=[mount])
 
     await workspace.write_text('data/notes/a.md', 'from file tools')
@@ -74,16 +80,27 @@ async def check_bucket_mounts(backend: MountingBackend) -> None:
     owner = (await backend.run(['stat', '-c', '%U', working_dir])).stdout.strip()
     assert (shell.exit_code, shell.stdout) == (0, f'from file toolsfirst\ntwo\nmoved\n{owner}\n'), shell.stderr
 
-    # Unmounting sends what is still queued, so the served folder has every file.
-    await backend.ensure_mounts([], working_dir)
+    # Unmounting, as the next run with no mounts does, sends what is still queued, so the served folder has every file.
+    await _unmount(backend)
     served = posixpath.join(_SERVER, 'live', 'data')
     stored = await backend.run(f'cd {served} && cat notes/a.md log d2/f && test ! -e d1', shell=True)
     assert (stored.exit_code, stored.stdout) == (0, 'from file toolsfirst\ntwo\nmoved\n'), stored.stderr
 
-    # As after a sandbox restart: nothing is mounted, and something writes into the bare folder.
+    # As after a sandbox restart: the mount is gone, and something writes into the bare folder.
+    await backend.ensure_mounts([mount], working_dir)
+    dropped = await backend._run_as_root(  # pyright: ignore[reportPrivateUsage]
+        ['sh', '-c', f'pkill -9 -x rclone; umount -l {working_dir}/data'], b''
+    )
+    assert dropped.exit_code == 0, dropped.stderr
     await backend.run('echo lost > data/lost.txt', shell=True)
     with pytest.warns(UserWarning, match='.pydantic-ai-recovered'):
         await backend.ensure_mounts([mount], working_dir)
     again = await backend.run('cat data/log .pydantic-ai-recovered/*-data/lost.txt', shell=True)
     assert again.stdout == 'first\ntwo\nlost\n'
-    await backend.ensure_mounts([], working_dir)
+    await _unmount(backend)
+
+
+async def _unmount(backend: MountingBackend) -> None:
+    """As the next run in the sandbox would, with no mounts: the run that mounted releases them, and they go."""
+    await backend._mounter.release()  # pyright: ignore[reportPrivateUsage]
+    await backend.ensure_mounts([], await backend.working_dir())

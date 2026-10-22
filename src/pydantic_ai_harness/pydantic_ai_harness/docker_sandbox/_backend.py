@@ -236,7 +236,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsMounts):
             default of 2048.
         executable: The container CLI to run, such as `'podman'`.
 
-    Shell commands see a [mount](https://pydantic.dev/docs/ai/harness/cloud-storage/) with `shell=True` when `docker_args` give the
+    Commands see a [mount](https://pydantic.dev/docs/ai/harness/cloud-storage/) with `commands=True` when `docker_args` give the
     container FUSE: `['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', 'apparmor:unconfined']`.
     """
 
@@ -263,6 +263,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsMounts):
             raise TypeError('docker_args must be a sequence of arguments, not a string')
         self._image = image
         self._ref = ref
+        # Attached to an existing sandbox, an earlier run's mounts may be there.
+        self._mounter = _mounts.Mounter(self._run_as_root, attached=self._ref is not None)
         self._working_dir = None if working_dir is None else posixpath.normpath(working_dir)
         self._env = _checked_env(env or {})
         self._allow_internet_access = allow_internet_access
@@ -439,14 +441,16 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsMounts):
         # Only `docker_args` can give the container the FUSE device that mounting needs.
         if not any('/dev/fuse' in arg or arg == '--privileged' for arg in self._docker_args):
             raise MountError(
-                'DockerSandbox can mount a filesystem for shell commands only when `docker_args` give the container '
-                "FUSE: `['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', 'apparmor:unconfined']`."
+                'DockerSandbox can mount a filesystem for commands only when `docker_args` give the container FUSE: '
+                "`['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', 'apparmor:unconfined']`."
             )
         _mounts.check_mount(mount)
 
     async def ensure_mounts(self, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
+        if not self._mounter.needed(mounts):
+            return None
         await self._acquire()
-        return await _mounts.ensure_mounts(self._run_as_root, mounts, working_dir)
+        return await self._mounter.ensure(mounts, working_dir)
 
     async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
         docker = [self._executable, 'exec', '--interactive', '--user', '0', '--workdir', '/', self._name]

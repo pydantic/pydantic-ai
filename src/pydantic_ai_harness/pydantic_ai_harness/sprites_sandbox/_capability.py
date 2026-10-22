@@ -13,7 +13,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace import innermost_backend
-from pydantic_ai_harness._workspace_provider import Mounts, check_working_dir, with_mounts
+from pydantic_ai_harness._workspace_provider import Mounts, check_working_dir, release_mounts, with_mounts
 from pydantic_ai_harness.sprites_sandbox._backend import SpritesSandboxBackend, destroy_sprite
 
 if TYPE_CHECKING:
@@ -116,6 +116,7 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
         try:
             return await handler()
         finally:
+            await release_mounts(ctx)
             if owned is not None:
                 # `result.workspace` outlives the run, with no one left to close it.
                 owned.claim(False)

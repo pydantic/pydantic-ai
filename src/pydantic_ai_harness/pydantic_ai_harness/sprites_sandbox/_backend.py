@@ -385,7 +385,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     caller-supplied Sprite must already have it. File writes go through the Sprite's filesystem
     API; the other file operations run as shell commands.
 
-    Shell commands see a [mount](https://pydantic.dev/docs/ai/harness/cloud-storage/) with `shell=True`; the first such mount installs
+    Commands see a [mount](https://pydantic.dev/docs/ai/harness/cloud-storage/) with `commands=True`; the first such mount installs
     `fuse3` and rclone in the Sprite if it lacks them.
     """
 
@@ -407,6 +407,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             raise TypeError('env keys and values must be strings')
         self._sandbox = sandbox
         self._ref = ref if sandbox is None else WorkspaceRef(provider='sprites', id=sandbox.name)
+        # Attached to an existing sandbox, an earlier run's mounts may be there.
+        self._mounter = _mounts.Mounter(self._run_as_root, attached=self._ref is not None)
         self._new_sprite_name = f'pydantic-ai-{uuid.uuid4().hex}'
         self._uncertain_create = False
         self._runtime = runtime
@@ -747,8 +749,10 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         _mounts.check_mount(mount)
 
     async def ensure_mounts(self, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
+        if not self._mounter.needed(mounts):
+            return None
         async with self._operation():
-            return await _mounts.ensure_mounts(self._run_as_root, mounts, working_dir)
+            return await self._mounter.ensure(mounts, working_dir)
 
     async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
         # Commands run as the Sprite's user, which has passwordless `sudo`. The keys go on stdin, never in argv: the

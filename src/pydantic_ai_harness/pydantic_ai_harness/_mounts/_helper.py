@@ -5,11 +5,13 @@ so keys never reach a command line, a file or a log: they go from here to the rc
 can open, and live in its memory. It prints one JSON line: `{"recovered": [...]}` or `{"error": ..., "message": ...}`.
 
 The request names every mount the sandbox should have. Each mount's kernel mount source is `pai-<fingerprint>`, so
-this can tell its own mounts, and which configuration each is, from anything else mounted.
+this can tell its own mounts, and which configuration each is, from anything else mounted. A lease records which runs
+hold the mounts, so a run that wants different ones while another holds them is refused rather than swapping them.
 """
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import hashlib
 import http.client
@@ -34,6 +36,10 @@ STATE = '/dev/shm/pydantic-ai-mounts'
 CACHE = '/var/cache/pydantic-ai-mounts'
 """rclone's write cache, on disk, so uploads still queued when the sandbox stops are sent after it restarts."""
 SOCKET = f'{STATE}/rc.sock'
+LEASE = f'{STATE}/lease.json'
+"""The fingerprints mounted, and each run holding them until when."""
+MARKER = '.pydantic-ai-mount'
+"""Written into a folder before mounting on it: the mount hides it, so seeing it means the mount was lost."""
 RCLONE = '/usr/local/bin/rclone'
 RCLONE_VERSION = 'v1.75.2'
 RCLONE_SHA256 = {
@@ -78,7 +84,9 @@ def rc(command: str, body: dict[str, Any] | None = None, timeout: float = 60) ->
     reply = json.loads(response.read() or b'{}')
     if response.status != 200:
         # rclone echoes the request, keys included, in its errors: report only its own message.
-        raise MountFailed('rclone', f'rclone {command} failed: {reply.get("error", response.status)}')
+        raise MountFailed(
+            'rclone', f'rclone {command} failed: {reply.get("error", response.status)}. See {STATE}/rcd.log.'
+        )
     return reply
 
 
@@ -91,7 +99,7 @@ def install_rclone() -> str:
         return RCLONE
     arch = platform.machine()
     if arch not in RCLONE_SHA256:
-        raise MountFailed('rclone', f'no rclone build for {arch}; install rclone in the sandbox image')
+        raise MountFailed('rclone', f'There is no rclone build for {arch}. Install rclone in the sandbox image.')
     name = f'rclone-{RCLONE_VERSION}-linux-{"amd64" if arch == "x86_64" else "arm64"}'
     try:
         # The download site refuses Python's default User-Agent.
@@ -101,10 +109,13 @@ def install_rclone() -> str:
             archive = reply.read()
     except OSError as error:
         raise MountFailed(
-            'rclone', f'could not download rclone ({error}); install rclone in the sandbox image'
+            'rclone', f'Could not download rclone ({error}). Install rclone in the sandbox image.'
         ) from None
     if hashlib.sha256(archive).hexdigest() != RCLONE_SHA256[arch]:
-        raise MountFailed('rclone', 'the downloaded rclone does not match its published checksum')
+        raise MountFailed(
+            'rclone',
+            'The downloaded rclone does not match its published checksum. Install rclone in the sandbox image.',
+        )
     with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
         binary = zipped.read(f'{name}/rclone')
     with open(f'{RCLONE}.tmp', 'wb') as file:
@@ -123,7 +134,7 @@ def install_fuse() -> None:
         for command in (['apt-get', 'update', '-q'], ['apt-get', 'install', '-y', '-q', 'fuse3']):
             subprocess.run(command, capture_output=True, env=env, timeout=APT_SECONDS)
     if not shutil.which('fusermount3'):
-        raise MountFailed('fuse', 'the sandbox has no `fusermount3`; install fuse3 in its image')
+        raise MountFailed('fuse', 'The sandbox has no `fusermount3`. Install fuse3 in its image.')
 
 
 def start_daemon(rclone: str) -> None:
@@ -150,7 +161,7 @@ def start_daemon(rclone: str) -> None:
             return
         except (OSError, MountFailed):
             time.sleep(0.05)
-    raise MountFailed('rclone', f'the rclone daemon did not start; see {STATE}/rcd.log')
+    raise MountFailed('rclone', f'The rclone daemon did not start. See {STATE}/rcd.log in the sandbox.')
 
 
 def kernel_mounts() -> dict[str, str]:
@@ -196,20 +207,23 @@ def unmount(path: str) -> None:
                 break
             time.sleep(0.1)
         else:
-            raise MountFailed('busy', f'{path} still has files uploading; try again once they are sent')
+            raise MountFailed('busy', f'{path} still has files uploading. Try again once they are sent.')
         rc('mount/unmount', {'mountPoint': path})
     else:
         # The daemon that served it is gone, so nothing is left to send.
         subprocess.run(['fusermount3', '-uz', path], capture_output=True)
         subprocess.run(['umount', '-l', path], capture_output=True)
     if kernel_mounts().get(path, '').startswith('pai-'):
-        raise MountFailed('stuck', f'{path} could not be unmounted; restart the sandbox to clear it')
+        raise MountFailed('stuck', f'{path} could not be unmounted. Restart the sandbox to clear it.')
+    # Unmounted on purpose, so the marker no longer means a lost mount.
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(os.path.join(path, MARKER))
 
 
 def make_folder(path: str, owner: os.stat_result) -> None:
     """Create `path` and its missing parents, owned by the agent's user."""
     if os.path.lexists(path) and not os.path.isdir(path):
-        raise MountFailed('conflict', f'{path} is a file, not a folder to mount on')
+        raise MountFailed('conflict', f'{path} is a file. Mount at a folder.')
     missing: list[str] = []
     while not os.path.isdir(path):
         missing.append(path)
@@ -219,18 +233,53 @@ def make_folder(path: str, owner: os.stat_result) -> None:
         os.chown(folder, owner.st_uid, owner.st_gid)
 
 
-def recover(path: str) -> str | None:
-    """Move aside what was written into the bare folder while nothing was mounted there, so the mount doesn't hide it."""
+def prepare(path: str, owner: os.stat_result) -> tuple[bool, str | None]:
+    """Make the bare folder ready to mount on.
+
+    Returns whether the marker was written now, and where files written there while it wasn't mounted went. Only a
+    folder this mounted on before (it holds the marker) has such files; a folder with other files is refused, rather
+    than its files being moved away.
+    """
     entries = os.listdir(path)
-    if not entries:
-        return None
+    if MARKER not in entries:
+        if entries:
+            raise MountFailed('conflict', f'{path} already holds files. Mount at a new or empty folder.')
+        with open(os.path.join(path, MARKER), 'wb'):
+            pass
+        return True, None
+    strays = [entry for entry in entries if entry != MARKER]
+    if not strays:
+        return False, None
     parent, name = os.path.split(path)
+    recovered = os.path.join(parent, RECOVERED)
+    if os.path.islink(recovered):
+        raise MountFailed(
+            'conflict', f'{recovered} is a symlink. Remove it so files found in a lost mount can go there.'
+        )
     stamp = f'{time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())}-{uuid.uuid4().hex[:6]}'
-    destination = os.path.join(parent, RECOVERED, f'{stamp}-{name}')
+    destination = os.path.join(recovered, f'{stamp}-{name}')
     os.makedirs(destination)
-    for entry in entries:
+    # The agent's user can then move or remove what was found.
+    for folder in (recovered, destination):
+        os.chown(folder, owner.st_uid, owner.st_gid)
+    for entry in strays:
         shutil.move(os.path.join(path, entry), os.path.join(destination, entry))
-    return destination
+    return False, destination
+
+
+def read_lease() -> dict[str, Any]:
+    try:
+        with open(LEASE, encoding='utf-8') as file:
+            return json.load(file)
+    except (OSError, ValueError):
+        return {'set': [], 'holders': {}}
+
+
+def write_lease(lease: dict[str, Any]) -> None:
+    # Replaced whole, so a deadline that ends this call mid-write can't leave half a lease.
+    with open(f'{LEASE}.new', 'w', encoding='utf-8') as file:
+        json.dump(lease, file)
+    os.replace(f'{LEASE}.new', LEASE)
 
 
 def mount(request: dict[str, Any], keys: dict[str, str], owner: os.stat_result) -> None:
@@ -247,7 +296,8 @@ def mount(request: dict[str, Any], keys: dict[str, str], owner: os.stat_result) 
         {
             'fs': f'{remote}:{request["root"]}',
             'mountPoint': path,
-            'mountOpt': {'AllowOther': True, 'DeviceName': remote},
+            # The folder holds only the marker, which `prepare` checked; the mount hides it.
+            'mountOpt': {'AllowOther': True, 'AllowNonEmpty': True, 'DeviceName': remote},
             'vfsOpt': {
                 # The write cache is what makes appends, in-place edits and renames work on object storage.
                 'CacheMode': 'writes',
@@ -262,50 +312,108 @@ def mount(request: dict[str, Any], keys: dict[str, str], owner: os.stat_result) 
         },
     )
     if not alive(path) or kernel_mounts().get(path) != remote:
-        raise MountFailed('mount', f'{path} did not answer right after it was mounted')
+        raise MountFailed(
+            'mount', f'{path} did not answer right after it was mounted. Check the bucket and its keys, and try again.'
+        )
+    # When its keys end, for a mount that can only take new ones by being mounted again.
+    with open(f'{STATE}/{fingerprint}.expires', 'w', encoding='utf-8') as file:
+        file.write(str(request.get('keys_expire') or ''))
+
+
+def keys_last(fingerprint: str, until: float) -> bool:
+    """Whether the keys a mount was mounted with last until `until`."""
+    try:
+        with open(f'{STATE}/{fingerprint}.expires', encoding='utf-8') as file:
+            expires = file.read()
+    except OSError:
+        return False
+    return not expires or float(expires) > until
+
+
+def release(owner: str) -> dict[str, Any]:
+    lease = read_lease()
+    lease['holders'].pop(owner, None)
+    write_lease(lease)
+    return {'recovered': []}
+
+
+def place(
+    path: str, wanted: dict[str, Any], keys: dict[str, dict[str, str]], owner: os.stat_result, until: float
+) -> str | None:
+    """Mount `wanted` at `path`, or keep it there with fresh keys; returns where files found in a lost mount went."""
+    fingerprint = str(wanted['fingerprint'])
+    if os.path.realpath(path) != path:
+        # A symlink would put the mount, and the moving aside of strays, somewhere else.
+        raise MountFailed('conflict', f'{path} leads through a symlink. Mount at a real folder.')
+    source = kernel_mounts().get(path)
+    if source is not None and not source.startswith('pai-') and os.path.ismount(path):
+        raise MountFailed('conflict', f'{path} already has something else mounted on it. Mount at another folder.')
+    if source == f'pai-{fingerprint}':
+        fs = served().get(path)
+        if fs is not None and alive(path):
+            if wanted['remote']['type'] == 's3':
+                # Fresh keys for the mount already there, so it outlives the ones it was mounted with.
+                rc('backend/command', {'command': 'set', 'fs': fs, 'opt': keys[fingerprint]})
+                return None
+            # rclone can't change an Azure mount's keys in place, so a SAS token about to end means mounting again
+            # with the new one. An account key doesn't expire.
+            if 'sas_url' not in keys[fingerprint] or keys_last(fingerprint, until):
+                return None
+        unmount(path)
+    make_folder(path, owner)
+    marked, moved = prepare(path, owner)
+    try:
+        mount(wanted, keys[fingerprint], owner)
+    except MountFailed:
+        if marked:
+            # Nothing was mounted, so the marker would later read as a lost mount.
+            os.remove(os.path.join(path, MARKER))
+        raise
+    return moved
 
 
 def ensure(request: dict[str, Any]) -> dict[str, Any]:
     wanted: dict[str, dict[str, Any]] = {mount['path']: mount for mount in request['mounts']}
     keys: dict[str, dict[str, str]] = request['keys']
+    run = str(request['owner'])
+    now = time.time()
+    lease_until = now + float(request['lease_seconds'])
+    lease = read_lease()
+    held = {holder: until for holder, until in lease['holders'].items() if until > now}
+    others = {holder: until for holder, until in held.items() if holder != run}
+    fingerprints = sorted(str(mount['fingerprint']) for mount in wanted.values())
+    if not wanted:
+        # A run with nothing to mount removes only what no run holds: an earlier run's mounts, not a concurrent run's,
+        # nor those of the run asking, which another of its workspaces put there.
+        if held:
+            return {'recovered': []}
+    elif others and lease['set'] != fingerprints:
+        raise MountFailed(
+            'busy',
+            'Another run is using this sandbox with different mounts. Run them one after another, or give each run '
+            'its own sandbox.',
+        )
     # The request is the whole set: a mount of an earlier configuration, or at a path no longer wanted, goes.
     for path, source in kernel_mounts().items():
         if source.startswith('pai-') and (path not in wanted or source != f'pai-{wanted[path]["fingerprint"]}'):
             unmount(path)
     if not wanted:
+        write_lease({'set': [], 'holders': {}})
         return {'recovered': []}
     install_fuse()
     start_daemon(install_rclone())
     # Mount folders belong to the agent's user, who owns the working directory.
     owner = os.stat(request['working_dir'])
-    recovered: list[str] = []
-    for path, wanted_mount in wanted.items():
-        fingerprint = str(wanted_mount['fingerprint'])
-        if os.path.realpath(path) != path:
-            # A symlink would put the mount, and the moving aside of strays, somewhere else.
-            raise MountFailed('conflict', f'{path} leads through a symlink; mount folders must be real folders')
-        source = kernel_mounts().get(path)
-        if source is not None and not source.startswith('pai-') and os.path.ismount(path):
-            raise MountFailed('conflict', f'{path} already has something else mounted on it')
-        if source == f'pai-{fingerprint}':
-            fs = served().get(path)
-            if fs is not None and alive(path):
-                if wanted_mount['remote']['type'] == 's3':
-                    # Fresh keys for the mount already there, so it outlives the ones it was mounted with. Azure
-                    # mounts use an account key, which doesn't expire.
-                    rc('backend/command', {'command': 'set', 'fs': fs, 'opt': keys[fingerprint]})
-                continue
-            unmount(path)
-        make_folder(path, owner)
-        moved = recover(path)
-        if moved is not None:
-            recovered.append(moved)
-        mount(wanted_mount, keys[fingerprint], owner)
+    recovered = [
+        moved for path, wanted_mount in wanted.items() if (moved := place(path, wanted_mount, keys, owner, lease_until))
+    ]
+    # Only once every mount is in place does this run hold them.
+    write_lease({'set': fingerprints, 'holders': {**others, run: lease_until}})
     return {'recovered': recovered}
 
 
 def _out_of_time(signum: int, frame: object) -> None:
-    raise MountFailed('timeout', f'mounting took longer than {DEADLINE_SECONDS} seconds')
+    raise MountFailed('timeout', f'Mounting took longer than {DEADLINE_SECONDS} seconds. Try again.')
 
 
 def main() -> None:
@@ -317,7 +425,7 @@ def main() -> None:
         # Two runs ensuring at once would mount twice on one path.
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            result = ensure(request)
+            result = release(request['release']) if 'release' in request else ensure(request)
         except MountFailed as error:
             result = {'error': error.code, 'message': str(error)}
     print(json.dumps(result))

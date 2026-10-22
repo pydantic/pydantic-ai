@@ -99,7 +99,7 @@ A new container gets `--pids-limit 2048`, so a runaway fork loop can't use up th
 
 ## Mount cloud storage
 
-Pass `mounts=` to show a [cloud storage filesystem](https://pydantic.dev/docs/ai/harness/cloud-storage/) as a folder. File tools always reach it. For commands to see it too (`shell=True`), the container needs FUSE, and the image needs Python 3 and `fuse3`:
+Pass `mounts=` to show a [cloud storage filesystem](https://pydantic.dev/docs/ai/harness/cloud-storage/) as a folder. File tools always reach it. For commands to see it too (`commands=True`), the container needs FUSE, and the image needs Python 3 and `fuse3`:
 
 ```python {names="defined"}
 from pydantic_ai import Agent
@@ -120,14 +120,14 @@ agent = Agent(
         DockerSandbox(
             image='my-image-with-fuse3',
             docker_args=['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', 'apparmor:unconfined'],
-            mounts=[Mount('reports', reports, shell=True)],
+            mounts=[Mount('reports', reports, commands=True)],
         ),
         Coder(),
     ],
 )
 ```
 
-`SYS_ADMIN` lets commands in the container mount filesystems, so the container isolates less; use it for code you trust. Shell commands can read the keys a mount uses, so only keys that expire are handed over; see [shell commands](https://pydantic.dev/docs/ai/harness/cloud-storage/#shell-commands).
+`SYS_ADMIN` lets commands in the container mount filesystems, so the container isolates less; use it for code you trust. Commands can read the keys a mount uses, so only keys that expire are handed over; see [commands](https://pydantic.dev/docs/ai/harness/cloud-storage/#commands).
 
 ## Reattach later
 

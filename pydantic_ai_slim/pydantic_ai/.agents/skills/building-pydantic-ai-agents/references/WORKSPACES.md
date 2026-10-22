@@ -31,7 +31,7 @@ claims only that exact ref: a foreign ref, or a local ref for another directory,
 cannot redirect the agent to another host directory (pass `workspace='new'` to start over in the
 configured one). For a single run, pass the backend instead:
 `agent.run(..., workspace=LocalWorkspaceBackend('.'))`, or
-`workspace=ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend('.')))` for a read-only run (outside
+`workspace=ReadOnlyWorkspace(LocalWorkspaceBackend('.'))` for a read-only run (outside
 durable execution; see below).
 Without an attached workspace, operations raise `WorkspaceUnavailableError`; a capability that needs one checks
 `ctx.workspace.attached` in `before_run` and raises a `UserError` naming what to attach. `Workspace` offers the same run

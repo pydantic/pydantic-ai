@@ -235,7 +235,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             `/root` on the default image, otherwise the image's own working directory.
         env: Environment variables every command gets; a command's own `env` is layered on top.
 
-    Shell commands see a [mount](https://pydantic.dev/docs/ai/harness/cloud-storage/) with `shell=True` when the sandbox runs with
+    Commands see a [mount](https://pydantic.dev/docs/ai/harness/cloud-storage/) with `commands=True` when the sandbox runs with
     `runtime='vm'`: Modal's default runtime refuses FUSE.
     """
 
@@ -269,6 +269,8 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
             raise TypeError('env keys and values must be strings')
         self._ref = ref if sandbox is None else WorkspaceRef(provider='modal', id=sandbox.object_id)
+        # Attached to an existing sandbox, an earlier run's mounts may be there.
+        self._mounter = _mounts.Mounter(self._run_as_root, attached=self._ref is not None)
         self._sandbox: modal.Sandbox | None = sandbox
         self._image = image
         self._app_name = app_name
@@ -769,12 +771,14 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
     def check_mount(self, mount: Mount) -> None:
         # Modal's default runtime (gVisor) refuses FUSE; its VM runtime allows it.
         if self._runtime != 'vm':
-            raise MountError("ModalSandbox can mount a filesystem for shell commands only with `runtime='vm'`.")
+            raise MountError("ModalSandbox can mount a filesystem for commands only with `runtime='vm'`; pass it.")
         _mounts.check_mount(mount)
 
     async def ensure_mounts(self, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
+        if not self._mounter.needed(mounts):
+            return None
         await self.get_sandbox()
-        return await _mounts.ensure_mounts(self._run_as_root, mounts, working_dir)
+        return await self._mounter.ensure(mounts, working_dir)
 
     async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
         import modal

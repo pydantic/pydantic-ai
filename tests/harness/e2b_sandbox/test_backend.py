@@ -1136,18 +1136,18 @@ _KEYS: Any = {
 }
 
 
+def _mount() -> Mount:
+    return Mount('data', S3Filesystem('s3://acme/data', credentials=_KEYS), commands=True)
+
+
 class TestMounts:
-    def test_buckets_with_expiring_keys_can_be_mounted(self, fake_e2b: FakeE2B) -> None:
-        backend = E2BSandboxBackend()
-        backend.check_mount(Mount('data', S3Filesystem('s3://acme/data', credentials=_KEYS), shell=True))
-        with pytest.raises(MountError, match='finds its keys in the environment'):
-            backend.check_mount(Mount('data', S3Filesystem('s3://acme/data'), shell=True))
+    async def test_a_new_sandbox_with_nothing_to_mount_is_not_started(self, fake_e2b: FakeE2B) -> None:
+        assert await E2BSandboxBackend().ensure_mounts([], '/w') is None
+        assert not fake_e2b.sandboxes
 
     async def test_the_mounter_runs_as_root_with_the_keys_on_stdin(self, fake_e2b: FakeE2B) -> None:
         fake_e2b.responder = lambda command, timeout: ('{"recovered": []}\n', '', 0)
-        await E2BSandboxBackend().ensure_mounts(
-            [Mount('data', S3Filesystem('s3://acme/data', credentials=_KEYS), shell=True)], '/w'
-        )
+        await E2BSandboxBackend().ensure_mounts([_mount()], '/w')
         commands = fake_e2b.sandboxes[0].commands
         (call,) = commands.calls
         (handle,) = commands.handles
@@ -1160,17 +1160,17 @@ class TestMounts:
         fake_e2b.responder = lambda command, timeout: ('', 'python3: command not found', 127)
         fake_e2b.stdin_error = NotFoundException('process not found')
         with pytest.raises(MountError, match='python3: command not found'):
-            await E2BSandboxBackend().ensure_mounts([], '/w')
+            await E2BSandboxBackend().ensure_mounts([_mount()], '/w')
 
     async def test_a_failed_mounter_is_killed(self, fake_e2b: FakeE2B) -> None:
         fake_e2b.wait_error = SandboxException('stream broke')
         with pytest.raises(WorkspaceError, match='stream broke'):
-            await E2BSandboxBackend().ensure_mounts([], '/w')
+            await E2BSandboxBackend().ensure_mounts([_mount()], '/w')
         (handle,) = fake_e2b.sandboxes[0].commands.handles
         assert handle.killed
 
     @pytest.mark.parametrize('anyio_backend', ['trio'])
     async def test_mounting_needs_asyncio(self, fake_e2b: FakeE2B, anyio_backend: str) -> None:
         with pytest.raises(UserError, match='need the asyncio event loop'):
-            await E2BSandboxBackend().ensure_mounts([], '/w')
+            await E2BSandboxBackend().ensure_mounts([_mount()], '/w')
         assert not fake_e2b.sandboxes

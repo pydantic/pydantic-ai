@@ -4,18 +4,22 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import Mounts, check_working_dir, with_mounts
+from pydantic_ai_harness._workspace_provider import Mounts, check_working_dir, release_mounts, with_mounts
 from pydantic_ai_harness.docker_sandbox._backend import (
     PROVIDER,
     DockerSandboxBackend,
     remove_container,
     resolve_executable,
 )
+
+if TYPE_CHECKING:
+    from pydantic_ai.agent import AgentRunResult
 
 
 @dataclass(kw_only=True)
@@ -107,3 +111,9 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
             executable=self._executable_path,
         )
         return with_mounts(backend, self.mounts, ctx)
+
+    async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        try:
+            return await handler()
+        finally:
+            await release_mounts(ctx)

@@ -216,17 +216,24 @@ class _Scope:
 
 
 def _commands_reach(scope: _Scope, path: str) -> bool:
-    """Whether `rg` can search `path`: the workspace runs commands, and shell commands see every mount there."""
+    """Whether `rg` can search `path`: the workspace runs commands, and commands see every mount there."""
     if not supports_commands(scope.workspace):
         return False
     target = posixpath.normpath(posixpath.join(scope.cwd, path))
-    for mount in scope.workspace.mounts:
-        root = posixpath.join(scope.cwd, mount.path)
-        if not mount.shell and (
-            root == target or root.startswith(f'{target.rstrip("/")}/') or target.startswith(f'{root}/')
-        ):
-            return False
-    return True
+    above = f'{target.rstrip("/")}/'
+    return _files_only_mount(scope, target) is None and not any(
+        root.startswith(above) for root in _files_only_roots(scope)
+    )
+
+
+def _files_only_roots(scope: _Scope) -> list[str]:
+    """Where the mounts that only file tools reach are."""
+    return [posixpath.join(scope.cwd, mount.path) for mount in scope.workspace.mounts if not mount.commands]
+
+
+def _files_only_mount(scope: _Scope, path: str) -> str | None:
+    """The folder of the mount only file tools reach that holds `path`, if any."""
+    return next((root for root in _files_only_roots(scope) if path == root or path.startswith(f'{root}/')), None)
 
 
 def _fall_back_from_ripgrep(scope: _Scope) -> None:
@@ -747,6 +754,11 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             raise PermissionError(
                 f'`{path}` leads outside {self._root_name(scope)} through a symlink; the file tools only work '
                 f'inside it. Use a path inside {self._root_place(scope)}, or a shell tool if you have one.'
+            )
+        if _files_only_mount(scope, resolved) != _files_only_mount(scope, real):
+            # Operations go to the path as written, which the workspace routes by its text alone.
+            raise PermissionError(
+                f'`{path}` leads into or out of a mounted folder through a symlink; use the path without the link.'
             )
         return resolved, real
 

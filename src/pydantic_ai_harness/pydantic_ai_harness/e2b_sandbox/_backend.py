@@ -231,7 +231,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         env: Environment variables every command gets, on a created or an attached sandbox;
             per-command `env` is layered on top. Nothing is read from the host environment.
 
-    Shell commands see a [mount](https://pydantic.dev/docs/ai/harness/cloud-storage/) with `shell=True`. A sandbox without `rclone` and
+    Commands see a [mount](https://pydantic.dev/docs/ai/harness/cloud-storage/) with `commands=True`. A sandbox without `rclone` and
     `fuse3` installs them on first use, which needs internet access; a custom template also needs `python3`.
     """
 
@@ -253,6 +253,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
             raise TypeError('env keys and values must be strings')
         self._ref = ref if sandbox is None else WorkspaceRef(provider='e2b', id=sandbox.sandbox_id)
+        # Attached to an existing sandbox, an earlier run's mounts may be there.
+        self._mounter = _mounts.Mounter(self._run_as_root, attached=self._ref is not None)
         self._sandbox = sandbox
         self._user = 'user'
         self._working_dir = absolute_path('working_dir', working_dir)
@@ -682,23 +684,21 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         _mounts.check_mount(mount)
 
     async def ensure_mounts(self, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
+        if not self._mounter.needed(mounts):
+            return None
         if not running_on_asyncio():
             raise UserError('E2B commands need the asyncio event loop: the E2B SDK runs them on asyncio tasks.')
         await self.get_sandbox()
-        return await _mounts.ensure_mounts(self._run_as_root, mounts, working_dir)
+        return await self._mounter.ensure(mounts, working_dir)
 
     async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
         sandbox = await self.get_sandbox()
         async with self._sdk_errors(sandbox.sandbox_id, 'Could not mount storage in the E2B sandbox'):
-            handle: e2b.AsyncCommandHandle | None = None
-            # Shielded so a started helper always has a handle to kill. `user='root'`, not `sudo`: the sandbox's
-            # journal records `sudo`'s arguments, though never stdin.
-            with anyio.CancelScope(shield=True):
-                handle = await sandbox.commands.run(
-                    shlex.join(argv), background=True, stdin=True, user='root', timeout=_SDK_STREAM_UNBOUNDED
-                )
-            if handle is None:  # pragma: no cover - the shield lets the start finish or raise
-                raise WorkspaceError('Could not mount storage in the E2B sandbox: the helper did not start')
+            # `user='root'`, not `sudo`: the sandbox's journal records `sudo`'s arguments, though never stdin. The
+            # caller shields this whole call, so a started helper always has a handle to kill.
+            handle = await sandbox.commands.run(
+                shlex.join(argv), background=True, stdin=True, user='root', timeout=_SDK_STREAM_UNBOUNDED
+            )
             try:
                 # The helper reads one line, so stdin needn't be closed (older templates can't).
                 try:

@@ -1260,7 +1260,7 @@ def _bucket_mount() -> Mount:
         'token': 't',
         'expires_at': datetime.now(UTC) + timedelta(hours=1),
     }
-    return Mount('data', S3Filesystem('s3://acme/data', credentials=keys), shell=True)
+    return Mount('data', S3Filesystem('s3://acme/data', credentials=keys), commands=True)
 
 
 async def test_only_the_vm_runtime_mounts_buckets(fake_modal: FakeModal) -> None:
@@ -1280,7 +1280,9 @@ async def test_mounting_sends_the_request_on_stdin_as_root(fake_modal: FakeModal
     backend = ModalSandboxBackend(runtime='vm')
     keys: Any = {'access_key_id': 'a', 'secret_access_key': 'secret', 'token': None}
     keys['expires_at'] = datetime.now(UTC) + timedelta(minutes=5)
-    await backend.ensure_mounts([Mount('data', S3Filesystem('s3://acme/data', credentials=keys), shell=True)], '/root')
+    await backend.ensure_mounts(
+        [Mount('data', S3Filesystem('s3://acme/data', credentials=keys), commands=True)], '/root'
+    )
 
     call = fake_modal.sandboxes[0].exec_calls[-1]
     # No user switch: Modal runs commands as the image's user, root on the default image.

@@ -957,12 +957,12 @@ class TestSpritesSandbox:
             'token': 't',
             'expires_at': datetime.now(UTC) + timedelta(hours=1),
         }
-        mount = Mount('data', S3Filesystem('s3://acme/data', credentials=keys), shell=True)
+        mount = Mount('data', S3Filesystem('s3://acme/data', credentials=keys), commands=True)
         backend = SpritesSandboxBackend()
 
         backend.check_mount(mount)
         with pytest.raises(MountError, match='MemoryFilesystem cannot be mounted'):
-            backend.check_mount(Mount('data', MemoryFilesystem(), shell=True))
+            backend.check_mount(Mount('data', MemoryFilesystem(), commands=True))
         await backend.ensure_mounts([mount], '/work')
 
         args = (bin_dir / 'sudo.args').read_bytes().split(b'\0')[:-1]

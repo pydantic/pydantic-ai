@@ -14,7 +14,7 @@ __all__ = ('Mount', 'MountError', 'SupportsMounts')
 
 
 class MountError(WorkspaceError):
-    """A mount could not be shown to shell commands: the sandbox can't mount it, or mounting it failed."""
+    """A mount could not be shown to commands: the sandbox can't mount it, or mounting it failed."""
 
 
 @dataclass(frozen=True)
@@ -25,12 +25,12 @@ class Mount:
     from pydantic_ai.workspaces import Mount
 
     Mount('data', s3)  # file tools see `data/`
-    Mount('data', s3, shell=True)  # the sandbox mounts it, so shell commands see `data/` too
+    Mount('data', s3, commands=True)  # the sandbox mounts it, so commands see `data/` too
     ```
     """
 
     path: str
-    """Where the folder appears: relative to the working directory, or absolute."""
+    """Where the folder appears, relative to the working directory, such as `'data'`."""
 
     filesystem: WorkspaceBackend
     """What the folder shows: the backend's working directory, read on the first file operation. It must store files
@@ -44,18 +44,19 @@ class Mount:
     description: str | None = None
     """What the folder is for, shown to the model."""
 
-    shell: bool = False
-    """Whether shell commands see the folder too.
+    commands: bool = False
+    """Whether commands see the folder too.
 
     With `True`, the workspace's backend mounts the filesystem in the environment, and the workspace refuses a backend
-    that has no shell or can't mount it. With `False`, only file tools reach the folder, and the model is told so.
+    that runs no commands or can't mount it. With `False`, only file tools reach the folder, and the model is told so.
     """
 
     def __post_init__(self) -> None:
-        # `normpath` keeps a leading `//`, which POSIX leaves to the system; here it is `/`.
-        path = posixpath.normpath(self.path).replace('//', '/', 1)
-        if path in ('.', '/') or path == '..' or path.startswith('../'):
-            raise ValueError(f'mount path must name a folder inside the workspace, got {self.path!r}')
+        path = posixpath.normpath(self.path)
+        if posixpath.isabs(path) or path == '.' or path == '..' or path.startswith('../'):
+            raise ValueError(
+                f"a mount path is a folder inside the working directory, such as 'data', got {self.path!r}"
+            )
         object.__setattr__(self, 'path', path)
         filesystem = self.filesystem
         # A backend that runs commands is an environment (a host's `/`, a sandbox), not a folder's contents. That
@@ -73,22 +74,24 @@ class Mount:
 
 @runtime_checkable
 class SupportsMounts(Protocol):
-    """Optional on a backend: mount filesystems in its environment, so shell commands see them.
+    """Optional on a backend: mount filesystems in its environment, so commands see them.
 
-    Only mounts with `shell=True` are passed here; file tools reach every mount without it.
+    Only mounts with `commands=True` are passed here; file tools reach every mount without it.
     """
 
     def check_mount(self, mount: Mount) -> None:
         """Raise [`MountError`][pydantic_ai.workspaces.MountError] saying why `mount` can't be mounted. No I/O.
 
-        Called when the workspace is built, so a mount that can't work is refused before the run.
+        Called when the workspace is built, so a mount that can't work is refused before the run. The message is
+        one or more full sentences, ending with what to do.
         """
         ...
 
     async def ensure_mounts(self, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
         """Mount `mounts` (the backend's whole set), repairing lost ones and removing others.
 
-        Relative mount paths are under `working_dir`. Return when to call again, such as before the keys a mount
+        Called before the workspace's first operation, with an empty set when nothing is to be mounted, so mounts an
+        earlier run left can go. Mount paths are relative to `working_dir`. Return when to call again, such as before the keys a mount
         uses expire, or `None`. Raise [`MountError`][pydantic_ai.workspaces.MountError] when a mount can't be
         provided.
         """
@@ -96,7 +99,7 @@ class SupportsMounts(Protocol):
 
 
 def within(path: str, folder: str) -> bool:
-    """Whether `path` is `folder` or inside it; both normalized, and both relative or both absolute."""
+    """Whether `path` is `folder` or inside it; both normalized."""
     return path == folder or path.startswith(folder.rstrip('/') + '/')
 
 
