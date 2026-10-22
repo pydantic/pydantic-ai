@@ -5231,6 +5231,69 @@ def test_google_grounding_uses_part_index_when_segment_text_repeats():
     }
 
 
+def test_google_grounding_offsets_count_across_text_parts():
+    """Without a part index, Gemini counts a segment's offsets across all the text parts joined together.
+
+    Unit test: Gemini answers in two text parts about 1 run in 10, so no recording has it. The texts and offsets are
+    from a live Gemini 2.5 Flash response.
+    """
+    first = 'Mount Columbia has an elevation of 3,747 meters (12,293 ft). It was first climbed in 1902.'
+    second = 'Mount Columbia has an elevation of 3,747 m (12,293 ft). It was first climbed in 1902.'
+    source = WebCitationSource(url='https://example.com')
+    sentence = 'It was first climbed in 1902'
+    segments = [
+        Segment(end_index=59, text='Mount Columbia has an elevation of 3,747 meters (12,293 ft)'),
+        Segment(start_index=61, end_index=89, text=sentence),
+        Segment(start_index=90, end_index=144, text='Mount Columbia has an elevation of 3,747 m (12,293 ft)'),
+        Segment(start_index=146, end_index=174, text=sentence),
+    ]
+    metadata = GroundingMetadata(
+        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri=source.url))],
+        grounding_supports=[GroundingSupport(grounding_chunk_indices=[0], segment=segment) for segment in segments],
+    )
+
+    citations = _map_citations([Part(text=first), Part(text=second)], metadata)
+
+    assert {index: part_citations for index, (part_citations, _) in citations.items()} == {
+        0: [
+            Citation(sources=[source], anchor=ContentCitationAnchor(start=0, end=59)),
+            Citation(sources=[source], anchor=ContentCitationAnchor(start=61, end=89)),
+        ],
+        1: [
+            Citation(sources=[source], anchor=ContentCitationAnchor(start=0, end=54)),
+            Citation(sources=[source], anchor=ContentCitationAnchor(start=56, end=84)),
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ('text', 'expected'),
+    [
+        pytest.param('Mount Columbia is 3,747 m high.', ContentCitationAnchor(start=0, end=14), id='unique'),
+        pytest.param('Mount Columbia, or Mount Columbia.', None, id='repeated'),
+        pytest.param('Another mountain.', None, id='missing'),
+    ],
+)
+def test_google_grounding_offsets_a_byte_off_use_the_segment_text(text: str, expected: ContentCitationAnchor | None):
+    """Offsets that don't select the segment text, which Gemini sometimes reports a byte off, fall back to the text.
+
+    The text anchors the citation only when it occurs once in the part, which is its only text part here. Unit test: about 1 Gemini Web Fetch run in 5
+    has such offsets, so no recording has them.
+    """
+    source = WebCitationSource(url='https://example.com')
+    metadata = GroundingMetadata(
+        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri=source.url))],
+        grounding_supports=[
+            GroundingSupport(
+                grounding_chunk_indices=[0], segment=Segment(start_index=1, end_index=15, text='Mount Columbia')
+            )
+        ],
+    )
+
+    citations, _ = _map_citations([Part(text=text)], metadata)[0]
+    assert citations == [Citation(sources=[source], anchor=expected)]
+
+
 def test_google_grounding_filters_sources_and_keeps_raw_confidence_scores():
     """Chunks that aren't sources are left out of the citation, but the raw data keeps every chunk index and score.
 
