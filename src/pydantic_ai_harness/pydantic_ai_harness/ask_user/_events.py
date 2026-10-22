@@ -22,7 +22,7 @@ class AskUserRequestedEvent(CapabilityEvent, namespace=ASK_USER_EVENTS, name='re
 
 @dataclass(kw_only=True)
 class AskUserAnsweredEvent(CapabilityEvent, namespace=ASK_USER_EVENTS, name='answered', dispatch='immediate'):
-    """The answerer returned, timed out, or raised; `response.cancelled` says whether the user declined.
+    """The answerer returned, timed out, or raised; if it returned, `response.cancelled` says whether the user declined.
 
     Emitted before the response is checked against the request, so a listener waiting since the
     request event is released even when the answerer misbehaved and the run is about to fail.
