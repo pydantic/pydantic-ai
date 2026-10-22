@@ -313,6 +313,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     # would not add durability, it would take over dispatch from the first without either saying so.
     _one_per_agent: ClassVar[str | None] = 'durable execution engine'
 
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        # The model-request hooks only route a run's model calls through the engine inside a durable
+        # context and pass through outside one; a realtime session makes no such calls to route.
+        return ()
+
     @property
     def engine_name(self) -> str:
         """Human-readable engine name used in error messages."""

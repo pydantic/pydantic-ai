@@ -195,6 +195,10 @@ class Instrumentation(AbstractCapability[Any]):
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
 
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        # A realtime session builds its own session and response spans from these settings.
+        return ()
+
     @classmethod
     def from_spec(
         cls,
