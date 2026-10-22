@@ -723,6 +723,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             instance_id = vars(self).setdefault('_batch_instance_id', uuid.uuid4().hex)
         return f'instance:{instance_id}'
 
+    def _no_batch_api_message(self) -> str:
+        """The error for batching this model when [`batch_max_requests`][pydantic_ai.models.Model.batch_max_requests] is `None`."""
+        return f'`{type(self).__name__}` {self.model_name!r} has no batch API.'
+
     def _batch_unlisted_status(self, batch: Batch) -> BatchResultStatus | None:
         """How the provider ended the requests an ended `batch` has no result for, if it says.
 

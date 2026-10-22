@@ -75,6 +75,30 @@ def _model(api_key: str = 'test-key', model_name: str = 'gpt-4.1-nano', **client
 
 
 @pytest.mark.parametrize(
+    ('model_factory', 'message'),
+    [
+        pytest.param(
+            lambda: OpenAIChatModel('gpt-4.1-nano', provider=OpenAIProvider(api_key='k')),
+            "`OpenAIChatModel` 'gpt-4.1-nano' has no batch API: batch it through the Responses API, with "
+            '`OpenAIResponsesModel` or the `openai:` prefix.',
+            id='openai',
+        ),
+        pytest.param(
+            lambda: OpenAIChatModel('openai/gpt-4.1-nano', provider=OpenRouterProvider(api_key='k')),
+            "`OpenAIChatModel` 'openai/gpt-4.1-nano' has no batch API.",
+            id='openrouter',
+        ),
+    ],
+)
+def test_batching_a_chat_completions_model_points_to_the_responses_api(
+    model_factory: Callable[[], OpenAIChatModel], message: str
+) -> None:
+    with pytest.raises(UserError) as exc_info:
+        BatchPool().wrap(model_factory())
+    assert str(exc_info.value) == message
+
+
+@pytest.mark.parametrize(
     'model_factory,max_requests',
     [
         pytest.param(lambda: _model(), 50_000, id='openai'),

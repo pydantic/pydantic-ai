@@ -771,6 +771,13 @@ class GoogleModel(Model[Client]):
     def batch_max_bytes(self) -> int | None:
         return None if self._is_google_cloud else _batch_module().MAX_BATCH_BYTES
 
+    def _no_batch_api_message(self) -> str:
+        # Only Google Cloud has no batch API this model can use.
+        return (
+            f'`GoogleModel` {self.model_name!r} has no batch API on Google Cloud, whose batch prediction jobs read '
+            'from Cloud Storage or BigQuery: batch it through the Gemini API, with the `google:` provider.'
+        )
+
     def batch_request_size(self, request: EncodedBatchRequest) -> int:
         return _batch_module().request_size(request)
 

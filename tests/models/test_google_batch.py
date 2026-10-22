@@ -121,8 +121,12 @@ async def test_gemini_batch_is_not_on_google_cloud() -> None:
     )
 
     assert model.batch_max_requests is None
-    with pytest.raises(UserError, match='has no batch API'):
+    with pytest.raises(UserError) as exc_info:
         BatchPool().wrap(model)
+    assert str(exc_info.value) == snapshot(
+        "`GoogleModel` 'gemini-2.5-flash-lite' has no batch API on Google Cloud, whose batch prediction jobs read "
+        'from Cloud Storage or BigQuery: batch it through the Gemini API, with the `google:` provider.'
+    )
     with pytest.raises(UserError, match='only supported by the Gemini API, not Google Cloud'):
         await model.batch_encode(_request())
 

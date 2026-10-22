@@ -1417,6 +1417,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             self.profile, self.settings, model_settings
         ) or super().resolve_cache_retention(model_settings)
 
+    def _no_batch_api_message(self) -> str:
+        if self.system == 'openai':
+            return (
+                f'`{type(self).__name__}` {self.model_name!r} has no batch API: batch it through the Responses API, with '
+                '`OpenAIResponsesModel` or the `openai:` prefix.'
+            )
+        return super()._no_batch_api_message()
+
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
 
