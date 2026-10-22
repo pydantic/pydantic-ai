@@ -60,6 +60,11 @@ class TemporalRunContext(DurableRunContext[AgentDepsT]):
             'https://github.com/pydantic/pydantic-ai/issues/7971.'
         )
 
+    @classmethod
+    def deserialize_run_context(cls, ctx: dict[str, Any], deps: Any) -> TemporalRunContext[Any]:
+        """Deserialize the run context from a `dict[str, Any]`."""
+        return cls(**ctx, deps=deps)
+
 
 def deserialize_run_context(
     run_context_type: type[TemporalRunContext[Any]],

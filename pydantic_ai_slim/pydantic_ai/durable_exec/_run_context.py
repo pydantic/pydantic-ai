@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Self, overload
+from typing import TYPE_CHECKING, Any, overload
 
 from pydantic import TypeAdapter
 from typing_extensions import TypeVar
@@ -324,7 +324,7 @@ class DurableRunContext(RunContext[AgentDepsT]):
         return serialized
 
     @classmethod
-    def deserialize_run_context(cls, ctx: dict[str, Any], deps: Any) -> Self:
+    def deserialize_run_context(cls, ctx: dict[str, Any], deps: Any) -> DurableRunContext[Any]:
         """Deserialize the run context from a `dict[str, Any]`."""
         return cls(**ctx, deps=deps)
 
