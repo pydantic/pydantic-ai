@@ -112,7 +112,8 @@ reports whether the reconnect carried the conversation through without cutting a
 
 How a reply the drop caught in flight is handled depends on the mechanism. Gemini reports
 `True` once the server has issued a resumption handle (shortly after connect; a drop before that
-reports `False` and cancels running tools) but closes the cut reply as an interrupted response
+reports `False`, cancels running tools, and dials a fresh session: the model loses the earlier turns,
+though the session's [message history](history.md) keeps them) but closes the cut reply as an interrupted response
 (keeping any partial transcript in history) before the
 [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] and stays
 quiet until the next input. Gemini issues no handle while a tool call is running, so a resumed
