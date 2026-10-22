@@ -13,8 +13,10 @@ from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     RetryFeedbackPart,
     TextContent,
     ToolReturnPart,
@@ -507,18 +509,35 @@ def _is_tool_continuation(message: ModelMessage) -> bool:
 
 
 def _restore_snapshot(ctx: RunContext[AgentDepsT], request_context: ModelRequestContext, part: UserPromptPart) -> None:
-    """Put a snapshot compaction dropped back into history, right after the latest prompt it kept.
+    """Put a snapshot compaction dropped back where the model will see it, without splitting a tool call from its result.
 
-    This only happens on the request where compaction rewrote the history, so the prefix that moves is the one
-    compaction already moved. It goes in as a request of its own, which the request ahead of it absorbs when sent.
+    It goes right after the latest prompt that follows the compaction boundary, as a request of its own that
+    the request ahead of it absorbs when sent. With no such prompt (native compaction mid tool loop leaves only
+    the compacted response and the tool results), it joins the request being sent, after its tool results:
+    anything before the boundary is dropped by the provider. This only happens on the request where compaction
+    rewrote the history, so the prefix that moves is the one compaction already moved.
     """
     history = ctx.messages
-    anchor = next((i for i in range(len(history) - 2, -1, -1) if _has_user_prompt(history[i])), -1)
-    anchor_message = history[anchor] if anchor >= 0 else None
+    boundary = next(
+        (
+            i
+            for i in range(len(history) - 1, -1, -1)
+            if isinstance(message := history[i], ModelResponse)
+            and any(isinstance(item, CompactionPart) for item in message.parts)
+        ),
+        -1,
+    )
+    anchor = next((i for i in range(len(history) - 2, boundary, -1) if _has_user_prompt(history[i])), None)
+    sent = (
+        None
+        if anchor is None
+        else next((i for i, message in enumerate(request_context.messages) if message is history[anchor]), None)
+    )
+    if anchor is None or sent is None:
+        ctx.enqueue(part)
+        return
     restored = ModelRequest(parts=[part])
     history.insert(anchor + 1, restored)
-    # With no prompt left, or one this request no longer sends, it leads the request instead.
-    sent = next((i for i, message in enumerate(request_context.messages) if message is anchor_message), -1)
     request_context.messages.insert(sent + 1, restored)
 
 

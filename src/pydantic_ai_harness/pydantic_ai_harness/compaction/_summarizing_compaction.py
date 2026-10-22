@@ -318,12 +318,48 @@ def _harness_data_origin(part: UserPromptPart) -> str | None:
             and origin.startswith(_HARNESS_ORIGIN_PREFIX)
         ):
             return origin
-        case [TextContent(metadata=str() as marker), *_] if marker == _LEGACY_MEMORY_MARKER or marker.startswith(
-            f'{_LEGACY_MEMORY_MARKER}:'
-        ):
+        case [item, *_] if _is_legacy_memory(item):
             return _LEGACY_MEMORY_MARKER
         case _:
             return None
+
+
+def _is_legacy_memory(item: UserContent) -> bool:
+    return isinstance(item, TextContent) and (
+        item.metadata == _LEGACY_MEMORY_MARKER
+        or (isinstance(item.metadata, str) and item.metadata.startswith(f'{_LEGACY_MEMORY_MARKER}:'))
+    )
+
+
+def _split_legacy_memory(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Give each legacy `Memory` snapshot that shares a user prompt part with other content a part of its own.
+
+    Older `Memory` releases could add their snapshot to the user's own prompt part, so it sits next to what the
+    user wrote, in either order. Split apart, the snapshot is summarized as harness data and the user's text
+    stays a user turn.
+    """
+    out: list[ModelMessage] = []
+    for message in messages:
+        if not isinstance(message, ModelRequest) or not any(
+            isinstance(part, UserPromptPart)
+            and not isinstance(part.content, str)
+            and len(part.content) > 1
+            and any(_is_legacy_memory(item) for item in part.content)
+            for part in message.parts
+        ):
+            out.append(message)
+            continue
+        parts: list[ModelRequestPart] = []
+        for part in message.parts:
+            if not isinstance(part, UserPromptPart) or isinstance(part.content, str) or len(part.content) < 2:
+                parts.append(part)
+                continue
+            user = [item for item in part.content if not _is_legacy_memory(item)]
+            if user:
+                parts.append(replace(part, content=user))
+            parts.extend(replace(part, content=[item]) for item in part.content if _is_legacy_memory(item))
+        out.append(replace(message, parts=parts))
+    return out
 
 
 def _is_harness_data(part: ModelRequestPart) -> bool:
@@ -710,7 +746,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             return messages
 
         system_parts = _extract_system_prompts(messages)
-        to_summarize = messages[:cutoff]
+        to_summarize = _split_legacy_memory(messages[:cutoff])
         preserved = messages[cutoff:]
 
         extra: list[ModelMessage] = []

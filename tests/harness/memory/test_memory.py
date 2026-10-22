@@ -30,7 +30,9 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    post_compaction_window,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -64,7 +66,14 @@ from pydantic_ai_harness.memory import (
     SqliteMemoryStore,
 )
 from pydantic_ai_harness.system_reminders import Reminder, SystemReminders
+from tests.conftest import try_import
 from tests.harness._recording_durability import RecordingDurability
+
+with try_import() as provider_imports:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 
 class FunctionToolsetRejectingDurability(RecordingDurability):
@@ -1719,6 +1728,62 @@ class TestInjection:
         assert not _memory_contexts(resumed.all_messages())
         nxt = await agent.run('and now?', message_history=resumed.all_messages())
         assert '- likes coffee' in _memory_contexts(nxt.all_messages())[-1]
+
+    @pytest.mark.skipif(not provider_imports(), reason='anthropic or openai not installed')
+    @pytest.mark.parametrize('provider', ['anthropic', 'openai'])
+    async def test_native_compaction_mid_run_restores_the_snapshot_after_the_boundary_once(self, provider: str) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- a fact')
+        sent: list[list[ModelMessage]] = []
+        compaction = (
+            CompactionPart(content='A summary without the memory.', provider_name='anthropic')
+            if provider == 'anthropic'
+            else CompactionPart(provider_name='openai', provider_details={'encrypted_content': 'opaque'})
+        )
+
+        @dataclass
+        class CompactMidRun(AbstractCapability[None]):
+            """Replaces the history with a compaction response and the current request, as `OpenAICompaction` does."""
+
+            async def before_model_request(
+                self, ctx: RunContext[None], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                if ctx.run_step == 2:
+                    ctx.messages[:] = [ModelResponse(parts=[compaction]), ctx.messages[-1]]
+                    request_context.messages = list(ctx.messages)
+                return request_context
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(messages)
+            if len(sent) == 1 and provider == 'anthropic':
+                # Anthropic compacts while it answers, in the same response as the next tool call.
+                return ModelResponse(parts=[compaction, ToolCallPart('lookup', {}, tool_call_id='call-1')])
+            if len(sent) < 3:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id=f'call-{len(sent)}')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        def lookup() -> str:
+            return 'found'
+
+        capabilities: list[AbstractCapability[None]] = [Memory(store=store)]
+        if provider == 'openai':
+            capabilities.insert(0, CompactMidRun())
+        agent = Agent(FunctionModel(model), deps_type=type(None), capabilities=capabilities)
+        agent.tool_plain(lookup)
+        result = await agent.run('go')
+
+        adapter = (
+            AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key='x'))
+            if provider == 'anthropic'
+            else OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key='x'))
+        )
+        [snapshot] = _memory_contexts(sent[0])
+        for messages in sent[1:]:
+            # What the provider is sent: everything before the boundary is dropped.
+            trimmed = adapter._trim_before_compaction(messages)  # pyright: ignore[reportPrivateUsage]
+            assert _memory_contexts(trimmed) == [snapshot]
+        # Restored on the request after compaction, then found there instead of restored again.
+        assert len(_memory_contexts(post_compaction_window(result.all_messages()))) == 1
 
     @pytest.mark.parametrize('preserve_first_user_message', [True, False])
     async def test_compaction_mid_run_keeps_the_run_snapshot_current(self, preserve_first_user_message: bool) -> None:
