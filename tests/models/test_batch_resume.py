@@ -17,10 +17,10 @@ import pytest
 
 from pydantic_ai import Agent, ModelMessagesTypeAdapter, PendingModelResponse
 from pydantic_ai.capabilities import BatchModelRequests
-from pydantic_ai.exceptions import ModelHTTPError, SuspendedResponseExpired
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, SuspendedResponseExpired
 from pydantic_ai.messages import ModelResponse
 
-from ..batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING
+from ..batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, UNRUN_MESSAGES
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -142,6 +142,15 @@ class _BatchAPI:
             for custom_id in self.custom_ids(batch_id)
         )
         self.batches[batch_id] |= {'status': 'completed', 'error_file_id': error_id}
+
+    def cancel_partway(self, batch_id: str, text: str) -> None:
+        """End the batch as cancelled after it ran its first request, with `text` as its response."""
+        output_id = f'file-output-{batch_id}'
+        custom_id = self.custom_ids(batch_id)[0]
+        self.files[output_id] = json.dumps(
+            {'custom_id': custom_id, 'response': {'status_code': 200, 'body': _response_body(text)}}
+        )
+        self.batches[batch_id] |= {'status': 'cancelled', 'output_file_id': output_id}
 
     def expire(self, batch_id: str) -> None:
         """End the batch after its completion window, without running its requests."""
@@ -350,3 +359,16 @@ async def test_a_credential_the_provider_denies_doesnt_join_a_concurrent_check()
     )
     assert isinstance(allowed, tuple) and allowed[0] == 'Hi!'
     assert isinstance(denied, SuspendedResponseExpired)
+
+
+async def test_a_batch_cancelled_partway_fails_the_requests_it_didnt_run() -> None:
+    """A batch someone cancelled delivers what it ran; the rest raise, saying so, and aren't submitted again."""
+    api = _BatchAPI()
+    first, second = await _two_histories(api)
+    api.cancel_partway('batch_0', 'Hi!')
+    ran, unran = sorted((first, second), key=lambda stored: api.custom_ids('batch_0')[0] not in stored.decode())
+
+    assert (await _resume(api, ran))[0] == 'Hi!'
+    with pytest.raises(ModelAPIError, match=UNRUN_MESSAGES['canceled']):
+        await _resume(api, unran)
+    assert list(api.batches) == ['batch_0']

@@ -310,9 +310,12 @@ async def _run_batches(
                 # The job ended without results, so its error is each of its requests' outcome.
                 results.update(dict.fromkeys(custom_ids, error))
             else:
+                unlisted = model._batch_unlisted_status(batch)  # pyright: ignore[reportPrivateUsage]
                 for custom_id in custom_ids:
-                    results[custom_id] = batch_results.get(custom_id) or missing_result_error(
-                        model.model_name, batch.id
+                    results[custom_id] = batch_results.get(custom_id) or (
+                        missing_result_error(model.model_name, batch.id)
+                        if unlisted is None
+                        else batch_models.BatchResult(custom_id=custom_id, status=unlisted)
                     )
     except BaseException:
         await _cancel_batches(model, batches)

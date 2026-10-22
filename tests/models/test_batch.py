@@ -886,6 +886,7 @@ async def test_wrapper_models_forward_the_batch_api() -> None:
     assert model.batch_max_requests == 10_000
     batch = await model.batch_create([await model.batch_encode(request)])
     assert (await model.batch_status(batch)).status == 'ended'
+    assert model._batch_unlisted_status(batch) is None  # pyright: ignore[reportPrivateUsage]
     assert (await model.batch_cancel(batch)).status == 'ended'
     [result] = await model.batch_results(batch)
     assert model.batch_decode(result, request).text == 'success (no tool calls)'

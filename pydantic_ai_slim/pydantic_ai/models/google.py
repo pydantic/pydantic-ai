@@ -145,7 +145,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 if TYPE_CHECKING:
-    from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
+    from .batch import Batch, BatchRequest, BatchResult, BatchResultStatus, EncodedBatchRequest
 
 
 _FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1)[^\\])*)\1\)')
@@ -776,6 +776,9 @@ class GoogleModel(Model[Client]):
 
     def _batch_credential(self) -> str:
         return _batch_module().batch_credential(self)
+
+    def _batch_unlisted_status(self, batch: Batch) -> BatchResultStatus | None:
+        return _batch_module().unlisted_status(batch)
 
     async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
         return await _batch_module().batch_encode(self, request)

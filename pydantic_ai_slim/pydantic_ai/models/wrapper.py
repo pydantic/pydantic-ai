@@ -27,7 +27,7 @@ from . import (
 from ._request_timeout import RequestDeadline
 
 if TYPE_CHECKING:
-    from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
+    from .batch import Batch, BatchRequest, BatchResult, BatchResultStatus, EncodedBatchRequest
 
 __all__ = ['WrapperModel']
 
@@ -82,6 +82,9 @@ class WrapperModel(Model):
 
     def _batch_credential(self) -> str:
         return self.wrapped._batch_credential()
+
+    def _batch_unlisted_status(self, batch: Batch) -> BatchResultStatus | None:
+        return self.wrapped._batch_unlisted_status(batch)
 
     async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
         return await self.wrapped.batch_encode(request)

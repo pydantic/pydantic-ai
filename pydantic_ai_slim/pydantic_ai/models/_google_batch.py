@@ -57,7 +57,7 @@ from ._batch_codec import (
     shared_group,
     unrun_error,
 )
-from .batch import Batch, BatchRequest, BatchResult, BatchStatus, EncodedBatchRequest
+from .batch import Batch, BatchRequest, BatchResult, BatchResultStatus, BatchStatus, EncodedBatchRequest
 from .google import (
     GoogleModel,
     GoogleModelSettings,
@@ -335,6 +335,16 @@ def _batch_group(model: GoogleModel) -> str:
         'model': model.model_name,
     }
     return json.dumps(group, sort_keys=True)
+
+
+def unlisted_status(batch: Batch) -> BatchResultStatus | None:
+    """Why a job left requests out of its results: a job canceled or expired while it ran writes rows for only some."""
+    state = (batch.provider_details or {}).get('state')
+    if state == JobState.JOB_STATE_CANCELLED.value:
+        return 'canceled'
+    if state == JobState.JOB_STATE_EXPIRED.value:
+        return 'expired'
+    return None
 
 
 def batch_credential(model: GoogleModel) -> str:

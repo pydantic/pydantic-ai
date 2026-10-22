@@ -8,6 +8,7 @@ raised before anything is sent, and results the API rarely produces on demand.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -17,7 +18,8 @@ import httpx2
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import ModelRequest, ModelResponse, ToolDefinition, UserPromptPart
+from pydantic_ai import Agent, ModelRequest, ModelResponse, ToolDefinition, UserPromptPart
+from pydantic_ai.capabilities import BatchModelRequests
 from pydantic_ai.direct import model_request_batch
 from pydantic_ai.exceptions import (
     ModelAPIError,
@@ -35,7 +37,7 @@ from pydantic_ai.models.batch import Batch, BatchRequest, BatchResult
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
 
-from ..batch_utils import UNRUN_MESSAGES
+from ..batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, UNRUN_MESSAGES
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -676,3 +678,50 @@ async def test_gemini_batch_forgets_the_oldest_uploaded_input_files(
     batch = await model.batch_status(await model.batch_create([await model.batch_encode(_request())]))
     await model.batch_results(batch)
     assert deleted == []
+
+
+def _counting_creates(monkeypatch: pytest.MonkeyPatch, model: GoogleModel) -> list[str]:
+    """Record the source file of every job created, on top of `_fake_jobs`."""
+    created: list[str] = []
+    create = model.client.aio.batches.create
+
+    async def counted(*, model: str, src: str, config: Any = None) -> BatchJob:
+        created.append(src)
+        return await create(model=model, src=src, config=config)
+
+    monkeypatch.setattr(model.client.aio.batches, 'create', counted)
+    return created
+
+
+@pytest.mark.parametrize(
+    'state, error, submissions',
+    [
+        pytest.param('JOB_STATE_CANCELLED', UNRUN_MESSAGES['canceled'], 1, id='canceled'),
+        pytest.param('JOB_STATE_EXPIRED', UNRUN_MESSAGES['expired'], 3, id='expired'),
+    ],
+)
+async def test_gemini_job_that_ended_partway_says_why_it_left_requests_out(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, state: str, error: str, submissions: int
+) -> None:
+    """A job canceled or expired while it ran writes rows for only some requests; the others ended the same way.
+
+    A canceled request isn't submitted again, as someone meant to stop it, while an expired one is.
+    """
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    _fake_jobs(
+        monkeypatch,
+        model,
+        {'state': state, 'dest': {'file_name': 'files/out'}},
+        [{'key': 'other', 'response': _OK_RESPONSE}],
+    )
+    created = _counting_creates(monkeypatch, model)
+    agent = Agent(model, capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)])
+
+    with pytest.raises(ModelAPIError, match=error):
+        await agent.run('Hello')
+    assert len(created) == submissions
+
+    created.clear()
+    (response,) = await model_request_batch(model, [_request()], **FAST_POLLING)
+    assert isinstance(response, ModelAPIError) and re.search(error, str(response))
+    assert len(created) == submissions

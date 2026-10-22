@@ -274,7 +274,8 @@ class BatchPool:
         self._polls: dict[
             tuple[asyncio.AbstractEventLoop, _CheckKey], asyncio.Task[tuple[Batch, dict[str, BatchResult] | None]]
         ] = {}
-        self._results: OrderedDict[_CheckKey, dict[str, BatchResult]] = OrderedDict()
+        # The ended batch, as the provider last described it, and its results.
+        self._results: OrderedDict[_CheckKey, tuple[Batch, dict[str, BatchResult]]] = OrderedDict()
         # The last status of each batch still in progress, with when it was checked, so requests resumed one after
         # another, like a loop over stored message histories, share a check per `poll_interval` rather than each
         # making one.
@@ -479,9 +480,9 @@ class BatchPool:
         """The batch's current state, and its results once it has ended, shared by concurrent checks of the batch."""
         batch = ticket['batch']
         check_key: _CheckKey = (model._batch_credential(), *_batch_key(batch))  # pyright: ignore[reportPrivateUsage]
-        if (results := self._results.get(check_key)) is not None:
+        if (ended := self._results.get(check_key)) is not None:
             self._results.move_to_end(check_key)
-            return batch, results
+            return ended
         if (status := self._statuses.get(check_key)) is not None:
             checked_at, checked = status
             if time.monotonic() - checked_at < self.poll_interval.total_seconds():
@@ -537,7 +538,7 @@ class BatchPool:
             with _expired_after_retention(batch):
                 results = {result.custom_id: result for result in await model.batch_results(batch)}
         self._statuses.pop(check_key, None)
-        self._results[check_key] = results
+        self._results[check_key] = batch, results
         # Requests abandoned while it ran no longer matter: an ended batch can't be cancelled.
         self._submitted.pop(_batch_key(batch), None)
         self._abandoned.pop(_batch_key(batch), None)
@@ -667,7 +668,10 @@ class BatchedModel(WrapperModel):
             checked['batch'] = batch
             checked['polls'] += 1
             return replace(pending, provider_details={**(pending.provider_details or {}), **_ticket_details(checked)})
-        result = results.get(ticket['custom_id'])
+        if (result := results.get(ticket['custom_id'])) is None and (
+            unlisted := self.wrapped._batch_unlisted_status(batch)
+        ) is not None:
+            result = BatchResult(custom_id=ticket['custom_id'], status=unlisted)
         try:
             if result is None:
                 raise missing_result_error(self.wrapped.model_name, batch.id)

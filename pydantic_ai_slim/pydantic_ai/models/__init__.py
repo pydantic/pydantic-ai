@@ -147,7 +147,7 @@ if TYPE_CHECKING:
 
     from ..agent.abstract import AbstractAgent
     from ..usage import RunUsage, UsageLimits
-    from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
+    from .batch import Batch, BatchRequest, BatchResult, BatchResultStatus, EncodedBatchRequest
 else:
     # Legacy HTTPX is optional, so this module has to import without it. The annotation then degrades
     # to `object`, dropping static checking of what `create_async_http_client` hands back — the client
@@ -722,6 +722,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         a model with another credential asks the provider itself. By default, the identity is this model instance.
         """
         return f'instance:{self._batch_instance_id}'
+
+    def _batch_unlisted_status(self, batch: Batch) -> BatchResultStatus | None:
+        """How the provider ended the requests an ended `batch` has no result for, if it says.
+
+        A provider that lists every request of a batch in its results returns `None`, as does one whose batch should
+        have a result for each request it held. One whose results leave out the requests a batch didn't run says why,
+        as `'expired'` or `'canceled'`.
+        """
+        return None
 
     def batch_request_size(self, request: EncodedBatchRequest) -> int:
         """The bytes `request` adds to a batch, which [`batch_max_bytes`][pydantic_ai.models.Model.batch_max_bytes] limits.
