@@ -57,7 +57,7 @@ the rest briefly in the review body.
 
 ## Targeted checks
 
-Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests, the third to every bug fix:
+Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests, the third to every bug fix, the fourth to every PR that touches message history:
 
 - **Profile-flag test pinning.** When the diff adds or modifies a
   `profile.get(...)` read under `pydantic_ai_slim/pydantic_ai/models/`, verify
@@ -82,6 +82,26 @@ Beyond free-form review, run these checks proactively; the first applies to ever
   it. Ask for placement that reaches only the reproduced surfaces, not for more
   recordings. Rate it **HIGH** when the PR body or tests show a reached surface
   already works on `main` without the change; otherwise **MEDIUM**.
+- **Message history and prompt cache.** When the diff enqueues or edits
+  messages, contributes instructions or tools, renders history in a model
+  adapter, wraps content in tags, or converts history to or from a UI protocol,
+  check it against the rules in `agent_docs/message-history-and-caching.md`:
+  no accidental, default-on or per-request rewrite of earlier history by
+  framework or harness code (compaction and explicit user-configured history
+  processors are intentional), no untrusted content in
+  system voice, no framework voice sent as a user string, no unescaped wrapper
+  payload, no framework record found by its text, and the same history always
+  renders to the same bytes. For tags: lowercase `snake_case` names, an
+  existing tag before a new one, an escape that neutralizes every opening and
+  closing spelling of every registered framing tag inside a data frame (only
+  `system` inside a `<system>` body) through `_framing.wrap()`, never a
+  hand-rolled escaper,
+  with tests for the variants and a cross-tag case, attributes limited to identity and
+  outcome, no unframed framework preamble before a frame on a user turn, no
+  "the tag that follows" references, and a live probe for new framing. Code that
+  re-renders history for another model must render framework data parts as
+  labeled untrusted data, never as user turns. Calibration is Example 6 in
+  `.review-context/review-instructions.md`.
 
 ## Review process
 
