@@ -141,6 +141,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [Docker Sandbox](docker-sandbox.md) | Harness | Commands and files in a local [Docker](https://www.docker.com/) or Podman container |
 | [SSH Workspace](ssh-workspace.md) | Harness | Commands and files on a remote host over your `ssh` client; no isolation |
 | [Bubblewrap Sandbox](bubblewrap-sandbox.md) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) sandbox on that workspace's host |
+| [Bucket](bucket.md) | Harness | A cloud storage bucket (S3, R2, Google Cloud Storage, Azure Blob) as a folder in the workspace, or as the whole workspace |
 
 ### Tools & native abilities
 

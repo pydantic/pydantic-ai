@@ -284,19 +284,22 @@ isolated backend for untrusted commands. On a backend without commands or `Suppo
 
 A [`Mount`][pydantic_ai.workspaces.Mount] shows storage, such as a bucket, as a folder in the workspace:
 
-```python {test="skip"}
+```python {lint="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.workspaces import Mount
+from pydantic_ai_harness.bucket import Bucket
 
+exports = Bucket('s3://acme-data/exports/')
 agent = Agent(
     '{{ anthropic:medium }}',
-    capabilities=[LocalWorkspace('.', mounts=[Mount('data', storage, read_only=True, description='Daily exports')])],
+    capabilities=[LocalWorkspace('.', mounts=[Mount('data', exports, read_only=True, description='Daily exports')])],
 )
 ```
 
-`storage` is any object implementing [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem]
-with paths starting at `/`, so `data/2026/a.csv` is `/2026/a.csv` in it. File tools always reach a mount.
+[`Bucket`](harness/bucket.md) is a cloud storage bucket. Any object implementing
+[`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem] with paths starting at `/` can be mounted,
+so `data/2026/a.csv` is `/2026/a.csv` in it. File tools always reach a mount.
 Shell commands see it only when the workspace can mount that storage; on `LocalWorkspace` they never do.
 Set `shell=True` to require that, or `shell=False` to keep a mount to file tools.
 

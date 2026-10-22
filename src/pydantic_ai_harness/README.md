@@ -156,6 +156,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [Docker Sandbox](pydantic_ai_harness/docker_sandbox/) | Harness | Commands and files in a local [Docker](https://www.docker.com/) or Podman container |
 | [SSH Workspace](pydantic_ai_harness/ssh_workspace/) | Harness | Commands and files on a remote host over your `ssh` client; no isolation |
 | [Bubblewrap Sandbox](pydantic_ai_harness/bubblewrap_sandbox/) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) sandbox on that workspace's host |
+| [Bucket](pydantic_ai_harness/bucket/) | Harness | A cloud storage bucket (S3, R2, Google Cloud Storage, Azure Blob) as a folder in the workspace, or as the whole workspace |
 
 ### Tools & native abilities
 

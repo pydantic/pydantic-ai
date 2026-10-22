@@ -387,6 +387,9 @@ navigation:
           - page: "Bubblewrap Sandbox"
             path: "harness/bubblewrap-sandbox.md"
             slug: "harness/bubblewrap-sandbox"
+          - page: "Bucket"
+            path: "harness/bucket.md"
+            slug: "harness/bucket"
       - section: "Tools & Native Abilities"
         slug: ""
         contents:

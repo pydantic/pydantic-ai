@@ -125,6 +125,7 @@ class WorkspaceBackendSuite:
     ) -> None:
         if not has_real_posix_shell or not can_detect_exit_with_inherited_output_pipes:
             pytest.skip('backend cannot observe the direct command exit independently of inherited output pipes')
+        commands = _commands(backend)
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
             release = posixpath.join(root, 'release')
@@ -134,9 +135,7 @@ class WorkspaceBackendSuite:
             command = 'while [ ! -f "$1" ]; do sleep 0.1; done; printf finished > "$2"'
             try:
                 with anyio.fail_after(60):  # Hang guard, not an assertion about remote speed.
-                    result = await _commands(backend).run(
-                        ['sh', '-c', f'({command}) & printf done', 'sh', release, finished]
-                    )
+                    result = await commands.run(['sh', '-c', f'({command}) & printf done', 'sh', release, finished])
                 assert (result.exit_code, result.stdout) == (0, 'done')
                 assert not await workspace.exists(finished)
             finally:
@@ -177,12 +176,13 @@ class WorkspaceBackendSuite:
     ) -> None:
         if not has_real_posix_shell:
             pytest.skip('fake has no foreground process to cancel')
+        commands = _commands(backend)
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
             pid_file = posixpath.join(root, 'pid')
 
             async def command() -> None:
-                await _commands(backend).run(['sh', '-c', 'echo $$ > "$1"; exec sleep 3600', 'sh', pid_file])
+                await commands.run(['sh', '-c', 'echo $$ > "$1"; exec sleep 3600', 'sh', pid_file])
 
             async with anyio.create_task_group() as tg:
                 tg.start_soon(command)
@@ -192,7 +192,7 @@ class WorkspaceBackendSuite:
                 tg.cancel_scope.cancel()
             pid = (await workspace.read_text(pid_file)).strip()
             with anyio.fail_after(60):
-                while (await _commands(backend).run(['sh', '-c', 'kill -0 "$1"', 'sh', pid])).exit_code == 0:
+                while (await commands.run(['sh', '-c', 'kill -0 "$1"', 'sh', pid])).exit_code == 0:
                     await anyio.sleep(0.05)  # pragma: lax no cover - depends on how fast the process dies
 
     async def test_env_is_added(self, backend: WorkspaceBackend) -> None:
