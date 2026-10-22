@@ -1,0 +1,113 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "519"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Take the country that borders both France and Austria and whose capital is not
+              its largest city. Give me information about its largest city.
+            type: text
+        model: claude-sonnet-5-5
+        output_config:
+          format:
+            type: json_schema
+            schema:
+              type: object
+              properties:
+                city:
+                  type: string
+                country:
+                  type: string
+                population:
+                  type: integer
+              additionalProperties: false
+              required:
+              - city
+              - country
+              - population
+        stream: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-6e7d883ff9926cf756e245f8b12aff96-0782a4adf078a487-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CfY6obk9b6FqLvcQLnbcu","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":273,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}              }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSzQgKEAgSGAI4AUIIdGhpbmtpbmcSDLw6TpE//fgCRCB51xoMbymvEK3yssi945HyIjA3iVVvkmts8KrCLKIGOb20jyitdJqWN2Fzx+NXvdN1+CRqMqdDfQkntU5NIKNs3JYq6gcQh5Lc+GEEhxCJhvrCpz4MnVrC5Kky/nPmjG7B4e2fb/rBoMyWeiFo2PesOqmAMQb6Qzn4uHlE4LO9KZ43TJeyEdm31i4EXWq20mALhRySUQPJa269M43p3hLh2nS2VI4VJfVLpNNHO8BtBev2F4ERRJQktP/7fc1PllZL/rTC6mEoopnycS1XBOiSsNXmsbGbwjLK8DTdsTdD/ksiL2+QBhXQ3cJbVRioYBmr3Yg85BFevS6EpW/ywNxK44mxxwsfe/PfEfv67q+yCVUOefI7kw/J/0IhRDMQ3BQ57ZAzm2E/cRTs1OxApPsMcQ8G0KEzyYRwnfAT623U2XaJLfGW28MBSvAKApnxMHPNbBNlmJQCHrZCMUgMHNDJQJD3aXVUSrKyuaHuM3vef1G8yRhCuwDKDfi7fiGfaMlkiC/egZ+qu7lJczxlPOV72LYcbf1TAdEKNV2D+lIZDx2vISfvLhOjtvvEuSLLjaa5J8Fe+LBq9VzwwlMhpSjEUR6sRwEw/dwZiJVEs9DwLuEWvEexexJJ2brr+nq3Lk973RvsOefgsVjOf0tOXQ5Ux1EpVnsVuGv8+yT/YCXJJWTB/9c5NvKbwTHa85VJRMRgeRRVLWQq+g9QntKCaFtK6EAv5nGh0iqbCt95TcQV2Jb9xjtq9HXMpJll9H3ynQgukVo20+nFS26DkBQodlBgncPWzQTDJCkEgfjNkgg3n31QWxEZdBjDJOSoMEdmTQ59bRVUhrrFHjWrKhyw3hE3EI2F1vyh895OCs4jfSCB92IVsYE6LARRwZTXS2j46HkySxbbvS656o5dur/O2ftHAElLKmT2ITa5krh1IZAkSD0Vu3XGqCqbz2dcJNHZY36Fin1FXruY3Yg4i/4dO4DZ4nOmD5dULUek58R9bVgYsJSk3dmqZzkgec6j9Em7N4FR8/GZ42ogGBhoGoq1nrSftxakbtRxsandFh+2q8/7G8h96vq7CAzDr2gUXnFCacgeDUv1NL4x1wwlj2KkjqnZ1pU6zYP1Dmoi7S60sALKLzK3zoPD3csW0SDwXJKDkk5MYgzzM+RrSzdwrMNtodul/pT8nzob0GVdHDARD5ccj8Ng5O/dT0wvJ1Vr4/dhvu/GS8l7VFYM7tJ8MlXqmTjulhim3LE5IgjXYJmpPyEkCarn0v+3DOgZL/AP2uFwadUwCKDPwifyi7Hw/aW9mGIO+G61j7MJ06f3B56ivp9wt0RQTupN95sFf1zLkhhSB1fhZ4qcwzkbatb7vOnnmGxFgixdvACFQ/22DJ1UmrTMeM1yFE8NRNhd+gG0A2JRMhPkdpgiaSkYCkgC9lLpbYEYAQ=="}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"{\"city\":\"Z"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"urich\",\"country\":\"Swit"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"zerland\",\"population\":443037"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"}"}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1               }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":273,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":287,"output_tokens_details":{"thinking_tokens":261}}       }
+
+        event: message_stop
+        data: {"type":"message_stop"          }
+
+  recorded_at: 2026-09-29T17:09:59.483268+00:00

@@ -6,18 +6,18 @@ import json
 import sys
 from collections.abc import Sequence
 from contextlib import AsyncExitStack, ExitStack
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import anyio
 from pydantic import ImportString, TypeAdapter, ValidationError
 
-from .. import __version__, models, usage as _usage
+from .. import __version__, _display, models, usage as _usage
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
 from ..exceptions import UserError
-from ..messages import FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse, ToolReturnPart
+from ..messages import FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse
 from ..models import infer_model, known_model_names
 from ..native_tools import NATIVE_TOOLS_REQUIRING_CONFIG, SUPPORTED_NATIVE_TOOLS
 from ..output import OutputDataT
@@ -125,7 +125,7 @@ def load_agent(agent_path: str) -> Agent[Any, Any] | None:
 
 @cli_agent.system_prompt
 def cli_system_prompt() -> str:
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
     tzinfo = now_utc.astimezone().tzinfo
     tzname = tzinfo.tzname(now_utc) if tzinfo else ''
     return f"""\
@@ -137,6 +137,63 @@ The user is running {sys.platform}."""
 def cli_exit(prog_name: str = 'clai'):  # pragma: no cover
     """Run the CLI and exit."""
     sys.exit(cli(prog_name=prog_name))
+
+
+def _print_intro(
+    console: Console,
+    agent: Agent[Any, Any],
+    model: models.Model | models.KnownModelName | str | None = None,
+    *,
+    agent_path: str | None = None,
+    toolsets: Sequence[AbstractToolset[Any]] | None = None,
+) -> None:
+    """Print the intro a chat session opens with.
+
+    Left to itself, the first run would print the banner into the middle of the answer to the first
+    prompt. A chat session knows what the agent is before then, so it shows the same banner up front.
+
+    What the session will actually do is resolved here the way a run resolves it, rather than read
+    off the agent as configured: an `override()` in force, or instrumentation switched on globally
+    by `Agent.instrument_all()`, would otherwise have the banner describe a different session than
+    the one the user is about to have.
+
+    Args:
+        console: Console to print to.
+        agent: The agent the session will run.
+        model: Model the session was asked to use, if not the agent's own.
+        agent_path: How the user asked for the agent, for one that doesn't name itself.
+        toolsets: Toolsets the session will pass to each run, which aren't on the agent — `clai`
+            loads `--mcp-config` into these, so leaving them out would undercount the session.
+    """
+    details = agent._startup_banner_details(model, toolsets)  # pyright: ignore[reportPrivateUsage]
+
+    try:
+        banner = _display.render_banner(
+            # A loaded agent doesn't always name itself, so fall back to how the user asked for it.
+            name=agent.name or agent_path,
+            model=details.model,
+            output_type=agent.output_type,
+            tools=details.tools,
+            capabilities=details.capabilities,
+            observability=not details.instrumented,
+            # The console already knows how wide the terminal is, `COLUMNS` and all, and re-asks it
+            # every time. Without one it answers 80 whether it read that off `COLUMNS` or had nothing
+            # to go on, so the width comes from the stream instead, which tells those two apart.
+            width=console.width if console.is_terminal else _display.terminal_width(console.file),
+        )
+        # Rendered by the console but written by hand: a write rich fails on stays in its buffer, so
+        # the next thing the session printed would re-emit the banner and fail outside this guard.
+        with console.capture() as capture:
+            # The banner arrives laid out in columns and pre-coloured, so rich reads its ANSI back
+            # rather than re-highlighting or re-wrapping it; `list[str]` as an output type isn't markup.
+            console.print(Text.from_ansi(banner), soft_wrap=True)
+        console.file.write(capture.get())
+    except Exception:
+        # Laying the banner out is inside the guard as well as writing it, the way the plain path
+        # has it: `render_banner` reads an output type's own `repr` and the console's width, neither
+        # of which is ours. A terminal whose encoding can't take the logo (`LC_ALL=C`) is no reason
+        # to fail a session before it starts; the chat opens without a header rather than not at all.
+        pass
 
 
 def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai:gpt-5') -> int:
@@ -208,6 +265,10 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
     args = parser.parse_args(args_list)
 
     from .web import run_web_command
+
+    # The web UI prints its own startup lines; a banner would arrive later, in the server log,
+    # triggered by whenever someone first sends a message in the browser.
+    _display.claim_banner()
 
     return run_web_command(
         agent_path=args.agent,
@@ -337,7 +398,10 @@ def _run_chat_command(
             return 1
 
     model_name = agent.model if isinstance(agent.model, str) else agent.model.model_id
-    if args.agent and model_arg_set:
+    # Nothing can print a second one later: `ask_agent` claims it before every run.
+    if _display.banner_available(is_terminal=console.is_terminal):
+        _print_intro(console, agent, agent_path=args.agent, toolsets=toolsets)
+    elif args.agent and model_arg_set:
         console.print(
             f'{name_version} using custom agent [magenta]{args.agent}[/magenta] with [magenta]{model_name}[/magenta]',
             highlight=False,
@@ -382,6 +446,17 @@ async def run_chat(
     usage_limits: _usage.UsageLimits | None = None,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
 ) -> int:
+    # `Agent.to_cli()` arrives here with nothing printed yet, so this is where its session gets the
+    # banner. `clai` printed its own intro and claimed the banner already, so it doesn't get a second.
+    # A session with no model at all has nothing to say about one, and its first prompt will fail on
+    # that anyway; `_print_intro` resolves which model it will be, overrides included.
+    if (
+        isinstance(agent, Agent)
+        and agent._has_model(model)  # pyright: ignore[reportPrivateUsage]
+        and _display.banner_available(is_terminal=console.is_terminal)
+    ):
+        _print_intro(console, agent, model, toolsets=toolsets)
+
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_history_path.touch(exist_ok=True)
@@ -458,6 +533,10 @@ async def ask_agent(
     *,
     usage: _usage.RunUsage | None = None,
 ) -> list[ModelMessage]:
+    # A chat session owns the terminal: it has already printed whatever intro it wanted, and a
+    # banner from the run itself would land in the middle of the answer to this prompt.
+    _display.claim_banner()
+
     status = Status('[dim]Working on it…[/dim]', console=console)
 
     # Count this turn into a fresh `RunUsage` so `usage_limits` stays per-run, then merge it into the
@@ -527,13 +606,14 @@ async def ask_agent(
                         async with node.stream(agent_run.ctx) as handle_stream:
                             async for event in handle_stream:
                                 if isinstance(event, FunctionToolCallEvent):
-                                    pending_calls[event.tool_call_id] = event.part.tool_name
+                                    # `args_valid is None`: the call won't run, e.g. it was skipped
+                                    # because a final result was already processed.
+                                    if event.args_valid is not None:
+                                        pending_calls[event.tool_call_id] = event.part.tool_name
                                 elif isinstance(event, FunctionToolResultEvent):
-                                    # Pop on any result, not just a `ToolReturnPart`: a call that
-                                    # comes back as a `RetryPromptPart` would otherwise stay pending
-                                    # and pin its indicator for the rest of the run.
-                                    pending_calls.pop(event.tool_call_id, None)
-                                    if isinstance(event.part, ToolReturnPart):
+                                    # Pop on any result, a retried one included: it would otherwise stay
+                                    # pending and pin its indicator for the rest of the run.
+                                    if pending_calls.pop(event.tool_call_id, None) is not None:
                                         content_pieces.append(f'> Called tool `{event.part.tool_name}`.')
                                 calling = [f'> _Calling tool `{name}`…_' for name in pending_calls.values()]
                                 live.update(Markdown('\n\n'.join([*content_pieces, *calling]), code_theme=code_theme))
@@ -542,7 +622,7 @@ async def ask_agent(
             return agent_run.result.all_messages()
     finally:
         if usage is not None:
-            usage.incr(turn_usage)
+            usage.incr(turn_usage)  # usage-attribution: the CLI's own cross-turn total, not a run's usage
 
 
 class CustomAutoSuggest(AutoSuggestFromHistory):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +39,6 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.openai import OpenAIRealtimeModelSettings
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed'),
 ]
 
@@ -117,6 +117,7 @@ async def test_text_in_audio_out_turn(
                 'output_text_tokens': 16,
                 'audio_tokens': 82,
             },
+            cost=Decimal('0.005568'),
             requests=1,
         )
     )

@@ -1,3 +1,7 @@
+---
+description: "Keep long Pydantic AI conversations within the context window using OpenAI or Anthropic native compaction, or trim and summarize message history on any model."
+---
+
 # Compaction
 
 As a conversation grows, its message history can approach the model's context window. *Compaction* keeps it in check by shrinking older messages (trimming, clearing, or summarizing them) while preserving recent context and tool-call integrity. Pydantic AI supports this at several levels: [provider-native compaction APIs](#provider-native-compaction), [model-agnostic history editing](#model-agnostic-compaction) you write yourself, and [Pydantic AI Harness](#pydantic-ai-harness)'s menu of ready-made model-agnostic strategies.
@@ -19,7 +23,7 @@ When dispatching a tool call, Pydantic AI uses the provider that served that res
 
 ### Client-held history
 
-[`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through the [UI adapters](../ui/overview.md), whose protocols have the client transmit the full conversation history on each request, so compacted conversations keep working with such frontends. A client-submitted compaction item is honored — the conversation stays compacted — but it is never trusted to stand in for the agent's [system prompt](../agent.md#system-prompts): that still reaches the model on every request, as described under [Loading untrusted history](../message-history.md#loading-untrusted-history).
+[`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through the [UI adapters](../ui/overview.md), whose protocols have the client transmit the full conversation history on each request, so compacted conversations keep working with such frontends. On AG-UI the compaction item is an activity message, which `@ag-ui/client` doesn't send back; see [Records carried as activity messages](../ui/ag-ui.md#activity-records). A client-submitted compaction item is honored — the conversation stays compacted — but it is never trusted to stand in for the agent's [system prompt](../agent.md#system-prompts): that still reaches the model on every request, as described under [Loading untrusted history](../message-history.md#loading-untrusted-history).
 
 If a run also receives its own server-side history — the [server-side persistence pattern](../ui/overview.md#trust-model-for-client-submitted-messages), where stored messages are passed as `message_history` and client messages only supply the latest turn — client-submitted compaction items are ignored instead. A compaction item marks a boundary before which nothing is sent to the model, so honoring one from the client would let it hide the server's own stored history from the model and substitute its summary for that context. Client-submitted compaction items are only honored when the client-transmitted messages are the entire conversation.
 

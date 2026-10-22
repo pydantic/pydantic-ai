@@ -19,7 +19,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='xai_sdk not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -63,6 +62,22 @@ async def test_xai_grok_45_thinking(allow_model_requests: None, xai_provider: Xa
     This confirms a real cassette-backed call succeeds and returns a thinking part.
     """
     m = XaiModel('grok-4.5', provider=xai_provider)
+    agent = Agent(m, model_settings={'thinking': True})
+
+    result = await agent.run('What is 2+2?')
+    assert '4' in result.output
+    response = next(m for m in result.all_messages() if isinstance(m, ModelResponse))
+    assert any(isinstance(p, ThinkingPart) for p in response.parts)
+
+
+async def test_xai_grok_47_thinking(allow_model_requests: None, xai_provider: XaiProvider):
+    """End-to-end smoke test that Grok 4.7 reasons when `reasoning_effort` is omitted.
+
+    `thinking=True` omits `reasoning_effort` so xAI applies Grok 4.7's documented `high` default; the
+    mapping is asserted at the wire level by `test_xai_grok_47_unified_thinking_reasoning_effort`.
+    This confirms a real cassette-backed call succeeds and returns a thinking part.
+    """
+    m = XaiModel('grok-4.7', provider=xai_provider)
     agent = Agent(m, model_settings={'thinking': True})
 
     result = await agent.run('What is 2+2?')
@@ -123,6 +138,38 @@ async def test_xai_grok_45_unified_thinking_reasoning_effort(
     response = create_response(content='ok')
     mock_client = MockXai.create_mock([response])
     m = XaiModel('grok-4.5', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(thinking=thinking))
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'ok'
+    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+    if expected_reasoning_effort is None:
+        assert 'reasoning_effort' not in kwargs
+    else:
+        assert kwargs['reasoning_effort'] == expected_reasoning_effort
+
+
+@pytest.mark.parametrize(
+    ('thinking', 'expected_reasoning_effort'),
+    [
+        # `thinking=False` is silently ignored: grok-4.7 is always-on, so no `reasoning_effort` is sent.
+        (False, None),
+        # `True` uses Grok 4.7's documented high default by omitting `reasoning_effort`.
+        (True, None),
+        ('minimal', 'low'),
+        ('low', 'low'),
+        ('medium', 'medium'),
+        ('high', 'high'),
+        ('xhigh', 'high'),
+    ],
+)
+async def test_xai_grok_47_unified_thinking_reasoning_effort(
+    allow_model_requests: None, thinking: ThinkingLevel, expected_reasoning_effort: str | None
+) -> None:
+    response = create_response(content='ok')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel('grok-4.7', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m, model_settings=ModelSettings(thinking=thinking))
 
     result = await agent.run('Hello')

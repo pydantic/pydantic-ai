@@ -1,3 +1,7 @@
+---
+description: "Make Pydantic AI agents durable with DBOS, checkpointing model requests and MCP calls to Postgres or SQLite so a workflow resumes from its last completed step."
+---
+
 # Durable Execution with DBOS
 
 [DBOS](https://www.dbos.dev/) is a lightweight [durable execution](https://docs.dbos.dev/architecture) library natively integrated with Pydantic AI.
@@ -79,7 +83,7 @@ dbos_config: DBOSConfig = {
 DBOS(config=dbos_config)
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     instructions="You're an expert in geography.",
     name='geography',  # (2)!
     capabilities=[DBOSDurability()],  # (3)!
@@ -125,7 +129,7 @@ Any agent can be wrapped in a [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAg
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.dbos import DBOSAgent
 
-agent = Agent('openai:gpt-5.6-sol', name='geography')
+agent = Agent('{{ openai:medium }}', name='geography')
 dbos_agent = DBOSAgent(agent)  # Use `dbos_agent` in place of `agent`.
 ```
 
@@ -155,9 +159,18 @@ Each [`MCPToolset`][pydantic_ai.mcp.MCPToolset] must have a unique [`id`][pydant
 MCP tools perform I/O and always run in their DBOS step. Setting a tool's `metadata={'dbos': False}`
 is rejected instead of running the MCP call inline in workflow code.
 
-[`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]s, including those contributed by a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], are wrapped too and require a stable `id`. Tool discovery, argument validation, and calls run as `{name}__dynamic_toolset__{id}.get_tools`, `{name}__dynamic_toolset__{id}.validate_args`, and `{name}__dynamic_toolset__{id}.call_tool` steps. A tool's [`args_validator`](../tools-advanced.md#args-validator) runs in the `validate_args` step, which re-resolves the toolset like `call_tool`; a tool without one schedules no validation step. Validation runs before [approval and deferral](../deferred-tools.md), so rejected arguments never reach an approver. The dynamic toolset is resolved and entered independently inside each step, so its I/O — including MCP communication — is checkpointed. For a `DynamicCapability`, DBOS reuses the capability resolved for the run inside those steps. The capability factory itself runs in workflow code and re-runs when a workflow recovers, so like all workflow code it must be deterministic given the run's `deps`: construct the toolset in the factory and leave its I/O to the steps.
+An MCP server is connected once per workflow rather than once per step: the first step that needs it
+connects it — inside a step, so DBOS retries a failed connection like any other step failure — and the
+workflow holds the session until the run ends. Tool discovery still runs its `get_tools` step, and
+whether it runs is decided by the run's own recorded history rather than by what a warm process
+happens to hold, so the step sequence stays the same on recovery; the server's own
+[`cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools] then answers those steps from the session the
+run is already holding, without another round trip. Concurrent runs in one process share a server's session, as they do outside a
+workflow, and it is closed once the last of them ends.
 
-A toolset contributed by a [capability](../capabilities/overview.md) — a [`Capability`][pydantic_ai.capabilities.Capability] with `tools=`, or a locally-running [`MCP`][pydantic_ai.capabilities.MCP] server — derives its `id` from the capability's own [`id`][pydantic_ai.capabilities.AbstractCapability.id], so set `Capability(id='...', tools=[...])` or `MCP(id='...', url='...')`. An `MCP` resolves its `id` in precedence order: an explicit `id=`, then a `native=MCPServerTool(...)` id, then a slug derived from the server URL's host and path. A bare non-URL local client (e.g. `MCP(local=Path(...))`) with none of these stays id-less and must be given an explicit `id` to be used here.
+[`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]s, including those contributed by a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], are wrapped too and require a stable `id`. Tool discovery, argument validation, and calls run as `{name}__dynamic_toolset__{id}.get_tools`, `{name}__dynamic_toolset__{id}.validate_args`, and `{name}__dynamic_toolset__{id}.call_tool` steps. A tool's [`args_validator`](../tools-advanced.md#args-validator) runs in the `validate_args` step, which re-resolves the toolset like `call_tool`; a tool without one schedules no validation step. Validation runs before [approval and deferral](../deferred-tools.md), so rejected arguments never reach an approver. All of the dynamic toolset's I/O — including MCP communication — happens inside those steps, so it is checkpointed. When the factory is built with `per_run_step=False`, the run resolves the toolset once and each step reuses it, entering it the first time a step needs it and leaving it entered for the rest of the run. Building a toolset is not the same as connecting it — an `MCPToolset` opens nothing until it is entered — so connecting happens inside a step, where it is retried like any other step failure. The factory itself runs in workflow code and re-runs whenever that replays, so like the capability factory below it must be deterministic given the run's `deps`: build the toolset in the factory and leave its I/O to the steps. This is the lifecycle a non-durable run gives the toolset, so a toolset's own caching — such as [`cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools] on an `MCPToolset` the factory returns — works as it does outside a workflow, instead of being discarded between steps. A `per_run_step=True` factory is re-resolved inside each step, as it asks to be. For a `DynamicCapability`, DBOS reuses the capability resolved for the run inside those steps. The capability factory itself runs in workflow code and re-runs when a workflow recovers, so like all workflow code it must be deterministic given the run's `deps`: construct the toolset in the factory and leave its I/O to the steps.
+
+A toolset contributed by a [capability](../capabilities/overview.md) — a [`Capability`][pydantic_ai.capabilities.Capability] with `tools=`, or a locally-running [`MCP`][pydantic_ai.capabilities.MCP] server — derives its `id` from the capability's own [`id`][pydantic_ai.capabilities.AbstractCapability.id], so set `Capability(id='...', tools=[...])` or `MCP(id='...', url='...')`. An `MCP` resolves its `id` in precedence order: an explicit `id=`, then a `native=MCPServerTool(...)` id, then the server URL's hostname. Two `MCP` capabilities on one host are rejected, so give each an explicit `id`. A bare non-URL local client (e.g. `MCP(local=Path(...))`) with none of these stays id-less and must be given an explicit `id` to be used here.
 
 Function tools and event stream handlers registered on the agent directly or through another capability are not automatically wrapped by DBOS. An `event_stream_handler=` passed to `DBOSDurability` runs inside a DBOS step and receives live-streamed events. For directly registered tools and handlers, you can decide how to integrate them:
 
@@ -172,9 +185,22 @@ All other agents and toolsets are supported.
 By default, DBOS checkpoints workflow inputs/outputs and step outputs into a database using [`pickle`](https://docs.python.org/3/library/pickle.html). But you can optionally supply a [custom serializer](https://docs.dbos.dev/python/reference/contexts#custom-serialization) through DBOS configuration. This means you need to make sure the [dependencies](../dependencies.md) object provided to [`Agent.run()`][pydantic_ai.agent.Agent.run] / [`Agent.run_sync()`][pydantic_ai.agent.Agent.run_sync], and tool outputs can be serialized.
 You may also want to keep the inputs and outputs small (under \~2 MB). PostgreSQL and SQLite support up to 1 GB per field, but large objects may impact performance.
 
+If you don't pass `run_id` or `conversation_id` to [`Agent.run()`][pydantic_ai.agent.Agent.run] in a workflow, the defaults are derived from the workflow ID rather than generated at random, so a recovered workflow keeps the IDs its completed steps already saw.
+
+### Workspaces
+
+Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent, and use `ctx.workspace` as in any run. Each workspace call made in workflow code, including from function tools, which DBOS runs in the workflow, is a step, so file contents and command output count toward the [size guidance above](#agent-run-context-and-dependencies).
+
+DBOS stores workflow-side workspace call arguments (commands, `env=`, file contents) in history.
+Keep secrets in the workspace capability's `env=` instead of passing them to workspace calls;
+calls from function tools run in the workflow too, so their arguments are stored as well. Protect stored history with an appropriate payload codec.
+
+Adding a workspace to an agent changes its workflows' steps, so let in-flight workflows finish or
+deploy the change as a new application version; DBOS can't recover a workflow started before it.
+
 ### Model Selection at Runtime
 
-[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. A model instance can't be serialized across the step boundary, and rebuilding one from its `model_id` string would build a *different* model — the same model name on whatever provider the worker's environment implies, so the request would go to another endpoint with other credentials. An instance that isn't registered ahead of time is therefore rejected with a `UserError`. There are two ways to use a specific instance: pre-register it by passing a `models` dict to [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] and reference it by key (or pass the registered instance), or pass a model-name string and build the instance inside the step with a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability — the right choice when the model depends on the run's `deps`, e.g. per-user credentials. Model-name strings themselves never need registering. The agent's own model, set at construction, is always available as the default.
+[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] supports both model strings (like `'{{ openai:medium }}'`) and model instances. A model instance can't be serialized across the step boundary, and rebuilding one from its `model_id` string would build a *different* model — the same model name on whatever provider the worker's environment implies, so the request would go to another endpoint with other credentials. An instance that isn't registered ahead of time is therefore rejected with a `UserError`. There are two ways to use a specific instance: pre-register it by passing a `models` dict to [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] and reference it by key (or pass the registered instance), or pass a model-name string and build the instance inside the step with a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability — the right choice when the model depends on the run's `deps`, e.g. per-user credentials. Model-name strings themselves never need registering. The agent's own model, set at construction, is always available as the default.
 
 To customize how a model string is built — a custom provider, or per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability before `DBOSDurability`: it gets first crack at every string, and the resolver runs again inside the step with the run's actual `deps`, so it must be deterministic for a given `(model_id, deps)` and must not perform external I/O.
 
@@ -196,15 +222,23 @@ A durability `event_stream_handler=` and a separately registered `ProcessEventSt
 
 A per-run handler passed to `Agent.run(event_stream_handler=...)` also runs workflow-side against replayed model events.
 
+Events emitted with [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] from inside a DBOS step — an MCP or dynamic-toolset tool, an `event_stream_handler`, or a tool you decorated with `@DBOS.step` — are delivered when the step actually runs, and are *not* re-emitted when its recorded result is replayed on recovery. Like a log line written inside a step, an emitted event is a side effect of running the step rather than part of its recorded result. Plain function tools and [capability](../capabilities/overview.md) hooks run in workflow code, where an emit re-runs with the rest of the workflow. Capability listeners registered with [`@on_event`][pydantic_ai.capabilities.on_event] run in workflow code too, so they re-run on recovery and must be deterministic; keep I/O in a durability `event_stream_handler=`, which runs in its own step. Unlike [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue], which is rejected inside a step because dropping it would change what the model sees, a missed event only means an observer wasn't notified. Carrying a durable unit's emitted events in its recorded output, so a replay reproduces them, is tracked in [pydantic-ai#7971](https://github.com/pydantic/pydantic-ai/issues/7971).
+
 Because the model stream is consumed inside the step, cancelling it from the workflow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary.
 
-[`CancellationToken`][pydantic_ai.CancellationToken] cannot be passed to a DBOS durable run, and [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] raises a clear [`UserError`][pydantic_ai.exceptions.UserError] inside a step-wrapped unit (a dynamic or MCP tool, or an `event_stream_handler`) whose recorded result would replay without re-running on recovery. A plain function tool runs at workflow level under DBOS, where `cancel()` works and is replay-consistent. To stop a run from outside, cancel the DBOS workflow.
+[`CancellationToken`][pydantic_ai.CancellationToken] cannot be passed to a DBOS durable run, and [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] raises a clear [`UserError`][pydantic_ai.exceptions.UserError] inside a step-wrapped unit (a dynamic or MCP tool, or an `event_stream_handler`) whose recorded result would replay without re-running on recovery. A plain function tool runs at workflow level under DBOS, where `cancel()` works and is replay-consistent. To stop a run from outside, cancel the DBOS workflow. DBOS aborts the run with its own exception rather than an `asyncio.CancelledError` (`DBOSWorkflowCancelledError`, or `DBOSWorkflowConflictIDError` on dbos 3.2 and later), but the run's state is attached to it all the same, so catching it inside the workflow and calling [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] recovers the [message history after cancellation](../agent.md#message-history-after-cancellation). The `DBOSAwaitedWorkflowCancelledError` the workflow's caller receives doesn't carry it, as DBOS builds that error from the workflow's recorded status.
 
 [`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] is not for workflow code: it requires no running event loop and wraps `run_stream()`. Under [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability], use the buffered async streaming APIs above or [`Agent.run()`][pydantic_ai.agent.Agent.run] with an event stream handler. Outside a workflow, an agent with `DBOSDurability` behaves like a normal agent, so `run_stream_sync()` works as usual. (Wrapper `DBOSAgent` forbids `run_stream` inside workflows — use `run` + event stream handler there.)
 
+### Run Timeouts
+
+A run's [`timeout=`](../timeouts.md#bounding-a-whole-run) works inside a workflow. The run's start time is recorded as a `{name}.run_start_time` step, so a recovered workflow keeps the deadline the run started with, and may find it has already passed. When the deadline passes, the run raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] in workflow code, where you can catch it. The deprecated `DBOSAgent` rejects `timeout=`.
+
+The deadline bounds the agent run, not the workflow. To bound the whole workflow as well, start it inside DBOS's `SetWorkflowTimeout`, which cancels the workflow when it expires.
+
 ### Suspended Turns and Background Mode
 
-When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request step. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first step. Size step timeouts for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation step.
+When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request step, and the wait between polls is a durable `DBOS.sleep` step, so recovery skips completed waits. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first step. Size step timeouts for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation step.
 
 ### Parallel Tool Execution
 
@@ -212,10 +246,15 @@ Under DBOS, tools are executed in parallel by default to minimize latency. To gu
 It's equivalent to the behavior of [`with agent.parallel_tool_call_execution_mode('parallel_ordered_events')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode].
 
 If you prefer strict ordering, you can configure the agent to run tools sequentially by setting `parallel_execution_mode='sequential'` on [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability].
+A run with a [workspace](../workspace.md) always runs its tool calls sequentially.
 
 ### Toolsets at Runtime
 
-Additional toolsets can be passed per run via `agent.run(toolsets=...)`. Non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools DBOS runs inline, are supported. [`MCPToolset`][pydantic_ai.mcp.MCPToolset]s and dynamic toolsets must be set when constructing the agent so their steps are registered before the workflow runs; passing them at runtime raises a `UserError`.
+Pass every executing toolset that needs durable wrapping to the agent constructor so its steps are registered before the workflow runs. This includes [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]: give it an explicit `id` and pass it to `Agent(toolsets=[...])`. The [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator registers after the engine's durable units were created, so under [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] using it inside a workflow raises a `UserError`. The deprecated `DBOSAgent` doesn't run this check: inside a workflow it runs the step-wrapped toolset list frozen at wrap time, so a toolset registered that late is silently left out of the run.
+
+Additional toolsets can be passed per run via `agent.run(toolsets=...)`. Non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools DBOS runs inline, are supported. [`MCPToolset`][pydantic_ai.mcp.MCPToolset]s and dynamic toolsets passed at runtime raise a `UserError`.
+
+Toolsets swapped in with [`agent.override(toolsets=...)`][pydantic_ai.agent.AbstractAgent.override] inside a workflow are held to the same rule, as they also arrive after the agent's steps were registered. A toolset added at runtime also cannot reuse the `id` of one the agent was constructed with, as the `id` is what identifies which registered toolset's step a tool call is dispatched to.
 
 
 ## Step Configuration
@@ -235,7 +274,7 @@ For custom tools, you can annotate them directly with [`@DBOS.step`](https://doc
 
 On top of the automatic retries for request failures that DBOS will perform, Pydantic AI and various provider API clients also have their own request retry logic. Enabling these at the same time may cause the request to be retried more often than expected, with improper `Retry-After` handling.
 
-When using DBOS, it's recommended to not use [HTTP Request Retries](../models/http-request-retries.md) and to turn off your provider API client's own retry logic, for example by setting `max_retries=0` on a [custom `OpenAIProvider` API client](../models/openai.md#custom-openai-client).
+When using DBOS, it's recommended to not use [transport retries](../retries.md#transport-retries) and to turn off your provider API client's own retry logic, for example by setting `max_retries=0` on a [custom `OpenAIProvider` API client](../models/openai.md#custom-openai-client).
 
 You can customize DBOS's retry policy using [step configuration](#step-configuration).
 

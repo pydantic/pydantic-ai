@@ -64,7 +64,7 @@ class TogetherProvider(_OpenAICompatibleProvider):
                 # DeepSeek's V4 models reject a forced tool choice while thinking is on, and thinking is
                 # their default. Whether Together honors DeepSeek's thinking toggle is unverified, so the
                 # restriction is unconditional here rather than per request as it is on `DeepSeekProvider`.
-                profile = merge_profile(profile, OpenAIModelProfile(openai_supports_tool_choice_required=False))
+                profile = merge_profile(profile, OpenAIModelProfile(supports_forced_tool_choice=False))
 
         # As the Together API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly

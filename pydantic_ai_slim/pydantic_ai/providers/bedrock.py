@@ -3,7 +3,8 @@ from __future__ import annotations as _annotations
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal, overload
+from datetime import timedelta
+from typing import Any, ClassVar, Literal, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
@@ -23,6 +24,8 @@ from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers._bedrock_model_names import (
     BEDROCK_GEO_PREFIXES as BEDROCK_GEO_PREFIXES,  # re-exported for backwards compatibility
+    bedrock_claude_cache_retentions,
+    bedrock_lacks_claude_structured_output,
     remove_bedrock_geo_prefix as remove_bedrock_geo_prefix,  # re-exported for backwards compatibility
     split_bedrock_model_id,
 )
@@ -83,6 +86,8 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
     `description` so the model still has the hint.
     """
 
+    _unsupported_keys_by_type: ClassVar[dict[str, tuple[str, ...]]] = _BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE
+
     def walk(self) -> JsonSchema:
         schema = super().walk()
 
@@ -107,7 +112,7 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
 
         incompatible: dict[str, object] = {}
         if isinstance(schema_type, str):
-            for key in _BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE.get(schema_type, ()):
+            for key in self._unsupported_keys_by_type.get(schema_type, ()):
                 if key in schema:
                     incompatible[key] = schema[key]
             if schema_type == 'array' and schema.get('minItems', 0) > 1:
@@ -122,6 +127,28 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
             desc = schema.get('description')
             schema['description'] = notes_str if not desc else f'{desc} ({notes_str})'
 
+        return schema
+
+
+class _BedrockJsonSchemaTransformerWithoutContains(BedrockJsonSchemaTransformer):
+    # Claude, GLM, Qwen and Gemma reject `contains`; Ministral accepts it. Keep the fallback model-specific.
+    # Verified on Bedrock us-east-1; see https://github.com/pydantic/pydantic-ai/issues/10713.
+    _unsupported_keys_by_type: ClassVar[dict[str, tuple[str, ...]]] = {
+        **_BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE,
+        'array': (*_BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE['array'], 'contains'),
+    }
+
+
+class _BedrockAnthropicJsonSchemaTransformer(_BedrockJsonSchemaTransformerWithoutContains):
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        schema = super().transform(schema)
+        schema_type = schema.get('type')
+        # Claude also rejects contains on nullable array type lists; GLM, Qwen and Gemma accept it.
+        # Keep the matching-type traversal boundary: the contains subschema is not walked here.
+        if self.strict and isinstance(schema_type, list) and 'array' in schema_type and 'contains' in schema:
+            note = f'contains={schema.pop("contains")}'
+            description = schema.get('description')
+            schema['description'] = note if not description else f'{description} ({note})'
         return schema
 
 
@@ -202,7 +229,7 @@ class BedrockModelProfile(ModelProfile, total=False):
     """
 
     bedrock_supports_adaptive_thinking: bool
-    """Whether this model accepts `{'thinking': {'type': 'adaptive'}}` (Sonnet 4.6+, Opus 4.6+).
+    """Whether this model accepts `{'thinking': {'type': 'adaptive'}}` (Haiku 5.5, Sonnet 4.6+, Opus 4.6+).
 
     Only meaningful for the `'anthropic'` variant. When False, the variant falls back to
     `{'type': 'enabled', 'budget_tokens': N}` for pre-4.6 models.
@@ -211,7 +238,7 @@ class BedrockModelProfile(ModelProfile, total=False):
     """
 
     bedrock_supports_effort: bool
-    """Whether this model emits `output_config.effort` on Bedrock Converse (Sonnet 4.6+, Opus 4.6+).
+    """Whether this model emits `output_config.effort` on Bedrock Converse (Haiku 5.5, Sonnet 4.6+, Opus 4.6+).
 
     Only meaningful for the `'anthropic'` variant AND only honored alongside
     `bedrock_supports_adaptive_thinking=True`. Bedrock has not been verified to accept
@@ -236,28 +263,53 @@ class BedrockModelProfile(ModelProfile, total=False):
       Converse; Cohere's `k` and Qwen's key are unverified on Converse, so they stay here too).
     """
 
+    bedrock_tool_choice_none_variant: Literal['anthropic'] | None
+    """How `tool_choice='none'` is sent once the history has a tool call.
+
+    Converse's `toolChoice` has no `none` mode, so the tools are dropped from the request instead. Converse rejects
+    `toolUse`/`toolResult` blocks without a `toolConfig`, though, so once the history has them the tools are kept:
+
+    - `'anthropic'`: `toolChoice` is omitted and `{'tool_choice': {'type': 'none'}}` is sent in
+      `additionalModelRequestFields`. Bedrock 400s when this is combined with a Converse `toolChoice`.
+    - `None`: no native `none` exists, so `toolChoice` is omitted and the model can still call the tools.
+
+    Default: `None`.
+    """
+
+    bedrock_document_cache_point_variant: Literal['anthropic'] | None
+    """Where a cache point goes when the message ends with documents.
+
+    Bedrock rejects a `cachePoint` directly after some document blocks, so it can't always go at the end:
+
+    - `'anthropic'`: a `cachePoint` may follow a PDF, so it's appended, for a `CachePoint` too. Bedrock renders
+      documents of every other format as text, moves them to the front of the message unless a `cachePoint`
+      precedes them, and rejects a `cachePoint` after them. When the message has no earlier `cachePoint`, an
+      automatic `bedrock_cache_messages` cache point goes at the end, with such trailing documents moved ahead of
+      the block before them, unless that's a PDF: the rendered prompt is unchanged, and matches the next request's,
+      which no longer has this `cachePoint`, so that request reads the cache.
+    - `None`: the `cachePoint` goes before the trailing documents and videos.
+
+    Default: `None`.
+    """
+
+    bedrock_disallows_sampling_settings: bool
+    """Whether Converse rejects `temperature`, `top_p` and `top_k` for this model. Default: `False`.
+
+    When set, `BedrockConverseModel` drops these settings with a warning instead of sending them.
+    """
+
     bedrock_supported_on_converse: bool
     """Whether this model is served by the Bedrock Converse API. Default: `True`.
 
     Set to `False` for models that Bedrock serves only through the Mantle OpenAI-compatible API (today,
-    the proprietary OpenAI GPT models); `BedrockConverseModel` raises at construction so the user gets an
-    actionable pointer to `BedrockMantleProvider` instead of an opaque Converse error at request time.
+    the proprietary OpenAI GPT models not allowlisted in `bedrock_openai_model_profile`);
+    `BedrockConverseModel` raises at construction so the user gets an actionable pointer to
+    `BedrockMantleProvider` instead of an opaque Converse error at request time.
     """
 
 
 def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model used via Bedrock."""
-    # These models support structured output on the direct Anthropic API but are not listed
-    # in the Bedrock Runtime structured-output docs:
-    # https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
-    bedrock_structured_output_unsupported = (
-        'claude-opus-4-1',
-        'claude-opus-4-7',
-        'claude-opus-4-8',
-        'claude-opus-5',
-        'claude-sonnet-5',
-        'claude-fable-5',
-    )
     downstream = anthropic_model_profile(model_name)
     supports_adaptive = bool((downstream or {}).get('anthropic_supports_adaptive_thinking', False))
     # Bedrock only honors effort inside the adaptive branch of `_build_additional_model_request_fields`, so don't claim
@@ -269,6 +321,9 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_send_back_thinking_parts=True,
             bedrock_supports_prompt_caching=True,
             bedrock_supports_tool_caching=True,
+            supports_cache=True,
+            # AWS grants the 1-hour cache TTL to only a subset of Claude models.
+            supported_cache_retentions=bedrock_claude_cache_retentions(model_name),
             bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
             # Anthropic on Bedrock rejects a `toolResult` co-located with a document or video block, but
             # accepts text and images alongside it. See https://github.com/pydantic/pydantic-ai/issues/6081.
@@ -278,16 +333,20 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_supports_adaptive_thinking=supports_adaptive,
             bedrock_supports_effort=supports_effort,
             bedrock_top_k_variant='anthropic',
+            bedrock_tool_choice_none_variant='anthropic',
+            bedrock_document_cache_point_variant='anthropic',
         ),
         _strip_builtin_tools(downstream),
     )
-    supports_structured_output = profile.get('supports_json_schema_output', False) and not model_name.startswith(
-        bedrock_structured_output_unsupported
-    )
+    supports_structured_output = profile.get(
+        'supports_json_schema_output', False
+    ) and not bedrock_lacks_claude_structured_output(model_name)
     return merge_profile(
         profile,
         BedrockModelProfile(
-            json_schema_transformer=BedrockJsonSchemaTransformer,
+            json_schema_transformer=(
+                _BedrockAnthropicJsonSchemaTransformer if supports_structured_output else BedrockJsonSchemaTransformer
+            ),
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
         ),
@@ -308,6 +367,8 @@ def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
             BedrockModelProfile(
                 bedrock_supports_tool_choice=True,
                 bedrock_supports_prompt_caching=True,
+                supports_cache=True,
+                supported_cache_retentions=('5m',),
                 bedrock_top_k_variant='nova',
             ),
         )
@@ -384,7 +445,11 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_thinking_variant='qwen',
             supports_thinking=supports_reasoning,
             thinking_always_enabled=supports_reasoning,
-            json_schema_transformer=BedrockJsonSchemaTransformer,
+            json_schema_transformer=(
+                _BedrockJsonSchemaTransformerWithoutContains
+                if supports_structured_output
+                else BedrockJsonSchemaTransformer
+            ),
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
             # Bedrock Converse API doesn't support JSON object mode
@@ -404,7 +469,11 @@ def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
     return merge_profile(
         _strip_builtin_tools(google_model_profile(model_name)),
         BedrockModelProfile(
-            json_schema_transformer=BedrockJsonSchemaTransformer,
+            json_schema_transformer=(
+                _BedrockJsonSchemaTransformerWithoutContains
+                if supports_structured_output
+                else BedrockJsonSchemaTransformer
+            ),
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
             # Bedrock Converse API doesn't support JSON object mode
@@ -422,7 +491,7 @@ def bedrock_zai_model_profile(model_name: str) -> ModelProfile | None:
         BedrockModelProfile(
             bedrock_supports_tool_choice=True,
             bedrock_supports_leading_assistant_message=True,
-            json_schema_transformer=BedrockJsonSchemaTransformer,
+            json_schema_transformer=_BedrockJsonSchemaTransformerWithoutContains,
             supports_json_schema_output=True,
             bedrock_supports_strict_tool_definition=True,
         ),
@@ -451,10 +520,8 @@ def bedrock_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
 
 
 # MiniMax, NVIDIA, and Writer don't have non-Bedrock provider modules in `pydantic_ai/profiles/`, so
-# these profile fns build a `BedrockModelProfile` from scratch instead of composing with an
-# upstream profile via `_strip_builtin_tools(<upstream>_model_profile(model_name))` like the
-# other `bedrock_<vendor>_model_profile` fns do. The inline `'openai'` lambda in
-# `BedrockProvider.model_profile` follows the same from-scratch pattern for the same reason.
+# these profile fns build a `BedrockModelProfile` from scratch instead of composing with an upstream
+# profile. OpenAI is handled separately because Converse support differs between its model families.
 
 
 def bedrock_writer_model_profile(model_name: str) -> ModelProfile | None:
@@ -495,16 +562,30 @@ def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
     )
 
 
+_BEDROCK_OPENAI_30_MINUTE_CACHE_MODELS = frozenset({'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'})
+
+
 def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an OpenAI model used via Bedrock Converse."""
-    # Only the open-weight GPT-OSS family is served on Converse; every proprietary GPT model (GPT-5.4+
-    # today, and future GPT-6/7/… tomorrow) is Bedrock Mantle-only. Flag those as unsupported so
-    # `BedrockConverseModel` raises an actionable error at construction rather than failing later with an
-    # opaque Converse error.
+    # Exact names, not prefixes: GPT-5.6 Cyber is Mantle-only, unlike Sol/Luna/Terra.
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-sol.html
+    # GPT-6 Sol/Luna have no AWS model card; their Converse support was verified with live requests.
+    if model_name in {
+        'gpt-5.6-sol',
+        'gpt-5.6-luna',
+        'gpt-5.6-terra',
+        'gpt-6-sol',
+        'gpt-6-luna',
+        'gpt-6-astra',
+        'gpt-6.1-sol',
+    }:
+        # Converse rejects `temperature`, `top_p` and `top_k` for these; everything else keeps the defaults.
+        return BedrockModelProfile(bedrock_disallows_sampling_settings=True)
+    # Keep other proprietary GPT models gated until their Converse support is confirmed.
     if not model_name.startswith('gpt-oss'):
         return BedrockModelProfile(bedrock_supported_on_converse=False)
-    # TODO(v3): default `bedrock:` to Bedrock Mantle (with a deprecation warning steering users who want
-    # Converse to a `bedrock-converse:` prefix), mirroring the OpenAI Responses transition.
     # Converse rejects `reasoning_effort='none'` — mark always-on.
     return BedrockModelProfile(
         bedrock_thinking_variant='openai',
@@ -546,13 +627,27 @@ class BedrockProvider(Provider[BaseClient]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-            'anthropic': bedrock_anthropic_model_profile,
+            'anthropic': lambda model_name: merge_profile(
+                bedrock_anthropic_model_profile(model_name),
+                # Bedrock's Claude model cards document a 5-minute TTL; some models accept a 1-hour
+                # `cachePoint` TTL, which `prompt_cache_outlook` detects in message history.
+                # https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
+                ModelProfile(default_cache_retention=timedelta(minutes=5)),
+            ),
             'mistral': bedrock_mistral_model_profile,
             'cohere': lambda model_name: _strip_builtin_tools(cohere_model_profile(model_name)),
             'amazon': bedrock_amazon_model_profile,
             'meta': bedrock_meta_model_profile,
             'deepseek': lambda model_name: _strip_builtin_tools(bedrock_deepseek_model_profile(model_name)),
-            'openai': bedrock_openai_model_profile,
+            'openai': lambda model_name: merge_profile(
+                bedrock_openai_model_profile(model_name),
+                # Bedrock documents a 30-minute minimum TTL for exactly these; other OpenAI models get
+                # automatic caching with no documented retention.
+                # https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
+                ModelProfile(default_cache_retention=timedelta(minutes=30))
+                if model_name in _BEDROCK_OPENAI_30_MINUTE_CACHE_MODELS
+                else None,
+            ),
             'qwen': bedrock_qwen_model_profile,
             'google': bedrock_google_model_profile,
             'minimax': bedrock_minimax_model_profile,
