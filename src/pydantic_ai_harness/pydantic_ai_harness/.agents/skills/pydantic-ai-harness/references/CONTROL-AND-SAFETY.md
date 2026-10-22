@@ -511,7 +511,9 @@ agent = Agent(
   are escaped.
 - `LLMReminder(model=...)` (model required) makes one extra model call per request; its agent is
   built on first use, so no provider key is needed at construction. On any error it sends
-  `GoalReanchor` text instead, with no warning or log; gate it with your own cadence wrapper.
+  `GoalReanchor` text instead, logging a warning with the traceback once per run under
+  `pydantic_ai_harness.system_reminders`; only a budget too tight for the extra request is silent.
+  Gate it with your own cadence wrapper.
 - Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored:
   pass `cache_ttl=None`, since leaving it unset warns that the default breakpoint is gone.
 - `SystemReminders` adds no cache breakpoint; `Planning` adds one for its plan reminder, and

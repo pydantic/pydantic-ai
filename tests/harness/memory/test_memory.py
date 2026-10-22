@@ -64,6 +64,7 @@ from pydantic_ai_harness.memory import (
     SqliteMemoryStore,
 )
 from pydantic_ai_harness.planning import InMemoryPlanStore, PlanItem, Planning
+from pydantic_ai_harness.system_reminders import LLMReminder, SystemReminders
 from tests.harness._recording_durability import RecordingDurability
 
 
@@ -1480,6 +1481,35 @@ class TestInjection:
         assert 'what do I like?' in _user_text(captured[1][:1])
         assert isinstance(captured[1][2], ModelRequest)
         assert any(isinstance(part, ToolReturnPart) for part in captured[1][2].parts)
+
+    async def test_snapshot_stays_with_user_prompt_after_generated_reminders(self) -> None:
+        # An `LLMReminder` firing keeps its generated text in history as user-channel content; that isn't the
+        # user's prompt, so the snapshot stays with the prompt the user wrote.
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- likes tea')
+        captured: list[list[ModelMessage]] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            captured.append(messages)
+            if len(captured) < 3:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id=f'lookup{len(captured)}')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        def lookup() -> str:
+            return 'found'
+
+        reminders = SystemReminders[None](
+            dynamic_reminders=[
+                LLMReminder(model=FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('refocus')])))
+            ],
+            cache_ttl=None,
+        )
+        agent = Agent(FunctionModel(model), deps_type=type(None), capabilities=[reminders, Memory(store=store)])
+        agent.tool_plain(lookup)
+        await agent.run('what do I like?')
+
+        assert len(captured) == 3
+        assert [_memory_request_indexes(messages) for messages in captured] == [[0], [0], [0]]
 
     async def test_snapshot_stays_with_user_prompt_when_approved_tool_resumes(self) -> None:
         store = InMemoryStore()
