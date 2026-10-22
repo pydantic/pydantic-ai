@@ -14,10 +14,8 @@ arrived and a result whose part didn't render both leave the call unpaired and b
 
 from __future__ import annotations as _annotations
 
-import os
 from dataclasses import dataclass
 
-import httpx2
 import pytest
 from pydantic import JsonValue
 
@@ -50,11 +48,10 @@ from ..conftest import AnthropicModelFactory, message_shape
 from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
-    from anthropic import AsyncAnthropic, AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle
     from anthropic.types.beta import BetaTextBlock, BetaUsage
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-    from pydantic_ai.providers.anthropic import AnthropicProvider, AsyncAnthropicClient
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -719,29 +716,14 @@ async def test_orphaned_tool_search_call_is_dropped_through_an_agent_run(allow_m
     )
 
 
-def _tool_search_client(transport: str, http_client: httpx2.AsyncClient) -> tuple[str, AsyncAnthropicClient]:
-    region = os.environ.get('AWS_REGION', 'us-east-1')
-    if transport == 'bedrock':
-        # The SDK signs with SigV4 through `botocore`, which only ships under the `bedrock` extra.
-        pytest.importorskip('botocore')
-        token = os.environ.get('AWS_BEARER_TOKEN_BEDROCK', 'test-bedrock-token')
-        return 'global.anthropic.claude-opus-5-5', AsyncAnthropicBedrock(
-            api_key=token, aws_region=region, http_client=http_client
-        )
-    if transport == 'mantle':
-        token = os.environ.get('AWS_BEARER_TOKEN_BEDROCK', 'test-bedrock-token')
-        return 'anthropic.claude-opus-5-5', AsyncAnthropicBedrockMantle(
-            api_key=token, aws_region=region, http_client=http_client
-        )
-    return 'claude-opus-5-5', AsyncAnthropic(
-        api_key=os.environ.get('ANTHROPIC_API_KEY', 'mock-api-key'), http_client=http_client
-    )
-
-
 @pytest.mark.vcr
 @pytest.mark.parametrize('transport', ['direct', 'bedrock', 'mantle'])
 async def test_in_flight_tool_search_call_is_answered_in_the_next_response(
-    allow_model_requests: None, request_capture: RequestCapture, transport: str
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    request: pytest.FixtureRequest,
+    transport: str,
 ):
     """A tool search the model runs alongside a client tool call is kept, and its result arrives next.
 
@@ -751,10 +733,15 @@ async def test_in_flight_tool_search_call_is_answered_in_the_next_response(
     model search again (https://github.com/pydantic/pydantic-ai/issues/10966). Recorded on the direct
     API, the legacy Bedrock InvokeModel API and Claude Platform on AWS, which all accept the shape.
     """
-    model_name, client = _tool_search_client(transport, request_capture.client)
-    agent = Agent(
-        AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client)), capabilities=[ToolSearch()]
-    )
+    if transport == 'bedrock':
+        client = request.getfixturevalue('anthropic_bedrock_client')
+        model = AnthropicModel('global.anthropic.claude-opus-5-5', provider=AnthropicProvider(anthropic_client=client))
+    elif transport == 'mantle':
+        client = request.getfixturevalue('anthropic_bedrock_mantle_client')
+        model = AnthropicModel('anthropic.claude-opus-5-5', provider=AnthropicProvider(anthropic_client=client))
+    else:
+        model = anthropic_model('claude-opus-5-5', capture=True)
+    agent = Agent(model, capabilities=[ToolSearch()])
 
     @agent.tool_plain
     def send_status(message: str) -> str:
