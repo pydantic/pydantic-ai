@@ -828,6 +828,10 @@ def _no_heartbeat_wait(claim_timeout: int) -> float:
     return 0
 
 
+class _Interrupted(BaseException):
+    pass
+
+
 class TestClaim:
     async def test_long_step_extends_the_claim(self, absurd: AsyncAbsurd, monkeypatch: pytest.MonkeyPatch) -> None:
         # A step can outlast the worker's `claim_timeout`; the claim is extended while it runs, so no
@@ -929,6 +933,38 @@ class TestClaim:
                 await agent.run('go')
 
         assert list(await checkpoints(absurd, ctx.task_id)) == ['slow__model.request']
+
+    async def test_lost_claim_and_a_step_base_exception_are_both_raised(
+        self, absurd: AsyncAbsurd, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A tool raising a `BaseException` as the claim is lost fails the step twice at once; both
+        # errors are raised rather than either being dropped.
+        monkeypatch.setattr(_HEARTBEAT_INTERVAL, _no_heartbeat_wait)
+        toolset = FunctionToolset(id='tools')
+        task: dict[str, str] = {}
+
+        @toolset.tool_plain
+        async def slow() -> str:
+            await absurd.cancel_task(task['id'])
+            try:
+                await anyio.sleep_forever()
+            except anyio.get_cancelled_exc_class():
+                raise _Interrupted from None
+            raise AssertionError('unreachable')  # pragma: no cover
+
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('slow')),
+            name='slow',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability()],
+        )
+        async with running_task_context(absurd) as ctx:
+            task['id'] = ctx.task_id
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(BaseExceptionGroup) as exc_info:
+                await agent.run('go')
+
+        assert exc_info.group_contains(CancelledTask, depth=None)
+        assert exc_info.group_contains(_Interrupted, depth=None)
 
 
 @pytest.mark.skipif(not logfire_installed(), reason='logfire not installed')

@@ -136,7 +136,8 @@ async def _run_holding_claim(task_ctx: AsyncTaskContext, body: Callable[[], Awai
         # Usually just `extend_claim`'s failure, or a `BaseException` the body raised.
         if len(group.exceptions) == 1:
             raise group.exceptions[0] from None
-        raise  # pragma: no cover -- both failed at once
+        # Both failed at once: raise them together rather than lose either.
+        raise
     if error is not None:
         raise error
     return result
