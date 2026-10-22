@@ -205,9 +205,9 @@ class MarkTimedOutSpans(AbstractCapability[object]):
     A cut-off request also has no finish reason, and no usage when the provider reports it only at
     the end of the stream. Other cancellations, such as pydantic-ai stopping a request whose stream
     failed, are left as they are; pydantic-ai already records a cancelled tool span as an error.
-    Each hook runs inside the span pydantic-ai opens for it. A run reaches `wrap_run` as the
-    `RunTimeLimitExceeded` that the CLAI 2 engine's `WorkflowPolicy.on_run_error` raises in place of
-    the cancellation, which records an error but no `error.type`.
+    Each hook runs inside the span pydantic-ai opens for it. Under the CLAI 2 engine, a cut-off run
+    reaches `wrap_run` as the `RunTimeLimitExceeded` that `agent.WorkflowPolicy.on_run_error` raises
+    in place of the cancellation, which records an error but no `error.type`.
     """
 
     async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[object]:

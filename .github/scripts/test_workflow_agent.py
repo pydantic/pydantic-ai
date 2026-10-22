@@ -4,6 +4,7 @@ import asyncio
 import json
 import sys
 import time
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator
 from contextvars import Context
 from functools import partial
@@ -14,8 +15,17 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai import Agent, PydanticAIDeprecationWarning, RunContext
+from pydantic_ai.messages import (
+    FunctionToolResultEvent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -139,8 +149,9 @@ async def test_only_safe_output_tools_remain_inside_the_time_reserve(
         del messages
         offered.append({tool_def.name for tool_def in info.function_tools})
         if len(offered) == 1:
-            # The reserve starts while this request is in flight.
-            monkeypatch.setattr(cli, 'run_deadline', time.monotonic() + cli.RUN_TIME_RESERVE_SECS - 1)
+            # The reserve starts while this request is in flight. Not `monkeypatch`: it would restore
+            # the run's deadline after `WorkflowPolicy` clears it, leaking it into later tests.
+            cli.run_deadline = time.monotonic() + cli.RUN_TIME_RESERVE_SECS - 1
             return ModelResponse(parts=[ToolCallPart('safeoutputs_noop', {'message': 'posted'})])
         return ModelResponse(parts=[TextPart('done')])
 
@@ -367,6 +378,23 @@ async def test_run_budget_marks_the_spans_it_cuts_off(
         for span in agent_spans.get_finished_spans()
     ]
     assert sorted(outcomes, key=repr) == [('chat', 'ERROR', 'timeout'), ('invoke_agent', 'ERROR', 'timeout')]
+
+
+async def test_tool_retry_is_reported_as_an_error(capsys: pytest.CaptureFixture[str]) -> None:
+    """The pinned runtime reports a tool retry as a `RetryPromptPart`, which gh-aw must not read as success."""
+    with warnings.catch_warnings():
+        # `main` deprecates the part the pinned runtime still emits.
+        warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
+        retry = RetryPromptPart(content='Validation failed', tool_name='Bash', tool_call_id='c1')  # pyright: ignore[reportDeprecated]
+
+    async def events() -> AsyncIterator[FunctionToolResultEvent]:
+        # The pinned runtime types `part` as `ToolReturnPart | RetryPromptPart`; `main` dropped the latter.
+        yield FunctionToolResultEvent(part=retry)  # pyright: ignore[reportArgumentType]
+
+    ctx: RunContext[object] = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    await cli._stream_events(ctx, events())  # pyright: ignore[reportPrivateUsage]
+    [line] = capsys.readouterr().out.splitlines()
+    assert json.loads(line)['message']['content'][0]['is_error'] is True
 
 
 async def test_cancelled_delegate_preserves_usage(monkeypatch: pytest.MonkeyPatch) -> None:
