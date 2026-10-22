@@ -472,10 +472,10 @@ Whether a deferred tool can be forced by name depends on how its definition reac
 - On OpenAI Responses, a tool withheld until revealed, such as an on-demand capability's tool or a
   tool search corpus member on a model without native tool search, travels in the
   `additional_tools` item alone once `load_capability` or another tool's `ToolReturn.tools` reveals
-  it, and can be named in `tool_choice` on every model unless `openai_previous_response_id` or
-  `openai_conversation_id` is set. GPT-5.6 and later accept the name as is. On earlier models,
-  Pydantic AI declares the tool in `tools` for the request whose `tool_choice` names it, so that one
-  request misses the prompt cache. With either setting, Pydantic AI keeps the tool in the item alone:
+  it, as does a tool that [appears mid-run](#mid-run-tool-additions). Such a tool can be named in
+  `tool_choice` on every model unless `openai_previous_response_id` or `openai_conversation_id` is
+  set. GPT-5.6 and later accept the name as is. On earlier models, Pydantic AI declares the tool in
+  `tools` for the request whose `tool_choice` names it, so that one request misses the prompt cache. With either setting, Pydantic AI keeps the tool in the item alone:
   earlier models reject the name with a 400 (`Tool choice '<name>' not found in 'tools' parameter.`),
   and so does GPT-5.6 once a stored response holds the item.
 
@@ -591,7 +591,7 @@ The table below covers the cases where Pydantic AI must change the tools array c
 | Mistral | `tool_choice` is a list of multiple tools — the API can only force a single named tool |
 | Cohere | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
 | xAI | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
-| OpenAI Responses | On models before GPT-5.6, a `tool_choice` (list or `ToolOrOutput`) naming a tool that only the `additional_tools` item declares, such as one `load_capability` revealed: that request declares it in `tools`, unless `openai_previous_response_id` or `openai_conversation_id` is set, in which case the API rejects the request (see [Tool Choice](#tool-choice)). `allowed_tools` handles every other case natively |
+| OpenAI Responses | On models before GPT-5.6, a `tool_choice` (list or `ToolOrOutput`) naming a tool that only the `additional_tools` item declares, such as one `load_capability` revealed or one that [appeared mid-run](#mid-run-tool-additions): that request declares it in `tools`, unless `openai_previous_response_id` or `openai_conversation_id` is set, in which case the API rejects the request (see [Tool Choice](#tool-choice)). `allowed_tools` handles every other case natively |
 | Google | Never — `allowed_function_names` handles all cases natively |
 
 If preserving cache hits matters, prefer providers/cases marked "Never", or use `ToolOrOutput` (which keeps the full set) instead of a restrictive list.
@@ -1067,7 +1067,7 @@ A tool can also join a run without being searched for or loaded. It might be add
 
 | Provider | How the new tool arrives | Cache prefix |
 |---|---|---|
-| First-party OpenAI Responses (`OpenAIProvider`) | An `additional_tools` input item carrying its definition | **Stable**: `tools[]` is unchanged |
+| First-party OpenAI Responses (`OpenAIProvider`) | An `additional_tools` input item carrying its definition | **Stable**: `tools[]` is unchanged, except on models before GPT-5.6 for a request whose `tool_choice` names the new tool (see [Tool Choice](#tool-choice)) |
 | Anthropic models with tool search (Sonnet 4.5+, Opus 4.5+, Haiku 4.5+) | A `defer_loading` declaration plus a `tool_addition` block (or a `tool_reference` result on models without mid-conversation tool changes) | **Stable** once the request already declares a deferred tool. Otherwise, on some models (Claude Opus 4.8, for example) the first deferred declaration adds a one-time preamble, which moves the prefix on that request only |
 | Everything else, including older Anthropic models, OpenAI-compatible Responses endpoints (Azure, OpenRouter, and so on), and OpenAI Chat Completions | Added to `tools[]`, plus a note in the conversation that it's now available | **Breaks** from the tool definitions onward on the request where it appears |
 
