@@ -167,6 +167,16 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             ),
         ],
     ) -> ToolReturn:
+        grid = _coordinate_grid(ctx)
+        if grid is not None and any(action.type not in OBSERVING_ACTIONS for action in actions):
+            try:
+                width, height = await ctx.workspace.display_size()
+            except WorkspaceUnavailableError:
+                raise
+            except WorkspaceError as e:
+                raise ToolFailed(f'Reading the display size failed, so no action ran: {e}') from e
+            actions = [_to_pixels(action, width, height, grid) for action in actions]
+
         performed = 0
         error: str | None = None
         for action in actions:
@@ -207,9 +217,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             raise ToolFailed(' '.join([*summary, 'The screenshot was not a PNG.']))
         result['screenshot_size'] = size
         # A grid model points on its grid, so the size in pixels would only invite pixel coordinates.
-        summary.append(
-            'Screenshot attached.' if _coordinate_grid(ctx) else f'Screenshot attached ({size[0]}x{size[1]}).'
-        )
+        summary.append('Screenshot attached.' if grid else f'Screenshot attached ({size[0]}x{size[1]}).')
         return ToolReturn([' '.join(summary), BinaryImage(data=png, media_type='image/png')], metadata=result)
 
     @classmethod
@@ -239,17 +247,11 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         return self._toolset
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Fail the run at its start when its workspace has no display or its model can't see screenshots."""
+        """Fail the run at its start when its workspace has no display."""
         if not ctx.workspace.has_display:
             raise UserError(
                 '`ComputerUse` needs a workspace with a display, such as a sandbox capability started with a '
                 "desktop. This run's workspace has none."
-            )
-        model = ctx.model
-        if isinstance(model, Model) and not model.profile.get('supports_image_input', True):
-            raise UserError(
-                f'`ComputerUse` needs a model that accepts images, and {model.model_name!r} does not: '
-                'every `computer` call returns a screenshot.'
             )
 
     async def before_tool_execute(
@@ -260,10 +262,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
-        """Ask for approval when configured, and scale a grid model's coordinates to pixels.
-
-        Runs where the run's model is known, before the tool; the scaled actions are what the workspace receives.
-        """
+        """Ask for approval of a call that does more than look or wait, when configured."""
         if tool_def.tool_kind != COMPUTER_KIND.id:
             return args
         actions: list[ComputerToolAction] = args['actions']
@@ -273,17 +272,22 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             and any(action.type not in OBSERVING_ACTIONS for action in actions)
         ):
             raise ApprovalRequired
-        if (grid := _coordinate_grid(ctx)) is not None and any(
-            action.type not in OBSERVING_ACTIONS for action in actions
-        ):
-            width, height = await ctx.workspace.display_size()
-            args = {**args, 'actions': [_to_pixels(action, width, height, grid) for action in actions]}
         return args
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        """Send only the most recent `keep_screenshots` screenshots; the run's history keeps them all."""
+        """Refuse a model that can't see screenshots, and send only the most recent `keep_screenshots` of them.
+
+        Checked for every request, since model selection can change the model within a run; the run's history keeps
+        every screenshot.
+        """
+        model = request_context.model
+        if not model.profile.get('supports_image_input', True):
+            raise UserError(
+                f'`ComputerUse` needs a model that accepts images, and {model.model_name!r} does not: '
+                'every `computer` call returns a screenshot.'
+            )
         if self.keep_screenshots is not None:
             request_context.messages = _drop_old_screenshots(request_context.messages, self.keep_screenshots)
         return request_context

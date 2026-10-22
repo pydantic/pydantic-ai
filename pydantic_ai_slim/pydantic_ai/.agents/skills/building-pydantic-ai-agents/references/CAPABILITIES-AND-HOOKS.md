@@ -27,6 +27,7 @@ Provider-adaptive capabilities to reach for first:
 - `WebFetch`
 - `ImageGeneration`
 - `MCP`
+- `ComputerUse` (needs a workspace with a display, see [Workspaces](./WORKSPACES.md))
 
 For stricter safety handling, use `RaiseContentFilterError` to raise `ContentFilterError` whenever a model response has `finish_reason='content_filter'`, including responses with partial text.
 
