@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ConfigDict, with_config
 
@@ -29,7 +29,6 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetGetToolsParams,
 )
 from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult
-from pydantic_ai.durable_exec._utils import StreamedActivityResult
 from pydantic_ai.durable_exec._workspace import WorkspaceCall, WorkspaceCallParams, WorkspaceCallResult
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
@@ -67,7 +66,6 @@ __all__ = (
     '_MCPCallTransport',
     '_ModelRequestTransport',
     '_RequestParams',
-    '_StreamedActivityPayload',
     '_WorkspaceCallTransport',
     '_WorkspaceCallWire',
 )
@@ -267,12 +265,6 @@ class _CompactMessagesParams:
 class _EventStreamHandlerParams:
     event: AgentStreamEvent
     serialized_run_context: Any
-
-
-# The `ModelResponse` arm decodes histories recorded by the deprecated `TemporalAgent`, whose
-# stream activity returned the bare response. Remove it (and the workflow-side event synthesis
-# in `request_stream_segment`) once those histories have aged out, along with `TemporalAgent`.
-_StreamedActivityPayload: TypeAlias = StreamedActivityResult | ModelResponse
 
 
 def restore_telemetry_mcp_url_ids(

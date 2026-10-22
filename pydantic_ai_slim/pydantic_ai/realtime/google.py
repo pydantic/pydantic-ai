@@ -1597,6 +1597,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
         return not self._async_tool_calls_enabled
 
     @property
+    def _sends_failed_tool_results(self) -> bool:
+        # A call left without a response stays open: a blocking call holds the model waiting on it, so no later
+        # turn is answered (2.5), and a non-blocking one is made again on every later input (3.8). Checked live.
+        return True
+
+    @property
     def input_transcription_enabled(self) -> bool:
         return self._input_transcription_enabled
 
