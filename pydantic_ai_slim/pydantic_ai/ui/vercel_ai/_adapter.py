@@ -73,7 +73,7 @@ from ._utils import (
     iter_metadata_chunks,
     iter_tool_approval_responses,
     load_provider_metadata,
-    load_text_parts,
+    load_text_part,
     merged_text_citations,
     tool_return_output,
 )
@@ -451,8 +451,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         pending_enqueued = []
 
                     if isinstance(part, TextUIPart):
-                        for text_part in load_text_parts(part.text, load_provider_metadata(part.provider_metadata)):
-                            builder.add(text_part)
+                        builder.add(load_text_part(part.text, load_provider_metadata(part.provider_metadata)))
                     elif isinstance(part, ReasoningUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         builder.add(
@@ -1054,6 +1053,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         is therefore presented to the model as a definitive failure rather than a request to correct
         and retry; keep the conversation in-process rather than persisting through the Vercel AI wire
         format if you need retry semantics to survive a round-trip.
+
+        Consecutive `TextPart`s come back as one, with the first part's `id` and `provider_details`. Their
+        citations are all kept on it, with anchors moved onto the merged text; positions in the answer inside the
+        provider's raw citations are moved only for OpenAI Responses, the one provider they're sent back to.
 
         Tool calls lose one thing too: `ToolCallPart.args` that don't parse as a JSON object are
         rewritten to `{'INVALID_JSON': '<raw args>'}` (see

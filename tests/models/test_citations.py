@@ -52,6 +52,9 @@ with try_import() as openrouter_available:
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
+with try_import() as vercel_available:
+    from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
 with try_import() as xai_available:
     from pydantic_ai.models.xai import XaiModel
     from pydantic_ai.native_tools import XSearchTool
@@ -1071,6 +1074,41 @@ async def test_anthropic_document_citation_replay_counts_fetched_pages(
     ]
     assert cited == snapshot([[0], [1], [2]])
     assert _replayed_document_indices(request_capture.bodies('/v1/messages')[-1]) == cited
+
+
+# Body matching would sort this conversation's turns out of order; the requests are pinned by `request_capture`.
+@pytest.mark.vcr()
+async def test_anthropic_document_citation_replay_after_vercel_round_trip(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+) -> None:
+    """Citations survive a Vercel AI frontend holding the history, and are sent back on the text that comes back.
+
+    Anthropic answers a sentence citing two documents in several text blocks. The Vercel adapter shows them as one
+    text part and loads it back as one, so the next request sends a single text block with both citations.
+    """
+    if not anthropic_available() or not vercel_available():
+        pytest.skip('anthropic or Vercel AI dependencies not installed')
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
+        settings=ModelSettings(max_tokens=4096, citations=True),
+    )
+    agent = Agent(model)
+
+    result = await agent.run(
+        [
+            'In one sentence, give the return window and the shipping time, citing both documents.',
+            RETURNS_POLICY,
+            SHIPPING_POLICY,
+        ]
+    )
+    assert len(_cited_text_parts(result.all_messages())) == 2
+
+    history = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(result.all_messages()))
+    assert len(_cited_text_parts(history)) == 1
+    await agent.run('Thanks. Reply only OK.', message_history=history)
+
+    assert _replayed_document_indices(request_capture.bodies('/v1/messages')[-1]) == snapshot([[0, 1]])
 
 
 def read_shipping_policy() -> BinaryContent:

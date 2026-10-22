@@ -3,10 +3,9 @@
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import replace
 from datetime import datetime
-from typing import Any, NotRequired, cast
+from typing import Any, cast
 
-from pydantic import BaseModel, ConfigDict, NonNegativeInt, TypeAdapter, ValidationError
-from typing_extensions import TypedDict
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from pydantic_ai._mcp_apps import get_mcp_app_tool_result
 from pydantic_ai._utils import is_str_dict
@@ -180,82 +179,65 @@ def merged_text_citations(parts: Sequence[TextPart]) -> list[Citation]:
     return citations
 
 
+def _offset_raw_citation(citation: object, offset: int) -> object:
+    """Shift a provider citation's positions in the answer text, which only OpenAI Responses annotations hold.
+
+    Other providers' raw citations either hold positions in the cited document, which merging doesn't move, or
+    aren't sent back to the provider, so they're left as they are.
+    """
+    if not offset or not is_str_dict(citation):
+        return citation
+    if (
+        citation.get('type') == 'url_citation'
+        and isinstance(start := citation.get('start_index'), int)
+        and isinstance(end := citation.get('end_index'), int)
+    ):
+        return {**citation, 'start_index': start + offset, 'end_index': end + offset}
+    if citation.get('type') == 'file_citation' and isinstance(index := citation.get('index'), int):
+        return {**citation, 'index': index + offset}
+    return citation
+
+
 def dump_text_metadata(parts: Sequence[TextPart]) -> dict[str, Any] | None:
     """Dump provider metadata for a UI text part holding one or more consecutive text parts.
 
-    The first part's fields and all citations go at the top level. When several parts were merged and any of them
-    has citations, `parts` also keeps each one's length, fields and citations, so that loading the message gives back
-    the original parts, with each citation on the part it belongs to.
+    The UI text part loads back as one text part, so it keeps the first part's fields, as merged text always has, with
+    every part's citations: ours with their anchors moved onto the merged text, and the provider's, which replay
+    sends back, joined under `provider_details['citations']`. The provider name comes from a part with citations
+    when the first part has none, since replay only sends back citations from the provider that produced them.
     """
     first = parts[0]
-    split = len(parts) > 1 and any(part.citations for part in parts)
+    provider_name = first.provider_name or next((part.provider_name for part in parts if part.citations), None)
+    provider_details = first.provider_details
+    if len(parts) > 1:
+        raw_citations: list[object] = []
+        offset = 0
+        for part in parts:
+            citations = (part.provider_details or {}).get('citations')
+            if part.provider_name == provider_name and isinstance(citations, list):
+                raw_citations.extend(
+                    _offset_raw_citation(citation, offset) for citation in cast(list[object], citations)
+                )
+            offset += len(part.content)
+        if raw_citations:
+            provider_details = {**(provider_details or {}), 'citations': raw_citations}
     return dump_provider_metadata(
         id=first.id,
-        provider_name=first.provider_name,
-        provider_details=first.provider_details,
+        provider_name=provider_name,
+        provider_details=provider_details,
         citations=dump_citations(merged_text_citations(parts)),
-        parts=[_dump_text_part_metadata(part) for part in parts] if split else None,
     )
 
 
-def _dump_text_part_metadata(part: TextPart) -> dict[str, Any]:
-    metadata = dump_provider_metadata(
-        wrapper_key=None,
-        id=part.id,
-        provider_name=part.provider_name,
-        provider_details=part.provider_details,
-        citations=dump_citations(part.citations),
+def load_text_part(text: str, provider_meta: dict[str, Any]) -> TextPart:
+    """Load the text part a UI text part holds, from its text and provider metadata."""
+    return TextPart(
+        content=text,
+        id=provider_meta.get('id'),
+        provider_name=provider_meta.get('provider_name'),
+        provider_details=provider_meta.get('provider_details'),
+        citations=load_citations(provider_meta.get('citations'), text),
     )
-    return {'length': len(part.content), **(metadata or {})}
-
-
-class _TextPartMetadata(TypedDict):
-    length: NonNegativeInt
-    id: NotRequired[str | None]
-    provider_name: NotRequired[str | None]
-    provider_details: NotRequired[dict[str, Any] | None]
-    citations: NotRequired[object]
-
-
-_text_parts_metadata_ta: TypeAdapter[list[_TextPartMetadata]] = TypeAdapter(list[_TextPartMetadata])
-
-
-def load_text_parts(text: str, provider_meta: dict[str, Any]) -> list[TextPart]:
-    """Load the text parts held by a UI text part, from its text and provider metadata.
-
-    Provider metadata is client-controlled, so if `parts` doesn't validate or its lengths don't add up to `text`, the
-    text loads as one part with the top-level fields and citations.
-    """
-    if (data := provider_meta.get('parts')) is not None:
-        try:
-            entries = _text_parts_metadata_ta.validate_python(data)
-        except ValidationError:
-            entries = None
-        if entries and sum(entry['length'] for entry in entries) == len(text):
-            parts: list[TextPart] = []
-            start = 0
-            for entry in entries:
-                content = text[start : start + entry['length']]
-                start += entry['length']
-                parts.append(
-                    TextPart(
-                        content=content,
-                        id=entry.get('id'),
-                        provider_name=entry.get('provider_name'),
-                        provider_details=entry.get('provider_details'),
-                        citations=load_citations(entry.get('citations'), content),
-                    )
-                )
-            return parts
-    return [
-        TextPart(
-            content=text,
-            id=provider_meta.get('id'),
-            provider_name=provider_meta.get('provider_name'),
-            provider_details=provider_meta.get('provider_details'),
-            citations=load_citations(provider_meta.get('citations'), text),
-        )
-    ]
 
 
 def iter_citation_source_chunks(citations: Iterable[Citation], seen_urls: set[str]) -> Iterator[SourceUrlChunk]:

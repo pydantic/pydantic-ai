@@ -2002,59 +2002,6 @@ async def test_event_stream_citations():
                                 'anchor': None,
                             },
                         ],
-                        'parts': [
-                            {
-                                'length': 25,
-                                'provider_name': 'google',
-                                'citations': [
-                                    {
-                                        'sources': [
-                                            {
-                                                'url': 'https://github.com/pydantic/pydantic-ai',
-                                                'title': 'pydantic/pydantic-ai',
-                                                'excerpts': [],
-                                                'kind': 'web',
-                                            }
-                                        ],
-                                        'anchor': {'start': 0, 'end': 24, 'kind': 'content'},
-                                    }
-                                ],
-                            },
-                            {
-                                'length': 21,
-                                'provider_name': 'google',
-                                'citations': [
-                                    {
-                                        'sources': [
-                                            {
-                                                'url': 'https://github.com/pydantic/pydantic-ai',
-                                                'title': 'pydantic/pydantic-ai',
-                                                'excerpts': [],
-                                                'kind': 'web',
-                                            },
-                                            {
-                                                'url': 'https://pydantic.dev/docs/ai/',
-                                                'title': 'Pydantic AI docs',
-                                                'excerpts': [],
-                                                'kind': 'web',
-                                            },
-                                        ],
-                                        'anchor': {'start': 1, 'end': 20, 'kind': 'content'},
-                                    },
-                                    {
-                                        'sources': [
-                                            {
-                                                'document_id': 'file-1',
-                                                'title': 'notes.txt',
-                                                'excerpts': [],
-                                                'kind': 'document',
-                                            }
-                                        ],
-                                        'anchor': None,
-                                    },
-                                ],
-                            },
-                        ],
                     }
                 },
             },
@@ -2078,7 +2025,7 @@ async def test_event_stream_citations():
 
 def test_dump_and_load_citations():
     """`dump_messages` carries citations on the merged text part and lists web sources after it; `load_messages`
-    restores the original text parts with their citations and skips the source parts.
+    loads it as one text part with every citation, anchored in the merged text, and skips the source parts.
 
     Not a VCR test: no recorded provider returns two consecutive text parts that both carry anchored citations.
     """
@@ -2137,59 +2084,6 @@ def test_dump_and_load_citations():
                                 'anchor': None,
                             },
                         ],
-                        'parts': [
-                            {
-                                'length': 25,
-                                'provider_name': 'google',
-                                'citations': [
-                                    {
-                                        'sources': [
-                                            {
-                                                'url': 'https://github.com/pydantic/pydantic-ai',
-                                                'title': 'pydantic/pydantic-ai',
-                                                'excerpts': [],
-                                                'kind': 'web',
-                                            }
-                                        ],
-                                        'anchor': {'start': 0, 'end': 24, 'kind': 'content'},
-                                    }
-                                ],
-                            },
-                            {
-                                'length': 21,
-                                'provider_name': 'google',
-                                'citations': [
-                                    {
-                                        'sources': [
-                                            {
-                                                'url': 'https://github.com/pydantic/pydantic-ai',
-                                                'title': 'pydantic/pydantic-ai',
-                                                'excerpts': [],
-                                                'kind': 'web',
-                                            },
-                                            {
-                                                'url': 'https://pydantic.dev/docs/ai/',
-                                                'title': 'Pydantic AI docs',
-                                                'excerpts': [],
-                                                'kind': 'web',
-                                            },
-                                        ],
-                                        'anchor': {'start': 1, 'end': 20, 'kind': 'content'},
-                                    },
-                                    {
-                                        'sources': [
-                                            {
-                                                'document_id': 'file-1',
-                                                'title': 'notes.txt',
-                                                'excerpts': [],
-                                                'kind': 'document',
-                                            }
-                                        ],
-                                        'anchor': None,
-                                    },
-                                ],
-                            },
-                        ],
                     }
                 },
             ),
@@ -2208,7 +2102,7 @@ def test_dump_and_load_citations():
     assert loaded[1].parts == snapshot(
         [
             TextPart(
-                content='Pydantic AI is on GitHub.',
+                content='Pydantic AI is on GitHub. Its docs are online.',
                 provider_name='google',
                 citations=[
                     Citation(
@@ -2218,13 +2112,7 @@ def test_dump_and_load_citations():
                             )
                         ],
                         anchor=ContentCitationAnchor(start=0, end=24),
-                    )
-                ],
-            ),
-            TextPart(
-                content=' Its docs are online.',
-                provider_name='google',
-                citations=[
+                    ),
                     Citation(
                         sources=[
                             WebCitationSource(
@@ -2232,11 +2120,11 @@ def test_dump_and_load_citations():
                             ),
                             WebCitationSource(url='https://pydantic.dev/docs/ai/', title='Pydantic AI docs'),
                         ],
-                        anchor=ContentCitationAnchor(start=1, end=20),
+                        anchor=ContentCitationAnchor(start=26, end=45),
                     ),
                     Citation(sources=[DocumentCitationSource(document_id='file-1', title='notes.txt')]),
                 ],
-            ),
+            )
         ]
     )
 
@@ -2366,19 +2254,78 @@ def _bedrock_document_parts() -> list[TextPart]:
     ]
 
 
+def _openai_responses_parts() -> list[TextPart]:
+    """Text parts shaped like two OpenAI Responses messages: each annotation's range covers the link in its own text."""
+
+    def cited(text: str, url: str, message_id: str) -> TextPart:
+        start = text.index('([')
+        raw_citation = {
+            'type': 'url_citation',
+            'url': url,
+            'title': 'Source',
+            'start_index': start,
+            'end_index': len(text),
+        }
+        return TextPart(
+            text,
+            id=message_id,
+            provider_name='openai',
+            provider_details={'citations': [raw_citation, {'type': 'file_citation', 'file_id': 'file-1', 'index': 0}]},
+            citations=[
+                Citation(
+                    [WebCitationSource(url, title='Source')], anchor=MarkerCitationAnchor(start=start, end=len(text))
+                )
+            ],
+        )
+
+    return [
+        cited('Shipping is fast ([a.com](https://a.com))', 'https://a.com', 'msg-1'),
+        cited(' and returns are easy ([b.com](https://b.com))', 'https://b.com', 'msg-2'),
+    ]
+
+
 @pytest.mark.parametrize(
-    'parts', [_anthropic_web_search_parts(), _bedrock_document_parts()], ids=['anthropic', 'bedrock']
+    'parts',
+    [_anthropic_web_search_parts(), _bedrock_document_parts(), _openai_responses_parts()],
+    ids=['anthropic', 'bedrock', 'openai'],
 )
 async def test_merged_text_parts_round_trip(parts: list[TextPart]):
-    """Consecutive text parts are shown as one UI text part, but loading it gives back the original parts, with each
-    citation on the part it came from, whether the message was dumped or streamed."""
+    """Consecutive text parts are shown as one UI text part and load back as one text part with every citation,
+    whether the message was dumped or streamed.
+
+    Our citations' anchors and OpenAI's raw positions are moved onto the merged text, so each still selects the text
+    it did before; other providers' raw citations point into the cited document and are joined unchanged. Not a VCR
+    test: merging is the adapter's own transformation, and `test_vercel_citation_replay_after_round_trip` records it
+    end to end.
+    """
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='What is Pydantic AI?')]),
         ModelResponse(parts=parts),
     ]
     dumped = VercelAIAdapter.dump_messages(messages)
-    assert sum(isinstance(part, TextUIPart) for part in dumped[1].parts) == 1
-    assert VercelAIAdapter.load_messages(dumped)[1].parts == parts
+    [text_ui_part] = [part for part in dumped[1].parts if isinstance(part, TextUIPart)]
+    [loaded] = VercelAIAdapter.load_messages(dumped)[1].parts
+    assert isinstance(loaded, TextPart)
+
+    merged = ''.join(part.content for part in parts)
+    assert loaded.content == merged
+    cited_parts = [part for part in parts if part.citations]
+    assert loaded.provider_name == cited_parts[0].provider_name
+    assert loaded.id == parts[0].id
+    raw_citations = (loaded.provider_details or {})['citations']
+    assert len(raw_citations) == sum(len((part.provider_details or {})['citations']) for part in cited_parts)
+
+    offset = 0
+    expected_selections: list[str] = []
+    for part in parts:
+        for citation in part.citations or []:
+            assert citation.anchor
+            expected_selections.append(part.content[citation.anchor.start : citation.anchor.end])
+        offset += len(part.content)
+    assert [merged[c.anchor.start : c.anchor.end] for c in loaded.citations or [] if c.anchor] == expected_selections
+    for raw in raw_citations:
+        if raw.get('type') == 'url_citation':
+            assert raw['url'] in merged[raw['start_index'] : raw['end_index']]
 
     async def event_generator():
         for index, part in enumerate(parts):
@@ -2388,92 +2335,7 @@ async def test_merged_text_parts_round_trip(parts: list[TextPart]):
     event_stream = VercelAIEventStream()
     chunks = [chunk async for chunk in event_stream.transform_stream(event_generator())]
     [text_end] = [chunk for chunk in chunks if isinstance(chunk, TextEndChunk)]
-    text_ui_part = dumped[1].parts[0]
-    assert isinstance(text_ui_part, TextUIPart)
     assert text_end.provider_metadata == text_ui_part.provider_metadata
-    streamed = UIMessage(
-        id='assistant-1',
-        role='assistant',
-        parts=[TextUIPart(text=''.join(part.content for part in parts), provider_metadata=text_end.provider_metadata)],
-    )
-    assert VercelAIAdapter.load_messages([streamed])[0].parts == parts
-
-
-@pytest.mark.parametrize(
-    'text_parts',
-    [
-        pytest.param([{'length': 5}], id='lengths-too-short'),
-        pytest.param([{'length': 5}, {'length': 10}], id='lengths-too-long'),
-        pytest.param([{'length': -1}, {'length': 13}], id='negative-length'),
-        pytest.param('not a list', id='not-a-list'),
-        pytest.param([], id='empty'),
-    ],
-)
-def test_load_invalid_text_parts(text_parts: object):
-    """Provider metadata is client-controlled, so text part boundaries that don't fit the text are ignored and the
-    text loads as one part, with the top-level citations."""
-    citation = {'sources': [{'url': 'https://example.com', 'kind': 'web'}]}
-    ui_messages = [
-        UIMessage(
-            id='assistant-1',
-            role='assistant',
-            parts=[
-                TextUIPart(
-                    text='Hello, world!',
-                    provider_metadata={'pydantic_ai': {'citations': [citation], 'parts': text_parts}},
-                )
-            ],
-        )
-    ]
-
-    assert VercelAIAdapter.load_messages(ui_messages)[0].parts == [
-        TextPart('Hello, world!', citations=[Citation([WebCitationSource('https://example.com')])])
-    ]
-
-
-def test_load_text_parts_drops_citations_outside_their_part():
-    """A citation whose anchor doesn't fit in its own part is dropped, even if it fits in the merged text."""
-    source = {'url': 'https://example.com', 'kind': 'web'}
-    ui_messages = [
-        UIMessage(
-            id='assistant-1',
-            role='assistant',
-            parts=[
-                TextUIPart(
-                    text='Hello, world!',
-                    provider_metadata={
-                        'pydantic_ai': {
-                            'parts': [
-                                {'length': 7, 'id': 'msg-1'},
-                                {
-                                    'length': 6,
-                                    'citations': [
-                                        {'sources': [source], 'anchor': {'start': 0, 'end': 5, 'kind': 'content'}},
-                                        {'sources': [source], 'anchor': {'start': 0, 'end': 12, 'kind': 'content'}},
-                                    ],
-                                },
-                            ]
-                        }
-                    },
-                )
-            ],
-        )
-    ]
-
-    assert VercelAIAdapter.load_messages(ui_messages)[0].parts == snapshot(
-        [
-            TextPart(content='Hello, ', id='msg-1'),
-            TextPart(
-                content='world!',
-                citations=[
-                    Citation(
-                        sources=[WebCitationSource(url='https://example.com')],
-                        anchor=ContentCitationAnchor(start=0, end=5),
-                    )
-                ],
-            ),
-        ]
-    )
 
 
 async def test_tool_call_delta_dict_args_are_serialized_compactly():
