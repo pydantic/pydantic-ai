@@ -29,6 +29,7 @@ try:
     )
 
     from pydantic_ai.durable_exec.temporal import AgentPlugin, TemporalDurability
+    from pydantic_ai.durable_exec.temporal._durability import worker_registrations
 
     from ._shared import TASK_QUEUE
 except ImportError:  # pragma: lax no cover
@@ -302,9 +303,8 @@ def _child_workflow_registration(agent: Agent[None, str], toolset_id: str) -> ty
     assert durability is not None
     registrations = [
         registration
-        for registration in durability.temporal_registrations
-        if isinstance(registration, type)
-        and (workflow_name := WorkflowDefinition.must_from_class(registration).name) is not None
+        for registration in worker_registrations(durability)[1]
+        if (workflow_name := WorkflowDefinition.must_from_class(registration).name) is not None
         and f'__toolset__{toolset_id}__call_tool__child_workflow' in workflow_name
     ]
     assert len(registrations) == 1

@@ -486,6 +486,7 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
 
     from pydantic_ai.durable_exec.temporal import TemporalDurability
+    from pydantic_ai.durable_exec.temporal._durability import worker_registrations
 
     agent = Agent(
         TestModel(),
@@ -503,11 +504,7 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
 
     from temporalio.workflow import _Definition as WorkflowDefinition
 
-    workflow_names = {
-        WorkflowDefinition.must_from_class(item).name
-        for item in durability.temporal_registrations
-        if isinstance(item, type)
-    }
+    workflow_names = {WorkflowDefinition.must_from_class(item).name for item in worker_registrations(durability)[1]}
     assert workflow_names == TEMPORAL_CHILD_WORKFLOW_NAMES
     with_workspace = Agent(
         TestModel(),

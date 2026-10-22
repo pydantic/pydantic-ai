@@ -8,7 +8,6 @@ except ImportError as _import_error:
         'you can use the `temporal` optional group — `pip install "pydantic-ai-slim[temporal]"`'
     ) from _import_error
 
-import inspect
 import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import replace
@@ -30,7 +29,7 @@ from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
 from ...workspaces import WorkspaceError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
-from ._durability import TemporalDurability
+from ._durability import TemporalDurability, worker_registrations
 from ._event_stream import (
     AgentEventStream,
     DurableAgentRunEvents,
@@ -248,11 +247,9 @@ class PydanticAIPlugin(SimplePlugin):
                             f'Agent {agent.name!r} listed in `__pydantic_ai_agents__` has no '
                             '`TemporalDurability` capability; add one to `capabilities=[...]`.'
                         )
-                    for registration in durability.temporal_registrations:
-                        if inspect.isclass(registration):
-                            child_workflows.append(registration)
-                        else:
-                            activities.append(registration)
+                    agent_activities, agent_workflows = worker_registrations(durability)
+                    activities.extend(agent_activities)
+                    child_workflows.extend(agent_workflows)
                 else:
                     raise TypeError(  # pragma: no cover
                         f'__pydantic_ai_agents__ items must be TemporalAgent or AbstractAgent, got {type(agent)}'  # type: ignore[reportUnknownVariableType]
@@ -285,9 +282,7 @@ class AgentPlugin(SimplePlugin):
                     f'Agent {agent.name!r} has no `TemporalDurability` capability; '
                     'add one to `capabilities=[...]` before constructing the plugin.'
                 )
-            registrations = durability.temporal_registrations
-            activities = [r for r in registrations if not inspect.isclass(r)]
-            workflows = [r for r in registrations if inspect.isclass(r)]
+            activities, workflows = worker_registrations(durability)
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='AgentPlugin',
             activities=activities,

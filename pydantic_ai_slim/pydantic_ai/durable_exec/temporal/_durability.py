@@ -548,10 +548,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         to run as a child workflow. Use `AgentPlugin` or `PydanticAIPlugin` when child workflows
         are present so both activity and workflow definitions are registered.
         """
-        backend = self._operation_backend
-        if backend is None:
-            return []
-        registrations = backend.registrations()
         if self._has_child_workflow_tools:
             raise UserError(
                 '`TemporalDurability.temporal_activities` cannot be used when a tool is configured to run as a '
@@ -559,15 +555,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 'Configure the worker with `AgentPlugin(agent)`, or use `PydanticAIPlugin` and list the agent on '
                 'the workflow via `__pydantic_ai_agents__`.'
             )
-        return [registration for registration in registrations if not isinstance(registration, type)]
-
-    @property
-    def temporal_registrations(self) -> list[Callable[..., Any]]:
-        """All Temporal activity and workflow definitions required by this capability."""
-        backend = self._operation_backend
-        if backend is None:
-            return []
-        return list(backend.registrations())
+        return worker_registrations(self)[0]
 
     # --- Capability hooks ---
 
@@ -778,3 +766,14 @@ class _TerminalEventPublisher(AbstractCapability[AgentDepsT]):
     async def after_run(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
         self._durability._publish_terminal_event(result)  # pyright: ignore[reportPrivateUsage]
         return result
+
+
+def worker_registrations(durability: TemporalDurability[Any]) -> tuple[list[Callable[..., Any]], list[type]]:
+    """Return the activities and workflow definitions a worker must register for `durability`."""
+    backend = durability._operation_backend  # pyright: ignore[reportPrivateUsage]
+    if backend is None:
+        return [], []
+    registrations = backend.registrations()
+    activities = [registration for registration in registrations if not isinstance(registration, type)]
+    workflows = [registration for registration in registrations if isinstance(registration, type)]
+    return activities, workflows

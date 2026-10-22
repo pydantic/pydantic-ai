@@ -141,6 +141,7 @@ try:
         TemporalDurability,
         TemporalWrapperToolset,
     )
+    from pydantic_ai.durable_exec.temporal._durability import worker_registrations
     from pydantic_ai.durable_exec.temporal._function_toolset import (
         TemporalFunctionToolset,
         temporalize_function_toolset,
@@ -1385,7 +1386,7 @@ def test_durability_temporal_activities():
 
 def test_durability_temporal_registrations_before_binding():
     """An unbound capability has no Temporal registrations."""
-    assert TemporalDurability().temporal_registrations == []
+    assert worker_registrations(TemporalDurability()) == ([], [])
 
 
 def test_durability_temporal_activities_with_toolsets():
