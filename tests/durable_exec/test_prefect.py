@@ -5140,11 +5140,8 @@ async def test_prefect_durability_batch_model_flow_retry_does_not_submit_again()
 
     assert await flaky() == 'success (no tool calls)'
     assert attempts == 2
-    assert task_runs == [
-        ('batch_create', task_runs[0][1]),
-        ('batch_status', task_runs[1][1]),
-        ('batch_status', task_runs[2][1]),
-    ]
+    # Only the first attempt's tasks ran.
+    assert [method for method, _ in task_runs] == ['batch_create', 'batch_status', 'batch_status']
     assert (len(wrapped.created), wrapped.status_checks) == (1, 2)
 
 
