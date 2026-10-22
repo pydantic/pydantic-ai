@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import operator
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
@@ -925,10 +926,9 @@ class TestLLMReminder:
             _ctx(messages=[ModelRequest(parts=[UserPromptPart('g')])])
         )
         assert isinstance(result, GeneratedReminder)
-        with pytest.raises(AttributeError):
-            _ = result.strip()  # pyright: ignore[reportAttributeAccessIssue]
+        assert not hasattr(result, 'strip')
         with pytest.raises(TypeError):
-            _ = 'Note: ' + result  # pyright: ignore[reportOperatorIssue]
+            operator.add('Note: ', result)
         assert str(result) == _llm_reminder('refocus')
 
     async def test_a_wrapped_generated_reminder_is_still_quoted(self) -> None:
