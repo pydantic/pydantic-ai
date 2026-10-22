@@ -222,8 +222,10 @@ Gotchas:
   populate
   `conversation_id` on its `RunRecord`s.
 - Recovery of compaction-dropped messages depends on pre-compaction snapshots still being
-  retained (`max_snapshots_per_run` can prune them). The corpus is rebuilt on every call, so cost
-  grows with in-scope history.
+  retained (`max_snapshots_per_run` can prune them). Without the full-text index (non-SQLite
+  stores, custom sources, subclasses) the corpus is rebuilt on every call, so cost grows with
+  in-scope history; with it, a search re-renders only runs whose `complete` snapshots changed,
+  though every run record is still listed to apply the scope.
 - History a run inherits through `message_history` is indexed once, under the run that first
   persisted it. Excerpts are clipped to 500 characters; when the matched term lies past the cutoff,
   the excerpt shows the text around it. The `\w+` tokenizer cannot match a word inside unspaced
