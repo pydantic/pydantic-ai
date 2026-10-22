@@ -115,7 +115,12 @@ _COMBINATION = re.compile(r'(?<=.)\+(?=.)')
 
 
 def _normalize_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(_normalize_key(part) for key in keys for part in _COMBINATION.split(key) if part)
+    if '' in keys:
+        raise ValueError('a key name must not be empty')
+    normalized = tuple(_normalize_key(part) for key in keys for part in _COMBINATION.split(key))
+    if len(normalized) > 8:
+        raise ValueError('at most 8 keys, counting each key of a combination such as `ctrl+s`')
+    return normalized
 
 
 def _check_position(x: int | None, y: int | None) -> None:

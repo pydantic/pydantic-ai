@@ -154,6 +154,7 @@ async def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands(act
             Drag(path=(Point(x=1, y=2), Point(x=3, y=4)), modifiers=('alt',)),
             ['xdotool', 'mouseup', '1', 'keyup', 'alt'],
         ),
+        (PressKeys(keys=('ctrl', 's'), repeat=3), ['xdotool', 'keyup', 's', 'ctrl']),
     ],
 )
 async def test_x11_computer_releases_what_a_failed_action_held(action: ComputerAction, release: list[str]) -> None:
@@ -297,6 +298,8 @@ def test_actions_normalize_key_names_and_validate_from_json() -> None:
         lambda: Scroll(direction='down', amount=51),
         lambda: TypeText(text='x' * 2_001),
         lambda: TypeText(text='a\x00b'),
+        lambda: PressKeys(keys=('a+b+c+d+e+f+g+h+i',)),
+        lambda: HoldKeys(keys=('',), seconds=1),
         lambda: Drag(path=(Point(x=0, y=0),) * 51),
     ],
 )
