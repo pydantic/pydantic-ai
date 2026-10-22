@@ -33,7 +33,7 @@ never discarded.
 | [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent] | The provider detected the end of user speech, when the profile declares [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]. |
 | [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] | The provider reported an interrupted model response. |
 | [`RealtimeInputTranscriptionErrorEvent`][pydantic_ai.realtime.RealtimeInputTranscriptionErrorEvent] | One user turn could not be transcribed; the session remains usable. |
-| [`RealtimeOutputSpeechStartEvent`][pydantic_ai.realtime.RealtimeOutputSpeechStartEvent] / [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent] | The model became, or stopped being, audible. These are emitted on a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband), where the provider owns audio playback. |
+| [`RealtimeOutputSpeechStartEvent`][pydantic_ai.realtime.RealtimeOutputSpeechStartEvent] / [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent] | The model became, or stopped being, audible. These are emitted on a gpt-realtime or Azure OpenAI [WebRTC sideband](deployment.md#browser-webrtc-server-sideband), where the provider owns audio playback. |
 | [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] | The exchange is over: the model gave every reply it owed, and no tool remains active. |
 | [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] | The connection was automatically re-established. |
 | [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] | A recoverable provider error occurred; the session remains usable. |
@@ -50,7 +50,8 @@ The first eight rows are [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEv
 [`pydantic_ai.messages`][pydantic_ai.messages] — the same events a
 [standard streamed run](../agent.md#streaming-all-events) yields, so event-handling code written for
 a text agent (rendering parts, logging tool calls) works on a session unchanged. The `Realtime*`
-rows are [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members that only a session emits:
+rows are [`RealtimeSessionEvent`][pydantic_ai.messages.RealtimeSessionEvent] members, the part of
+`AgentStreamEvent` that only a session emits:
 speech detection, interruption, turn completion, reconnection, and recoverable errors have no
 equivalent in a request-response run.
 
