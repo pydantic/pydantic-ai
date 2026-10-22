@@ -16,11 +16,23 @@ from typing import Any
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+    ModelOverloadedError,
+    ModelQuotaExceededError,
+    ModelRateLimitError,
+    ModelServerError,
+    ModelUnavailableError,
+    UserError,
+)
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._batch_model import BatchPool
 from pydantic_ai.models.batch import Batch, BatchRequest
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.tools import ToolDefinition
 from tests.conftest import try_import
@@ -30,6 +42,7 @@ with try_import() as imports_successful:
     from openai import AsyncAzureOpenAI, AsyncOpenAI
     from openai.auth import WorkloadIdentity
 
+    from pydantic_ai.models import _openai_batch as openai_batch
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.models.openai_codex import OpenAICodexModel
     from pydantic_ai.providers.azure import AzureProvider
@@ -286,10 +299,20 @@ class _FakeBatchAPI:
     batch: dict[str, Any]
     files: dict[str, str] = field(default_factory=dict[str, str])
     requests: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
+    delete_status: int = 200
+    response_bodies: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
         path = request.url.path.removeprefix('/v1')
         self.requests.append((request.method, path))
+        if request.method == 'DELETE' and path.startswith('/files/'):
+            if self.delete_status != 200:
+                return httpx2.Response(self.delete_status, json={'error': {'message': 'Nope', 'type': 'server_error'}})
+            return httpx2.Response(200, json={'id': path.split('/')[2], 'object': 'file', 'deleted': True})
+        if request.method == 'POST' and path == '/responses':
+            # A request sent on its own, outside a batch.
+            self.response_bodies.append(json.loads(request.read()))
+            return httpx2.Response(200, json=_RESPONSE_BODY)
         if request.method == 'POST' and path == '/files':
             # The JSONL file is the last part of the multipart upload.
             self.files['file-input'] = request.read().decode().split('\r\n\r\n')[-1].rsplit('\r\n--', 1)[0]
@@ -311,6 +334,34 @@ class _FakeBatchAPI:
         if path.endswith('/cancel'):
             self.batch['status'] = 'cancelling'
         return httpx2.Response(200, json=self.batch)
+
+
+_RESPONSE_BODY: dict[str, Any] = {
+    'id': 'resp_1',
+    'object': 'response',
+    'created_at': 1_767_225_600,
+    'model': 'gpt-4.1-nano-2025-04-14',
+    'status': 'completed',
+    'output': [
+        {
+            'id': 'msg_1',
+            'type': 'message',
+            'role': 'assistant',
+            'status': 'completed',
+            'content': [{'type': 'output_text', 'text': 'Hi!', 'annotations': []}],
+        }
+    ],
+    'parallel_tool_calls': True,
+    'tool_choice': 'auto',
+    'tools': [],
+    'usage': {
+        'input_tokens': 10,
+        'input_tokens_details': {'cached_tokens': 0},
+        'output_tokens': 2,
+        'output_tokens_details': {'reasoning_tokens': 0},
+        'total_tokens': 12,
+    },
+}
 
 
 def _batch_json(status: str, **fields: Any) -> dict[str, Any]:
@@ -470,15 +521,17 @@ async def test_batch_results_read_every_kind_of_line(allow_model_requests: None)
     assert response.provider_response_id == 'resp_1'
     assert response.provider_details is not None and response.provider_details['processing'] == 'batch'
 
+    # The body is the error object, as the SDK unwraps it from an error response.
     with pytest.raises(ModelHTTPError) as exc_info:
         model.batch_decode(results['http-error'], by_id['http-error'])
-    assert (exc_info.value.status_code, exc_info.value.body) == (400, error_body)
+    assert (exc_info.value.status_code, exc_info.value.body) == (400, error_body['error'])
 
-    with pytest.raises(ModelHTTPError) as exc_info:
+    with pytest.raises(ModelServerError) as exc_info:
         model.batch_decode(results['line-error'], by_id['line-error'])
+    assert isinstance(exc_info.value, ModelHTTPError)
     assert (exc_info.value.status_code, exc_info.value.body) == (
         500,
-        {'error': {'code': 'server_error', 'message': 'Something broke'}},
+        {'code': 'server_error', 'message': 'Something broke'},
     )
 
     for custom_id, status in (('expired', 'expired'), ('cancelled', 'canceled'), ('unrun', 'expired')):
@@ -496,9 +549,341 @@ async def test_batch_results_of_a_failed_batch(allow_model_requests: None) -> No
     api.batch = _batch_json('failed', errors=errors)
     results = await model.batch_results(await model.batch_status(batch))
     assert [(result.custom_id, result.status) for result in results] == [('one', 'errored'), ('two', 'errored')]
+    # The input file is still needed to tell which requests the batch held, so it's kept.
+    assert ('DELETE', '/files/file-input') not in api.requests
     with pytest.raises(ModelHTTPError) as exc_info:
         model.batch_decode(results[0], requests[0])
-    assert (exc_info.value.status_code, exc_info.value.body) == (
+    assert (exc_info.value.status_code, exc_info.value.body, exc_info.value.provider_error_code) == (
         400,
         {'errors': [{'code': 'invalid_request', 'message': 'Bad line', 'line': 2}]},
+        'invalid_request',
     )
+
+
+async def test_failed_batch_gives_each_request_the_errors_of_its_line(allow_model_requests: None) -> None:
+    """A batch that failed validation names the lines at fault: their requests get their own errors.
+
+    The other requests didn't run because of those lines, so they get every error, which names them. An error of
+    no line, about the batch as a whole, is every request's.
+    """
+    api = _FakeBatchAPI(batch=_batch_json('validating'))
+    model = _fake_model(api)
+    requests = [_request('one'), _request('two'), _request('three')]
+    batch = await model.batch_create([await model.batch_encode(request) for request in requests])
+    line_two = {'code': 'streaming_unsupported', 'message': 'Streaming is not supported.', 'line': 2}
+    line_three = {'code': 'unsupported_parameter', 'message': 'Background is not supported.', 'line': 3}
+    api.batch = _batch_json('failed', errors={'object': 'list', 'data': [line_two, line_three]})
+    results = {result.custom_id: result for result in await model.batch_results(await model.batch_status(batch))}
+
+    def body(custom_id: str) -> object:
+        with pytest.raises(ModelHTTPError) as exc_info:
+            model.batch_decode(results[custom_id], requests[0])
+        return exc_info.value.body
+
+    assert body('one') == {'errors': [line_two, line_three]}
+    assert body('two') == {'errors': [line_two]}
+    assert body('three') == {'errors': [line_three]}
+
+    whole_batch = {'code': 'token_limit_exceeded', 'message': 'Enqueued token limit reached.'}
+    api.batch = _batch_json('failed', errors={'object': 'list', 'data': [line_two, whole_batch]})
+    results = {result.custom_id: result for result in await model.batch_results(await model.batch_status(batch))}
+    assert body('one') == {'errors': [whole_batch]}
+    assert body('two') == {'errors': [line_two, whole_batch]}
+
+
+@pytest.mark.parametrize(
+    'line,error_class,status_code',
+    [
+        pytest.param(
+            {
+                'response': {
+                    'status_code': 400,
+                    'body': {
+                        'error': {
+                            'message': "This model's maximum context length is 1047576 tokens.",
+                            'type': 'invalid_request_error',
+                            'param': 'input',
+                            'code': 'context_length_exceeded',
+                        }
+                    },
+                }
+            },
+            ModelContextWindowExceededError,
+            400,
+            id='context-window',
+        ),
+        pytest.param(
+            {
+                'response': {
+                    'status_code': 429,
+                    'body': {
+                        'error': {'message': 'Rate limit reached.', 'type': 'requests', 'code': 'rate_limit_exceeded'}
+                    },
+                }
+            },
+            ModelRateLimitError,
+            429,
+            id='rate-limit',
+        ),
+        pytest.param(
+            {
+                'response': {
+                    'status_code': 429,
+                    'body': {
+                        'error': {
+                            'message': 'You exceeded your quota.',
+                            'type': 'insufficient_quota',
+                            'code': 'insufficient_quota',
+                        }
+                    },
+                }
+            },
+            ModelQuotaExceededError,
+            429,
+            id='quota',
+        ),
+        pytest.param(
+            {
+                'response': {
+                    'status_code': 503,
+                    'body': {'error': {'message': 'The server is overloaded.', 'type': 'server_error'}},
+                }
+            },
+            ModelOverloadedError,
+            503,
+            id='overloaded',
+        ),
+        pytest.param(
+            {
+                'response': {
+                    'status_code': 503,
+                    'body': {'error': {'message': 'Try again later.', 'type': 'server_error'}},
+                }
+            },
+            ModelUnavailableError,
+            503,
+            id='unavailable',
+        ),
+        pytest.param(
+            {'error': {'code': 'server_error', 'message': 'The server had an error.'}},
+            ModelServerError,
+            500,
+            id='line-error',
+        ),
+    ],
+)
+async def test_batch_error_lines_raise_the_category_of_the_same_error_outside_a_batch(
+    allow_model_requests: None, line: dict[str, Any], error_class: type[ModelAPIError], status_code: int
+) -> None:
+    """A failed request raises the error category its error would have outside a batch, as code catches it by that."""
+    api = _FakeBatchAPI(batch=_batch_json('in_progress'))
+    model = _fake_model(api)
+    request = _request('item')
+    batch = await model.batch_create([await model.batch_encode(request)])
+    api.files['file-errors'] = json.dumps(
+        {'id': 'batch_req_1', 'custom_id': 'item', 'response': None, 'error': None, **line}
+    )
+    api.batch = _batch_json('completed', error_file_id='file-errors')
+    [result] = await model.batch_results(await model.batch_status(batch))
+    with pytest.raises(error_class) as exc_info:
+        model.batch_decode(result, request)
+    assert isinstance(exc_info.value, ModelHTTPError)
+    assert exc_info.value.status_code == status_code
+
+
+async def test_batch_error_for_an_unknown_previous_response(allow_model_requests: None) -> None:
+    """A request continuing a response OpenAI doesn't have fails on its own, as it would outside a batch.
+
+    The error line is the one the live API wrote for such a request; the batch's other requests still ran.
+    """
+    api = _FakeBatchAPI(batch=_batch_json('in_progress'))
+    model = _fake_model(api)
+    requests = [_request('ok'), _request('e3_prev_id_bogus')]
+    batch = await model.batch_create([await model.batch_encode(request) for request in requests])
+    api.files['file-output'] = _line('ok', {'status_code': 200, 'body': _RESPONSE_BODY})
+    error = {
+        'message': "Previous response with id 'resp_doesnotexist123' not found.",
+        'type': 'invalid_request_error',
+        'param': 'previous_response_id',
+        'code': 'previous_response_not_found',
+    }
+    api.files['file-errors'] = json.dumps(
+        {'custom_id': 'e3_prev_id_bogus', 'response': {'status_code': 400, 'body': {'error': error}}, 'error': None}
+    )
+    api.batch = _batch_json('completed', output_file_id='file-output', error_file_id='file-errors')
+    results = {result.custom_id: result for result in await model.batch_results(await model.batch_status(batch))}
+    assert model.batch_decode(results['ok'], requests[0]).text == 'Hi!'
+    with pytest.raises(ModelHTTPError) as exc_info:
+        model.batch_decode(results['e3_prev_id_bogus'], requests[1])
+    error_info = exc_info.value
+    assert type(error_info) is ModelHTTPError
+    assert (
+        error_info.status_code,
+        error_info.body,
+        error_info.provider_error_code,
+        error_info.provider_error_type,
+    ) == (
+        400,
+        error,
+        'previous_response_not_found',
+        'invalid_request_error',
+    )
+
+
+async def test_batch_error_suggests_a_known_model_for_an_unknown_one(allow_model_requests: None) -> None:
+    """A batch whose model OpenAI doesn't know suggests a close known model, as a request on its own does."""
+    api = _FakeBatchAPI(batch=_batch_json('validating'))
+    model = OpenAIResponsesModel(
+        'gpt-4.1-nan',
+        provider=OpenAIProvider(
+            openai_client=AsyncOpenAI(
+                api_key='k', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(api.handle))
+            )
+        ),
+    )
+    request = _request()
+    batch = await model.batch_create([await model.batch_encode(request)])
+    error = {'code': 'model_not_found', 'message': "The provided model 'gpt-4.1-nan' is not supported.", 'line': 1}
+    api.batch = _batch_json('failed', errors={'object': 'list', 'data': [error]})
+    [result] = await model.batch_results(await model.batch_status(batch))
+    with pytest.raises(ModelHTTPError) as exc_info:
+        model.batch_decode(result, request)
+    assert exc_info.value.suggested_model_id == 'openai:gpt-4.1-nano'
+
+
+async def test_batch_status_of_an_unknown_status_keeps_waiting(allow_model_requests: None) -> None:
+    """OpenAI lists the statuses a batch ends in, so one added later is a batch that hasn't ended."""
+    api = _FakeBatchAPI(batch=_batch_json('validating'))
+    model = _fake_model(api)
+    batch = await model.batch_create([await model.batch_encode(_request())])
+    api.batch = _batch_json('paused')
+    batch = await model.batch_status(batch)
+    assert batch.status == 'in_progress'
+    assert batch.provider_details == {'status': 'paused', 'input_file_id': 'file-input'}
+
+
+async def test_cancelled_batch_returns_what_it_ran(allow_model_requests: None) -> None:
+    """A batch cancelled partway keeps the responses it finished; the requests it didn't get to were canceled."""
+    api = _FakeBatchAPI(batch=_batch_json('in_progress'))
+    model = _fake_model(api)
+    requests = [_request('done'), _request('cancelled'), _request('unrun')]
+    batch = await model.batch_create([await model.batch_encode(request) for request in requests])
+    api.files['file-output'] = _line('done', {'status_code': 200, 'body': _RESPONSE_BODY})
+    api.files['file-errors'] = _line('cancelled', error={'code': 'batch_cancelled', 'message': 'Cancelled.'})
+    api.batch = _batch_json('cancelled', output_file_id='file-output', error_file_id='file-errors')
+    results = {result.custom_id: result for result in await model.batch_results(await model.batch_status(batch))}
+    assert {custom_id: result.status for custom_id, result in results.items()} == {
+        'done': 'succeeded',
+        'cancelled': 'canceled',
+        'unrun': 'canceled',
+    }
+    assert model.batch_decode(results['done'], requests[0]).text == 'Hi!'
+    assert ('DELETE', '/files/file-input') not in api.requests
+
+
+@pytest.mark.parametrize('delete_status', [200, 404, 500])
+async def test_completed_batch_deletes_its_input_file(allow_model_requests: None, delete_status: int) -> None:
+    """Once every request has run, the input file isn't needed; deleting it is best effort, so failing to is fine."""
+    api = _FakeBatchAPI(batch=_batch_json('in_progress'), delete_status=delete_status)
+    model = _fake_model(api)
+    batch = await model.batch_create([await model.batch_encode(_request('ok'))])
+    api.files['file-output'] = _line('ok', {'status_code': 200, 'body': _RESPONSE_BODY})
+    api.batch = _batch_json('completed', output_file_id='file-output')
+    [result] = await model.batch_results(await model.batch_status(batch))
+    assert result.status == 'succeeded'
+    assert api.requests[-1] == ('DELETE', '/files/file-input')
+
+
+async def test_batch_size_limits(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A request counts the bytes of its line in the input file, which OpenAI limits to 200 MB.
+
+    A request too large for any batch is refused when it's encoded, and requests too large for one batch when
+    they're submitted, before anything is uploaded.
+    """
+    api = _FakeBatchAPI(batch=_batch_json('validating'))
+    model = _fake_model(api)
+    assert model.batch_max_bytes == 200_000_000
+    assert _model(model_name='gpt-4.1-nano').batch_max_bytes == 200_000_000
+    assert OpenAIChatModel('gpt-4.1-nano', provider=OpenAIProvider(api_key='k')).batch_max_bytes is None
+    assert WrapperModel(model).batch_max_bytes == 200_000_000
+
+    encoded = [await model.batch_encode(_request(custom_id)) for custom_id in ('one', 'two-ü')]
+    sizes = [model.batch_request_size(request) for request in encoded]
+    assert [WrapperModel(model).batch_request_size(request) for request in encoded] == sizes
+    await model.batch_create(encoded)
+    # Lines are separated by newlines, which each request counts.
+    assert len(api.files['file-input'].encode()) == sum(sizes) - 1
+
+    monkeypatch.setattr(openai_batch, 'MAX_BATCH_BYTES', sizes[0])
+    with pytest.raises(UserError, match=f'These requests take {sum(sizes):,} bytes, more than the {sizes[0]:,} bytes'):
+        await model.batch_create(encoded)
+    with pytest.raises(UserError, match=f'This request takes {sizes[1]:,} bytes, more than the {sizes[0]:,} bytes'):
+        await model.batch_encode(_request('two-ü'))
+    assert api.requests.count(('POST', '/files')) == 1
+
+
+async def test_batch_request_is_the_request_sent_outside_a_batch(allow_model_requests: None) -> None:
+    """A batch request carries exactly the body the request would send on its own: tools, output schema, reasoning."""
+    api = _FakeBatchAPI(batch=_batch_json('validating'))
+    model = _fake_model(api)
+    messages: list[Any] = [ModelRequest(parts=[UserPromptPart('Hello')], instructions='Answer briefly')]
+    settings = OpenAIResponsesModelSettings(
+        max_tokens=100, openai_reasoning_effort='low', openai_reasoning_summary='auto', openai_store=False
+    )
+    parameters = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='weather', parameters_json_schema={'type': 'object', 'properties': {}})],
+        output_mode='native',
+        output_object=OutputObjectDefinition(
+            json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']},
+            name='City',
+        ),
+    )
+    await model.request(messages, settings, parameters)
+    encoded = await model.batch_encode(
+        BatchRequest(custom_id='item', messages=messages, model_settings=settings, model_request_parameters=parameters)
+    )
+    [sent] = api.response_bodies
+    # A request on its own says it isn't streamed, which a batch, which never streams, leaves out.
+    assert sent.pop('stream') is False
+    assert json.loads(encoded.body) == sent
+    assert 'background' not in sent
+
+
+async def test_batch_usage_has_cached_and_reasoning_tokens(allow_model_requests: None) -> None:
+    """A batched response reports cached and reasoning tokens as the request would on its own, priced at batch rates.
+
+    Served by the fake: OpenAI doesn't reliably serve a batched request from the cache, so it can't be recorded.
+    """
+    api = _FakeBatchAPI(batch=_batch_json('in_progress'))
+    model = _fake_model(api)
+    request = _request('usage')
+    batch = await model.batch_create([await model.batch_encode(request)])
+    usage = {
+        'input_tokens': 2000,
+        'input_tokens_details': {'cached_tokens': 1536},
+        'output_tokens': 50,
+        'output_tokens_details': {'reasoning_tokens': 30},
+        'total_tokens': 2050,
+    }
+    api.files['file-output'] = _line('usage', {'status_code': 200, 'body': {**_RESPONSE_BODY, 'usage': usage}})
+    api.batch = _batch_json('completed', output_file_id='file-output')
+    [result] = await model.batch_results(await model.batch_status(batch))
+    response = model.batch_decode(result, request)
+    assert (response.usage.input_tokens, response.usage.cache_read_tokens, response.usage.output_tokens) == (
+        2000,
+        1536,
+        50,
+    )
+    assert response.usage.output_reasoning_tokens == 30
+    standard = ModelResponse(
+        parts=response.parts, usage=response.usage, model_name=response.model_name, provider_name=response.provider_name
+    )
+    # `genai-prices` has batch prices for uncached input and output; cached input costs the same either way.
+    batch_price, standard_price = response.cost().model_price, standard.cost().model_price
+    assert batch_price.input_mtok is not None and standard_price.input_mtok is not None
+    assert batch_price.output_mtok is not None and standard_price.output_mtok is not None
+    assert (batch_price.input_mtok * 2, batch_price.output_mtok * 2) == (
+        standard_price.input_mtok,
+        standard_price.output_mtok,
+    )
+    assert response.cost().total_price < standard.cost().total_price

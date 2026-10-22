@@ -8,6 +8,7 @@ raised before anything is sent, and results the API rarely produces on demand.
 from __future__ import annotations
 
 import json
+import sys
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -17,18 +18,29 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import ModelRequest, ModelResponse, ToolDefinition, UserPromptPart
 from pydantic_ai.direct import model_request_batch
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+    ModelOverloadedError,
+    ModelRateLimitError,
+    ModelServerError,
+    ModelUnavailableError,
+    UserError,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._batch_model import BatchPool
 from pydantic_ai.models.batch import Batch, BatchRequest, BatchResult
+from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from google.genai import Client
+    from google.genai import Client, errors
     from google.genai.types import BatchJob, BatchJobDestination, File, HttpOptions, JobError, JobState
 
+    from pydantic_ai.models import _google_batch as google_batch
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
@@ -111,8 +123,14 @@ async def test_gemini_batch_is_not_on_google_cloud() -> None:
 
 
 def test_gemini_batch_is_on_the_gemini_api() -> None:
+    """The Gemini API limits a batch by its input file's 2 GB, not its number of requests."""
     model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
-    assert model.batch_max_requests == 100_000
+    assert model.batch_max_requests == sys.maxsize
+    assert model.batch_max_bytes == 2_000_000_000
+    cloud = GoogleModel(
+        'gemini-2.5-flash-lite', provider=GoogleCloudProvider(project='project', location='us-central1')
+    )
+    assert cloud.batch_max_bytes is None
 
 
 async def test_gemini_batch_create_validates_requests(allow_model_requests: None) -> None:
@@ -262,22 +280,275 @@ def test_gemini_batch_request_that_never_ran_is_a_model_error(status: str) -> No
 
 
 @pytest.mark.parametrize(
-    'error, status_code',
+    'error, error_class, status_code, body',
     [
-        ({'code': 3, 'message': 'Invalid argument.'}, 400),
-        ({'code': 8, 'message': 'Quota exceeded.'}, 429),
-        ({'code': 99, 'message': 'Unknown code.'}, 500),
-        ({'message': 'No code.'}, 500),
+        (
+            {'code': 3, 'message': 'Invalid argument.'},
+            ModelHTTPError,
+            400,
+            {'error': {'code': 400, 'message': 'Invalid argument.', 'status': 'INVALID_ARGUMENT'}},
+        ),
+        (
+            {
+                'code': 3,
+                'message': 'The input token count (2000000) exceeds the maximum number of tokens allowed (1048576).',
+            },
+            ModelContextWindowExceededError,
+            400,
+            None,
+        ),
+        (
+            {'code': 8, 'message': 'Quota exceeded.'},
+            ModelRateLimitError,
+            429,
+            {'error': {'code': 429, 'message': 'Quota exceeded.', 'status': 'RESOURCE_EXHAUSTED'}},
+        ),
+        ({'code': 13, 'message': 'Internal error.'}, ModelServerError, 500, None),
+        ({'code': 14, 'message': 'The model is overloaded. Please try again later.'}, ModelOverloadedError, 503, None),
+        ({'code': 14, 'message': 'Service unavailable.'}, ModelUnavailableError, 503, None),
+        (
+            {'code': 99, 'message': 'Unknown code.'},
+            ModelServerError,
+            500,
+            {'error': {'code': 99, 'message': 'Unknown code.'}},
+        ),
+        ({'message': 'No code.'}, ModelServerError, 500, {'error': {'message': 'No code.'}}),
     ],
 )
-def test_gemini_batch_error_raises_the_http_error_of_its_rpc_code(error: dict[str, object], status_code: int) -> None:
-    """A per-request error carries a `google.rpc.Code`, which maps to the HTTP status `generateContent` would return."""
+def test_gemini_batch_error_raises_the_error_of_its_rpc_code(
+    error: dict[str, object], error_class: type[ModelAPIError], status_code: int, body: object
+) -> None:
+    """A per-request error is a `google.rpc.Status`, which raises the error `generateContent` would have for it.
+
+    That's the HTTP status and category the REST API gives the same status, and its body as the REST API sends it.
+    """
     model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
     result = BatchResult(custom_id='item', status='errored', body=json.dumps(error))
+    with pytest.raises(error_class) as exc_info:
+        model.batch_decode(result, _request())
+    assert isinstance(exc_info.value, ModelHTTPError)
+    if error_class is ModelHTTPError:
+        assert type(exc_info.value) is ModelHTTPError
+    assert exc_info.value.status_code == status_code
+    if body is not None:
+        assert exc_info.value.body == body
+
+
+def test_gemini_batch_error_suggests_a_known_model_for_an_unknown_one() -> None:
+    model = GoogleModel('gemini-2.5-flash-lit', provider=GoogleProvider(api_key='test-key'))
+    message = 'models/gemini-2.5-flash-lit is not found for API version v1beta, or is not supported.'
+    result = BatchResult(custom_id='item', status='errored', body=json.dumps({'code': 5, 'message': message}))
     with pytest.raises(ModelHTTPError) as exc_info:
         model.batch_decode(result, _request())
-    assert exc_info.value.status_code == status_code
-    assert exc_info.value.body == {'error': error}
+    assert (exc_info.value.status_code, exc_info.value.provider_error_code) == (404, 'NOT_FOUND')
+    assert exc_info.value.suggested_model_id == 'google:gemini-2.5-flash-lite'
+
+
+_OK_RESPONSE = {'candidates': [{'content': {'role': 'model', 'parts': [{'text': 'Hi!'}]}, 'finishReason': 'STOP'}]}
+
+
+def _fake_jobs(
+    monkeypatch: pytest.MonkeyPatch, model: GoogleModel, job: dict[str, Any], rows: list[dict[str, Any]] | None = None
+) -> list[str]:
+    """Serve `job` for every job, with `rows` in its results file, and return the names of the files deleted."""
+    deleted: list[str] = []
+
+    async def upload(*, file: Any, config: Any = None) -> File:
+        return File(name='files/input')
+
+    async def create(*, model: str, src: str, config: Any = None) -> BatchJob:
+        return BatchJob(name='batches/1', state=JobState.JOB_STATE_PENDING)
+
+    async def get(*, name: str, config: Any = None) -> BatchJob:
+        return BatchJob.model_validate({'name': name, **job})
+
+    async def download(*, file: str, config: Any = None) -> bytes:
+        return '\n'.join(json.dumps(row) for row in rows or []).encode()
+
+    async def delete(*, name: str, config: Any = None) -> None:
+        deleted.append(name)
+
+    monkeypatch.setattr(model.client.aio.files, 'upload', upload)
+    monkeypatch.setattr(model.client.aio.files, 'download', download)
+    monkeypatch.setattr(model.client.aio.files, 'delete', delete)
+    monkeypatch.setattr(model.client.aio.batches, 'create', create)
+    monkeypatch.setattr(model.client.aio.batches, 'get', get)
+    return deleted
+
+
+@pytest.mark.parametrize(
+    'state, status',
+    [
+        (None, 'in_progress'),
+        ('JOB_STATE_UNSPECIFIED', 'in_progress'),
+        ('JOB_STATE_QUEUED', 'in_progress'),
+        ('JOB_STATE_PENDING', 'in_progress'),
+        ('JOB_STATE_RUNNING', 'in_progress'),
+        ('JOB_STATE_PAUSED', 'in_progress'),
+        ('JOB_STATE_UPDATING', 'in_progress'),
+        ('JOB_STATE_CANCELLING', 'canceling'),
+        ('JOB_STATE_SUCCEEDED', 'ended'),
+        ('JOB_STATE_PARTIALLY_SUCCEEDED', 'ended'),
+        ('JOB_STATE_FAILED', 'ended'),
+        ('JOB_STATE_CANCELLED', 'ended'),
+        ('JOB_STATE_EXPIRED', 'ended'),
+    ],
+)
+async def test_gemini_batch_status_maps_every_job_state(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, state: str | None, status: str
+) -> None:
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    _fake_jobs(monkeypatch, model, {'state': state})
+    batch = await model.batch_create([await model.batch_encode(_request())])
+    batch = await model.batch_status(batch)
+    assert batch.status == status
+    assert batch.provider_details == {'input_file': 'files/input', 'state': state or 'JOB_STATE_UNSPECIFIED'}
+
+
+async def test_gemini_partially_succeeded_job_returns_its_rows(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A job that partially succeeded writes a row for each request it ran: a response or an error, matched by key.
+
+    A request it has no row for isn't in the results, which the caller reports as unrun. Once the job has ended, its
+    input file is deleted.
+    """
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    rows = [
+        {'key': 'failed', 'error': {'code': 8, 'message': 'Quota exceeded.'}},
+        {'key': 'ok', 'response': _OK_RESPONSE},
+    ]
+    deleted = _fake_jobs(
+        monkeypatch,
+        model,
+        {'state': 'JOB_STATE_PARTIALLY_SUCCEEDED', 'dest': {'file_name': 'files/out'}},
+        rows,
+    )
+    requests = {custom_id: _request(custom_id) for custom_id in ('ok', 'failed', 'missing')}
+    batch = await model.batch_status(
+        await model.batch_create([await model.batch_encode(request) for request in requests.values()])
+    )
+    assert batch.status == 'ended'
+    results = {result.custom_id: result for result in await model.batch_results(batch)}
+    assert {custom_id: result.status for custom_id, result in results.items()} == {
+        'failed': 'errored',
+        'ok': 'succeeded',
+    }
+    assert model.batch_decode(results['ok'], requests['ok']).text == 'Hi!'
+    with pytest.raises(ModelRateLimitError):
+        model.batch_decode(results['failed'], requests['failed'])
+    assert deleted == ['files/input']
+
+
+async def test_gemini_succeeded_job_whose_rows_all_failed(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A job can succeed with every request failing on its own, so each raises its own error."""
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    rows = [
+        {'key': 'one', 'error': {'code': 3, 'message': 'Invalid argument.'}},
+        {'key': 'two', 'error': {'code': 13, 'message': 'Internal error.'}},
+    ]
+    _fake_jobs(monkeypatch, model, {'state': 'JOB_STATE_SUCCEEDED', 'dest': {'file_name': 'files/out'}}, rows)
+    requests = [_request('one'), _request('two')]
+    batch = await model.batch_status(await model.batch_create([await model.batch_encode(r) for r in requests]))
+    one, two = await model.batch_results(batch)
+    assert (one.status, two.status) == ('errored', 'errored')
+    with pytest.raises(ModelHTTPError) as exc_info:
+        model.batch_decode(one, requests[0])
+    assert exc_info.value.status_code == 400
+    with pytest.raises(ModelServerError):
+        model.batch_decode(two, requests[1])
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        errors.ClientError(404, {'error': {'code': 404, 'message': 'Not found', 'status': 'NOT_FOUND'}}),
+        httpx2.ConnectError('Connection refused'),
+    ],
+)
+async def test_gemini_batch_results_survive_failing_to_delete_the_input_file(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """Deleting the input file is best effort: the file expires on its own, and the results matter more."""
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    _fake_jobs(
+        monkeypatch,
+        model,
+        {'state': 'JOB_STATE_SUCCEEDED', 'dest': {'file_name': 'files/out'}},
+        [{'key': 'ok', 'response': _OK_RESPONSE}],
+    )
+
+    async def delete(*, name: str, config: Any = None) -> None:
+        raise error
+
+    monkeypatch.setattr(model.client.aio.files, 'delete', delete)
+    batch = await model.batch_status(await model.batch_create([await model.batch_encode(_request('ok'))]))
+    [result] = await model.batch_results(batch)
+    assert result.status == 'succeeded'
+
+
+async def test_gemini_batch_size_limits(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A request counts the bytes of its line in the input file, which the Gemini API limits to 2 GB.
+
+    A request too large for any batch is refused when it's encoded, and requests too large for one batch when
+    they're submitted, before anything is uploaded.
+    """
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    uploads: list[bytes] = []
+    _fake_jobs(monkeypatch, model, {'state': 'JOB_STATE_PENDING'})
+
+    async def upload(*, file: Any, config: Any = None) -> File:
+        uploads.append(file.getvalue())
+        return File(name='files/input')
+
+    monkeypatch.setattr(model.client.aio.files, 'upload', upload)
+    encoded = [await model.batch_encode(_request(custom_id)) for custom_id in ('one', 'twö')]
+    sizes = [model.batch_request_size(request) for request in encoded]
+    await model.batch_create(encoded)
+    # Lines are separated by newlines, which each request counts.
+    assert len(uploads[0]) == sum(sizes) - 1
+    assert [json.loads(line)['key'] for line in uploads[0].splitlines()] == ['one', 'twö']
+
+    monkeypatch.setattr(google_batch, 'MAX_BATCH_BYTES', sizes[0])
+    with pytest.raises(UserError, match=f'These requests take {sum(sizes):,} bytes, more than the {sizes[0]:,} bytes'):
+        await model.batch_create(encoded)
+    with pytest.raises(UserError, match=f'This request takes {sizes[1]:,} bytes, more than the {sizes[0]:,} bytes'):
+        await model.batch_encode(_request('twö'))
+    assert len(uploads) == 1
+
+
+async def test_gemini_batch_request_is_the_request_sent_outside_a_batch(allow_model_requests: None) -> None:
+    """A batch request carries exactly the body `generateContent` would get: tools, output schema, thinking, safety."""
+    sent: list[dict[str, Any]] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.read()))
+        return httpx2.Response(200, json=_OK_RESPONSE)
+
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
+    model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key', http_client=http_client))
+    messages: list[Any] = [ModelRequest(parts=[UserPromptPart('Hello')], instructions='Answer briefly')]
+    settings = GoogleModelSettings(
+        max_tokens=100,
+        google_thinking_config={'thinking_budget': 512, 'include_thoughts': True},
+        google_safety_settings=[{'category': 'HARM_CATEGORY_HARASSMENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'}],  # pyright: ignore[reportArgumentType]
+    )
+    parameters = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='weather', parameters_json_schema={'type': 'object', 'properties': {}})],
+        output_mode='native',
+        output_object=OutputObjectDefinition(
+            json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']},
+            name='City',
+        ),
+        allow_text_output=False,
+    )
+    await model.request(messages, settings, parameters)
+    encoded = await model.batch_encode(
+        BatchRequest(custom_id='item', messages=messages, model_settings=settings, model_request_parameters=parameters)
+    )
+    assert json.loads(encoded.body) == sent[0]
 
 
 async def test_model_request_batch_keeps_other_jobs_results_when_one_fails(
