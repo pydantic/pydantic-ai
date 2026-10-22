@@ -467,6 +467,6 @@ def _wrap_gathered(outcome: Any) -> ExternalReturnValue | ExternalException:
     """Wrap an `asyncio.gather(return_exceptions=True)` outcome for Monty."""
     if isinstance(outcome, Exception):
         return ExternalException(exception=outcome)
-    if isinstance(outcome, BaseException):  # pragma: no cover
+    if isinstance(outcome, BaseException):
         raise outcome
     return ExternalReturnValue(return_value=outcome)

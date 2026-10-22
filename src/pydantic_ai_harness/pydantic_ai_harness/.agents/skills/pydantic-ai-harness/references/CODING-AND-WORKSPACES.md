@@ -3,7 +3,7 @@
 Harness capabilities that touch files or run commands (`Coder`, `FileSystem`, `Shell`, `RepoContext`,
 `Macroscope`) act in the run's **workspace**, never on a path they pick themselves. Attach the
 workspace as its own capability: `LocalWorkspace` for this machine, or `ModalSandbox` / `E2BSandbox` /
-`SpritesSandbox` / `DaytonaSandbox` for an isolated cloud machine, or `SmolSandbox` for a microVM on this machine. Core workspace semantics (refs, `workspace=`
+`SpritesSandbox` / `DaytonaSandbox` for an isolated cloud machine, or `SmolSandbox` / `BoxLiteSandbox` / `DockerSandbox` for a microVM or container on this machine. Core workspace semantics (refs, `workspace=`
 precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 `building-pydantic-ai-agents` skill's WORKSPACES.md reference; this file covers the harness side.
 
@@ -15,6 +15,8 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Narrower agent: file tools and/or commands with policy (allowlists, patterns, read-only) | `FileSystem()` and/or `Shell()` + a workspace |
 | Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `SpritesSandbox()` / `DaytonaSandbox()`; tool capabilities stay the same |
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
+| Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
+| Isolation on this machine with Docker or Podman | `DockerSandbox(image='python:3.13-slim')`: a local container |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrapSandbox(...)` to sandbox its commands on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
 
@@ -180,6 +182,11 @@ descendants), `read_only=False` (`True` registers only read tools), `content_has
   `allowed_patterns`. A read-only workspace gets only read tools.
 - Veto writes with `@agent.on_event(FileChangeRequestEvent)` + `event.cancel(reason)` (from
   `pydantic_ai_harness.filesystem`); the event carries a unified `diff`.
+- Recognize the file tools by kind, never by name: each declares `tool_kind` `file_system.<tool>`
+  (`READ_FILE_KIND`, `WRITE_FILE_KIND`, ... from `pydantic_ai_harness.filesystem`), and its calls
+  become typed parts (`isinstance(part, ReadFileCallPart)`; `part.typed_args` is `None` until the
+  arguments validate). Only `read_file` has a typed return part (`ReadFileReturnPart`, successful
+  returns only).
 
 ## Shell
 
@@ -327,15 +334,63 @@ Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`
 - Without `image` it runs smolvm's Alpine (BusyBox, root, no Python/git/`rg`); pass an OCI image such as
   `image='python:3.12-alpine'`. No network unless `allow_internet_access=True`, which is unrestricted
   egress from this machine's network (LAN, metadata endpoints), not internet-only. `working_dir` is created.
-- The ref is `WorkspaceRef(provider='smol', id='pydantic-ai-<32 hex>')`; any other id raises `ValueError`,
-  so a ref can't reach other tools' VMs. The name isn't proof of origin (any process of this OS user can
-  use it), so only pass refs the app stored. Runs never delete the VM, and VMs have no TTL:
+- The ref is `WorkspaceRef(provider='smol', id='pydantic-ai-<32 hex>')`; from history, `workspace=ref`,
+  `backend(ref)` or `destroy(ref)` any other id raises `ValueError`, so a ref can't reach other tools' VMs.
+  A VM on this machine goes in as `workspace=SmolSandboxBackend(sandbox=machine)` (or `ref=` with its name),
+  which history doesn't reattach. The name isn't proof of origin (any process of this OS user can use it),
+  so only pass refs the app stored. Runs never delete the VM, and VMs have no TTL:
   `await SmolSandbox().destroy(ref)` (boots a stopped VM to delete it; quiet if gone; waits for a boot
   in progress, so a `finally` that destroys `backend.ref` also covers a run cancelled mid-boot).
 - Reattaching in the same process works as for the cloud sandboxes. Across processes, smolmachines does
   not flush a VM's disk when the process exits, so stop it first:
   `await (await SmolSandbox().backend(ref).get_sandbox()).stop()`.
 - File operations go through the VM's shell, 64 KiB per command; multi-MiB files take seconds.
+
+### BoxLiteSandbox
+
+`BoxLiteSandbox(*, image=None, cpus=None, memory_mb=None, allow_internet_access=False, allowed_hosts=None,
+working_dir='/workspace', env=None, box_options=None)` (backend `BoxLiteSandboxBackend`, extra `[boxlite]`)
+creates a local [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM on first use. No credentials or
+daemon; needs macOS 14+ on Apple silicon, or Linux x86_64/aarch64 with glibc 2.28+ and access to `/dev/kvm`;
+Python up to 3.14.
+
+- Without `image` it runs Alpine (BusyBox, root, no Python/git/`rg`); pass e.g. `image='python:3.12-slim'`.
+  No network unless `allow_internet_access=True`; `allowed_hosts=['pypi.org', ...]` limits egress to those
+  hosts, IPs or CIDRs. `working_dir` is created.
+- `box_options` passes other `boxlite.BoxOptions` arguments to a new box (`volumes`, `ports`, `secrets`,
+  `disk_size_gb`, `user`); the ones the named settings own raise `UserError`. Runtime-wide settings
+  (registry logins, home dir) go to `boxlite.Boxlite.init_default(boxlite.Options(...))` before first use.
+- The ref is `WorkspaceRef(provider='boxlite', id='pydantic-ai-<32 hex>')`; from history, `workspace=ref`,
+  `backend(ref)` or `destroy(ref)` any other id raises `ValueError`. An existing box goes in as
+  `workspace=BoxLiteSandboxBackend(sandbox=box)` (or `ref=` with any name), which history doesn't reattach.
+  Runs never delete the box: `await BoxLiteSandbox().destroy(ref)` (quiet if gone; waits for a creation in
+  progress). A box stops, keeping its disk, when the process lets go of it; its ref boots it
+  again. One process at a time can use a BoxLite home (`~/.boxlite` or `BOXLITE_HOME`); another gets
+  `WorkspaceUnavailableError`.
+- Output is read while the command runs and for at most 2 s after it exits, so a background job never holds
+  a command open; output past 10 MiB stops the command with `WorkspaceOutputLimitError`.
+
+### DockerSandbox
+
+`DockerSandbox(*, image=None, working_dir='/workspace', env=None, allow_internet_access=True, docker_args=(), executable='docker')`
+(backend `DockerSandboxBackend`) runs commands and file operations in a local container through the
+`docker` CLI (`executable='podman'` works). No extra, no SDK.
+
+- The first operation creates the container; the image needs a POSIX `sh`, and its own entrypoint and
+  command don't run. Creating the container (and pulling) is not bounded by a command's `timeout`. Without `image` the
+  capability only attaches and removes by ref, and leaves a run without a ref to other workspace capabilities.
+  `working_dir=None` uses the image's `WORKDIR`; a missing `working_dir` is created on first use, in an attached container too.
+- The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`; attaching starts a stopped container,
+  so it comes back. The container outlives the run: `await DockerSandbox().destroy(ref)`.
+  Leftovers carry the label `ai.pydantic.workspace=true`: `docker ps --all --filter label=ai.pydantic.workspace=true`.
+- Network on Docker's default bridge (internet plus LAN and host services); `allow_internet_access=False`
+  adds `--network none`, which Docker refuses next to a `--network` in `docker_args`. `docker_args`:
+  `['--memory', '2g']`, `['--volume', f'{project}:/workspace']` to work on a host directory.
+- A missing `working_dir` is created as the container's user: with `--user`, use a mount or
+  `working_dir=None`.
+- New containers get `--pids-limit 2048`; a `--pids-limit` in `docker_args` replaces it (`-1` removes it).
+- With Docker, a background child holding stdout/stderr open keeps `run()` waiting: redirect it.
+  With Podman, `run()` returns when the command exits.
 
 ## Remote hosts and bubblewrap
 
@@ -461,6 +516,7 @@ task's approval fails the run.
 - https://pydantic.dev/docs/ai/harness/sprites-sandbox/
 - https://pydantic.dev/docs/ai/harness/daytona-sandbox/
 - https://pydantic.dev/docs/ai/harness/smol-sandbox/
+- https://pydantic.dev/docs/ai/harness/boxlite-sandbox/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
 - https://pydantic.dev/docs/ai/harness/repo-context/
 - https://pydantic.dev/docs/ai/harness/macroscope/
