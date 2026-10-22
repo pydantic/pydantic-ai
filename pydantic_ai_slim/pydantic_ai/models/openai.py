@@ -152,7 +152,7 @@ from ._tool_choice import (
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
 
 if TYPE_CHECKING:
-    from ._openai_responses_websocket import ResponsesWebSocket, ResponsesWebSocketStream
+    from ._openai_responses_websocket import ResponsesWebSocket, ResponsesWebSocketLane, ResponsesWebSocketStream
 
 try:
     from openai import (
@@ -2596,6 +2596,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     _provider: Provider[AsyncOpenAI] = field(repr=False)
     _history_digest_key: bytes | None = field(default=None, repr=False)
     _websocket: ResponsesWebSocket | None = field(default=None, repr=False)
+    _websocket_lane: ResponsesWebSocketLane | None = field(default=None, repr=False)
 
     @property
     def _contains_live_connection(self) -> bool:
@@ -3627,9 +3628,31 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream | ModelResponse:
+        if (websocket := self._websocket) is not None and self._websocket_lane is None:
+            if (span := current_model_request_span()) is not None:
+                span.set_attribute('pydantic_ai.transport', 'websocket')
+            # Reserve before building the request: the lane's cached response decides what it can continue from.
+            _, timeout = self._build_request_options(model_settings)
+            lane = await websocket.reserve(
+                next(
+                    (
+                        m.provider_response_id
+                        for m in reversed(messages)
+                        if isinstance(m, ModelResponse) and m.provider_name == self.system
+                    ),
+                    None,
+                ),
+                HTTPX2Timeout(self.client.timeout if isinstance(timeout, NotGiven) else timeout),
+            )
+            try:
+                return await _utils.replace_no_init(self, _websocket_lane=lane)._responses_create(
+                    messages, stream, model_settings, model_request_parameters
+                )
+            except BaseException:
+                websocket.release(lane, finished=True)
+                raise
+
         profile = self.profile
-        if self._websocket is not None and (span := current_model_request_span()) is not None:
-            span.set_attribute('pydantic_ai.transport', 'websocket')
 
         include = self._build_include(model_settings)
 
@@ -3711,7 +3734,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 raise UserError(
                     'Responses WebSocket `extra_body` cannot set `background`, `stream`, `stream_id`, or `type`.'
                 )
+            assert self._websocket_lane is not None
             return await websocket.request(
+                self._websocket_lane,
                 {key: value for key, value in body.items() if not isinstance(value, Omit)},
                 HTTPX2Timeout(self.client.timeout if isinstance(timeout, NotGiven) else timeout),
             )
@@ -4151,9 +4176,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return None
 
     def _is_response_id_reachable(self, response: ModelResponse) -> bool:
-        """A WebSocket ID is usable only while it is the latest response on its owning socket."""
+        """A WebSocket ID is usable only while it is the latest response on the lane reserved for this request."""
         if (response.provider_details or {}).get('transport') == 'websocket':
-            return self._websocket is not None and response.provider_response_id == self._websocket.latest_response_id
+            lane = self._websocket_lane
+            return lane is not None and response.provider_response_id == lane.latest_response_id
         return self._websocket is None
 
     def _history_boundary(self, messages: list[ModelMessage]) -> Literal['transport'] | None:
