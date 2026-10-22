@@ -120,11 +120,11 @@ _HARNESS_DATA_INSTRUCTION = (
 _BRIDGE_PREFIX = 'This summary was produced by a different model than the one continuing the task.'
 
 _KEPT_USER_MESSAGE_METADATA = 'pydantic-ai-harness.compaction.kept-user-message.v1'
-"""Marks a user turn retained by `keep_user_messages`, on its request's `metadata` and on its text items.
+"""Marks the text items of a user turn retained by `keep_user_messages`, as their `TextContent.metadata`.
 
-Continuing a history merges adjacent requests and keeps only the framework's own metadata namespace,
-so the request-level marker is lost there; the copy's `TextContent` items carry the same marker as
-their `metadata`, the way pins do, so a retained copy is still recognized inside a merged request.
+The marker rides on the items, the way pins do, so a retained copy is still recognized after continuing a history
+merges its request into another. Earlier versions also marked the request's `metadata`. That marker is no longer
+read: request metadata can come back from a client, so a turn marked only there is summarized like any other.
 """
 
 # Interim, deliberately generic rule: a harness capability that tags the content it adds on the user channel
@@ -229,14 +229,11 @@ def format_transcript(
     elements: list[str] = []
     for msg in messages:
         if isinstance(msg, ModelRequest):
-            kept = _is_kept_user_message(msg)
             for part in msg.parts:
                 if isinstance(part, UserPromptPart) and (origin := _harness_data_origin(part)) is not None:
                     elements.append(_harness_data_element(origin, user_prompt_text(part), tool_return_max_chars))
-                elif kept or (isinstance(part, UserPromptPart) and _is_kept_user_part(part)):
-                    # The rest of a kept turn is carried forward as-is, so it isn't summarized too. Harness data an
-                    # earlier version kept is summarized instead, and `_kept_user_messages` drops it. A kept copy
-                    # merged into a later request is recognized by the marker on its text.
+                elif _is_kept_user_part(part):
+                    # A kept turn is carried forward as-is, so it isn't summarized too, wherever its request went.
                     continue
                 elif isinstance(part, UserPromptPart):
                     elements.append(_message_element('user', user_prompt_text(part)))
@@ -449,11 +446,6 @@ def _adds_nothing_to_summarize(message: ModelMessage, kept: Sequence[ModelMessag
     )
 
 
-def _is_kept_user_message(message: ModelRequest) -> bool:
-    """Return whether *message* is an earlier `keep_user_messages` retention copy, as it was stored."""
-    return message.metadata is not None and message.metadata.get(_KEPT_USER_MESSAGE_METADATA) is True
-
-
 def _is_kept_user_part(part: ModelRequestPart) -> bool:
     """Return whether *part* is an earlier `keep_user_messages` retention copy, wherever its request went."""
     return (
@@ -476,8 +468,8 @@ def _mark_kept(part: UserPromptPart) -> UserPromptPart:
     A plain string becomes a single `TextContent`, which the model reads the same way. A `TextContent`
     without metadata gets the marker as its metadata; one whose metadata is a dict gets the marker as an
     extra key, so the caller's keys stay. One whose metadata is any other value has no model-invisible
-    place for a marker, so a part with no other text keeps only the request-level marker, which the
-    history cleanup that merges requests drops: a known limit until core provenance lands.
+    place for a marker, so a part with no other text isn't recognized as a copy, and a later compaction
+    summarizes and keeps it again: a known limit until core provenance lands.
     """
     items = [part.content] if isinstance(part.content, str) else part.content
     marked: list[UserContent] = []
@@ -776,14 +768,6 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         for msg in to_summarize:
             if not isinstance(msg, ModelRequest):
                 continue
-            if _is_kept_user_message(msg):
-                # A turn kept by an earlier compaction may hold harness data from before it was told apart.
-                genuine = [part for part in msg.parts if not is_harness_data(part)]
-                if len(genuine) == len(msg.parts):
-                    out.append(msg)
-                elif genuine:
-                    out.append(replace(msg, parts=genuine))
-                continue
             user_parts = [
                 part
                 for part in msg.parts
@@ -804,8 +788,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                 else:
                     bounded, _ = self._bound_sequence(part.content)
                     kept.append(_mark_kept(replace(part, content=bounded)))
-            metadata = {**(msg.metadata or {}), _KEPT_USER_MESSAGE_METADATA: True}
-            out.append(replace(msg, parts=kept, metadata=metadata))
+            out.append(replace(msg, parts=kept))
         return out
 
     def _truncate(self, text: str, max_chars: int | None = None) -> str:
