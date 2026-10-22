@@ -574,6 +574,29 @@ async def test_output_schema_and_native_tool_edits_stay_with_their_attempt():
     ]
 
 
+async def test_a_usage_limit_exceeded_by_a_suspended_response_is_not_fallen_back_from():
+    """A token limit the run's own check finds exceeded ends the run, even when `fallback_on` matches every error."""
+    calls: list[str] = []
+
+    def expensive(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('expensive')
+        return ModelResponse(
+            parts=[TextPart('partial')], state='suspended', usage=RequestUsage(input_tokens=100, output_tokens=1)
+        )
+
+    def cheap(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('cheap')  # pragma: no cover
+        return ModelResponse(parts=[TextPart('ok')])  # pragma: no cover
+
+    agent = Agent(
+        FunctionModel(expensive, model_name='expensive'),
+        capabilities=[ModelFallback(FunctionModel(cheap, model_name='cheap'), fallback_on=(Exception,))],
+    )
+    with pytest.raises(UsageLimitExceeded):
+        await agent.run('x', usage_limits=UsageLimits(input_tokens_limit=5))
+    assert calls == ['expensive']
+
+
 async def test_every_candidate_prepares_its_own_messages():
     """Each attempt runs the candidate's own `prepare_messages`, on history not prepared for another model."""
     prepared_by: list[tuple[str, int]] = []

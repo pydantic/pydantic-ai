@@ -41,7 +41,7 @@ When every model has failed or been rejected, `ModelFallback` raises [`FallbackE
 !!! note
     Provider SDKs often retry failed requests themselves before raising, which delays falling back. Set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0` on the agent, or on each candidate model but the last. As with `FallbackModel`, a candidate's own `settings` apply only to that candidate, and settings on the agent or run apply to every candidate. See [The layers](../retries.md#the-layers) in the retries guide for the full retry map.
 
-A run that reaches its `timeout=` stops with [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] wherever it is, including in the middle of a candidate's request: the remaining candidates aren't attempted.
+A run that reaches its `timeout=` stops with [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] wherever it is, including in the middle of a candidate's request: the remaining candidates aren't attempted. Likewise, a request that exceeds the run's [usage limits](../agent.md#usage-limits) raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] whatever `fallback_on` says, as another model wouldn't change that.
 
 ## How attempts work
 

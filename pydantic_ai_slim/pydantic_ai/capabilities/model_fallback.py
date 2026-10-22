@@ -12,7 +12,7 @@ from pydantic_ai._fallback import (
     stamp_continuation_pin,
 )
 from pydantic_ai._utils import replace_no_init
-from pydantic_ai.exceptions import ModelAPIError, RetryModelRequest, UserError
+from pydantic_ai.exceptions import ModelAPIError, RetryModelRequest, UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.models.wrapper import WrapperModel
@@ -205,6 +205,9 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         error: Exception,
     ) -> ModelResponse:
+        if isinstance(error, UsageLimitExceeded):
+            # The run's own limit stopped the request, which no other model would change, whatever `fallback_on` says.
+            raise error
         if not await self._chain.falls_back(error):
             raise error
         raise self._advance()
