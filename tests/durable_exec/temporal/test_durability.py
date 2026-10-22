@@ -1744,8 +1744,13 @@ def test_durability_activity_config_tolerates_unschemable_annotations(monkeypatc
         temporalize_toolset_func=temporalize_toolset,
     )
     assert sentinel_activity in custom_agent.temporal_activities
-    assert AgentPlugin(custom_agent).configure_worker({}) == {'activities': custom_agent.temporal_activities}
-    assert AgentPlugin(existing_agent).configure_worker({}) == {'activities': existing_agent.temporal_activities}
+    # Both of each agent's toolsets return the same sentinel, which the plugin registers once.
+    assert AgentPlugin(custom_agent).configure_worker({}) == {
+        'activities': list(dict.fromkeys(custom_agent.temporal_activities))
+    }
+    assert AgentPlugin(existing_agent).configure_worker({}) == {
+        'activities': list(dict.fromkeys(existing_agent.temporal_activities))
+    }
 
 
 def test_durability_shared_instance_across_agents():
