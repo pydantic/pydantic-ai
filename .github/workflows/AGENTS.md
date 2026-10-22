@@ -254,6 +254,11 @@ documented account or plan limit (runner kind `plan_limit`). Keep these outcomes
   from these events on fork and Dependabot pull requests. Gates on other events, and the
   scheduled check, still open an incident for a missing key.
 
+Before the gate passes or incident reuse creates an issue, re-read a list that returned no
+readable incident. During a GitHub Issues degradation the labeled list returned HTTP 200 with
+no readable incident of any age or scope. Each read writes its pages' HTTP status, issue and
+unreadable counts, request IDs, and the incident numbers it saw to the job log and step summary.
+
 The trusted health check calls `GET https://api.z.ai/api/monitor/usage/quota/limit`
 with the raw `ZAI_API_KEY` value in the `Authorization` header. Recognize
 `TOKENS_LIMIT` and `CREDIT_LIMIT` rows. Both quota windows must be valid:
