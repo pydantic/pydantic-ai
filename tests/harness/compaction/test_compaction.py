@@ -6,6 +6,7 @@ import asyncio
 import dataclasses
 import time
 from collections.abc import AsyncIterable, AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -1458,7 +1459,13 @@ class TestWarnNearLimitsMarkerDetection:
     async def test_strip_keeps_the_request_fields_of_a_mixed_request(self):
         legacy = _legacy_warning().parts[0]
         request = ModelRequest(
-            parts=[UserPromptPart('keep me'), legacy], instructions='Be careful.', run_id='run-1', metadata={'k': 'v'}
+            parts=[UserPromptPart('keep me'), legacy],
+            timestamp=datetime(2024, 1, 2, tzinfo=UTC),
+            instructions='Be careful.',
+            conversation_id='conversation-1',
+            run_id='run-1',
+            metadata={'k': 'v'},
+            state='interrupted',
         )
         rc = _make_request_context([request])
         result = await WarnNearLimits(max_iterations=100).before_model_request(_make_ctx(requests=5), rc)
