@@ -13,6 +13,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -119,8 +120,12 @@ def _shape(messages: list[ModelMessage]) -> list[str]:
             elif isinstance(part, ToolReturnPart):
                 content = str(part.content)
                 out.append(f'return {part.tool_call_id} {len(content)}')
+            elif isinstance(part, CompactionPart) or (
+                isinstance(part, SystemPromptPart) and part.content.startswith(_SUMMARY)
+            ):
+                out.append('summary')
             elif isinstance(part, SystemPromptPart):
-                out.append('summary' if part.content.startswith(_SUMMARY) else f'system {part.content}')
+                out.append(f'system {part.content}')
             elif isinstance(part, UserPromptPart):
                 content = part.content if isinstance(part.content, str) else ' '.join(map(str, part.content))
                 out.append(f'user {content}')
@@ -283,7 +288,7 @@ class TestRelevanceCompaction:
             _Judge().model, summarizer=_summarizer(prompts), max_tokens=3_000, target_tokens=2_000, keep_tokens=10
         )
         history = _history('GIST a ', 'junk b ', 'last c ')
-        # A summary `SummarizingCompaction` wrote, folded into the first request.
+        # A summary an earlier release of `SummarizingCompaction` wrote as a system prompt, folded into the first request.
         first = history[0]
         assert isinstance(first, ModelRequest)
         history[0] = ModelRequest(parts=[*first.parts, SystemPromptPart(f'{_SUMMARY}what happened before')])
@@ -315,8 +320,8 @@ class TestRelevanceCompaction:
 
         assert _shape(result)[:3] == ['system sys', 'user do the task', 'summary']
         summary = result[1].parts[0]
-        assert isinstance(summary, SystemPromptPart)
-        assert summary.content == f'{_SUMMARY}the summary'
+        assert isinstance(summary, CompactionPart)
+        assert summary.content == 'the summary'
         # Without an anchor, the earlier summary is summarized again with the steps.
         assert 'previous-summary' not in prompts[0]
         assert f'<message role="system">\n{_SUMMARY}old\n</message>' in prompts[0]

@@ -64,7 +64,7 @@ from pydantic_ai_harness.compaction._summary import (
 )
 
 if TYPE_CHECKING:
-    from pydantic_ai.messages import AgentStreamEvent, ModelRequestPart, UserContent
+    from pydantic_ai.messages import AgentStreamEvent, ModelRequestPart, ModelResponsePart, UserContent
     from pydantic_ai.models import AbstractModel, ModelRequestContext
 
 _DEFAULT_SUMMARY_PROMPT = """\
@@ -412,7 +412,7 @@ def _kept_first_user_message(message: ModelRequest, system_parts: list[SystemPro
     return message if len(kept) == len(message.parts) else replace(message, parts=kept)
 
 
-def is_legacy_summary(part: ModelRequestPart) -> TypeGuard[SystemPromptPart]:
+def is_legacy_summary(part: ModelRequestPart | ModelResponsePart) -> TypeGuard[SystemPromptPart]:
     """Whether *part* is a summary written by a release that stored it as a system prompt.
 
     Recognized by its text, so a user system prompt that opens with the same sentence counts too.
