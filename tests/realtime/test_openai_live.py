@@ -3807,6 +3807,39 @@ async def test_a_tool_result_ready_while_the_sideband_is_away_goes_out_on_the_ne
     assert [json.loads(frame)['type'] for frame in attached.sent] == ['response.item.create', 'response.create']
 
 
+async def test_a_tool_result_the_dropping_sideband_took_is_sent_again_on_the_new_one() -> None:
+    """A send into a sideband that is dropping can succeed and still never arrive, and the backend can't resume
+    without it: a re-attach sends the round's outputs again, until the backend starts the response that reads them.
+    """
+    attached = _FakeWebSocket([])
+    # The first re-attach drops too, before it has sent the outputs again: the next one does.
+    sockets: list[_FakeWebSocket] = [_DeadWebSocket([]), attached]
+
+    async def reattach() -> Any:
+        return sockets.pop(0)
+
+    dropping = _DroppingWebSocket([])
+    connection = OpenAILiveConnection(dropping, reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
+    _open_delegation(connection, call_ids=('c1',))
+    await connection.send(ToolResult('c1', output='14C'))
+    output = {'type': 'function_call_output', 'call_id': 'c1', 'output': '14C'}
+    assert [json.loads(frame)['item'] for frame in dropping.sent] == [output]
+
+    assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=True)]
+    assert sockets == []
+    assert [json.loads(frame)['item'] for frame in attached.sent] == [output]
+
+    # Once the backend starts the response that reads them, they have arrived.
+    connection._map_response_event(  # pyright: ignore[reportPrivateUsage]
+        {'type': 'response.created', 'sequence_number': 0, 'response': _backend_response(status='in_progress')},
+        delegation_id='d1',
+    )
+    assert connection._delegations['d1'].round_outputs == []  # pyright: ignore[reportPrivateUsage]
+    # A response from a delegation this sideband doesn't know of changes nothing.
+    created = {'type': 'response.created', 'sequence_number': 0, 'response': _backend_response(status='in_progress')}
+    assert connection._map_response_event(created, delegation_id='unknown') == []  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_a_send_that_fails_with_no_reattach_coming_raises() -> None:
     async def reattach() -> Any:
         raise OSError('unreachable')

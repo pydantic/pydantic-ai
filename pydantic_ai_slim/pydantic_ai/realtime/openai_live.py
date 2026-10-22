@@ -168,6 +168,7 @@ try:
     from openai.types.responses import (
         Response,
         ResponseCompletedEvent,
+        ResponseCreatedEvent,
         ResponseErrorEvent,
         ResponseFailedEvent,
         ResponseFunctionToolCall,
@@ -639,6 +640,12 @@ class _Delegation:
 
     The continuation waits for its terminal, then goes out from the receive loop.
     """
+    round_outputs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    """The items sent with this round's tool results, until the backend starts the response that reads them.
+
+    A sideband re-attaching sends them again: one sent as the old sideband was dropping may never have arrived, and
+    the backend can't resume without it. Live takes a repeated output without complaint (checked live).
+    """
     stalled: bool = False
     """A call it asked for settled without a result (a usage limit stopped it), so it can never be continued.
 
@@ -1062,14 +1069,15 @@ class OpenAILiveConnection(RealtimeConnection):
         delegation = self._delegations.get(delegation_id) if delegation_id is not None else None
         if delegation is not None:
             delegation.pending_tool_calls.discard(result.tool_call_id)
-        await self._send_event(
-            {
-                'type': 'response.item.create',
-                'item': {'type': 'function_call_output', 'call_id': result.tool_call_id, 'output': result.output},
-            }
-        )
+        items: list[dict[str, Any]] = [
+            {'type': 'function_call_output', 'call_id': result.tool_call_id, 'output': result.output}
+        ]
         if follow_up is not None:
-            await self._send_event({'type': 'response.item.create', 'item': follow_up})
+            items.append(follow_up)
+        for item in items:
+            await self._send_event({'type': 'response.item.create', 'item': item})
+            if delegation is not None and self._reattach is not None:
+                delegation.round_outputs.append(item)
         if delegation is None:
             # A call we can't correlate to a delegation has no response we can wait on, so continue now.
             await self._send_event({'type': 'response.create'})
@@ -1355,6 +1363,12 @@ class OpenAILiveConnection(RealtimeConnection):
             return False
         except (websockets.WebSocketException, OSError, TimeoutError):
             # A failed attach: a later attempt may still succeed.
+            return False
+        try:
+            for delegation in self._delegations.values():
+                for item in delegation.round_outputs:
+                    await ws.send(to_json({'type': 'response.item.create', 'item': item}).decode())
+        except self.transport_errors:
             return False
         self._ws = ws
         self._restored = True
@@ -1720,6 +1734,11 @@ class OpenAILiveConnection(RealtimeConnection):
                 )
             ]
         delegation = self._delegations.get(delegation_id) if delegation_id is not None else None
+        if isinstance(event, ResponseCreatedEvent):
+            if delegation is not None:
+                # The backend has the round's results: there is nothing to send again.
+                delegation.round_outputs.clear()
+            return []
         if isinstance(event, (ResponseCompletedEvent, ResponseFailedEvent, ResponseIncompleteEvent)):
             self._pending_reasoning.pop(delegation_id, None)
             events: list[RealtimeCodecEvent] = self._map_backend_usage(event.response)
