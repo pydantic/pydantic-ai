@@ -436,9 +436,9 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
         A tool raising `ModelRetry` or `ToolFailed` never reaches `after_tool_execute`: core
         wraps both into control-flow exceptions and re-raises them past it
         (`tool_manager._run_execute_hooks`). Their text still lands in the conversation -- a
-        failure as an ordinary `ToolReturnPart`, a retry as a `RetryPromptPart` -- so a
-        `result_guard` that did not see them would leave the one text path it exists to
-        screen unscreened whenever a tool errored.
+        failure as a `ToolReturnPart` with `outcome='failed'`, a retry as one with
+        `outcome='retried'` -- so a `result_guard` that did not see them would leave the one
+        text path it exists to screen unscreened whenever a tool errored.
 
         A caller that asks core for raw errors, as `CodeMode` does for the calls its sandbox
         makes, gets the tool's `ModelRetry` or `ToolFailed` unwrapped, and its message reaches

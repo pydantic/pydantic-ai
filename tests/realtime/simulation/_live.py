@@ -194,10 +194,10 @@ class LiveServer:
         if (usage := tags.get('usage')) is not None:
             self.truth.usage_read.setdefault(tags['backend'], tuple(usage))
             self.backend_terminals_read += 1
-            spoken = self.truth.responses[tags['spoken']]
-            if spoken.tool_calls and spoken.terminal_read is None:
-                # The reply that delegated a tool call is recorded once its backend reports usage.
-                spoken.terminal_read = now
+        if (ended := tags.get('ends')) is not None and (spoken := self.truth.responses[ended]).terminal_read is None:
+            # The reply that called the delegation's tools is recorded once the client sees it is over: at the
+            # terminal that settles the delegation, or at a continuation's call.
+            spoken.terminal_read = now
 
     # --- the model ---------------------------------------------------------------------------------
 
@@ -312,9 +312,26 @@ class LiveServer:
     def running_delegation(self) -> _Delegation | None:
         return next((d for d in self.delegations.values() if d.backend is not None), None)
 
+    def _end_spoken(self, delegation: _Delegation) -> str | None:
+        """The reply that called the delegation's tools is over: returns its key, for the frame that tells the client."""
+        spoken = delegation.spoken
+        if self.speaking is not spoken:  # pragma: lax no cover (a reply that ended some other way)
+            return None
+        spoken.status = 'completed'
+        spoken.seq_end = self.truth.tick()
+        self.speaking = None
+        return spoken.key
+
     def backend_call(self, count: int = 1) -> list[str]:
         delegation = self.running_delegation()
         assert delegation is not None
+        ended: str | None = None
+        if not delegation.backend_calls and delegation.spoken.tool_calls:
+            # A continuation's first call, made with the results it was continued with: the reply that called tools
+            # before is over, and this is a response of its own, answering those results, as in a standard run.
+            ended = self._end_spoken(delegation)
+            answers, delegation.outputs = delegation.outputs, []
+            delegation.spoken = self.speaking = self.truth.new_response(trigger='auto', answers=answers)
         ids: list[str] = []
         for _ in range(count):
             call_id = self.truth.new_call_id()
@@ -342,9 +359,15 @@ class LiveServer:
                         'output_index': 0,
                         'sequence_number': 1,
                     },
-                    '_simulation': {'response': delegation.spoken.key, 'content': True, 'calls': [call_id]},
+                    '_simulation': {
+                        'response': delegation.spoken.key,
+                        'content': True,
+                        'calls': [call_id],
+                        'ends': ended,
+                    },
                 }
             )
+            ended = None
         return ids
 
     def backend_finish(self, status: Literal['completed', 'failed'] = 'completed') -> None:
@@ -353,6 +376,11 @@ class LiveServer:
         backend, delegation.backend = delegation.backend, None
         number = int(backend.removeprefix('resp_b'))
         usage = (1000 * number + 1, 1000 * number + 2)
+        asked_for_tools, delegation.backend_calls = bool(delegation.backend_calls), []
+        settled = status == 'failed' or not asked_for_tools
+        # The reply that called tools goes on, and the model with it, while the backend waits for their results: only
+        # the delegation's outcome is said with them in hand, in a reply of its own.
+        ended = self._end_spoken(delegation) if settled and delegation.spoken.tool_calls else None
         self._emit(
             {
                 'type': 'response.event',
@@ -362,10 +390,9 @@ class LiveServer:
                     'response': _backend_response(backend, status, usage),
                     'sequence_number': 2,
                 },
-                '_simulation': {'backend': backend, 'usage': usage, 'spoken': delegation.spoken.key},
+                '_simulation': {'backend': backend, 'usage': usage, 'ends': ended},
             }
         )
-        asked_for_tools, delegation.backend_calls = bool(delegation.backend_calls), []
         if status == 'failed':
             # The backend gave up: the calls it asked for lead nowhere, answered or not.
             self.backends_failed += 1
@@ -375,13 +402,7 @@ class LiveServer:
                 input_ = self.truth.input(output)
                 assert input_ is not None
                 input_.answer_lost = True
-        if asked_for_tools and self.speaking is delegation.spoken:
-            # The reply that asked for the tools is complete with this terminal's usage; what the model says
-            # next is a reply of its own.
-            delegation.spoken.status = 'completed'
-            delegation.spoken.seq_end = self.truth.tick()
-            self.speaking = None
-        if status == 'failed' or not asked_for_tools:
+        if settled:
             # The delegation owes nothing more: the model speaks its outcome (the tool results it answered).
             self.triggers.extend(delegation.outputs)
             del self.delegations[delegation.id]

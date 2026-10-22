@@ -117,6 +117,8 @@ models:
     input: 0.6
     output: 2.4
 if: ${{ needs.provider_health.outputs.ready == 'true' }}
+# Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
+max-daily-ai-credits: -1
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
