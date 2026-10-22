@@ -546,6 +546,14 @@ def voyageai_modules() -> tuple[ModuleType, ModuleType, ModuleType]:
             id='authentication',
         ),
         pytest.param(
+            # A 4xx without a category stays a plain `ModelAPIError`, as before.
+            'InvalidRequestError',
+            ('Conflict.', '{"detail": "Conflict."}', 409, {'detail': 'Conflict.'}),
+            set[type[ModelAPIError]](),
+            {'message': 'Conflict.'},
+            id='uncategorized',
+        ),
+        pytest.param(
             'Timeout',
             ('Request timed out',),
             {ModelConnectionError, ModelTimeoutError},
