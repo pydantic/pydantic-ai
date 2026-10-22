@@ -209,8 +209,9 @@ Voice Live applies `thinking`, `openai_turn_detection`, and `openai_input_noise_
 On a [cascade model][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_voice_live_cascade],
 which can't take OpenAI's semantic VAD or near/far-field noise reduction, they become Voice Live's own
 semantic VAD and deep noise suppression. [`azure_voice_live_temperature`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_temperature]
-sets the sampling temperature; on a cascade reasoning model like `gpt-5`, it's dropped with a
-`UserWarning` while the model is reasoning. Voice Live ignores `openai_output_speed` and `openai_truncation`.
+sets the sampling temperature, except on a cascade model with reasoning enabled, where it's dropped
+for the session with a `UserWarning`. Set `thinking=False` to keep it on a model that can turn reasoning
+off; `gpt-5` can't. Voice Live ignores `openai_output_speed` and `openai_truncation`.
 
 ### Turn detection and audio processing
 
