@@ -88,11 +88,11 @@ from .messages import (
     _merge_consecutive_messages,  # pyright: ignore[reportPrivateUsage]
     _repair_dangling_tool_calls,  # pyright: ignore[reportPrivateUsage]
 )
+from .models._batch_model import check_collectable
 
 # `_ContinuationStreamedResponse` is an intentionally-exported member of the private
 # `_continuation` module (see its `__all__`); the leading underscore is a module-privacy
 # marker, not a within-package one, so the private-usage check doesn't apply here.
-from .models._batch_model import check_collectable
 from .models._continuation import (
     MAX_BACKGROUND_POLLS,
     MAX_GENERATION_CONTINUATIONS,
