@@ -8169,7 +8169,10 @@ async def test_agent_realtime_session_reevaluates_seeded_dynamic_system_prompt()
     first = session.all_messages()[0]
     assert isinstance(first, ModelRequest) and isinstance(first.parts[0], SystemPromptPart)
     assert first.parts[0].content == 'Current value.'
-    assert seed[0].parts[0].content == 'Stale value.'  # pyright: ignore[reportAttributeAccessIssue]
+    # The caller's history is left as it was.
+    stale = seed[0]
+    assert isinstance(stale, ModelRequest) and isinstance(stale.parts[0], SystemPromptPart)
+    assert stale.parts[0].content == 'Stale value.'
 
 
 async def test_agent_realtime_session_unknown_tool() -> None:
