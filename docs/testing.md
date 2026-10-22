@@ -34,9 +34,10 @@ The simplest and fastest way to exercise most of your application code is using 
 
 !!! note "Testing agents with native tools"
     [`TestModel`][pydantic_ai.models.test.TestModel] cannot emulate provider-executed [native tools](native-tools.md).
-    If your production agent is configured with native tools via `capabilities`, override them in tests with
-    `agent.override(model=TestModel(), native_tools=[])` unless the test is specifically checking that native
-    tools are passed to the model.
+    It accepts them in requests and records them on `last_model_request_parameters`, but never calls them, so its
+    responses contain no native tool calls or results. To check which native tools are passed to the model, inspect
+    `model.last_model_request_parameters.native_tools` after the run; to leave them out of a test entirely, use
+    `agent.override(model=TestModel(), native_tools=[])`.
 
 Let's write unit tests for the following application code:
 
