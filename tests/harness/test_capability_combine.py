@@ -60,6 +60,7 @@ from pydantic_ai_harness import (
     BackgroundTools,
     Coder,
     Planning,
+    RelevanceCompaction,
     Researcher,
     SpendLimits,
     SSHWorkspace,
@@ -177,6 +178,10 @@ def _check_summarizing(merged: Any) -> None:
     assert merged.keep_messages == 7
 
 
+def _check_relevance(merged: Any) -> None:
+    assert merged.keep_tokens == 7
+
+
 def _check_system_reminders(merged: Any) -> None:
     # Additive sequences union, so every reminder either side declared still fires.
     assert [r.content for r in merged.reminders] == ['first', 'second']
@@ -228,6 +233,14 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one run identity per agent',
         lambda: (StepPersistence[Any](agent_name='first'), StepPersistence[Any](agent_name='second')),
         _check_step_persistence,
+    ),
+    'RelevanceCompaction': Combines(
+        'two would each judge every step, the second judging what the first already compacted',
+        lambda: (
+            RelevanceCompaction[Any](TestModel(), max_tokens=50, keep_tokens=3),
+            RelevanceCompaction[Any](TestModel(), max_tokens=50, keep_tokens=7),
+        ),
+        _check_relevance,
     ),
     'SummarizingCompaction': Combines(
         'two would each make a model call, the second summarizing the first summary',

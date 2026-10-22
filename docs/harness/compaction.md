@@ -7,7 +7,7 @@ description: "Keep a long Pydantic AI agent run within the context window on any
 
 Compaction is a menu of strategies for keeping an agent's conversation history within a model's context window. These Pydantic AI `Capability` classes edit the message history just before each request goes out. `FallbackCompaction` optionally triggers its chain at a token threshold and also works as a composing `CompactionStrategy`. The edits **persist** into the run's message history, so a trim, clear, or summary carries forward to later steps -- it is not recomputed from the full history every turn.
 
-All strategies preserve tool-call / tool-return **pairing**. Core does not validate this, and a provider rejects an orphaned pair, so the pairing guarantee is what makes these safe to drop into an agent. The zero-LLM strategies never call a model; only `SummarizingCompaction` (and `TieredCompaction` when it escalates that far) spends tokens.
+All strategies preserve tool-call / tool-return **pairing**. Core does not validate this, and a provider rejects an orphaned pair, so the pairing guarantee is what makes these safe to drop into an agent. The zero-LLM strategies never call a model; only `SummarizingCompaction` and `RelevanceCompaction` (and `TieredCompaction` when it escalates to one of them) spend tokens.
 
 On OpenAI and Anthropic, core also ships [provider-native compaction](https://pydantic.dev/docs/ai/capabilities/compaction/) -- the provider summarizes history server-side. The strategies on this page are the model-agnostic alternative: they work with every model and keep the compaction logic (and its costs) under your control.
 
@@ -28,6 +28,7 @@ An agent that runs for many turns accumulates history: tool outputs, file reads,
 | `ClearToolResults` | zero-LLM | Blanks the content of old tool *results* in place, keeping the last `keep_pairs` | Tool outputs dominate context and can be re-fetched on demand (the cheap first tier) |
 | `DeduplicateFileReads` | zero-LLM | Blanks every file read superseded by a newer read of the same file | The agent re-reads files and only the latest version matters |
 | `SummarizingCompaction` | one LLM call | Summarizes older messages into a structured summary, keeping the recent tail | Old context still matters but must be compressed; use behind the cheap tiers |
+| `RelevanceCompaction` | one judge request per new step, plus an optional summary | Keeps, reduces, or drops each older step by a judge model's answers | Some old tool results are still needed verbatim and others are dead weight |
 | `TieredCompaction` | escalates | Runs cheap passes first, summarizes only if still over `target_tokens` | You want a sensible default: spend the expensive summary only when needed |
 | `FallbackCompaction` | depends on chain | Tries the next strategy when one raises | Summarization can fail and deterministic truncation must keep the run alive |
 | `WarnNearLimits` | zero-LLM | Injects an URGENT/CRITICAL warning as limits approach | You want the agent to wrap up rather than have its history rewritten |
@@ -430,6 +431,67 @@ not set, the operation uses the run's model. The capability carries a stable def
 durable execution uses to recover the operation by the same identity. Overriding it with a custom
 value orphans recorded operations for in-flight workflows, so keep it fixed once a workflow is live.
 
+## `RelevanceCompaction`: keep what the task still needs
+
+`RelevanceCompaction` asks a judge model about each older step of the history and keeps the step verbatim, reduces it, or drops it, based on the answers. Reach for it when the older context is uneven: some tool results hold code or error text the agent still needs exactly, others are dead weight, and one summary of everything would lose the exact parts.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness.compaction import RelevanceCompaction, SummarizingCompaction
+
+agent = Agent(
+    '{{ anthropic:large }}',
+    capabilities=[
+        RelevanceCompaction(
+            'system-one:nimble',
+            summarizer=SummarizingCompaction(model='{{ anthropic:small }}', max_messages=1),
+            max_fraction=0.8,
+        )
+    ],
+)
+```
+
+The judge is required. A [decision model](../models/decision.md), such as `system-one:<model>` on [System One](../models/system-one.md) (including the models Ollama runs locally) or TypeSafe's `typesafe:jev-latest`, answers with a probability. Any other model that supports structured output fills the same two fields, so `judge=` also takes a `FallbackModel` that tries a decision model first and a language model second.
+
+A *step* is a model response together with the requests that answer it: its tool results, retry feedback, and the next user prompt. A step is kept or removed whole, so a tool call never loses its result. Everything before the first response (the system prompt, the first user message, and an earlier summary), pinned content, and the most recent `keep_tokens` (default 8,000) of history are never judged.
+
+Each remaining step is judged in one request with two questions:
+
+- `needed_verbatim`: "Will the agent need the exact content of this earlier step, such as code, file contents, identifiers, numbers, commands or error text, to finish the current task?"
+- `still_matters`: "Does this earlier step record a fact, decision, change, result or user instruction that still matters for the current task?"
+
+The judge is shown the current task (the latest user prompt), the most recent part of the conversation, and the step itself, including its tool results. A step longer than `judge_step_tokens` (default 2,000) is shown by its start and end, and the task and the recent conversation are each clamped to `judge_context_tokens` (default 500). The defaults keep a request within the 8,192-token input of small local decision models, since code and JSON take about twice as many tokens as the ~4-characters-per-token estimate suggests. The judge is told that all of it is untrusted data, and text that looks like the prompt's own tags is escaped.
+
+Steps are chosen by rank against a token budget, never by comparing a probability to a fixed threshold: a judge's probabilities shift as a whole with the shape of the request, while the order it puts steps in holds. The history is compacted to `target_tokens` (or `target_fraction`), which defaults to half the trigger:
+
+1. Steps are kept verbatim in order of `needed_verbatim` while they fit the target.
+2. The rest are reduced in order of `still_matters`. With a `summarizer`, they are written into one summary placed after the head of the history, up to `summary_input_tokens` (default 30,000) of steps per compaction. Without one, each of their tool results is cut to its first `truncated_result_chars` (default 300) characters plus a note that the tool can be called again, while that still fits the target.
+3. Whatever is left is dropped, except that a step holding a user prompt is reduced at worst, never dropped.
+
+The `summarizer` is a `SummarizingCompaction` used for its model, prompts and settings; its trigger and `keep_*` fields are never consulted, so any trigger such as `max_messages=1` works. An earlier summary is updated as the summarizer's `incremental` setting says. `receipts=True` adds a [receipt](#compaction-receipts) when steps were summarized or dropped.
+
+Judge requests run concurrently, up to `judge_concurrency` (default 8) at once. Every judgement is remembered on the instance under the task and the step's content, so a later compaction with the same task judges only the new steps. All the judge requests of one compaction count as one request against a `UsageLimits` request limit, checked before any of them is sent, and their tokens are added to the run's usage, like the summary request. On a laptop running Ollama, one judge request for a step of a few thousand tokens took 5 to 10 seconds, so the first compaction of a long history can take minutes there; later ones judge only the new steps.
+
+A judge error propagates, as a summary error does. Wrap the strategy in `FallbackCompaction` to fall back to one that makes no model requests:
+
+```python
+from pydantic_ai_harness.compaction import FallbackCompaction, RelevanceCompaction, SlidingWindowCompaction
+
+compaction = FallbackCompaction(
+    max_fraction=0.8,
+    fallback_chain=[
+        RelevanceCompaction('system-one:nimble', max_fraction=0.8),
+        SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
+    ],
+)
+```
+
+As a `TieredCompaction` tier, set its `target_tokens` explicitly: a tier's `compact` runs with its own target, and the default of half the trigger means nothing when the trigger is only there to satisfy the constructor.
+
+With a durable-execution capability attached, the judgements and the summary run as the durable operations `judge` and `summarize` of the capability's stable default `id`, `relevance_compaction`, so replay reuses them instead of calling the models again.
+
+The two-question split and concurrent per-step requests come from [fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction) (MIT), which compacts Claude Code transcripts with TypeSafe's Jev. Its measurements also motivated showing the judge each step's content and choosing steps by rank. No code is shared.
+
 ## `WarnNearLimits`: warn instead of rewrite
 
 `WarnNearLimits` never edits history. As the run approaches a configured limit, it adds an URGENT (then CRITICAL) warning to each request, so the model wraps up rather than having its context rewritten under it. Each warning is a [request-scoped system prompt](../message-history.md#request-scoped-system-prompts): the model sees it for its own request only, and it stays in the message history, so earlier requests are sent unchanged and the prompt cache and the model's earlier reasoning stay valid. Warnings that older versions sent as user prompts are left out of requests when a saved history still holds them. They are recognized by metadata on the part, not by their text, so a user prompt that quotes a warning is never removed.
@@ -473,6 +535,8 @@ The span name is the static `compact_messages`; the strategy is an attribute, no
 `gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the ~4-chars-per-token heuristic. Raw message content is not recorded.
 
 `SummarizingCompaction` runs its summarizer as a nested `Agent` named `summarizing_compaction`, so under `Agent.instrument_all()` (or `logfire.instrument_pydantic_ai()`) its runs carry `agent_name = summarizing_compaction`. Filter on that to track summarization usage and cost separately from the parent agent.
+
+`RelevanceCompaction` adds a `select compaction steps` span inside `compact_messages`. It records the number of steps and how many were judged rather than remembered (`relevance_compaction.steps`, `relevance_compaction.steps_judged`), the steps and tokens of each tier (`relevance_compaction.keep.steps`, `relevance_compaction.keep.tokens`, and the same for `reduce` and `drop`), and one `relevance_compaction.step` event per step with its position, size, both answers, whether it was remembered, and its tier. No message content is recorded. The judge's own runs are not instrumented, because their prompts carry the conversation.
 
 ## Compaction receipts
 
@@ -560,6 +624,8 @@ The recommended default is `TieredCompaction`; the other strategies below can be
 ::: pydantic_ai_harness.compaction.SlidingWindowCompaction
 
 ::: pydantic_ai_harness.compaction.SummarizingCompaction
+
+::: pydantic_ai_harness.compaction.RelevanceCompaction
 
 ::: pydantic_ai_harness.compaction.WarnNearLimits
 
