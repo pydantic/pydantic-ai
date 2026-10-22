@@ -1192,7 +1192,7 @@ agent = Agent(
 )
 ```
 
-Treat `None` as unknown, not as an empty context window. It is returned before the first model response and when the model's window or response usage is unknown. The example leaves history unchanged in these cases. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] measures against the smallest window among its candidates, so compaction happens early enough for whichever candidate answers.
+Treat `None` as unknown, not as an empty context window. It is returned before the first model response and when the model's window or response usage is unknown. The example leaves history unchanged in these cases. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] measures against the smallest window among its candidates, so compaction happens early enough for whichever candidate answers. On Anthropic, a response that ran a [server-side tool loop or a compaction](models/anthropic.md#server-side-tool-loops) is measured by its last pass only under a beta that reports the passes.
 
 [Instructions](agent.md#instructions) are sent with every request rather than stored in the history, so compaction can't drop them. If you use [`system_prompt`](agent.md#system-prompts) instead, add [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] after the compaction processor so the system prompt dropped with the old history is put back. The example keeps everything from the latest plain user turn onward; a turn that pairs tool results with a new prompt is kept whole, so a run started that way may keep more history than needed.
 
