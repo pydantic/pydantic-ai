@@ -75,6 +75,9 @@ _BUILTIN_TAGS: Final[tuple[FramingTag, ...]] = get_args(FramingTag)
 _TAG_NAME: Final = re.compile(r'[a-z]+(?:_[a-z]+)*')
 """The naming rule for every framing tag: lowercase snake_case."""
 
+_ATTRIBUTE_NAME: Final = re.compile(r'[a-z_][a-z0-9_]*')
+"""The attribute names a tag may carry: names are written as is, so they're limited to characters that can't end the tag."""
+
 _registration_lock: Final = threading.Lock()
 _registered_tags: tuple[RegisteredTag, ...] = ()
 _data_tag_openers: re.Pattern[str] = _tag_openers(*_BUILTIN_TAGS)
@@ -147,7 +150,8 @@ def open_tag(tag: FramingTag | RegisteredTag, /, **attrs: str | None) -> str:
     """Render the opening `tag`, for a frame whose body isn't a string, such as a file.
 
     Put the body between this and [`close_tag`][pydantic_ai.framing.close_tag] yourself; nothing in it is
-    escaped, so a text body goes through [`wrap`][pydantic_ai.framing.wrap] instead. Attribute values are
+    escaped, so a text body goes through [`wrap`][pydantic_ai.framing.wrap] instead. Attribute names
+    must be lowercase letters, digits and underscores, not starting with a digit; values are
     HTML-escaped, attributes whose value is `None` are left off, and the rest keep the order they're
     given in, so the same call always renders the same bytes.
 
@@ -167,9 +171,14 @@ def open_tag(tag: FramingTag | RegisteredTag, /, **attrs: str | None) -> str:
         **attrs: Attributes to put on the tag.
 
     Raises:
-        UserError: If `tag` is neither a built-in tag nor registered.
+        UserError: If `tag` is neither a built-in tag nor registered, or an attribute name isn't
+            lowercase letters, digits and underscores.
     """
     _require_known(tag)
+    if invalid := [name for name in attrs if not _ATTRIBUTE_NAME.fullmatch(name)]:
+        raise UserError(
+            f'Framing tag attribute names must match `[a-z_][a-z0-9_]*`; got {", ".join(map(repr, invalid))}.'
+        )
     rendered = ''.join(f' {name}="{html.escape(value)}"' for name, value in attrs.items() if value is not None)
     return f'<{tag}{rendered}>'
 
@@ -193,8 +202,9 @@ def wrap(tag: FramingTag | RegisteredTag, body: str, /, **attrs: str | None) -> 
     as a `<context>` element on a model without mid-conversation system messages, so only `<system>`
     tags are escaped there. Either way the rest of the body goes in exactly as written.
 
-    Attribute values are HTML-escaped, attributes whose value is `None` are left off, and the rest keep
-    the order they're given in, so the same call always renders the same bytes.
+    Attributes are rendered as by [`open_tag`][pydantic_ai.framing.open_tag]: names must be lowercase
+    letters, digits and underscores, values are HTML-escaped, attributes whose value is `None` are left
+    off, and the rest keep the order they're given in, so the same call always renders the same bytes.
 
     ```python
     from pydantic_ai.framing import wrap
@@ -212,7 +222,8 @@ def wrap(tag: FramingTag | RegisteredTag, body: str, /, **attrs: str | None) -> 
         **attrs: Attributes to put on the opening tag.
 
     Raises:
-        UserError: If `tag` is neither a built-in tag nor registered.
+        UserError: If `tag` is neither a built-in tag nor registered, or an attribute name isn't
+            lowercase letters, digits and underscores.
     """
     openers = _VOICE_TAG_OPENERS if tag == SYSTEM_TAG else _data_tag_openers
     return f'{open_tag(tag, **attrs)}{openers.sub("&lt;", body)}{close_tag(tag)}'
