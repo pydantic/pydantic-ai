@@ -62,6 +62,7 @@ __all__ = (
     '_EventStreamHandlerParams',
     '_EventStreamHandlerTransport',
     '_FunctionCallTransport',
+    '_GetInstructionsTransport',
     '_GetToolsTransport',
     '_MCPCallTransport',
     '_ModelRequestTransport',
