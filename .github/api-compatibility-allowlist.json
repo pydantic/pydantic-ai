@@ -23,6 +23,18 @@
       "fingerprint": "c4aa7c8b9e94bd5ada5a90325d99ca764fed5f8bd156d31ef511842e4d854f3a",
       "reason": "False positive: `BackgroundTools` still inherits `prepare_tools` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; the tool preparation moved into the wrapper toolset.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10613"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "953e88def3e59bb46a780d71e7f68ec43d2091299deec34f7d0520f89f42a27f",
+      "reason": "False positive: only adds `repr=False` so the credential-bearing URL stays out of `repr`; the attribute's type, default, and constructor parameter are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "f5277165732c4c6ae79c0ff3e286f1fbccca262094e6dee75b26bfca7455c244",
+      "reason": "False positive: only adds `repr=False` so the credential-bearing URL stays out of `repr`; the attribute's type, default, and constructor parameter are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
     }
   ]
 }
