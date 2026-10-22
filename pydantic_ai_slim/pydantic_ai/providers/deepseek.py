@@ -60,6 +60,9 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
                 # For a conversation carrying tools, DeepSeek documents that `reasoning_content` must be
                 # passed back in every subsequent request. See https://api-docs.deepseek.com/guides/thinking_mode.
                 openai_chat_send_back_thinking_parts='field',
+                # DeepSeek 400s on a thinking request whose current-turn tool call lacks `reasoning_content`
+                # even when no earlier response thought, as after a `FallbackModel` step served without thinking.
+                openai_chat_thinking_requires_field_on_tool_calls=True,
                 # DeepSeek's Responses endpoint documents merging each function call into the
                 # assistant message adjacent to it, unlike the official Responses API, so an
                 # assistant item between two calls strands the first one without its output.
@@ -69,11 +72,11 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
                 # thinking off, so for it the restriction is unconditional; the v4 models can, so
                 # theirs is evaluated per request. `startswith` covers future deepseek-v4-* SKUs
                 # without listing each one.
-                openai_supports_tool_choice_required=model_name != 'deepseek-reasoner',
-                openai_supports_forced_tool_choice_with_thinking=not is_v4,
+                supports_forced_tool_choice=model_name != 'deepseek-reasoner',
+                supports_forced_tool_choice_with_thinking=not is_v4,
                 # Thinking is on by default on DeepSeek V4 models and `deepseek-reasoner`; every other
                 # model name (including `deepseek-chat`) is treated as thinking-off by default.
-                openai_reasoning_enabled_by_default=thinks_by_default,
+                thinking_enabled_by_default=thinks_by_default,
                 # DeepSeek's Responses endpoint honors `text.format` of type `json_schema`, while its
                 # Chat Completions endpoint rejects it with `This response_format type is unavailable now`.
                 openai_responses_supports_json_schema_output=True,

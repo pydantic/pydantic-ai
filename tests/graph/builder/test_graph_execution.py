@@ -16,8 +16,6 @@ from pydantic_graph.id_types import ForkID, JoinID, NodeRunID, TaskID
 from pydantic_graph.join import ReduceFirstValue, reduce_list_append, reduce_list_extend
 from pydantic_graph.node import Fork
 
-pytestmark = pytest.mark.anyio
-
 READINESS_WAIT_TIMEOUT = 5
 
 

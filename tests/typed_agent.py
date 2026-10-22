@@ -6,11 +6,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import partial
-from typing import Annotated, Any, Literal, TypeAlias, TypeVar
+from typing import Annotated, Any, Literal, TypeAlias, TypeVar, assert_type
 
 from pydantic import Field
 from starlette.requests import Request
-from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, RunUsage, Tool
 from pydantic_ai.agent import AgentRun, AgentRunResult
@@ -287,6 +286,16 @@ structured_dict = StructuredDict(
 )
 structured_dict_agent = Agent(output_type=structured_dict)
 assert_type(structured_dict_agent, Agent[object, dict[str, Any]])
+
+# `from_spec` and `from_file` infer the output type from `output_type`, the same way `Agent()` does.
+assert_type(Agent.from_spec({}), Agent[object, str])
+assert_type(Agent.from_spec({}, output_type=Foo), Agent[object, Foo])
+assert_type(Agent.from_spec({}, deps_type=MyDeps), Agent[MyDeps, str])
+assert_type(Agent.from_spec({}, deps_type=MyDeps, output_type=Foo), Agent[MyDeps, Foo])
+assert_type(Agent.from_file('agent.yaml'), Agent[object, str])
+assert_type(Agent.from_file('agent.yaml', output_type=Foo), Agent[object, Foo])
+assert_type(Agent.from_file('agent.yaml', deps_type=MyDeps), Agent[MyDeps, str])
+assert_type(Agent.from_file('agent.yaml', deps_type=MyDeps, output_type=Foo), Agent[MyDeps, Foo])
 
 
 @dataclass

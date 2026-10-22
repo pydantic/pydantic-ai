@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
 from inspect import Parameter, Signature, signature
-from typing import TYPE_CHECKING, Any, Concatenate, Literal, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Concatenate, Literal, Self, cast, get_args, get_origin
 
 from pydantic import ConfigDict, TypeAdapter, ValidationError
 from pydantic._internal import _decorators, _generate_schema
@@ -20,7 +20,7 @@ from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import ParamSpec, Self, TypeIs, TypeVar, get_type_hints
+from typing_extensions import ParamSpec, TypeIs, TypeVar, get_type_hints
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext

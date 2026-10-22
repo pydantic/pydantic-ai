@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, assert_never
 
 import httpx
 import httpx2
 import pytest
-from typing_extensions import assert_never
 
 from pydantic_ai import Agent, ModelHTTPError
 from pydantic_ai.models import infer_model
@@ -32,8 +31,6 @@ with try_import() as bedrock_imports:
 
 with try_import() as groq_imports:
     from pydantic_ai.models.groq import GroqModel
-
-pytestmark = pytest.mark.anyio
 
 
 GatewayProvider = Literal['openai-responses', 'openai-chat', 'anthropic', 'google', 'groq']
@@ -129,6 +126,9 @@ async def test_gateway_direct_model_suggests_gateway_model_id(
         case 'anthropic':
             model = AnthropicModel(model_name, provider='gateway')
         case 'google':
+            monkeypatch.setattr(
+                'pydantic_ai.providers.google._create_google_httpx2_client', create_gateway_httpx2_client
+            )
             model = GoogleModel(model_name, provider='gateway')
         case 'groq':
             model = GroqModel(model_name, provider='gateway')

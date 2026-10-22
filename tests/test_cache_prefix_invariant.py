@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,7 +9,7 @@ from typing import Any, cast
 
 import pytest
 import yaml
-from vcr.record_mode import RecordMode
+from cassetter import Cassette, RecordMode
 
 from .cassette_utils import (
     canonical_prefix_blocks,
@@ -30,14 +31,16 @@ def prefix_moving_cassette(tmp_path: Path) -> Path:
                     'method': 'POST',
                     'uri': 'https://api.openai.com/v1/chat/completions',
                     'parsed_body': {'tools': [{'type': 'function', 'function': {'name': 'first'}}], 'messages': []},
-                }
+                },
+                'response': {'status': {'code': 200, 'message': 'OK'}},
             },
             {
                 'request': {
                     'method': 'POST',
                     'uri': 'https://api.openai.com/v1/chat/completions',
                     'parsed_body': {'tools': [{'type': 'function', 'function': {'name': 'changed'}}], 'messages': []},
-                }
+                },
+                'response': {'status': {'code': 200, 'message': 'OK'}},
             },
         ]
     }
@@ -69,6 +72,20 @@ def test_check_cache_prefix_stability_fails_unmarked(
         check_cache_prefix_stability(node, prefix_moving_cassette)
 
 
+def test_check_cache_prefix_stability_reads_loaded_cassette(
+    request: pytest.FixtureRequest, prefix_moving_cassette: Path
+) -> None:
+    """Playback checks the interactions cassetter already parsed instead of reading the file again."""
+    cassette = Cassette(prefix_moving_cassette, record_mode=RecordMode.NONE)
+    cassette.load()
+    assert list(iter_cassette_prefix_violations(cassette)) == list(
+        iter_cassette_prefix_violations(prefix_moving_cassette)
+    )
+    node = cast(pytest.Item, request.node)  # pyright: ignore[reportUnknownMemberType]
+    with pytest.raises(pytest.fail.Exception, match=rf'{re.escape(str(prefix_moving_cassette))} \[openai-chat\]'):
+        check_cache_prefix_stability(node, cassette)
+
+
 @pytest.mark.moves_cache_prefix(reason='unit test covers the deliberate exemption')
 def test_check_cache_prefix_stability_allows_marked(
     request: pytest.FixtureRequest, prefix_moving_cassette: Path
@@ -93,9 +110,18 @@ def test_check_cache_prefix_stability_allows_clean(request: pytest.FixtureReques
 )
 def test_cache_prefix_fixture_skips_uncheckable_cassettes(call_report: Any, cassette_path: str) -> None:
     """Failed tests and missing cassette files must not produce a second teardown failure."""
-    node = SimpleNamespace(rep_setup=SimpleNamespace(skipped=False, failed=False), rep_call=call_report)
+
+    def get_closest_marker(name: str) -> None:
+        return None
+
+    node = SimpleNamespace(
+        rep_setup=SimpleNamespace(skipped=False, failed=False),
+        rep_call=call_report,
+        get_closest_marker=get_closest_marker,
+    )
     request = SimpleNamespace(node=node)
-    vcr = SimpleNamespace(record_mode=RecordMode.NONE, _path=cassette_path)
+    vcr = Cassette(cassette_path, record_mode=RecordMode.NONE)
+    vcr.load()
     fixture = cast(Callable[[Any, Any], Iterator[None]], getattr(fail_cache_prefix_violations, '__wrapped__'))
     iterator = fixture(cast(Any, request), cast(Any, vcr))
 
@@ -314,6 +340,67 @@ def test_iter_cassette_prefix_violations_skips_malformed_cassettes(tmp_path: Pat
         encoding='utf-8',
     )
     assert list(iter_cassette_prefix_violations(skipped_requests)) == []
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('rewrite_prefix', [False, True])
+def test_responses_continuation_reconstructs_stored_input(tmp_path: Path, stream: bool, rewrite_prefix: bool) -> None:
+    interactions: list[dict[str, object]] = []
+    for index, value in enumerate(['A', 'B', None, 'C']):
+        input_messages: list[dict[str, str]] = [{'role': 'user', 'content': 'Continue.'}]
+        if value is not None:
+            input_messages.append({'role': 'system', 'content': value})
+        body: dict[str, object] = {
+            'instructions': 'Changed' if rewrite_prefix and index == 1 else 'Stable',
+            'input': input_messages,
+        }
+        if index:
+            body['previous_response_id'] = f'resp_{index - 1}'
+        response: dict[str, object] = {'parsed_body': {'id': f'resp_{index}'}}
+        if stream:
+            response = {
+                'body': {'string': f'data: {{"type":"response.completed","response":{{"id":"resp_{index}"}}}}\n'}
+            }
+        interactions.append(
+            {
+                'request': {'method': 'POST', 'uri': 'https://api.openai.com/v1/responses', 'parsed_body': body},
+                'response': response,
+            }
+        )
+    cassette = tmp_path / 'continuation.yaml'
+    cassette.write_text(yaml.safe_dump({'interactions': interactions}))
+    violations = list(iter_cassette_prefix_violations(cassette))
+    assert [violation.level for violation in violations] == (['system', 'system'] if rewrite_prefix else [])
+
+
+@pytest.mark.parametrize('response', [None, {'body': {'string': None}}])
+def test_responses_continuation_ignores_unusable_response_metadata(tmp_path: Path, response: object) -> None:
+    """A continuation with no usable response id cannot reconstruct stored input, but remains checkable."""
+    interactions = [
+        {
+            'request': {
+                'method': 'POST',
+                'uri': 'https://api.openai.com/v1/responses',
+                'parsed_body': {'instructions': 'Stable', 'input': [{'role': 'user', 'content': 'Continue.'}]},
+            },
+            'response': response,
+        },
+        {
+            'request': {
+                'method': 'POST',
+                'uri': 'https://api.openai.com/v1/responses',
+                'parsed_body': {
+                    'instructions': 'Stable',
+                    'input': [{'role': 'user', 'content': 'Continue.'}],
+                    'previous_response_id': 'missing',
+                },
+            },
+        },
+    ]
+    cassette = tmp_path / 'unusable-response.yaml'
+    cassette.write_text(yaml.safe_dump({'interactions': interactions}))
+
+    assert list(iter_cassette_prefix_violations(cassette)) == []
 
 
 def _anthropic_cassette(tmp_path: Path, name: str, bodies: list[dict[str, Any]]) -> Path:

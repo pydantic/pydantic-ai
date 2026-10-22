@@ -1,7 +1,7 @@
 // Pyright skips every path under a dot directory, even one the root `[tool.pyright] include`
 // names explicitly or one passed on its command line, so this directory is its own project.
-// It inherits the root settings and virtual environment, whose out-of-band
-// `pydantic-ai-harness` install matches the pin in `pydantic-ai-runner`.
+// It inherits the root settings and virtual environment, which has the workspace's
+// `pydantic-ai-harness`, the same checkout `pydantic-ai-runner` uses.
 // `make typecheck-pyright` runs it with `pyright -p .github/scripts`.
 {
   "extends": "../../pyproject.toml",

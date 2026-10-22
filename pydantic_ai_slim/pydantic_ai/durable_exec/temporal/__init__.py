@@ -11,6 +11,7 @@ except ImportError as _import_error:
 import warnings
 from collections.abc import Sequence
 from dataclasses import replace
+from importlib.util import find_spec
 from typing import Any
 
 from pydantic.errors import PydanticUserError
@@ -26,6 +27,7 @@ from pydantic_graph.exceptions import UnsupportedEventLoopError
 from ..._event_registry import set_replay_isolation_guard
 from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
+from ...workspaces import WorkspaceError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
 from ._durability import TemporalDurability
 from ._event_stream import (
@@ -62,7 +64,7 @@ __all__ = [
 
 # We need eagerly import the anyio backends or it will happens inside workflow code and temporal has issues
 # Note: It's difficult to add a test that covers this because pytest presumably does these imports itself
-# when you have a @pytest.mark.anyio somewhere.
+# when running async tests via the anyio pytest plugin.
 # I suppose we could add a test that runs a python script in a separate process, but I have not done that...
 import anyio._backends._asyncio  # pyright: ignore[reportUnusedImport]  #noqa: F401
 
@@ -113,13 +115,22 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
     # Temporal without running a sandboxed worker, then leaves the registry alone.
     set_replay_isolation_guard(workflow.unsafe.in_sandbox)
 
+    # Harness file-tool orchestration runs workflow-side for pre-write vetoes; importing it
+    # again inside Temporal's restricted sandbox would fail on import-time filesystem calls.
+    # Harness CodeMode imports `opentelemetry.context` via `_monty_exec` on first use; passing
+    # harness through alone leaves that dependency sandbox-local and triggers a late-import error.
+    harness_modules = ('pydantic_ai_harness', 'opentelemetry') if find_spec('pydantic_ai_harness') is not None else ()
     return replace(
         runner,
         restrictions=runner.restrictions.with_passthrough_modules(
+            *harness_modules,
             'pydantic_ai',
             'pydantic_graph',
             'pydantic',
             'pydantic_core',
+            # Pydantic imports `annotated_types` lazily, on the first schema with constraints; decoding
+            # a workspace result in workflow code can be that first use, after initial workflow load.
+            'annotated_types',
             'pydantic_monty',
             'logfire',
             'rich',
@@ -190,11 +201,16 @@ class PydanticAIPlugin(SimplePlugin):
             # `UnsupportedEventLoopError` is raised by `pydantic_graph`'s sync entry points
             # (e.g. `Graph.run_sync()`), which don't go through the `pydantic_ai` wrapper that
             # would otherwise turn it into a `UserError`; without it those would hang the same way.
+            # `WorkspaceError` covers a workspace that is gone or refused a call, re-raised in
+            # workflow code by `DurableWorkspace`; no redeploy can fix it. Builtin errors a workspace
+            # call re-raises (`FileNotFoundError` and the like) are left to Temporal's default, like
+            # any other exception in workflow code: the task retries until a code fix is deployed.
             workflow_failure_exception_types=[
                 UserError,
                 PydanticUserError,
                 AgentRunError,
                 UnsupportedEventLoopError,
+                WorkspaceError,
             ],
         )
 

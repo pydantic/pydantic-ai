@@ -1,12 +1,12 @@
 ---
-description: "A small but complete Pydantic AI example of a support agent for a bank, using a dynamic system prompt, structured output and tools."
+description: "A small but complete Pydantic AI example of a support agent for a bank, using dynamic instructions, structured output and tools."
 ---
 
 Small but complete example of using Pydantic AI to build a support agent for a bank.
 
 Demonstrates:
 
-- [dynamic system prompt](../agent.md#system-prompts)
+- [dynamic instructions](../agent.md#instructions)
 - [structured `output_type`](../output.md#structured-output)
 - [tools](../tools.md)
 

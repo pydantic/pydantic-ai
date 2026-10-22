@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import re
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
@@ -9,7 +10,7 @@ from . import ModelProfile
 
 if TYPE_CHECKING:
     from ..realtime.google import GoogleRealtimeModelProfile
-    from ..realtime.profiles import RealtimeModelProfile
+    from ..realtime.profiles import AsyncToolCallMode, RealtimeModelProfile
 
 GoogleThinkingLevel: TypeAlias = Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']
 """Native Gemini `thinking_level` values."""
@@ -172,10 +173,21 @@ class GoogleModelProfile(ModelProfile, total=False):
     See <https://ai.google.dev/gemini-api/docs/function-calling#function_calling_config>.
     """
 
+    google_web_search_billed_per_prompt: bool
+    """Whether Google Search grounding is billed once per grounded prompt rather than per search query. Default: `False`.
+
+    Gemini 2.5 and older bill a request once, however many queries it ran, and only when it returned a web source;
+    Gemini 3+ bills each unique search query. This decides the `web_searches` count on
+    [`RequestUsage`][pydantic_ai.usage.RequestUsage].
+    See <https://ai.google.dev/gemini-api/docs/google-search#pricing>.
+    """
+
 
 _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
     # Documented per-model thinking levels, most specific prefix first. Gemini 3+ models not
-    # listed support the full `GOOGLE_THINKING_LEVELS` scale.
+    # listed support the full `GOOGLE_THINKING_LEVELS` scale, except where only one API enforces
+    # the documented set: `GoogleModel.profile` applies that set by the client's transport, as it
+    # does for `gemini-3.1-flash-image` on the Gemini API.
     # https://ai.google.dev/gemini-api/docs/thinking
     ('gemini-3.1-flash-lite-image', frozenset(('MINIMAL', 'HIGH'))),
     ('gemini-3.7-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
@@ -184,6 +196,10 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
     # Verified live 2026-09-06: the Developer API 404s this id toward `gemini-3.1-pro-preview`.
     # The level set is from Google's documented thinking table.
     ('gemini-3-pro-preview', frozenset(('LOW', 'HIGH'))),
+    # https://ai.google.dev/gemini-api/docs/generate-content/long-decode: "Gemini 4 Argon does not support
+    # minimal. Use low, medium, or high." Verified live 2026-10-13 against the Gemini API and Vertex `global`:
+    # `LOW`, `MEDIUM` and `HIGH` are accepted, `MINIMAL` returns 400.
+    ('gemini-4-argon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
 )
 """Model name prefixes mapped to their documented thinking levels."""
 
@@ -233,6 +249,9 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         (levels for prefix, levels in _MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
         None,
     )
+    # `default_cache_retention` is intentionally left unset (None): Gemini's implicit caching (the default,
+    # applied automatically) documents no retention window — only explicit `CachedContent` has a
+    # user-set TTL, which isn't a model-family fact. https://ai.google.dev/gemini-api/docs/caching
     profile = GoogleModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
         supports_image_output=is_image_model,
@@ -240,6 +259,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_object_output=is_modern_gemini or not is_image_model,
         supports_tools=not is_image_model,
         supports_tool_return_schema=not is_image_model,
+        supports_video_input=not is_image_model,
         supports_thinking=supports_thinking,
         thinking_always_enabled=thinking_always_enabled,
         google_supports_tool_combination=is_modern_gemini,
@@ -248,10 +268,20 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         google_supports_thinking_level=google_supports_thinking_level,
         google_supports_minimal_thinking_level=thinking_levels is None or 'MINIMAL' in thinking_levels,
         google_supports_strict_tool_definition=supports_strict_tool_definition,
+        google_web_search_billed_per_prompt=is_older_gemini,
     )
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
     return profile
+
+
+_REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS = (
+    'gemini-2.5-flash-native-audio',
+    'gemini-3.1-flash-live',
+    'gemini-3.8-live',  # and `gemini-3.8-live-extended-thinking`
+    'gemini-live-2.5-flash',  # Vertex AI
+)
+"""Live model families whose typed turns don't see an image sent just before them as a video frame."""
 
 
 def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
@@ -261,21 +291,40 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # normalized once here rather than every check below having to allow for both.
     model_name = model_name.rsplit('/', 1)[-1]
     is_extended_thinking = model_name.startswith('gemini-3.8-live-extended-thinking')
-    is_3_8_live = model_name == 'gemini-3.8-live'
+    # A prefix match like every other id check here, so a dated or `-preview` snapshot of the model
+    # gets the same flags: an exact match would send such a snapshot a thinking level it rejects.
+    is_3_8_live = model_name.startswith('gemini-3.8-live') and not is_extended_thinking
+    # Vertex's half-cascade Live model (plus its pinned `-NNN`/`@` versions), which differs from the
+    # native-audio ones in a few ways below.
+    is_half_cascade = re.fullmatch(r'gemini-live-2\.5-flash(?:-\d{3}|@.+)?', model_name) is not None
     thinking_levels = next(
         (levels for prefix, levels in _REALTIME_MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
         None,
     )
+    # Only the native-audio models actually honor `Behavior.NON_BLOCKING`; verified live with a slow tool,
+    # where `gemini-2.5-flash-native-audio-latest` keeps speaking throughout and `gemini-3.1-flash-live-preview`
+    # accepts the flag but still goes silent until the result lands. `gemini-3.8-live` honors it too: verified
+    # live 2026-09-16, a `NON_BLOCKING` call's `turn_complete` arrives with the call rather than after its
+    # result, as it does for `BLOCKING`. On those it's the session's choice, via the `async_tool_calls`
+    # setting. Extended thinking has no other mode: it answers `1007 BLOCKING function calls are not
+    # supported for this model` to a `BLOCKING` declaration (verified live 2026-09-16).
+    async_tool_call_mode: AsyncToolCallMode = 'never'
+    if is_extended_thinking:
+        async_tool_call_mode = 'always'
+    elif 'native-audio' in model_name or is_3_8_live:
+        async_tool_call_mode = 'optional'
     profile: GoogleRealtimeModelProfile = {
         'supports_image_input': True,
-        # Every general-purpose Live model is audio-only: a session asking for `TEXT` is closed with
+        # The speech-to-speech Live models are audio-only: a session asking for `TEXT` is closed with
         # `1007 The requested combination of response modalities (TEXT) is not supported by the
         # model`. Verified live against all four the Developer API serves — the three
         # `gemini-2.5-flash-native-audio-*` variants *and* `gemini-3.1-flash-live-preview` — bare
         # (no transcription or speech config, which make no difference to the error), with the dict
         # and typed config forms, and on both `v1alpha` and `v1beta`. Google's docs describe the
         # half-cascade 3.1 model as supporting `TEXT`; the API disagrees, so this follows the API.
-        # Output transcription, on by default, is how a Live session gets text.
+        # Output transcription, on by default, is how a Live session gets text. Vertex's half-cascade
+        # `gemini-live-2.5-flash` is the exception that does answer in text (verified live 2026-09-28
+        # through the gateway).
         #
         # The one Live model that *is* text-only is `gemini-robotics-er-2-streaming-preview`, which
         # conversely rejects `AUDIO`. It isn't a speech-to-speech model and isn't advertised in
@@ -283,10 +332,16 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # `profile={'supports_text_output': True}`, which is what that override is for. Reporting
         # `False` by default keeps the common case failing closed with a clear error rather than an
         # opaque handshake rejection.
-        'supports_text_output': False,
+        'supports_text_output': is_half_cascade,
         'supports_session_seeding': True,
         'supports_seeding_images': True,
-        'supports_seeding_audio': False,
+        # Verified live 2026-09-28 by seeding a spoken fact as audio and asking about it:
+        # `gemini-3.1-flash-live-preview` and `gemini-3.8-live` recall it every time, while
+        # `gemini-3.8-live-extended-thinking` recalled it 1 time in 4 and `gemini-2.5-flash-native-audio-latest`
+        # closes the session (`1007 Precondition check failed`). Only the verified models, so a newer Live
+        # model seeds the transcript until its profile says otherwise.
+        'supports_seeding_audio': model_name.startswith(('gemini-3.1-flash-live', 'gemini-3.8-live'))
+        and not is_extended_thinking,
         'audio_input_sample_rate': 16000,
         'audio_output_sample_rate': 24000,
         # Search grounding only. Google's Live tool matrix lists code execution and URL context as
@@ -309,14 +364,7 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # setting is skipped for it too.
         'supports_thinking': is_extended_thinking
         or (('native-audio' in model_name or not model_name.startswith('gemini-live-2.5')) and not is_3_8_live),
-        # Only the native-audio models actually honor `Behavior.NON_BLOCKING`; verified live with
-        # a slow tool, where `gemini-2.5-flash-native-audio-latest` keeps speaking throughout and
-        # `gemini-3.1-flash-live-preview` accepts the flag but still goes silent until the result
-        # lands. This gates the opt-in `google_async_tool_calls` setting; it is not enabled by
-        # merely being supported. Extended thinking has no other mode — see below. `gemini-3.8-live`
-        # honors it too: verified live 2026-09-16, a `NON_BLOCKING` call's `turn_complete` arrives with
-        # the call rather than after its result, as it does for `BLOCKING`.
-        'supports_async_tool_calls': 'native-audio' in model_name or is_3_8_live or is_extended_thinking,
+        'async_tool_call_mode': async_tool_call_mode,
         # Gemini Live takes a tool's return schema natively, as the function declaration's
         # `response` schema (matching the classic `GoogleModel`'s `response_json_schema`).
         'supports_tool_return_schema': True,
@@ -332,13 +380,53 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # completes the turn alongside the call just as `NON_BLOCKING` does.
     # https://ai.google.dev/gemini-api/docs/models/gemini-3.8-live#migrating
     profile['google_async_tool_calls_by_default'] = is_3_8_live or is_extended_thinking
-    # Verified live 2026-09-16: `gemini-3.8-live-extended-thinking` answers `1007 BLOCKING function calls
-    # are not supported for this model` to a `BLOCKING` declaration, so every tool session on it is async.
-    profile['google_requires_async_tool_calls'] = is_extended_thinking
-    # ...and it rejects the scheduling field outright: `1007 Function response scheduling is not supported
-    # for this model`. The native-audio models and `gemini-3.8-live` take `INTERRUPT` (verified live
+    # Extended thinking rejects the scheduling field outright: `1007 Function response scheduling is not
+    # supported for this model`. The native-audio models and `gemini-3.8-live` take `INTERRUPT` (verified live
     # 2026-09-16 for the latter, as Google documents).
     profile['google_supports_async_tool_call_scheduling'] = 'native-audio' in model_name or is_3_8_live
+    # Verified live against Vertex's half-cascade `gemini-live-2.5-flash`: it sends a `turn_complete` when
+    # the tool-call generation ends (usage only, whether or not the results have arrived yet) and another
+    # after speaking the answer. The native-audio and 3.x models send only the second (recorded in the
+    # tool-round parity cassettes). Matched exactly (plus its pinned `-NNN`/`@` versions), not by family:
+    # a model sending only one boundary would never finish an empty answer. `GoogleRealtimeModel.profile`
+    # keeps it on for Vertex AI only, the one surface it was verified on.
+    profile['google_closes_tool_call_turn_separately'] = is_half_cascade
+    # Verified live 2026-10-19/20: text sent while `gemini-3.1-flash-live-preview` or `gemini-3.8-live` generates a
+    # reply cuts it off (`interrupted`, `turn_complete`), and the next turn answers it; speech that cuts it off is
+    # reported first (`voice_activity`), which tells the two apart. Vertex's `gemini-live-2.5-flash` cuts a reply off
+    # for text too, but reports no `voice_activity`, so a speech barge-in can't be told apart: it is left off, as is
+    # `gemini-2.5-flash-native-audio-preview-09-2025`, which finishes the reply and answers the text after it.
+    profile['google_input_cuts_off_reply'] = model_name.startswith('gemini-3.1-flash-live') or is_3_8_live
+    # Verified live 2026-09-25 with `enable_affective_dialog`: `gemini-3.1-flash-live-preview` refuses the
+    # handshake with `1007 Request contains an invalid argument`, and `gemini-3.8-live` and
+    # `gemini-3.8-live-extended-thinking` accept it and then close the session with that same `1007` on the
+    # first send. `gemini-2.5-flash-native-audio-latest` and the Vertex `gemini-live-2.5-flash` take it.
+    # Only the families verified to reject it are refused, so a newer Live model isn't turned away before
+    # its profile is updated.
+    profile['google_supports_affective_dialog'] = not model_name.startswith(
+        ('gemini-3.1-flash-live', 'gemini-3.8-live')
+    )
+    # Verified live 2026-09-28 by returning a solid-color image or a secret word from a tool and asking
+    # about it: the 3.x models read PNG, JPEG, WebP, and plain text in `FunctionResponse.parts`, while
+    # `gemini-2.5-flash-native-audio-latest` guesses. The 3.x models close the session with `1007
+    # Request contains an invalid argument` on a PDF, so documents aren't listed.
+    profile['google_supported_mime_types_in_tool_returns'] = (
+        ('image/png', 'image/jpeg', 'image/webp', 'text/plain')
+        if model_name.startswith(('gemini-3.1-flash-live', 'gemini-3.8-live'))
+        else ()
+    )
+    # Verified live 2026-09-25 by sending an image and then a typed question about it, 3/3 each: the 3.x
+    # models answered that they couldn't see an image, and the 2.5 models misread it. A typed turn only
+    # sees images in its own content, so these get the recent image sent again there.
+    # Verified live 2026-09-28 by seeding a tool call and its result and asking about the result, before
+    # and after a session-resumption re-dial: the 3.8 models, extended thinking included, recall it
+    # both times. `gemini-3.1-flash-live-preview` recalls it until the re-dial and then has lost it (it
+    # keeps the same history seeded as text), and `gemini-2.5-flash-native-audio-latest` closes the
+    # session (`1007 Request contains an invalid argument`) on function parts in seeded turns.
+    profile['google_supports_seeding_function_parts'] = model_name.startswith('gemini-3.8-live')
+    profile['google_text_turns_see_video_frames'] = not model_name.startswith(
+        _REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS
+    )
     return profile
 
 
@@ -411,6 +499,21 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
         # `$defs`/`$ref` and `anyOf [X, null]` have no OpenAPI-subset equivalent, so definitions are
         # inlined and a nullable union becomes the plain type plus `nullable: true`.
         super().__init__(schema, strict=strict, prefer_inlined_defs=True, simplify_nullable_unions=True)
+
+    def _walk_def(self, key: str, siblings: JsonSchema) -> JsonSchema:
+        if self.defs.get(key) is False:
+            raise UserError(
+                "Gemini's OpenAPI schema cannot represent a boolean `false` definition, which rejects all inputs."
+            )
+        return super()._walk_def(key, siblings)
+
+    def _handle_object(self, schema: JsonSchema) -> JsonSchema:
+        # `transform` drops `additionalProperties` and `Schema` has no `patternProperties`, so neither
+        # subschema reaches Gemini. Walking them anyway would refuse a recursive `dict[str, Node]` over a
+        # `$ref` the declaration doesn't contain.
+        schema.pop('additionalProperties', None)
+        schema.pop('patternProperties', None)
+        return super()._handle_object(schema)
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         # `additionalProperties` is mishandled by Gemini, so a `dict[str, MyType]` field always arrives

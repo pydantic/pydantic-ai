@@ -39,5 +39,5 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 
 **Can I build a coding agent like this in Python?** Yes. Give your agent the
 [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) capability, or start from the harness
-repository's [complete coding agent](https://github.com/pydantic/pydantic-ai-harness/blob/main/examples/coding_agent.py),
+repository's [complete coding agent](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/examples/coding_agent.py),
 built from the pieces `Coder` puts together.

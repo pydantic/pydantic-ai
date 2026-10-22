@@ -4,13 +4,12 @@ import inspect
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Literal, cast
+from typing import Any, Literal, assert_never, cast
 from unittest.mock import AsyncMock
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic import TypeAdapter
-from typing_extensions import assert_never
 
 from pydantic_ai import (
     Agent,
@@ -84,7 +83,6 @@ from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
-    RetryPromptPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -97,6 +95,9 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import Workspace
+
+from ..workspace_fakes import FakeWorkspace
 
 JOURNAL_OPERATION_NAMES = {
     'compat__model.request',
@@ -294,6 +295,7 @@ def test_durability_without_tool_config_key_ignores_tool_metadata() -> None:
     assert resolve(tool, 'configured') == {'base': 1}
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_mcp_tool_config_dispatches_durable_and_inline_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip('mcp')
     from fastmcp.client.transports import StdioTransport
@@ -1315,7 +1317,7 @@ async def test_dynamic_args_validator_runs_in_declarative_unit_and_preserves_sch
         str(part.content)
         for message in rejected.all_messages()
         for part in message.parts
-        if isinstance(part, RetryPromptPart)
+        if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
     ] == ['forbidden path']
     recorded_names = [name for name, _, _ in durability.calls]
     assert 'validation__dynamic_toolset__files.validate_args' in recorded_names
@@ -1368,11 +1370,14 @@ async def test_tool_body_validation_error_preserves_detailed_retry() -> None:
 
     assert result.output == 'done'
     assert len(model_messages) == 2
-    retry = next(part for message in model_messages[1] for part in message.parts if isinstance(part, RetryPromptPart))
+    returns: list[ToolReturnPart[Any]] = [
+        part for message in model_messages[1] for part in message.parts if isinstance(part, ToolReturnPart)
+    ]
+    retry = next(part for part in returns if part.outcome == 'retried')
     assert retry.content == [
         {
             'type': 'int_parsing',
-            'loc': (),
+            'loc': [],
             'msg': 'Input should be a valid integer, unable to parse string as an integer',
             'input': invalid_input,
         }
@@ -1436,9 +1441,17 @@ async def test_legacy_dynamic_execution_unit_preserves_argument_validation_retry
 
     def model(messages: list[Any], info: AgentInfo) -> ModelResponse:
         nonlocal retries
-        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        if any(
+            isinstance(part, ToolReturnPart) and part.outcome != 'retried'
+            for message in messages
+            for part in message.parts
+        ):
             return ModelResponse(parts=[TextPart('done')])
-        if any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts):
+        if any(
+            isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+            for message in messages
+            for part in message.parts
+        ):
             retries += 1
             return ModelResponse(parts=[ToolCallPart('double', {'x': 5})])
         return ModelResponse(parts=[ToolCallPart('double', {'x': 'not-a-number'})])
@@ -1482,6 +1495,39 @@ async def test_dynamic_validator_without_durable_unit_is_a_hard_error() -> None:
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     with pytest.raises(UserError, match=r"Tool 'guarded'.*has an `args_validator`"):
         await durable.get_tools(ctx)
+
+
+@pytest.mark.parametrize('lifecycle', ['enter-outside-durable', 'enter-always'])
+async def test_durable_toolset_keeps_registration_when_leaf_replaces_itself(lifecycle: Lifecycle) -> None:
+    class ReplacingToolset(FunctionToolset[None]):
+        async def for_run(self, ctx: RunContext[None]) -> FunctionToolset[None]:
+            return FunctionToolset(id=self.id)
+
+        async def for_run_step(self, ctx: RunContext[None]) -> FunctionToolset[None]:
+            return FunctionToolset(id=self.id)
+
+    async def unused_operation(
+        name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any], config: Mapping[str, Any]
+    ) -> Any: ...  # pragma: no branch
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    ctx.workspace = Workspace(FakeWorkspace('attached'))
+    leaf = ReplacingToolset(id='replacing')
+    durable = DurableFunctionToolset(
+        leaf,
+        in_durable_context=lambda: False,
+        call_tool_operation=unused_operation,
+        resolve_tool_config=lambda tool, name: {},
+        lifecycle=lifecycle,
+    )
+    # Temporal activities resolve tools on the registered toolset, so even with a workspace attached
+    # the run must list that toolset's tools, not a per-run replacement's.
+    replaced = lifecycle != 'enter-outside-durable'
+    for method in ('for_run', 'for_run_step'):
+        replacement = await getattr(durable, method)(ctx)
+        assert (replacement is not durable) is replaced
+        assert replacement.durable_registrations is durable.durable_registrations
+        assert (replacement.wrapped is not leaf) is replaced
 
 
 async def test_legacy_validation_fallbacks_remain_inline() -> None:

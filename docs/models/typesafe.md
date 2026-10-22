@@ -62,7 +62,7 @@ print(result.output)
 Give an agent an output type, and Jev answers every field of it in one request, each with its own confidence:
 
 ```python {title="triage_with_jev.py"}
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -70,7 +70,7 @@ from pydantic import BaseModel, ConfigDict
 from pydantic_ai import Agent, BoolCriteria, UseEnumMemberDocstrings
 
 
-class Area(UseEnumMemberDocstrings, str, Enum):
+class Area(UseEnumMemberDocstrings, StrEnum):
     billing = 'billing'
     """Charges, invoices, plans and payment methods."""
 
@@ -134,16 +134,16 @@ Jev's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window] is th
 
 ```python {title="jev_compaction.py" requires="compact_when_window_fills.py"}
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import ProcessHistory, ReinjectSystemPrompt
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.models.fallback import FallbackModel
 
 from compact_when_window_fills import compact_when_window_fills
 
 agent = Agent(
-    FallbackModel('typesafe:jev-latest', 'openai:gpt-5.6-sol'),
+    FallbackModel('typesafe:jev-latest', '{{ openai:medium }}'),
     output_type=bool,
     instructions='Does the customer want a refund?',
-    capabilities=[ProcessHistory(compact_when_window_fills), ReinjectSystemPrompt()],
+    capabilities=[ProcessHistory(compact_when_window_fills)],
 )
 ```
 
@@ -232,7 +232,7 @@ print(result.output)
 #> True
 ```
 
-See [Provider SDK retries](../retries.md#provider-sdk-retries) for how this interacts with Pydantic AI's own retries.
+To change only the count for a model, agent or run, set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) instead. The request then uses the SDK's default `RetryPolicy` with that count, in place of the client's. See [Provider SDK retries](../retries.md#provider-sdk-retries) for how this interacts with Pydantic AI's own retries.
 
 ## Model settings
 
