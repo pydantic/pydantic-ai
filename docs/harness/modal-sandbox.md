@@ -118,7 +118,7 @@ later = agent.run_sync('Which capability would you add next, and where would it 
 
 The ref holds no credentials, so the process that reattaches needs your Modal credentials too. Pass `workspace='new'` to start a fresh sandbox even when the message history names one.
 
-`image`, `app_name`, `create_app_if_missing`, `sandbox_timeout`, and `idle_timeout` only shape a new sandbox; `working_dir` and `env` apply to every command, including after you reattach.
+`image`, `app_name`, `create_app_if_missing`, `sandbox_timeout`, `idle_timeout`, and `runtime` only shape a new sandbox (on an attached one, `runtime` must say what it was created with, as it decides whether commands can see mounts); `working_dir` and `env` apply to every command, including after you reattach.
 
 Already have a `modal.Sandbox`? Pass `workspace=ModalSandboxBackend(sandbox=sandbox)` to a run, with `ModalSandboxBackend` from `pydantic_ai_harness.modal_sandbox`. `ModalSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend. A backend's `get_sandbox()` returns its `modal.Sandbox` for Modal features the workspace API does not cover; on a backend with no sandbox yet it creates one, like the first operation. It doesn't change who terminates the sandbox: whoever holds the ref does.
 
@@ -209,9 +209,10 @@ agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(), Coder(), ho
 | `create_app_if_missing` | Create that app if it doesn't exist. Default: `True`. |
 | `sandbox_timeout` | Seconds a new sandbox lives before Modal stops it (10-86,400). Default: `86_400` (24 hours, Modal's maximum). |
 | `idle_timeout` | Seconds without activity before Modal stops a new sandbox. Default: `None`, no idle limit. |
+| `runtime` | Runtime for a new sandbox, `'gvisor'` or `'vm'`. Default: `None`, Modal's choice. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `/root` on the default image, otherwise the image's own working directory. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. |
-| `mounts` | Storage to show as folders, such as a [`Bucket`](bucket.md), or a function of the run that picks them, for example one folder per customer. Default: none. |
+| `mounts` | Storage to show as folders, such as a [`Bucket`](bucket.md), or a function of the run that picks them, for example one folder per customer. File tools always reach them; shell commands see them only with `runtime='vm'`, since Modal's default runtime has no FUSE. Default: none. |
 | `warn_if_no_tools` | Warn when the agent has no `Shell` or `FileSystem` tool. Default: `True`. |
 
 Modal runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.

@@ -31,6 +31,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
+from .._mount_live import check_bucket_mounts
 from .._tool_calls import call_tools
 from .conftest import LIVE_IDLE_TIMEOUT, LIVE_SANDBOX_TIMEOUT
 
@@ -53,6 +54,11 @@ async def owned_backend(**settings: Any) -> AsyncGenerator[ModalSandboxBackend, 
         finally:
             # Modal 1.5.2 leaves the return type of `detach.aio()` unspecified.
             await native.detach.aio()  # pyright: ignore[reportUnknownMemberType]
+
+
+async def test_bucket_mounts_on_the_vm_runtime() -> None:
+    async with owned_backend(runtime='vm') as backend:
+        await check_bucket_mounts(backend)
 
 
 async def test_destroy_ref_without_resuming_workspace() -> None:

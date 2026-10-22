@@ -14,6 +14,7 @@ import time
 import types
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,8 @@ import pytest
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
+    Mount,
+    MountError,
     Workspace,
     WorkspaceError,
     WorkspaceOutputLimitError,
@@ -29,6 +32,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness.bucket import Bucket
 from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend, _backend
 
 from .fake_modal import FakeImage, FakeModal, FileInfo
@@ -1207,7 +1211,6 @@ class TestErrorMapping:
             ('ExecutionError', WorkspaceError),
             ('RequestSizeError', WorkspaceError),
             ('SandboxFilesystemError', WorkspaceError),
-            ('FilesystemExecutionError', WorkspaceError),
             ('ConnectionError', None),
             ('ServiceError', None),
             ('ResourceExhaustedError', None),
@@ -1248,3 +1251,48 @@ async def test_trio_is_refused_before_any_modal_call(fake_modal: FakeModal) -> N
         await ModalSandbox().destroy(WorkspaceRef(provider='modal', id='sb-owned'))
     assert not fake_modal.create_kwargs
     assert fake_modal.attach_ids == []
+
+
+def _bucket_mount() -> Mount:
+    keys: Any = {
+        'access_key_id': 'a',
+        'secret_access_key': 'b',
+        'token': 't',
+        'expires_at': datetime.now(UTC) + timedelta(hours=1),
+    }
+    return Mount('data', Bucket('s3://acme/data', credentials=keys))
+
+
+async def test_only_the_vm_runtime_mounts_buckets(fake_modal: FakeModal) -> None:
+    mount = _bucket_mount()
+    assert ModalSandboxBackend(runtime='vm').can_mount(mount)
+    assert not ModalSandboxBackend().can_mount(mount)
+    assert not ModalSandboxBackend(runtime='gvisor').can_mount(mount)
+
+    await started(runtime='vm')
+    assert fake_modal.create_kwargs[-1]['runtime'] == 'vm'
+    assert ModalSandbox(runtime='vm').backend(WorkspaceRef(provider='modal', id='sb-vm')).can_mount(mount)
+
+
+async def test_mounting_sends_the_request_on_stdin_as_root(fake_modal: FakeModal) -> None:
+    fake_modal.responder = lambda argv, timeout: ('{"recovered": []}\n', '', 0)
+    backend = ModalSandboxBackend(runtime='vm')
+    keys: Any = {'access_key_id': 'a', 'secret_access_key': 'secret', 'token': None}
+    keys['expires_at'] = datetime.now(UTC) + timedelta(minutes=5)
+    await backend.ensure_mounts([Mount('data', Bucket('s3://acme/data', credentials=keys))], '/root')
+
+    call = fake_modal.sandboxes[0].exec_calls[-1]
+    # No user switch: Modal runs commands as the image's user, root on the default image.
+    assert call.argv[:2] == ['python3', '-c']
+    assert call.workdir == '/'
+    assert 'secret' not in ' '.join(call.argv)
+    assert call.stdin.endswith(b'\n') and call.stdin.count(b'\n') == 1
+    assert b'"secret_access_key": "secret"' in call.stdin
+
+
+async def test_a_helper_that_exits_before_reading_reports_its_output(fake_modal: FakeModal) -> None:
+    fake_modal.responder = lambda argv, timeout: ('', 'python3: not found', 127)
+    fake_modal.stdin_refused = True
+    backend = ModalSandboxBackend(runtime='vm')
+    with pytest.raises(MountError, match='python3: not found'):
+        await backend.ensure_mounts([_bucket_mount()], '/root')

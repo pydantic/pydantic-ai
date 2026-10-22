@@ -43,6 +43,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
+from .._mount_live import check_bucket_mounts
 
 pytestmark = [pytest.mark.sprites_live]
 
@@ -98,6 +99,15 @@ async def test_creates_a_fresh_sprite_and_runs_a_command(client: AsyncSpritesCli
 
         assert backend.ref is not None
         assert (result.stdout.strip(), result.stderr.strip(), result.exit_code) == ('out', 'err', 3)
+
+
+async def test_bucket_mounts(client: AsyncSpritesClient) -> None:
+    """Validates that `sudo` in an exec gets its one input line as root, with FUSE, under the exec URL limit.
+
+    The fake runs `sudo` on the host and has no FUSE, and the helper's source goes in the exec URL.
+    """
+    async with _owned(client) as backend:
+        await check_bucket_mounts(backend)
 
 
 async def test_destroy_ref_does_not_attach(client: AsyncSpritesClient) -> None:

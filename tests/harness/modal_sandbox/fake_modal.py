@@ -55,6 +55,8 @@ class ExecCall:
     text: bool
     workdir: str | None = None
     env: dict[str, str | None] | None = None
+    # What reached the process's stdin: flushed by `drain`, so only what a real process would get.
+    stdin: bytes = b''
 
 
 class _AioCallable:
@@ -148,6 +150,29 @@ class _FakeStream:
         yield self._data
 
 
+class _FakeStdin:
+    """Mimics Modal's stdin writer: `write` and `write_eof` buffer, `drain` sends."""
+
+    def __init__(self, call: ExecCall, exited: bool) -> None:
+        self._call = call
+        self._buffer = b''
+        # A process that has already exited refuses its input, as Modal does.
+        self._exited = exited
+        self.drain = _AioCallable(self._drain)
+
+    def write(self, data: bytes) -> None:
+        self._buffer += data
+
+    def write_eof(self) -> None:
+        pass
+
+    def _drain(self) -> None:
+        if self._exited:
+            raise FakeConflictError('The process has already exited.')
+        self._call.stdin += self._buffer
+        self._buffer = b''
+
+
 class _FakeProcess:
     def __init__(
         self,
@@ -159,7 +184,9 @@ class _FakeProcess:
         stdout_hangs: bool = False,
         stdout_delay: float = 0.0,
         stdout_error: Exception | None = None,
+        stdin: _FakeStdin | None = None,
     ) -> None:
+        self.stdin = stdin
         self.stdout = _FakeStream(stdout, stdout_hangs, stdout_delay, stdout_error)
         self.stderr = _FakeStream(stderr)
         self._returncode = returncode
@@ -220,7 +247,6 @@ _EXCEPTION_BASES: dict[str, type[Exception]] = {
     'AuthError': FakeModalError,
     'ConnectionError': FakeModalError,
     'ExecutionError': FakeModalError,
-    'FilesystemExecutionError': FakeModalError,
     'InternalError': FakeModalError,
     'ImageBuildError': FakeModalError,
     'NotFoundError': FakeModalError,
@@ -546,7 +572,8 @@ class FakeSandbox:
         if argv[:4] == ['setsid', '-w', 'sh', '-c']:
             self.start_scripts.append(argv[4])
             argv = argv[8:]
-        self.exec_calls.append(ExecCall(argv=argv, timeout=timeout, text=text, workdir=workdir, env=env))
+        call = ExecCall(argv=argv, timeout=timeout, text=text, workdir=workdir, env=env)
+        self.exec_calls.append(call)
         # Refused before the stop answers: a terminated sandbox refuses every exec.
         if self.shutting_down:
             raise FakeConflictError('Modal Sandbox is shutting down.')
@@ -578,6 +605,7 @@ class FakeSandbox:
             self._control.stdout_hangs and not probing_fifo,
             self._control.stdout_delay,
             self._control.stdout_error,
+            _FakeStdin(call, exited=self._control.stdin_refused),
         )
 
     def _poll(self) -> int | None:
@@ -617,6 +645,8 @@ class FakeModal:
         self.stdout_delay = 0.0
         # Raised by the stdout reader while the process keeps running.
         self.stdout_error: Exception | None = None
+        # Whether a process has exited before its stdin is sent, so sending it fails.
+        self.stdin_refused = False
         # When set, sandboxes run commands and file operations on the host under this directory.
         self.host_root: Path | None = None
         self.module = self._build_module()
@@ -648,6 +678,7 @@ class FakeModal:
             idle_timeout: int | None = None,
             workdir: str | None = None,
             env: dict[str, str | None] | None = None,
+            runtime: str | None = None,
         ) -> FakeSandbox:
             if control.create_error is not None:
                 raise control.create_error
@@ -660,6 +691,7 @@ class FakeModal:
                     'env': env,
                     'timeout': timeout,
                     'idle_timeout': idle_timeout,
+                    'runtime': runtime,
                 }
             )
             control.owned_creates += 1

@@ -29,6 +29,7 @@ import shlex
 import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 import anyio
@@ -38,8 +39,10 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
+    Mount,
     SupportsCommands,
     SupportsFilesystem,
+    SupportsMounts,
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
@@ -48,6 +51,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness import _mounts
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     command_argv,
@@ -190,7 +194,7 @@ def _refused_message(context: str, error: e2b.SandboxException) -> str:
     return message
 
 
-class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
+class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsMounts):
     """An [E2B](https://e2b.dev) sandbox as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Commands and file operations run inside an E2B microVM, so the host is never exposed.
@@ -226,6 +230,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             `pwd -P` on first use.
         env: Environment variables every command gets, on a created or an attached sandbox;
             per-command `env` is layered on top. Nothing is read from the host environment.
+
+    Shell commands see [mounted](https://pydantic.dev/docs/ai/harness/bucket/) buckets. A sandbox without `rclone` and
+    `fuse3` installs them on first use, which needs internet access; a custom template also needs `python3`.
     """
 
     def __init__(
@@ -669,6 +676,44 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                         await sandbox.files.remove(claim, user=self._user)
                     except Exception:
                         pass
+
+    def can_mount(self, mount: Mount) -> bool:
+        # E2B sandboxes have FUSE, and root reaches it without `sudo`.
+        return _mounts.can_mount(mount)
+
+    async def ensure_mounts(self, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
+        if not running_on_asyncio():
+            raise UserError('E2B commands need the asyncio event loop: the E2B SDK runs them on asyncio tasks.')
+        await self.get_sandbox()
+        return await _mounts.ensure_mounts(self._run_as_root, mounts, working_dir)
+
+    async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
+        sandbox = await self.get_sandbox()
+        async with self._sdk_errors(sandbox.sandbox_id, 'Could not mount storage in the E2B sandbox'):
+            handle: e2b.AsyncCommandHandle | None = None
+            # Shielded so a started helper always has a handle to kill. `user='root'`, not `sudo`: the sandbox's
+            # journal records `sudo`'s arguments, though never stdin.
+            with anyio.CancelScope(shield=True):
+                handle = await sandbox.commands.run(
+                    shlex.join(argv), background=True, stdin=True, user='root', timeout=_SDK_STREAM_UNBOUNDED
+                )
+            if handle is None:  # pragma: no cover - the shield lets the start finish or raise
+                raise WorkspaceError('Could not mount storage in the E2B sandbox: the helper did not start')
+            try:
+                # The helper reads one line, so stdin needn't be closed (older templates can't).
+                try:
+                    await sandbox.commands.send_stdin(handle.pid, stdin)
+                except e2b.NotFoundException:
+                    # The helper already exited without reading its line; its output below says why.
+                    pass
+                try:
+                    result = await handle.wait()
+                except e2b.CommandExitException as exited:
+                    result = exited
+            except BaseException:
+                await stop_shielded(handle.kill, grace=_INTERNAL_EXEC_TIMEOUT)
+                raise
+        return CommandResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
 
 
 async def kill_sandbox(sandbox_id: str) -> None:

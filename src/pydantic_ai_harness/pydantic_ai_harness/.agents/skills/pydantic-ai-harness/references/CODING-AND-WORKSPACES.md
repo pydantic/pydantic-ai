@@ -392,11 +392,23 @@ Python up to 3.14.
 - With Docker, a background child holding stdout/stderr open keeps `run()` waiting: redirect it.
   With Podman, `run()` returns when the command exits.
 
+## Buckets as folders
+
+`Mount(path, storage, *, read_only=False, description=None, shell=None)` (`pydantic_ai.workspaces`) shows storage
+as a folder; `LocalWorkspace` and every sandbox capability take `mounts=[...]`, or a function of the run context
+that returns them (one folder per customer from `deps`). `Bucket(url, *, credentials=None, endpoint=None,
+region=None)` (`pydantic_ai_harness.bucket`, extra `bucket`) is an S3, R2/MinIO (`endpoint=`), GCS or Azure bucket;
+`BucketWorkspace(bucket)` makes one the whole workspace.
+
+- File tools always reach a mount; `FileSystem` tells the model which folders are mounts.
+- Commands see S3 and Azure mounts on E2B, Sprites, Modal (`runtime='vm'`) and Docker with FUSE in `docker_args`,
+  only when the keys expire (`expires_at`, or a function returning them); see the Bucket docs page.
+
 ## Remote hosts and bubblewrap
 
 ### SSHWorkspace
 
-`SSHWorkspace(destination, *, working_dir=None, read_only=False, env=None, ssh_args=())` (backend
+`SSHWorkspace(destination, *, working_dir=None, read_only=False, env=None, ssh_args=(), mounts=())` (backend
 `SSHWorkspaceBackend`) runs commands and file operations on a remote host through your `ssh` client,
 so keys, ports and jump hosts come from `~/.ssh/config` and `ssh-agent`. No extra, no SDK.
 

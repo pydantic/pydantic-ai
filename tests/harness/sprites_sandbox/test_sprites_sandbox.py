@@ -4,9 +4,11 @@ import asyncio
 import importlib
 import inspect
 import json
+import os
 import signal
 import sys
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +39,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     CommandResult,
+    Mount,
     SupportsCommands,
     Workspace,
     WorkspaceError,
@@ -45,9 +48,11 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness.bucket import Bucket
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBackend, _backend
 
+from ...workspace_fakes import MemoryStorage
 from .conftest import live_token
 from .fake_sprites import SpriteTransport
 
@@ -930,6 +935,41 @@ class TestSpritesSandbox:
         # Without it a non-TTY command outlives a closed socket by 10 seconds.
         assert socket.query['max_run_after_disconnect'] == ['1s']
         assert (socket.query['stdin'], socket.query['tty']) == (['true'], ['false'])
+
+    async def test_mounts_run_the_helper_as_root_with_the_keys_on_stdin(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # A `sudo` on the host that records what it got and answers as the helper does, after a warning as the
+        # Sprite's `sudo` prints.
+        bin_dir = tmp_path / 'bin'
+        bin_dir.mkdir()
+        sudo = bin_dir / 'sudo'
+        sudo.write_text(
+            '#!/bin/sh\nprintf "%s\\0" "$@" > "$0.args"; cat > "$0.stdin"\n'
+            'echo "sudo: unable to resolve host sprite" >&2; echo \'{"recovered": []}\'\n'
+        )
+        sudo.chmod(0o755)
+        monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
+        keys: Any = {
+            'access_key_id': 'a',
+            'secret_access_key': 'stdin-only-key',
+            'token': 't',
+            'expires_at': datetime.now(UTC) + timedelta(hours=1),
+        }
+        mount = Mount('data', Bucket('s3://acme/data', credentials=keys))
+        backend = SpritesSandboxBackend()
+
+        assert backend.can_mount(mount)
+        assert not backend.can_mount(Mount('data', MemoryStorage()))
+        await backend.ensure_mounts([mount], '/work')
+
+        args = (bin_dir / 'sudo.args').read_bytes().split(b'\0')[:-1]
+        assert args[:4] == [b'-n', b'--', b'python3', b'-c'] and len(args) == 5
+        request = json.loads((bin_dir / 'sudo.stdin').read_text())
+        assert request['keys'].popitem()[1]['secret_access_key'] == 'stdin-only-key'
+        assert request['mounts'][0]['path'] == '/work/data'
+        # The keys never reach the exec URL.
+        assert all('stdin-only-key' not in socket.query_url for socket in transport.execs)
 
     async def test_argv_shell_environment_and_nonzero_exit(self, transport: SpriteTransport) -> None:
         backend = SpritesSandbox[None](env={'BASE': 'base', 'LAYERED': 'base'}).get_workspace(context(), ref=None)

@@ -78,7 +78,7 @@ Commands in a sandbox see a mounted bucket too, as an ordinary folder, when the 
 A sandbox mounts an S3 or Azure bucket with [rclone](https://rclone.org) when:
 
 - its image has Python 3; `fuse3` (with apt) and rclone are installed on first use if the image lacks them, which needs internet access;
-- the sandbox allows FUSE: [Docker](https://pydantic.dev/docs/ai/harness/docker-sandbox/) when its `docker_args` give the container `/dev/fuse`;
+- the sandbox allows FUSE: [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/), [Sprites](https://pydantic.dev/docs/ai/harness/sprites-sandbox/), [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) with `runtime='vm'`, and [Docker](https://pydantic.dev/docs/ai/harness/docker-sandbox/) when its `docker_args` give the container `/dev/fuse`;
 - the bucket's keys expire: commands in the sandbox can read the keys a mount uses, so a bucket hands over only keys with an `expires_at`, given directly or returned by a function, which is called again before they expire. Make them keys limited to the bucket's folder, so a command that reads them can't reach anything else. Azure mounts use the storage account key, so they also need `share_long_lived_credentials=True` on the bucket.
 
 Otherwise, and for Google Cloud Storage buckets, the folder is reachable through file tools only. With AWS, a function like this one hands out keys that last 15 minutes and reach only `exports/`:

@@ -11,7 +11,7 @@ frame. Closing the socket kills a command that is still running, as a positive
 `max_run_after_disconnect` makes the Sprite do (the fake does it at once instead of after that time).
 
 Like the live Sprite, the command starts as soon as the socket opens, and its output is streamed only
-once the client has attached, which the fake takes to be the client's stdin EOF frame. The live
+once the client has attached, which the fake takes to be the client's first stdin frame. The live
 Sprite replays the last 16 or 64 KiB printed before that; the fake takes the worst case and replays
 nothing. An exec URL longer than `SpriteTransport.url_limit` is refused with HTTP 414, as the live
 Sprite refuses one of about 40 KB. File writes (`AsyncSpritePath.stat` and `write_bytes`) go to the
@@ -45,7 +45,7 @@ from websockets.datastructures import Headers
 from websockets.exceptions import InvalidStatus
 from websockets.http11 import Response
 
-_STDOUT, _EXIT, _STDIN_EOF = 1, 3, 4
+_STDIN, _STDOUT, _EXIT, _STDIN_EOF = 0, 1, 3, 4
 
 
 class FakeSocketTransport:
@@ -67,7 +67,7 @@ class FakeExecSocket:
         # Read by the SDK when the stream ends without an EXIT frame.
         self.close_code: int | None = None
         self.close_reason: str | None = None
-        # Set on the client's stdin EOF; output printed before then is not streamed.
+        # Set on the client's first stdin frame; output printed before then is not streamed.
         self.attached = False
         self._frames: asyncio.Queue[bytes | None] = asyncio.Queue()
         self._loop = loop
@@ -131,12 +131,17 @@ class FakeExecSocket:
         return frame
 
     async def send(self, message: bytes) -> None:
-        # The backend sends no stdin data, only the EOF the SDK sends once the socket is open.
-        assert message == bytes([_STDIN_EOF]) and self.process.stdin is not None
+        # Stdin data, sent only for a command run as root, or the EOF the SDK sends once the socket is open.
+        stdin = self.process.stdin
+        assert message[0] in (_STDIN, _STDIN_EOF) and stdin is not None
+        if message[0] == _STDIN:
+            self.attached = True
+            await anyio.to_thread.run_sync(lambda: (stdin.write(message[1:]), stdin.flush()))
+            return
         if self.sprite_transport.release_stdin_eof is not None:
             await self.sprite_transport.release_stdin_eof.wait()
         self.attached = True
-        await anyio.to_thread.run_sync(self.process.stdin.close)
+        await anyio.to_thread.run_sync(stdin.close)
 
     async def close(self) -> None:
         sprite_transport = self.sprite_transport
