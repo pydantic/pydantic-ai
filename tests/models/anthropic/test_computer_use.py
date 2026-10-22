@@ -15,6 +15,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     PartStartEvent,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -115,8 +116,10 @@ async def test_a_refused_action_gets_an_error_result_and_the_rest_are_not_execut
     )
 
     results = _members(request_json(vcr.requests[-1]), 'tool_result')
-    errors = [result for result in results if result['is_error']]
-    assert errors and all(block['type'] == 'text' for error in errors for block in error['content'])
+    # Nothing ran, so every member is an error: the click with its refusal and the rest as not executed.
+    assert results and all(result['is_error'] for result in results)
+    assert all(block['type'] == 'text' for result in results for block in result['content'])
+    assert {result['content'][0]['text'] for result in results[1:]} <= {NOT_EXECUTED}
     assert provider.actions == []
 
 
@@ -161,7 +164,7 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
     assert [(r['tool_use_id'], r['is_error'], [block['type'] for block in r['content']]) for r in results] == [
         ('toolu_1', False, ['text', 'image']),
         ('toolu_2', True, ['text']),
-        ('toolu_3', False, ['text']),
+        ('toolu_3', True, ['text']),
     ]
     assert [r['content'][0]['text'] for r in results] == [
         'OK',
@@ -188,7 +191,7 @@ async def test_a_lone_failed_call_gets_text_only(allow_model_requests: None) -> 
     assert [block['type'] for block in only['content']] == ['text']
 
 
-async def test_a_failed_call_is_an_error_on_its_first_member(allow_model_requests: None) -> None:
+async def test_a_failed_call_gives_every_member_its_text(allow_model_requests: None) -> None:
     provider = InMemoryProvider()
 
     class NoScreenshots(ProviderBackend):
@@ -209,12 +212,33 @@ async def test_a_failed_call_is_an_error_on_its_first_member(allow_model_request
     await Agent(model, capabilities=[Supplier(), ComputerUse(settle_seconds=0)]).run('Go.')
 
     _, second = get_mock_chat_completion_kwargs(client)
-    first, rest = second['messages'][-1]['content']
-    assert (first['is_error'], first['content'][0]['text']) == (
-        True,
-        'Ran 2 actions. Taking the screenshot failed: scrot: not found',
+    # The click ran, so no member may claim it didn't: each carries the text that says what happened.
+    results = second['messages'][-1]['content']
+    assert [(r['is_error'], [block['text'] for block in r['content']]) for r in results] == [
+        (True, ['Ran 2 actions. Taking the screenshot failed: scrot: not found']),
+        (True, ['Ran 2 actions. Taking the screenshot failed: scrot: not found']),
+    ]
+
+
+async def test_an_out_of_range_member_is_refused_and_nothing_runs(allow_model_requests: None) -> None:
+    provider = InMemoryProvider()
+    client = MockAnthropic.create_mock(
+        [
+            _turn(
+                _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
+                _tool_use('toolu_2', 'wait', {'duration': 30}),
+            ),
+            _turn(BetaTextBlock(text='done', type='text')),
+        ]
     )
-    assert (rest['is_error'], rest['content'][0]['text']) == (False, NOT_EXECUTED)
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    await _agent(model, provider).run('Go.')
+
+    assert provider.actions == []
+    _, second = get_mock_chat_completion_kwargs(client)
+    results = second['messages'][-1]['content']
+    assert [(r['tool_use_id'], r['is_error']) for r in results] == [('toolu_1', True), ('toolu_2', True)]
+    assert all('less than or equal to 10' in r['content'][0]['text'] for r in results)
 
 
 async def test_an_older_model_gets_a_function(allow_model_requests: None) -> None:
@@ -294,11 +318,13 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         (
             'scroll',
             {'scroll_direction': 'down', 'scroll_amount': 80, 'coordinate': [1, 2]},
-            {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 50, 'modifiers': []},
+            {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 80, 'modifiers': []},
         ),
         ('type', {'text': 'hi'}, {'type': 'type', 'text': 'hi'}),
         ('key', {'text': 'ctrl+s', 'repeat': 2}, {'type': 'keypress', 'keys': ['ctrl+s'], 'repeat': 2}),
-        ('hold_key', {'text': 'shift', 'duration': 30}, {'type': 'hold_key', 'keys': ['shift'], 'seconds': 10}),
+        ('hold_key', {'text': 'shift', 'duration': 30}, {'type': 'hold_key', 'keys': ['shift'], 'seconds': 30}),
+        ('scroll', {'scroll_direction': 'up'}, {'type': 'scroll', 'direction': 'up', 'amount': 3, 'modifiers': []}),
+        ('key', {'text': 'a'}, {'type': 'keypress', 'keys': ['a'], 'repeat': 1}),
         ('wait', {'duration': 2}, {'type': 'wait', 'seconds': 2}),
         ('screenshot', {}, {'type': 'screenshot'}),
         ('zoom', {'region': [0, 0, 10, 10]}, {'type': 'zoom', 'region': [0, 0, 10, 10]}),
@@ -371,10 +397,9 @@ def _stream(*blocks: Any) -> list[Any]:
 COMPUTER = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind='computer')
 
 
-async def test_streamed_and_whole_responses_give_the_same_calls_and_each_batch_starts_once(
-    allow_model_requests: None,
-) -> None:
-    # Text between member calls ends a batch, so this turn is two `computer` calls.
+async def test_a_responses_member_calls_are_one_call_streamed_or_not(allow_model_requests: None) -> None:
+    # Anthropic runs a response's member calls as one batch, stopped at the first failure, so text between them
+    # doesn't split it.
     blocks = [
         _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
         _tool_use('toolu_2', 'type', {'text': 'hi'}),
@@ -408,17 +433,17 @@ async def test_streamed_and_whole_responses_give_the_same_calls_and_each_batch_s
                     'actions': [
                         {'type': 'click', 'x': 5, 'y': 6, 'button': 'left', 'count': 1, 'modifiers': []},
                         {'type': 'type', 'text': 'hi'},
+                        {'type': 'keypress', 'keys': ['Return'], 'repeat': 1},
                     ]
                 },
             ),
-            ('toolu_3', {'actions': [{'type': 'keypress', 'keys': ['Return'], 'repeat': 1}]}),
         ]
     )
-    assert [type(part) for part in streamed.parts] == [type(part) for part in whole.parts]
+    assert [type(part) for part in streamed.parts] == [type(part) for part in whole.parts] == [TextPart, ToolCallPart]
     starts = [
         event.part for event in events if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart)
     ]
-    assert [part.tool_call_id for part in starts] == ['toolu_1', 'toolu_3']
+    assert [part.tool_call_id for part in starts] == ['toolu_1']
 
 
 async def test_the_toolset_follows_tool_choice(allow_model_requests: None) -> None:

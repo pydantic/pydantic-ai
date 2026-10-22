@@ -1960,10 +1960,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
         }
         computer_def = computer_tool(model_request_parameters)
-        previous: BetaContentBlock | None = None
+        computer_blocks: list[dict[str, Any]] = []
         for item in response.content:
-            # A member call right after another is part of the same batch.
-            follows_member, previous = _is_computer_member(previous, computer_def), item
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
             elif isinstance(item, BetaServerToolUseBlock):
@@ -2010,11 +2008,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
                 if computer_def is not None and _is_computer_member(item, computer_def):
-                    # A turn's consecutive member calls are one batch: they become one `computer` call.
-                    blocks = [_computer_block(item)]
-                    if follows_member:
-                        blocks[:0] = _computer_blocks(items.pop())
-                    items.append(_computer_call_part(blocks, computer_def.name, self.system))
+                    computer_blocks.append(_computer_block(item))
                     continue
                 items.append(
                     ToolCallPart(
@@ -2023,6 +2017,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         tool_call_id=item.id,
                     )
                 )
+
+        if computer_def is not None and computer_blocks:
+            # A response's member calls are one batch, run in order and stopped at the first failure, so they
+            # become one `computer` call, whatever other blocks sit between them.
+            items.append(_computer_call_part(computer_blocks, computer_def.name, self.system))
 
         finish_reason: FinishReason | None = None
         provider_details: dict[str, Any] | None = None
@@ -3373,48 +3372,42 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """One `computer` result as a result per member call, as the toolset requires.
 
         The calls before the failed one get `OK`, the failed one its error, and the rest the exact text Anthropic
-        asks for. The screenshot goes on the last call that ran; an error result may only hold text, so when none
-        ran it goes on the first call that didn't, and is left out when the only call failed.
+        asks for, all but the `OK`s as errors. The screenshot goes on the last call that ran, since an error result
+        may only hold text; when none ran the screen is unchanged and it is left out. A failed or denied result
+        doesn't record which calls ran, so every call gets its text, which says.
         """
+
+        def result(block: dict[str, Any], text: str, is_error: bool, extra: list[beta_tool_result_block_param.Content]):
+            return beta_tool_result_block_param.BetaToolResultBlockParam(
+                tool_use_id=block['id'],
+                type='tool_result',
+                content=[BetaTextBlockParam(text=text, type='text'), *extra],
+                is_error=is_error,
+                toolset_name='computer',
+            )
+
+        if part.outcome != 'success':
+            text = part.model_response_str(wrap_if_error=False)
+            return [result(block, text, True, []) for block in blocks]
         raw_metadata: Any = part.metadata
         # A result without its metadata, such as one rebuilt by a UI, reads as every call having run.
         metadata = cast(dict[str, Any], raw_metadata) if isinstance(raw_metadata, dict) else {}
-        if part.outcome != 'success':
-            performed, error = 0, part.model_response_str(wrap_if_error=False)
-        else:
-            performed, error = (
-                cast(int, metadata.get('performed', len(blocks))),
-                cast(str | None, metadata.get('error')),
-            )
+        performed = cast(int, metadata.get('performed', len(blocks)))
+        error = cast(str | None, metadata.get('error'))
         screenshot = [
             await self._map_file_to_content_block(file, 'tool returns')
             for file in part.files
             if isinstance(file, BinaryContent) and file.is_image
         ]
-        if error is None:
-            with_screenshot = len(blocks) - 1
-        else:
-            with_screenshot = performed - 1 if performed else (1 if len(blocks) > 1 else -1)
         results: list[beta_tool_result_block_param.BetaToolResultBlockParam] = []
         for index, block in enumerate(blocks):
             if index < performed:
-                text, is_error = 'OK', False
+                extra = cast(list[beta_tool_result_block_param.Content], screenshot) if index == performed - 1 else []
+                results.append(result(block, 'OK', False, extra))
             elif index == performed and error is not None:
-                text, is_error = error, True
+                results.append(result(block, error, True, []))
             else:
-                text, is_error = _COMPUTER_NOT_EXECUTED, False
-            content: list[beta_tool_result_block_param.Content] = [BetaTextBlockParam(text=text, type='text')]
-            if index == with_screenshot:
-                content.extend(cast(list[beta_tool_result_block_param.Content], screenshot))
-            results.append(
-                beta_tool_result_block_param.BetaToolResultBlockParam(
-                    tool_use_id=block['id'],
-                    type='tool_result',
-                    content=content,
-                    is_error=is_error,
-                    toolset_name='computer',
-                )
-            )
+                results.append(result(block, _COMPUTER_NOT_EXECUTED, True, []))
         return results
 
     def _map_tool_definition(
@@ -3814,21 +3807,10 @@ class AnthropicStreamedResponse(StreamedResponse):
         with _map_api_errors(self._model_name, self._model_id_namespace):
             current_block: BetaContentBlock | None = None
             ignored_server_tool_use_indices: set[int] = set()
-            # A turn's consecutive computer toolset calls stream as one `computer` call, emitted once the batch ends.
+            # A response's computer toolset calls are one batch: they stream as one `computer` call, emitted at the end.
             computer_def = computer_tool(self.model_request_parameters)
             computer_group: list[dict[str, Any]] = []
             computer_input: list[str] = []
-
-            def end_computer_call() -> ModelResponseStreamEvent | None:
-                nonlocal computer_group
-                if not computer_group:
-                    return None
-                assert computer_def is not None
-                group, computer_group = computer_group, []
-                return self._parts_manager.handle_part(
-                    vendor_part_id=f'computer-{group[0]["id"]}',
-                    part=_computer_call_part(group, computer_def.name, self.provider_name),
-                )
 
             builtin_tool_calls: dict[str, NativeToolCallPart] = {}
             async for event in MapStreamDecodeErrors(self._response, self._model_name):
@@ -3861,8 +3843,6 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if _is_computer_member(current_block, computer_def):
                         computer_input = []
                         continue
-                    if (computer_call := end_computer_call()) is not None:
-                        yield computer_call
                     if isinstance(current_block, BetaTextBlock) and current_block.text:
                         for event_ in self._parts_manager.handle_text_delta(
                             vendor_part_id=event.index, content=current_block.text
@@ -4098,8 +4078,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                     current_block = None
                 elif isinstance(event, BetaRawMessageStopEvent):  # pragma: no branch
                     current_block = None
-            if (computer_call := end_computer_call()) is not None:
-                yield computer_call
+            if computer_def is not None and computer_group:
+                yield self._parts_manager.handle_part(
+                    vendor_part_id=f'computer-{computer_group[0]["id"]}',
+                    part=_computer_call_part(computer_group, computer_def.name, self.provider_name),
+                )
 
     async def close_stream(self) -> None:
         await self._response.source.close()
@@ -4909,6 +4892,16 @@ def _computer_blocks(part: ModelResponsePart | None) -> list[dict[str, Any]]:
     return []
 
 
+def _given(input: dict[str, Any], key: str, default: Any) -> Any:
+    """The member input's value, or the default when Claude left it out.
+
+    Out-of-range values pass through, so the `computer` tool's validation refuses them rather than running a
+    different action than Claude asked for.
+    """
+    value = input.get(key)
+    return default if value is None else value
+
+
 def _map_computer_member(name: str, input: dict[str, Any]) -> dict[str, Any]:
     """One computer toolset call as a `computer` tool action; an unknown member fails validation, so the model retries."""
     coordinate: list[int] = input.get('coordinate') or []
@@ -4930,17 +4923,17 @@ def _map_computer_member(name: str, input: dict[str, Any]) -> dict[str, Any]:
         case 'left_mouse_up':
             return {'type': 'mouse_up'}
         case 'scroll':
-            amount = min(50, input.get('scroll_amount') or 3)
+            amount = _given(input, 'scroll_amount', 3)
             direction = input.get('scroll_direction')
             return {'type': 'scroll', **position, 'direction': direction, 'amount': amount, 'modifiers': modifiers}
         case 'type':
             return {'type': 'type', 'text': input.get('text', '')}
         case 'key':
-            return {'type': 'keypress', 'keys': [input.get('text', '')], 'repeat': min(50, input.get('repeat') or 1)}
+            return {'type': 'keypress', 'keys': [input.get('text', '')], 'repeat': _given(input, 'repeat', 1)}
         case 'hold_key':
-            return {'type': 'hold_key', 'keys': [input.get('text', '')], 'seconds': min(10, input.get('duration') or 1)}
+            return {'type': 'hold_key', 'keys': [input.get('text', '')], 'seconds': _given(input, 'duration', 1)}
         case 'wait':
-            return {'type': 'wait', 'seconds': min(10, input.get('duration') or 1)}
+            return {'type': 'wait', 'seconds': _given(input, 'duration', 1)}
         case 'screenshot':
             return {'type': 'screenshot'}
         case _:
