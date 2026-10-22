@@ -344,6 +344,7 @@ async def test_create_client_secret(openai_api_key: str, request: pytest.Fixture
 
     assert secret.value
     assert secret.expires_at.tzinfo is not None
+    assert secret.webrtc_url == 'https://api.openai.com/v1/realtime/calls'
     # The secret expires shortly after recording, so only a live response can remain future-dated.
     recording = request.config.getoption('record_mode') == 'rewrite'
     assert not recording or secret.expires_at > datetime.now(UTC)
@@ -407,6 +408,7 @@ async def test_create_client_secret_through_gateway() -> None:
 
     assert captured['url'] == 'https://gateway.pydantic.dev/proxy/openai/realtime/client_secrets'
     assert secret.value == 'ek_gw'
+    assert secret.webrtc_url == 'https://gateway.pydantic.dev/proxy/openai/realtime/calls'
 
 
 async def test_create_client_secret_preserves_base_url_fragment() -> None:
@@ -614,6 +616,8 @@ async def test_azure_entra_credential_mints_client_secret_with_bearer() -> None:
     assert captured['auth'] == 'Bearer entra-token-xyz'
     assert captured['api_key'] is None
     assert secret.value == 'ek_az'
+    # The browser posts its offer where `answer_webrtc_offer` would relay it, filter included.
+    assert secret.webrtc_url == 'https://resource.openai.azure.com/openai/v1/realtime/calls?webrtcfilter=on'
 
 
 def test_azure_entra_credential_needs_no_resource_key(monkeypatch: pytest.MonkeyPatch) -> None:

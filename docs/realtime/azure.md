@@ -96,8 +96,9 @@ One difference: ending the call from the server isn't supported yet, so
 [`UserError`][pydantic_ai.exceptions.UserError] and the call ends when the browser hangs up.
 `answer_webrtc_offer` relays the offer with `webrtcfilter=on`, which limits the events forwarded to the
 browser to a safe subset so the session instructions stay on the server's control connection. With
-`create_client_secret`, the browser posts its offer to Azure itself, so add `webrtcfilter=on` to the
-URL it posts to if you want the same filtering.
+`create_client_secret`, the browser posts its offer to Azure itself: have it post to the secret's
+[`webrtc_url`][pydantic_ai.realtime.RealtimeClientSecret.webrtc_url], which carries `webrtcfilter=on`
+for the same filtering.
 
 !!! note "Capturing sideband transcripts needs a deployed transcription model"
     The server side of a WebRTC call never receives the user's audio (it flows browser ↔ Azure

@@ -69,7 +69,9 @@ async def handle_offer(sdp_offer: str) -> str:
 
 The secure offer-relay flow never gives the browser a token. As an alternative,
 [`AgentRealtime.create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] mints a
-short-lived credential for client-led negotiation. Either way the browser is a peer on the provider
+short-lived credential for client-led negotiation: the browser posts its offer to the secret's
+[`webrtc_url`][pydantic_ai.realtime.RealtimeClientSecret.webrtc_url] with the secret as its
+bearer token. Either way the browser is a peer on the provider
 session and can send provider-native control events, so authorize every server-side tool against
 trusted [`deps`](../dependencies.md), not session instructions supplied to the model.
 
