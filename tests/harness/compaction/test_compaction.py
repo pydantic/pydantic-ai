@@ -435,27 +435,6 @@ class TestIsSafeCutoff:
         # Cutting at 2: both call and return are before cutoff (discarded together).
         assert _is_safe_cutoff(msgs, 2) is True
 
-    def test_unsafe_when_splitting_call_from_its_legacy_retry_prompt(self):
-        # TODO(v3): remove along with `RetryPromptPart`
-        msgs: list[ModelMessage] = [
-            _user('a'),
-            _tool_call('fn', 'tc1'),
-            ModelRequest(parts=[legacy_retry_prompt_part('bad args', tool_name='fn', tool_call_id='tc1')]),
-            _user('b'),
-        ]
-        assert _is_safe_cutoff(msgs, 2) is False
-
-    def test_safe_before_a_legacy_retry_prompt_without_a_tool_name(self):
-        # TODO(v3): remove along with `RetryPromptPart`
-        # Without a tool name it asks for a new final output, so it does not answer the call.
-        msgs: list[ModelMessage] = [
-            _user('a'),
-            _tool_call('fn', 'tc1'),
-            ModelRequest(parts=[legacy_retry_prompt_part('try again')]),
-            _user('b'),
-        ]
-        assert _is_safe_cutoff(msgs, 2) is True
-
 
 # ---------------------------------------------------------------------------
 # find_safe_cutoff
