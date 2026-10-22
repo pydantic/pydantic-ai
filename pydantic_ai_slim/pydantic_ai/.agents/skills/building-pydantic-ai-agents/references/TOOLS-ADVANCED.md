@@ -163,6 +163,18 @@ Set `tools=['tool_name']` when the call makes a tool declared with `defer_loadin
 
 Every searchable deferred tool stays in the search corpus after discovery. A `CompactionPart` resets prospective discovery at its exact position, so future requests reveal pre-boundary tools again. For a call in the response currently being dispatched, earlier evidence still counts when the serving provider did not honor that boundary on the request wire; otherwise a call without visible evidence is refused with a "not available yet" retry.
 
+## Add Tools Mid-Run Without Busting the Prompt Cache
+
+Tools may join a run after its first request: `FunctionToolset.add_function()`/`add_tool()` called from inside a tool, a dynamic toolset (`@agent.toolset`) returning more, an MCP server's `tools/list_changed`, or `prepare_tools`/a per-tool `prepare` letting one through. Don't hand-write a `ToolAvailabilityDeltaPart` for these. Each step, the framework compares the visible function tools with those the run started with, records every newcomer as a `ToolAvailabilityDeltaPart` beside that step's tool results, and sets `ModelRequestParameters.introduced_tool_names`. Only immediately available function tools count: a newcomer with `defer_loading=True` joins the tool search corpus and is revealed when a search finds it.
+
+- First-party OpenAI Responses (`OpenAIProvider`) delivers the newcomer as an `additional_tools` item, so `tools[]` stays byte-identical.
+- Anthropic models with tool search (Sonnet 4.5+, Opus 4.5+, Haiku 4.5+) deliver it as a `defer_loading` declaration plus a `tool_addition` block (or a synthesized `tool_reference` result). This is stable once a deferred tool is already declared; some models (e.g. Opus 4.8) add a one-time preamble with the first deferred declaration.
+- Everything else, including older Anthropic models and OpenAI-compatible Responses endpoints, appends it to `tools[]` and adds a one-line announcement.
+
+Exception: when no plainly visible tool is left to keep stable (the run started with no visible function, output or native tools, or every tool it started with has since left), the tools present go straight into `tools[]` with no delta, which also keeps Anthropic from receiving a request whose tools are all deferred.
+
+Replays, retries and later runs over the same history don't re-announce it. A compaction during the run re-announces it once without changing `tools[]`; a later run that starts after the compaction declares it in `tools[]` from its first request. The comparison is per run, so a tool that is new to a later run (e.g. unlocked by an approval) goes into `tools[]` from that run's first request. Callability is unchanged: the tool is callable as soon as it exists. Under Temporal, tools run in activities, which aren't re-executed on replay, so drive mid-run changes from workflow-side code (a `prepare_tools` keyed on run state, a dynamic toolset) rather than from inside a tool.
+
 ## Control Tool Execution When an Output Tool Is Called
 
 When a model calls an output tool (structured output) in the *same* response as other tools, the agent's `end_strategy` controls how those calls run and which one becomes the final result. Most agents never need to touch this, since most responses don't mix an output tool with other tools.
