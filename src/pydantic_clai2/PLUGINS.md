@@ -1259,7 +1259,11 @@ calls `host.live.new`). The page watches the session it shows (`LiveSession.watc
 is never closed for being idle; any other live session closes after an idle hour, and clicking it
 again resumes it. The sidebar marks each live session that runs a turn, has input queued behind
 one, or waits for an answer, from the `live` message. Esc and the stop button interrupt the shown
-session only. The process's working directory never changes: each session reads its own as
+session only. Alt+Enter in the composer steers the running turn (`LiveSession.steer`), as at the
+terminal's prompt, and the input queued behind it is listed above the composer from
+`LiveSession.queue`, which the terminal's own queue is: the page edits or removes an entry with
+`edit_queued` and `remove_queued`, and hears of every change through `host.live.subscribe`. A steered
+message shows in the transcript once core delivers it (`EnqueuedMessagesEvent`). The process's working directory never changes: each session reads its own as
 `host.workspace`. `/resume ID` typed in a session still moves that session to the directory `ID`
 was saved in, and `/workspace DIRECTORY` (an existing absolute path) starts a new conversation
 there (`host.sessions.follows_workspace`); its session-scoped plugins load again, each getting
@@ -3630,7 +3634,7 @@ What changes for a process-scoped plugin:
 | `await open(conversation_id)` | the live session holding that saved conversation; when none does, resumes it in a new live session in the folder it was saved in. Concurrent calls for one conversation get the same session. Raises `LookupError` for an unknown conversation, `ValueError` when its folder is gone, and `RuntimeError` where CLAI opens no other sessions |
 | `await new(workspace=None)` | a new live session with a new conversation, in `workspace`, by default the folder CLAI started in. Raises `ValueError` unless `workspace` is an existing absolute folder, and `RuntimeError` where CLAI opens no other sessions |
 | `await close(live_id)` | close a live session, cancelling its turn; its plugins end with `'exit'`. Raises `LookupError` when none is live, and `ValueError` for a session its own driver runs: the one the terminal shows, or the one `clai2 --web` or `clai2 -p` started with. A host built outside CLAI's shell raises `RuntimeError` |
-| `subscribe(listener)` | call `listener()` whenever a session opens or closes, or its running, queued, or watched state may change; returns a function that unsubscribes. It is called synchronously, from the session's own loop, so it must be quick and must not raise |
+| `subscribe(listener)` | call `listener()` whenever a session opens or closes, or its running, queued (including an edit of its queue), or watched state may change; returns a function that unsubscribes. It is called synchronously, from the session's own loop, so it must be quick and must not raise |
 
 Never await `open` or `new` from `on_session_start`: the new session waits for the
 plugins still loading.
@@ -3649,6 +3653,10 @@ A `LiveSession` is one live session:
 | `running` | whether a turn runs in it now |
 | `setting(key)` | a CLAI setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
 | `queued` | how many inputs wait for its running turn or command to end |
+| `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt |
+| `edit_queued(input_id, text)` | rewrite a waiting input in place, as Enter on a recalled one at the prompt does; raises `LookupError` once it has run or was removed, and `ValueError` for blank text |
+| `remove_queued(input_id)` | drop a waiting input; raises `LookupError` once it has run or was removed |
+| `steer(text)` | send `text` to its running turn now, as Alt+Enter at the prompt does; its model reads it at its next request. `False` when nothing takes it: no turn runs, or it is a `/command` or `!` shell line |
 | `watchers` | how many `watch()` calls have not stopped yet |
 | `watch()` | count a watcher, such as a browser showing it, until you call the function it returns; a watched session is never closed for being idle |
 | `send_input(text, images=())` | enter `text` at its prompt, with `images` attached, as its `host.send_input` does |

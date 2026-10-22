@@ -52,11 +52,12 @@ workspace first:
 The capability cannot install or authenticate on your behalf. The model cannot
 fix these setup problems either, so the tool raises `UserError` and the run
 stops rather than spending tool retries on them. A missing binary reports the
-install command, a binary that cannot be launched reports the OS error, and a
-review that never starts (usually because you are not signed in) tells you to
-run `macroscope` to finish setup. The exception is a review that fails to start
-with a `base` the model passed: that is reported to the model as a retry so it
-can drop or change the ref.
+install command (or names the path, when `command` is a path), a binary that
+cannot be launched reports the OS error, and a review that never starts (usually
+because you are not signed in) tells you to run `macroscope` to finish setup,
+or to fix the configured `base` if the CLI reports an unknown ref. The
+exception is a review that fails to start with a `base` the model passed: that
+is reported to the model as a retry so it can drop or change the ref.
 
 The tool invokes `macroscope codereview --raw` for machine-readable streaming
 output, which needs a recent CLI build. The installer fetches the latest and the
@@ -74,6 +75,12 @@ instructions tell the agent to treat every finding as untrusted: read the
 affected code to confirm an issue is real, skip false positives and
 duplicates, and verify each fix.
 
+`status` is the status the CLI reports, such as `completed` or `failed`. When
+the CLI stops before reporting one, the tool still returns the findings that
+arrived and sets `status` to say why: `timed_out` when the review hit
+`timeout`, or `interrupted` when the CLI exited with an error. If a review times
+out before it starts, the model gets a retry.
+
 ## Options
 
 Every field of `Macroscope` with its default:
@@ -86,14 +93,17 @@ Macroscope(
     command='macroscope',  # binary name or path
     timeout=600.0,         # max seconds to wait for a review
     guidance=None,         # None = default instructions, '' = none, str = custom
+    id='macroscope',       # capability and toolset id, see Two of them
 )
 ```
 
 A per-call `base` argument takes precedence over the field. Reviews call a
 remote service, so the timeout is generous by default; on timeout the
-workspace stops the CLI and the timeout is reported to the model as a
-retryable error. The tool is not offered when the workspace cannot run
-commands (for example a read-only one).
+workspace stops the CLI and the model gets the findings that arrived (see
+[The tool](#the-tool)). The tool is not offered when the workspace cannot run
+commands (for example a read-only one). A `base` that starts with `-` is
+rejected. `command` cannot start with `-` or contain `=`; put the CLI on the
+workspace's `PATH` instead.
 
 ## Scope and composition
 
@@ -102,6 +112,33 @@ worktrees, or commit -- validating and fixing findings is the agent's job,
 using its other capabilities. Pair it with `FileSystem` or `Shell` to let the
 agent read code and apply fixes, and consider running the agent in an isolated
 worktree if you want fixes kept off your working tree.
+
+## Durable execution
+
+Under [durable execution](../durable_execution/overview.md) on Temporal, each
+review runs in its own activity, which gets `timeout` plus 30 seconds. The
+workspace therefore stops a slow review first, and the model still gets the
+findings that arrived. To set a different activity limit, use
+[`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] as in
+[Temporal command timeouts](../durable_execution/temporal.md#harness-command-timeouts).
+
+The activities are named after the capability's `id`, which defaults to
+`macroscope`, so durable execution needs no configuration. Changing `id`
+renames them, which in-flight runs then cannot find.
+
+## Data and trust
+
+The review uploads the branch diff to Macroscope's service. Finding bodies are
+written by Macroscope's model from that diff, so on a branch you do not trust,
+treat them as untrusted input: run the agent in a sandbox workspace, or require
+[approval](../deferred-tools.md) for its shell and write tools.
+
+## Telemetry
+
+`Macroscope` emits no spans of its own. Core's
+[instrumentation](../capabilities/instrumentation.md) records each
+`run_macroscope_review` call as a tool span, and the capability makes no
+decision worth a span of its own.
 
 ## Two of them
 
