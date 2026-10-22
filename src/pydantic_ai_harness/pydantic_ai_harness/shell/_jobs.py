@@ -53,6 +53,7 @@ watch_logs() {{
       if [ $(( $(wc -c < "$log" 2> /dev/null) + 0 )) -gt "$1" ]; then
         : > "$log"
         printf '[Log exceeded max_log_bytes=%s; earlier output was cleared.]\\n' "$1" >> "$log"
+        printf x >> "$dir/log_clears"
       fi
     done
   done
@@ -82,7 +83,7 @@ publish $code
 the seconds between log checks.
 
 With a log limit, a watcher checks each log every `_LOG_CHECK_INTERVAL` seconds and empties one that has grown past it, leaving a
-notice. The command keeps running, and a command that reads its own log (a glob over job logs) reaches the
+notice, then appends a byte to `log_clears`, so a reader can tell the log was emptied even once it has grown back. The command keeps running, and a command that reads its own log (a glob over job logs) reaches the
 end of it and stops, instead of copying the log into itself until the disk is full.
 
 The `TERM` trap lets the wrapper outlive a `SIGTERM` sent to the whole group long enough to
@@ -242,6 +243,11 @@ class Job:
     @property
     def status_path(self) -> str:
         return posixpath.join(self.directory, 'status.json')
+
+    @property
+    def clears_path(self) -> str:
+        """A file one byte longer each time `max_log_bytes` empties one of the job's logs."""
+        return posixpath.join(self.directory, 'log_clears')
 
     @property
     def stop_command(self) -> str:

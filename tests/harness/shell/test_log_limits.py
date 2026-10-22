@@ -10,14 +10,10 @@ from pathlib import Path
 import anyio
 import pytest
 
-from pydantic_ai import RunContext
-from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness.shell import Shell
 
-from .._tool_calls import call_tool
-from .test_persistent import Recorder
+from ._context import run_context
+from .test_persistent import Recorder, shell
 
 pytestmark = [pytest.mark.skipif(os.name == 'nt', reason='POSIX shell commands and process groups')]
 
@@ -33,24 +29,6 @@ def fast_log_checks(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _handle(output: str, label: str) -> Path:
     return Path(output.split(f'{label}: ', 1)[1].split('\n', 1)[0])
-
-
-def _ctx(working_dir: Path) -> RunContext[None]:
-    return RunContext[None](
-        deps=None,
-        model=TestModel(),
-        usage=RunUsage(),
-        prompt=None,
-        messages=[],
-        run_step=0,
-        workspace=Workspace(LocalWorkspaceBackend(working_dir)),
-    )
-
-
-async def _shell(cwd: Path, arguments: dict[str, object], *, recorder: Recorder | None = None) -> str:
-    capability = Shell[None](denied_commands=[], tools=['shell'], max_log_bytes=2000)
-    capabilities = [capability] if recorder is None else [capability, recorder]
-    return await call_tool(capabilities, 'shell', arguments, workspace=LocalWorkspaceBackend(cwd))
 
 
 async def _wait_for_notice(log: Path) -> None:
@@ -71,7 +49,7 @@ class TestShellLogLimits:
             'echo seed; for log in .pydantic-ai-harness/shell/*/output.log; do '
             'while IFS= read -r line; do echo "$line"; done < "$log"; done'
         )
-        output = await _shell(tmp_path, {'command': command, 'timeout': 60})
+        output = await shell(tmp_path, {'command': command, 'timeout': 60}, max_log_bytes=2000)
         assert '"exit_code": 0' in output
         log = _handle(output, 'Output')
         assert NOTICE in log.read_text(encoding='utf-8')
@@ -81,15 +59,42 @@ class TestShellLogLimits:
         # The first write is streamed before the second pushes the log past the limit and it is emptied.
         command = "printf '%01500d\\n' 0; sleep 0.3; printf '%01500d\\n' 0; sleep 0.5; echo after"
         recorder = Recorder()
-        output = await _shell(tmp_path, {'command': command, 'timeout': 60}, recorder=recorder)
+        output = await shell(tmp_path, {'command': command, 'timeout': 60}, capabilities=[recorder], max_log_bytes=2000)
         assert '"exit_code": 0' in output
         assert recorder.output.startswith('0' * 1500)
         assert recorder.output.endswith(f'{NOTICE}\nafter\n')
         assert recorder.finished.truncated
         assert recorder.finished.total_lines is None
 
+    async def test_events_report_a_log_cleared_and_regrown_between_reads(self, tmp_path: Path) -> None:
+        # The reader backs off while the command is quiet, so the log is emptied and grows past what was
+        # already read before its next read; it must still start again from the notice.
+        command = (
+            "printf '%01500d\\n' 0; sleep 1.5; printf '%01500d\\n' 0; sleep 0.2; "
+            "printf '%01800d\\n' 0; sleep 1; echo after"
+        )
+        recorder = Recorder()
+        output = await shell(tmp_path, {'command': command, 'timeout': 60}, capabilities=[recorder], max_log_bytes=2000)
+        assert '"exit_code": 0' in output
+        assert recorder.output.startswith('0' * 1500)
+        assert recorder.output.endswith(f'{NOTICE}\n{"0" * 1800}\nafter\n')
+        assert recorder.finished.truncated
+        assert recorder.finished.total_lines is None
+
+    async def test_events_without_a_limit(self, tmp_path: Path) -> None:
+        recorder = Recorder()
+        output = await shell(
+            tmp_path, {'command': 'echo hi', 'timeout': 60}, capabilities=[recorder], max_log_bytes=None
+        )
+        assert '"exit_code": 0' in output
+        assert recorder.output == 'hi\n'
+        assert not recorder.finished.truncated
+        assert recorder.finished.total_lines == 1
+
     async def test_chatty_shell_command_keeps_running(self, tmp_path: Path) -> None:
-        output = await _shell(tmp_path, {'command': CHATTY.format(redirect=''), 'mode': 'background'})
+        output = await shell(
+            tmp_path, {'command': CHATTY.format(redirect=''), 'mode': 'background'}, max_log_bytes=2000
+        )
         group = int(output.split('kill -- -', 1)[1].split('`', 1)[0])
         try:
             await _wait_for_notice(_handle(output, 'Output'))
@@ -102,11 +107,11 @@ class TestShellLogLimits:
     async def test_background_logs_are_bounded(self, tmp_path: Path, redirect: str, log_name: str) -> None:
         toolset = Shell(max_log_bytes=2000).get_toolset()
         async with toolset:
-            started = await toolset.start_command(_ctx(tmp_path), CHATTY.format(redirect=redirect))
+            started = await toolset.start_command(run_context(tmp_path), CHATTY.format(redirect=redirect))
             command_id = started.rsplit('ID: ', 1)[1]
             try:
                 await _wait_for_notice(tmp_path / '.pydantic-ai-harness' / 'shell' / command_id / log_name)
-                assert 'exit code' not in await toolset.check_command(_ctx(tmp_path), command_id)
+                assert 'exit code' not in await toolset.check_command(run_context(tmp_path), command_id)
             finally:
-                stopped = await toolset.stop_command(_ctx(tmp_path), command_id)
+                stopped = await toolset.stop_command(run_context(tmp_path), command_id)
             assert '[exit code: 143]' in stopped
