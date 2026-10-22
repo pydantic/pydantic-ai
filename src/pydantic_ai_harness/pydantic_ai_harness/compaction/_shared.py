@@ -118,7 +118,7 @@ def _collect_text(messages: Sequence[ModelMessage]) -> list[str]:
 def _request_part_text(part: ModelRequestPart) -> list[str]:
     """Text segments a single request part contributes to the token estimate."""
     if isinstance(part, UserPromptPart):
-        return [_user_prompt_text_for_counting(part)]
+        return [''.join(user_prompt_texts(part))]
     elif isinstance(part, SystemPromptPart):
         return [part.content]
     elif isinstance(part, InstructionDeltaPart):
@@ -209,11 +209,6 @@ def _instructions_text(messages: Sequence[ModelMessage]) -> list[str]:
         if isinstance(msg, ModelRequest) and msg.instructions:
             return [msg.instructions]
     return []
-
-
-def _user_prompt_text_for_counting(part: UserPromptPart) -> str:
-    """Extract text content from a user prompt part for counting."""
-    return ''.join(user_prompt_texts(part))
 
 
 def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = None) -> int:
