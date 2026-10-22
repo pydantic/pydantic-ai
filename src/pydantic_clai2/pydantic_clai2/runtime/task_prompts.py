@@ -15,6 +15,7 @@ from pydantic_ai import RunContext, SkipModelRequest
 from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness.subagents import SubAgents
 
 TASK_PROMPT = 'clai2_task_prompt'
@@ -26,10 +27,15 @@ def is_task_prompt(ctx: RunContext[object]) -> bool:
     return bool(ctx.metadata and ctx.metadata.get(TASK_PROMPT))
 
 
+def is_delegate_tool(ctx: RunContext[object], tool_def: ToolDefinition) -> bool:
+    """Whether `tool_def` is the run's `SubAgents` delegate tool, whatever it is configured to be called."""
+    return isinstance(ctx.capabilities.get(tool_def.capability_id or ''), SubAgents)
+
+
 def delegate_tool(ctx: RunContext[object]) -> str | None:
-    """The name of the run's `SubAgents` delegate tool, whatever it is configured to be called."""
+    """The name of the run's `SubAgents` delegate tool, if it has one."""
     for name, definition in ctx.tools.items():
-        if isinstance(ctx.capabilities.get(definition.capability_id or ''), SubAgents):
+        if is_delegate_tool(ctx, definition):
             return name
     return None
 
