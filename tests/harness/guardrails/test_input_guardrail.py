@@ -1358,6 +1358,28 @@ class TestFindPromptPart:
         run_ctx, _ = _build_ctx_and_req(messages=history)
         assert _find_prompt_part(run_ctx, request) is copied
 
+    def test_a_copied_prompt_is_found_before_a_message_appended_after_it(self):
+        """A whole request-only message appended after the prompt's does not take the copy's place."""
+        prompt = UserPromptPart(content='the prompt')
+        copied = dataclasses.replace(prompt)
+        history: list[ModelMessage] = [ModelRequest(parts=[prompt])]
+        request: list[ModelMessage] = [ModelRequest(parts=[copied]), ModelRequest(parts=[_added('injected')])]
+        run_ctx, _ = _build_ctx_and_req(messages=history)
+        assert _find_prompt_part(run_ctx, request) is copied
+
+    def test_a_copied_prompt_is_found_after_history_trimmed_from_the_start(self):
+        earlier = UserPromptPart(content='earlier turn', timestamp=_EARLIER)
+        prompt = UserPromptPart(content='current turn')
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[earlier]),
+            ModelResponse(parts=[TextPart(content='assistant')]),
+            ModelRequest(parts=[prompt]),
+        ]
+        copied = dataclasses.replace(prompt)
+        request: list[ModelMessage] = [ModelRequest(parts=[copied]), ModelRequest(parts=[_added('injected')])]
+        run_ctx, _ = _build_ctx_and_req(messages=history)
+        assert _find_prompt_part(run_ctx, request) is copied
+
     def test_a_copy_with_changed_text_is_found_by_its_timestamp(self):
         prompt = UserPromptPart(content='the prompt')
         changed = dataclasses.replace(prompt, content='the prompt\ncontext')
