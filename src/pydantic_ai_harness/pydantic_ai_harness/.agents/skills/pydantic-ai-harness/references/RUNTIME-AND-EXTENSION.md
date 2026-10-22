@@ -320,6 +320,8 @@ Gotchas:
   checkpointed, and `DynamicToolset`s are not wrapped, so that work re-runs.
 - Steps match by name and order, not inputs: in-flight tasks keep stored results across a deploy.
 - A running step extends the worker's claim, so steps may outlast `claim_timeout`.
+- Inside a task an `MCPToolset` keeps one session for the run: the first step that needs the server
+  connects, and a failed connection fails that step, so the task's retry connects again.
 - Function, MCP, or dynamic toolsets passed with `run(toolsets=...)` inside a task raise `UserError`;
   `ExternalToolset` is fine.
 - Keep tool side effects idempotent: a crash after a tool runs but before its step is saved re-runs it.
