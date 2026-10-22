@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import KnownModelName, Model
@@ -22,13 +22,13 @@ class SmartSearch(AbstractCapability[AgentDepsT]):
     plus coverage figures so the model can tell an empty result from a complete
     search that found nothing.
 
-    The judge is any Pydantic AI model. A decision model is the recommended kind,
-    since it answers each relevance question with a probability: any one served
-    over the System One API (`'system-one:<name>'`), or TypeSafe's Jev
-    (`'typesafe:jev-latest'`), which is the default when the `typesafe` SDK is
-    installed and `TYPESAFE_API_KEY` is set. Otherwise the judge defaults to the
-    run's own model; pass a small, fast `model` instead, as one search makes up
-    to `candidates` (default 128) judge requests.
+    The judge is any Pydantic AI model, and is required, since it decides which
+    provider receives the searched source. A decision model is the recommended
+    kind, since it answers each relevance question with a probability: any one
+    served over the System One API (`'system-one:<name>'`), or TypeSafe's Jev
+    (`'typesafe:jev-latest'`). One search makes up to `candidates` (default 128)
+    judge requests, each counted as one request in the run's usage and checked
+    against its usage limits.
 
     ```python
     from pydantic_ai import Agent
@@ -38,7 +38,7 @@ class SmartSearch(AbstractCapability[AgentDepsT]):
 
     agent = Agent(
         'openai:gpt-6-luna',
-        capabilities=[LocalWorkspace('.'), SmartSearch(model='system-one:clm-latest')],
+        capabilities=[LocalWorkspace('.'), SmartSearch('system-one:clm-latest')],
     )
     ```
 
@@ -48,16 +48,16 @@ class SmartSearch(AbstractCapability[AgentDepsT]):
     cannot run commands, and a run without a workspace fails at its start.
     """
 
-    model: Model | KnownModelName | str | None = None
+    model: Model | KnownModelName | str
     """The model that judges each snippet's relevance: any Pydantic AI model or model name.
 
     A decision model served over the System One API, such as
     `'system-one:clm-latest'`, or a `SystemOneModel`, answers each judgment with a
-    probability. `None` (the default) picks TypeSafe's Jev (`'typesafe:jev-latest'`)
-    when the `typesafe` SDK is installed and `TYPESAFE_API_KEY` is set, and the
-    run's own model otherwise. Pin a model version (e.g. `'typesafe:jev-1.13.0'`)
-    once you have tuned `threshold` against it.
+    probability, as does TypeSafe's Jev (`'typesafe:jev-latest'`). Pin a model
+    version (e.g. `'typesafe:jev-1.13.0'`) once you have tuned `threshold` against it.
     """
+
+    _: KW_ONLY
 
     threshold: float = 0.5
     """Relevance a snippet needs to be returned, from 0 to 1.

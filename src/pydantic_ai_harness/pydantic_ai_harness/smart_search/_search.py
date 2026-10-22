@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.workspaces import Workspace
+from pydantic_ai.exceptions import ModelRetry, ToolFailed
+from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.smart_search._chunks import Chunk, searchable_root
 from pydantic_ai_harness.smart_search._index import SnippetIndexes, read_snippets
-from pydantic_ai_harness.smart_search._judge import JudgeModel, judge
+from pydantic_ai_harness.smart_search._judge import JudgeModel, has_request_room, judge
 from pydantic_ai_harness.smart_search._retrieve import terms
 
 MAX_QUERY_CHARS = 2000
@@ -19,6 +19,10 @@ MAX_CANDIDATES = 256
 MAX_LIMIT = 100
 EXCERPT_LINES = 12
 EXCERPT_CHARS = 1200
+_NO_ROOM = (
+    '`smart_search` has no requests left to judge with: each judged snippet counts as one request against '
+    "the run's `request_limit`. Use regular search instead."
+)
 _TEST_PATH = re.compile(r'(^|/)(tests?|__tests__|spec)/|(^|/)test_[^/]*$|[._-](test|spec)\.[^/]+$|_test\.py$')
 
 
@@ -146,7 +150,7 @@ def _to_match(item: _Scored, passing: list[_Scored], query: str) -> SmartSearchM
 
 
 async def search_code(
-    workspace: Workspace,
+    ctx: RunContext[Any],
     model: JudgeModel,
     query: str,
     directory: str,
@@ -164,35 +168,44 @@ async def search_code(
         raise ModelRetry(f'Query must contain 1-{MAX_QUERY_CHARS} characters.')
     limit = max(1, min(limit, MAX_LIMIT))
     candidates = max(1, min(candidates, MAX_CANDIDATES))
+    if not has_request_room(ctx):
+        raise ToolFailed(_NO_ROOM)
 
+    workspace = ctx.workspace
     root = await searchable_root(workspace, directory)
     found = await indexes.shortlist(workspace, root, glob, query, candidates)
     selected = await read_snippets(workspace, root, directory, found.hits)
+    scores = await judge(ctx, model, query, selected, concurrency=concurrency) if selected else []
+    judged = [_Scored(c, s) for c, s in zip(selected, scores) if s is not None]
     coverage = SmartSearchCoverage(
         files=found.files,
         snippets=found.snippets,
-        evaluated=len(selected),
+        evaluated=len(judged),
         skipped_files=len(found.skipped),
-        selection_complete=len(selected) == found.snippets,
+        selection_complete=len(judged) == found.snippets,
     )
 
-    scores = await judge(model, query, selected, concurrency=concurrency) if selected else []
     passing = sorted(
-        (_Scored(c, s) for c, s in zip(selected, scores) if s >= threshold),
+        (item for item in judged if item.score >= threshold),
         key=lambda p: (-p.score, p.chunk.path, p.chunk.line),
     )
     kept = _dedupe(passing)
 
     warnings: list[str] = []
-    if selected and not kept:
+    if judged and not kept:
         warnings.append(
             f'No snippet reached threshold {threshold}; this does not prove absence. '
             'Try rephrasing, a narrower directory, or regular grep.'
         )
     if not coverage.selection_complete:
         warnings.append(
-            f'Judged {len(selected)} of {found.snippets} snippets picked by a lexical shortlist; code with '
+            f'Judged {len(judged)} of {found.snippets} snippets picked by a lexical shortlist; code with '
             'unrelated wording may be missed. Raise `candidates` or narrow the directory/glob.'
+        )
+    if len(judged) < len(selected):
+        warnings.append(
+            f"Judged {len(judged)} of the {len(selected)} shortlisted snippets: the run's `request_limit` left room "
+            'for no more, as each judged snippet counts as one request.'
         )
     if found.skipped:
         warnings.append(f'{len(found.skipped)} files skipped (binary, non-UTF-8, minified or unreadable).')

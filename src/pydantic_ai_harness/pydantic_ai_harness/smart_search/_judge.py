@@ -11,21 +11,19 @@ Every snippet is judged in its own run, so neighbouring snippets never lend each
 
 from __future__ import annotations
 
-import os
 from collections.abc import Sequence
-from importlib.util import find_spec
+from dataclasses import replace
+from typing import Any
 
 import anyio
 from pydantic import BaseModel, Field
-from typing_extensions import TypeIs
 
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness._judge import claim_request
 from pydantic_ai_harness.smart_search._chunks import Chunk
-
-TYPESAFE_MODEL = 'typesafe:jev-latest'
-"""The recommended judge, used by default when TypeSafe is installed and `TYPESAFE_API_KEY` is set."""
 
 REQUEST_TIMEOUT_SECONDS = 30
 """The request timeout of a judge given by name; a model instance keeps its own `settings`."""
@@ -57,30 +55,6 @@ class Relevance(BaseModel):
         return self.entity * self.operation
 
 
-def typesafe_available() -> bool:
-    """Whether the recommended TypeSafe judge can run: its SDK is installed and `TYPESAFE_API_KEY` is set."""
-    return bool(os.environ.get('TYPESAFE_API_KEY')) and find_spec('typesafe_sdk') is not None
-
-
-def _is_request_response_model(model: object) -> TypeIs[Model]:
-    """Narrow the run's model to `Model` without leaving its client type unknown."""
-    return isinstance(model, Model)
-
-
-def resolve_judge_model(model: JudgeModel | None, run_model: object) -> JudgeModel:
-    """The configured judge; else TypeSafe's Jev when available; else the run's own model."""
-    if model is not None:
-        return model
-    if typesafe_available():
-        return TYPESAFE_MODEL
-    if _is_request_response_model(run_model):
-        return run_model
-    raise UserError(  # pragma: no cover
-        '`SmartSearch` could not pick a judge model: the run model is not a request-response `Model`. '
-        'Pass `SmartSearch(model=...)`.'
-    )
-
-
 def _state(chunk: Chunk) -> str:
     """What the judge sees: where the snippet lives, then the snippet itself."""
     where = f'{chunk.path}:{chunk.line}-{chunk.end_line}'
@@ -104,27 +78,49 @@ def build_agent(model: JudgeModel, query: str) -> Agent[None, Relevance]:
     return agent
 
 
+def has_request_room(ctx: RunContext[Any]) -> bool:
+    """Whether the run's `request_limit` leaves room for one more judgment and still one for the model's next turn."""
+    limits = ctx.usage_limits
+    return limits is None or limits.request_limit is None or ctx.usage.requests + 1 < limits.request_limit
+
+
 async def judge(
+    ctx: RunContext[Any],
     model: JudgeModel,
     query: str,
     chunks: Sequence[Chunk],
     *,
     concurrency: int,
-) -> list[float]:
-    """Score each chunk in `[0, 1]`, order preserved.
+) -> list[float | None]:
+    """Score each chunk in `[0, 1]`, order preserved, or `None` for a chunk the request budget left unjudged.
+
+    Each judgment is one request on the run's usage, checked against its limits. It is claimed before the
+    judge is awaited, so judgments running in parallel, and sibling searches, share the budget: once the
+    run's `request_limit` leaves no room for another judgment besides the model's next turn, the remaining
+    chunks (the lowest ranked, as they are judged in order) are left unjudged.
 
     Any failed judgment fails the whole search and cancels the rest: a partial scan reported as a complete
     one is worse than an error.
     """
     agent = build_agent(model, query)
+    # The claim below already holds each judgment's request slot, checked by `has_request_room`, so the
+    # nested run checks only the token limits; with no limits at all it would apply the default ones.
+    limits = replace(ctx.usage_limits, request_limit=None) if ctx.usage_limits else UsageLimits(request_limit=None)
     gate = anyio.Semaphore(concurrency)
-    scores = [0.0] * len(chunks)
+    scores: list[float | None] = [None] * len(chunks)
     errors: list[Exception] = []
 
     async def one(index: int, chunk: Chunk) -> None:
         async with gate:
+            if not has_request_room(ctx):
+                return
             try:
-                scores[index] = (await agent.run(_state(chunk))).output.score
+                claim_request(ctx)
+                try:
+                    result = await agent.run(_state(chunk), usage=ctx.usage, usage_limits=limits)
+                finally:
+                    ctx.usage.requests -= 1  # the nested run counted its own request
+                scores[index] = result.output.score
             except Exception as error:
                 # Raised below, outside the task group, so callers see the judge's own error rather
                 # than an `ExceptionGroup`.

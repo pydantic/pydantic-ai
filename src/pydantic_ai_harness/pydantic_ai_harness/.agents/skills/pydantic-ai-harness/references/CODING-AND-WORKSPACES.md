@@ -207,18 +207,19 @@ from pydantic_ai_harness import SmartSearch
 agent = Agent('test', capabilities=[LocalWorkspace('.'), SmartSearch(model='test')])
 ```
 
-- `model` is **any** Pydantic AI model or name. A decision model is recommended: `'system-one:<name>'` (or a
-  `SystemOneModel`) for any model behind the System One API (needs `SYSTEM_ONE_BASE_URL`), or Jev. Unset:
-  `'typesafe:jev-latest'` if the `typesafe` SDK is installed and `TYPESAFE_API_KEY` is set, else the run's
-  own model. System One is never picked by default (its model name depends on the server).
+- `model` is **required**: any Pydantic AI model or name. A decision model is recommended: `'system-one:<name>'`
+  (or a `SystemOneModel`) for any model behind the System One API (needs `SYSTEM_ONE_BASE_URL`), or
+  `'typesafe:jev-latest'`. A named judge gets a 30 s request timeout; an instance keeps its own `settings`.
 - `threshold=0.5` (tuned for Jev; retune for another judge), `concurrency=8`, `guidance=None`
   (default discovery instructions; `''` for none).
 - `cache_index=False`: on, keeps up to four directories' indexes (per `glob`) in memory for the agent's
   life; later searches re-read files but re-chunk only changed ones (content hash), and parallel searches
   of one directory build it once. A search is capped at 200,000 files (after `glob`), 50M lines and 2 GiB
   (`ModelRetry`).
-- Judge usage is not added to the run's usage or limits; bound cost with `candidates`. A failed judgment
-  fails the search as a tool failure the model sees.
+- Each judged snippet is one request in the run's usage (tokens too), checked against its `UsageLimits`.
+  A search judges only what `request_limit` (default 50) leaves room for, keeping one for the model's next
+  turn, and warns; with no room it fails. Raise `request_limit` for full searches. A failed judgment fails
+  the search as a tool failure the model sees.
 - Sends the query, snippets and paths to the judge's provider; `directory` must be inside the working
   directory (symlinks followed), else `ModelRetry`.
 
