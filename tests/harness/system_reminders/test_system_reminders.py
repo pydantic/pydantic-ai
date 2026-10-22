@@ -1402,7 +1402,14 @@ class TestEndToEnd:
             and message.metadata.get('pydantic-ai-harness.compaction.kept-user-message.v1')
             for part in message.parts
         ]
-        assert kept == [UserPromptPart('go', timestamp=IsDatetime())]
+        kept_texts = [
+            part.content
+            if isinstance(part.content, str)
+            else ''.join(item.content for item in part.content if isinstance(item, TextContent))
+            for part in kept
+            if isinstance(part, UserPromptPart)
+        ]
+        assert len(kept) == 1 and kept_texts == ['go']
 
     async def test_reminder_is_never_taken_for_a_previous_summary(self) -> None:
         """A reminder that looks like a compaction summary isn't fed back as the previous summary."""

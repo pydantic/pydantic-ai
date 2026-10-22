@@ -23,6 +23,36 @@
       "fingerprint": "c4aa7c8b9e94bd5ada5a90325d99ca764fed5f8bd156d31ef511842e4d854f3a",
       "reason": "False positive: `BackgroundTools` still inherits `prepare_tools` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; the tool preparation moved into the wrapper toolset.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10613"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "d8317571d93e30c3b2fb40996053f456d57a0a50be26450768cf18c7cabec9fa",
+      "reason": "Harness 0.x: `SystemReminders.cache_ttl` is deprecated and has no effect, because reminders no longer place a cache breakpoint of their own. Its effective default is `None`; leaving it unset warns that the old `'5m'` breakpoint is gone, so callers are told.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "1e64e822a5a01a40d027b161ea4cf1213fa11d68c18852702064f4372f23b13c",
+      "reason": "Harness 0.x: `SystemReminders.cache_ttl` is deprecated and has no effect, because reminders no longer place a cache breakpoint of their own. Its effective default is `None`; leaving it unset warns that the old `'5m'` breakpoint is gone, so callers are told.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "65a00d4aec5313b1a29633ae25a29e6802b4e3bd605a568bb2319bd2517a6e76",
+      "reason": "False positive: `SystemReminders` still inherits `wrap_model_request` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; reminders are now added in `before_model_request`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "96717c95763cc04554543b2f3e3723f7fa8399e2c601ceee9fd2c022a43bfee8",
+      "reason": "Harness 0.x: `Reminder.tag` defaults to `None`, since a reminder is already a system prompt and needs no `<system-reminder>` wrapper. Leaving it unset warns through `warn_default_changed`, and `tag='system-reminder'` restores the old wrapping.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "3f251f144a349a9576dead528de462aa8ca0be783ce575a1b0d7018bb4b663c1",
+      "reason": "Harness 0.x: `Reminder.tag` defaults to `None`, since a reminder is already a system prompt and needs no `<system-reminder>` wrapper. Leaving it unset warns through `warn_default_changed`, and `tag='system-reminder'` restores the old wrapping.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
     }
   ]
 }
