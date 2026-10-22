@@ -664,8 +664,10 @@ class TestDefaultClient:
         release = threading.Event()
 
         async def search_and_hold() -> None:
-            await toolset.web_search('a')
-            searched.set()
+            try:
+                await toolset.web_search('a')
+            finally:
+                searched.set()
             await asyncio.to_thread(release.wait)
 
         async def search() -> None:
@@ -680,6 +682,7 @@ class TestDefaultClient:
                 release.set()
             held.result()
         assert [len(client.loops) for client in built] == [2]
+        assert built[0].loops[0] is not built[0].loops[1]
 
     async def test_reused_on_the_same_event_loop(self, built: list[_LoopRecordingExa]) -> None:
         toolset = ExaSearch[None]().get_toolset()
