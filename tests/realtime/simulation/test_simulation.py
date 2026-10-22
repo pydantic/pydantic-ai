@@ -1331,7 +1331,6 @@ def test_live_wait_for_reply_waits_for_the_answer_to_a_failed_call() -> None:
 
     def scenario(sim: LiveSimulation) -> None:
         sim.send_text()
-        sim.delegate()
         sim.backend_call()
         sim.backend_finish()
         waiter = sim.wait_for_reply()
