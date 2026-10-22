@@ -588,11 +588,8 @@ async def test_a_live_change_queued_before_a_switch_does_not_end_the_stream(tmp_
                 # Switched before the client reads what was queued for it earlier.
                 switched = await published(page.queue, Snapshot)
             assert isinstance(switched, Snapshot) and switched.session.id != before
-            async for message in received:
-                if isinstance(message, LiveChanged):
-                    break
-            else:
-                pytest.fail('the stream ended while the session was still live')
+            message = await anext(received, None)
+        assert isinstance(message, LiveChanged), 'the stream ended while the session was still live'
         assert [entry.id for entry in message.sessions] == [before]
 
 
