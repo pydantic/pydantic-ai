@@ -523,6 +523,18 @@ class TestFindTokenCutoff:
         # which splits the pair, so it walks back to 1.
         assert find_token_cutoff(msgs, 8, tokenizer=len) == 1
 
+    @pytest.mark.parametrize(('tool_name', 'cutoff'), [('fn', 1), (None, 2)])
+    def test_walks_back_over_a_legacy_retry_only_when_it_names_a_tool(self, tool_name: str | None, cutoff: int):
+        # TODO(v3): remove along with `RetryPromptPart`
+        # A named retry answers the call before it, like a return; an unnamed one asks for a new final output.
+        msgs: list[ModelMessage] = [
+            _user('a' * 8),
+            _tool_call('fn', 'tc1'),
+            ModelRequest(parts=[legacy_retry_prompt_part('b' * 4, tool_name=tool_name, tool_call_id='tc1')]),
+            _user('c' * 4),
+        ]
+        assert find_token_cutoff(msgs, 8, tokenizer=len) == cutoff
+
     def test_measures_the_tail_with_provider_usage(self):
         """Thinking a provider returns without text counts, so the tail is not mostly unseen tokens."""
         msgs: list[ModelMessage] = [
