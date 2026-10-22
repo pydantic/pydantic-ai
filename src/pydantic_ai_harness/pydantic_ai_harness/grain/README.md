@@ -1,8 +1,9 @@
 # Grain
 
-`Grain` connects an agent to [Grain](https://grain.com)'s hosted MCP server so
-it can search and read the meetings, transcripts, notes, and deals the
-signed-in user can see.
+`Grain` connects an agent to [Grain](https://grain.com)'s hosted MCP server.
+The agent can search and read the meetings, transcripts, notes, and deals the
+signed-in user can see, and create clips and tag meetings unless you set
+`read_only=True`.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/grain/)
 
@@ -10,14 +11,13 @@ signed-in user can see.
 
 ## Before you start
 
-Grain MCP works on every Grain plan; the deal and coaching tools need the
-Business or Enterprise plan. Grain MCP takes an OAuth access token.
+Grain MCP works on every Grain plan. The deal and coaching tools need the
+Business or Enterprise plan.
 
-Grain issues these tokens only through OAuth. Your application gets one by
-running the standard MCP authorization flow: the server names its authorization
-server and supports dynamic client registration, so any MCP OAuth client library
-can sign the user in. Store the token it returns and pass it as `auth` or
-`GRAIN_ACCESS_TOKEN`.
+Grain MCP takes an OAuth access token, which Grain issues only through the
+standard MCP authorization flow. The server supports dynamic client
+registration, so any MCP OAuth client library can sign the user in. Pass the
+token it returns as `auth` or `GRAIN_ACCESS_TOKEN`.
 
 ## Installation
 
@@ -89,19 +89,27 @@ def grain_token(ctx: RunContext[Deps]) -> str | None:
 agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[Grain(auth=grain_token)])
 ```
 
-Each run connects as its own user, so concurrent runs never share an account.
+The function runs once per run, so each run connects with the token from its
+own deps.
 
 Your app gets each user's token, stores it, and refreshes it. For example, a
 "Connect Grain" button that runs the OAuth flow from [Before you
 start](#before-you-start) and saves the token to their account. Before each run,
 load it (this can be async) and put it in the deps; the function only reads it.
 
-With durable execution such as Temporal, read the token from the run's deps
-rather than from a global, since the function may run in another process. The
-capability's `id` defaults to `grain`, so `defer_loading=True` works without
-one. To add more than one `Grain` to an agent, give each a distinct `id` and
-wrap them in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/),
-since their tool names are the same; two that share an `id` but differ raise an
+With durable execution such as Temporal, read the token from the run's deps,
+not a global: the function may run in another process.
+
+Grain connects when the run starts, even with `defer_loading=True`. If the
+token is invalid or expired, the run raises an `httpx.HTTPStatusError` with
+status 401, so return `None` from the function when you know the token is no
+longer valid.
+
+The capability's `id` defaults to `grain`, so `defer_loading=True` works
+without one. To use two Grain accounts in one agent, give each `Grain` its own
+`id` and wrap them in
+[PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/), since
+their tool names are the same. Two that share an `id` but differ raise an
 error.
 
 ## Tool selection and approval
@@ -110,6 +118,12 @@ error.
 read-only, and leaves out all the others. If Grain has not labeled its read
 tools, the agent gets no Grain tools and emits an `MCPReadOnlyNoToolsWarning`. The token's
 permissions still decide what the agent can reach.
+
+Transcripts and meeting titles contain text from everyone in the meeting,
+including external guests, and that text reaches the model as tool output. Use
+`read_only=True` or require approval if the agent should not change Grain data.
+`include_instructions=False` stops the server's own instructions from reaching
+the agent.
 
 To filter tools or require approval in your application, wrap the toolset with
 the existing [toolset
@@ -137,23 +151,19 @@ Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/).
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the
-connection itself: your own FastMCP client or transport, for example one with a
-proxy or MCP handlers. The client then owns the URL and authentication, so
-passing `client` together with `auth` raises an error.
-`read_only` and `include_instructions` still apply.
-`include_instructions=False` stops the server's own instructions from reaching
-the agent.
+Pass `client` (a FastMCP client or transport) to control the connection
+yourself, for example to add a proxy or MCP handlers. The client owns the URL
+and authentication, so it cannot be combined with `auth`. `read_only` and
+`include_instructions` still apply.
 
 A `client` is one connection shared by every run; see [Per-user
 credentials](#per-user-credentials) to connect each user separately.
 
 ## Telemetry
 
-`Grain` emits no spans of its own. Core's
+`Grain` emits no spans of its own. Core
 [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/)
-already records each Grain tool call as a tool span, and connecting makes no
-decision worth a span of its own.
+records each Grain tool call as a tool span.
 
 ## Define the agent in YAML or JSON
 

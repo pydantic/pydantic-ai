@@ -734,6 +734,9 @@ def _openrouter_settings_to_openai_settings(
 class OpenRouterModel(OpenAIChatModel):
     """Extends OpenAIChatModel to capture extra metadata for Openrouter."""
 
+    # OpenRouter extends Chat Completions with a `video_url` content part, so video is up to the model.
+    _unsupported_file_inputs = frozenset()
+
     def __init__(
         self,
         model_name: str,
