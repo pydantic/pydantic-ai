@@ -30,6 +30,7 @@ An agent that runs for many turns accumulates history: tool outputs, file reads,
 | `SummarizingCompaction` | one LLM call | Summarizes older messages into a structured summary, keeping the recent tail | Old context still matters but must be compressed; use behind the cheap tiers |
 | `TieredCompaction` | escalates | Runs cheap passes first, summarizes only if still over `target_tokens` | You want a sensible default: spend the expensive summary only when needed |
 | `FallbackCompaction` | depends on chain | Tries the next strategy when one raises | Summarization can fail and deterministic truncation must keep the run alive |
+| `CompactOnCacheExpiry` | depends on strategy | Runs a strategy on the first request after the prompt cache expired | Conversations pause longer than the provider's cache retention, and you want compaction that adds no cache cost |
 | `WarnNearLimits` | zero-LLM | Injects an URGENT/CRITICAL warning as limits approach | You want the agent to wrap up rather than have its history rewritten |
 | `ReportContextUsage` | zero-LLM | Reports context usage to your application; never edits history | You want a live context gauge in a UI |
 
@@ -266,6 +267,80 @@ With neither trigger configured, the request hook does nothing. Direct `compact(
 inside other composing strategies and for manual compaction. Each child's own trigger
 is bypassed when the chain calls its `compact()` method.
 
+## `CompactOnCacheExpiry`: compact once the cache has expired
+
+Rewriting history moves the provider's cached prompt prefix, so the next request pays a cache write for everything after the edit. Once a conversation has been idle for longer than the provider keeps that prefix, the next request pays the write anyway. `CompactOnCacheExpiry` runs a strategy at that point, on the first request after the cache expired, so the edit adds no cache cost.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
+from pydantic_ai_harness.compaction import CompactOnCacheExpiry
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[Caching(), CompactOnCacheExpiry()])
+```
+
+The default strategy is `ClearToolResults(max_tokens=1, keep_pairs=5)`, which blanks all but the five newest tool results; `max_tokens=1` only satisfies `ClearToolResults`' required trigger, which is bypassed here. Claude Code clears tool results the same way after an idle gap longer than its cache retention. What you give up is the cleared content: the model calls the tool again if it needs that output. Pass any other strategy as the first argument. A summarizing strategy works too, but a summary written after expiry reads the whole history uncached once.
+
+By default only a history larger than a fifth of the model's context window is compacted, so a short conversation keeps its tool results over a short break, where clearing would save little. That is the proportion Claude Code uses before it summarizes an idle conversation (200K of a 1M window).
+
+The edit persists into the run's history, so later requests extend the compacted prefix instead of rewriting it again. Each compaction emits the standard `compact_messages` span with `compaction.strategy` set to `CompactOnCacheExpiry` and `compaction.idle_seconds`, the gap since the last model response that made the cache count as expired.
+
+### When the cache counts as expired
+
+The decision is core's [`prompt_cache_outlook`](https://pydantic.dev/docs/ai/core-concepts/message-history/#scheduling-maintenance-into-cache-cold-windows): the time from the last model response to the request being sent, both read from the history's timestamps, compared with the retention the request's settings ask for (such as `Caching(retention='1h')` or `anthropic_cache='1h'`), or else the provider's documented default. A `CachePoint(ttl='1h')` the provider already received extends it. If a history processor leaves the history without the request the run stamped, the current time stands in for that request's timestamp.
+
+| Model | Retention |
+|---|---|
+| Anthropic, including Bedrock's Claude models and OpenRouter's Anthropic routes | 5 minutes, or 1 hour when requested |
+| OpenRouter's Gemini routes | 5 minutes |
+| OpenAI GPT-5.6 and later, including GPT-5.6 Sol, Terra and Luna on Bedrock | 30 minutes |
+| OpenAI before GPT-5.6 with `openai_prompt_cache_retention` set | The requested retention |
+| Gemini on Google's own APIs, DeepSeek, xAI, Azure, Bedrock Nova, other OpenAI models, `FallbackModel` | Unknown |
+
+With an unknown retention there is no expiry to detect, so nothing is compacted. `FallbackModel` is unknown because the model that serves the request is chosen after the hook runs. Set `fallback_retention` when you know the retention of your deployment. It applies only when neither the settings nor the provider supply one. Pick a value at or above the real retention: a shorter one compacts while the cache is still warm and loses the cache hit.
+
+The history has to keep its response timestamps. A history stored on the server and passed as `message_history` keeps them, as does one that round-trips through the [Vercel AI adapter](https://pydantic.dev/docs/ai/integrations/ui/vercel-ai/). AG-UI messages carry no timestamps, so a history rebuilt from an AG-UI client always looks recent and nothing is compacted.
+
+The retention is the one the next request asks for, since the history doesn't record what earlier requests asked for. Lowering it mid-conversation, say from `'1h'` to `'5m'`, can compact the first turn after the change while the one-hour cache is still warm.
+
+### Options
+
+- `max_fraction` (default `0.2`) / `max_tokens`: only compact an expired history above this size. `max_tokens` replaces the default fraction, and `max_fraction=None` compacts every expired history. `context_window`, `fallback_context_window`, and `tokenizer` work as on the other strategies.
+- `fallback_retention`: the retention assumed when it is unknown, as above.
+
+### With other compaction
+
+It only fires after an idle gap, so a long run without pauses still needs a size-based strategy such as `TieredCompaction`. List `CompactOnCacheExpiry` after it: size-based strategies measure the history with the last response's reported usage, which doesn't reflect an edit made earlier in the same request, so a size-based strategy listed second would still see the size before the clear and could escalate to a summary the clear made unnecessary.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
+from pydantic_ai_harness.compaction import (
+    ClearToolResults,
+    CompactOnCacheExpiry,
+    SummarizingCompaction,
+    TieredCompaction,
+)
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    capabilities=[
+        Caching(),
+        TieredCompaction(
+            tiers=[ClearToolResults(max_tokens=1, keep_pairs=3), SummarizingCompaction(max_messages=1)],
+            target_fraction=0.8,
+        ),
+        CompactOnCacheExpiry(),
+    ],
+)
+```
+
+On Anthropic models that bind thinking blocks to the prefix that produced them, any history edit, including this one, invalidates the thinking blocks after the edit. See [thinking block binding](https://pydantic.dev/docs/ai/models/anthropic/#thinking-block-binding) for how Pydantic AI recovers.
+
+Under durable execution the run stamps each request with the wall clock, so a workflow replayed later can find an expired cache where the original run did not, and compact a history the original run sent unchanged.
+
+Compacting shortly *before* the cache expires, so that a summary request can still read the warm cache, needs a timer between runs and is not covered here. An application with its own scheduler can run any strategy at that point with [`compact_now`](#compacting-outside-a-run-compact_now).
+
 ## `ClampOversizedMessages`: surviving a runaway generation
 
 A single model response of repeated whitespace, or a single tool call with a giant payload, can produce one part so large the *next* request exceeds the provider's context cap. None of the other strategies can reach it: `SlidingWindowCompaction` drops the oldest messages but the offender is the newest; `ClearToolResults` only touches tool *results*; `WarnNearLimits` never edits history; and feeding the history to `SummarizingCompaction` hits the same cap.
@@ -469,6 +544,7 @@ The span name is the static `compact_messages`; the strategy is an attribute, no
 | `compaction.messages_after` | int | Message count after compaction |
 | `compaction.tokens_before` | int | Estimated token count before compaction |
 | `compaction.tokens_after` | int | Estimated token count after compaction |
+| `compaction.idle_seconds` | float | `CompactOnCacheExpiry` only: seconds since the last model response |
 
 `gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the ~4-chars-per-token heuristic. Raw message content is not recorded.
 
@@ -560,6 +636,8 @@ The recommended default is `TieredCompaction`; the other strategies below can be
 ::: pydantic_ai_harness.compaction.SlidingWindowCompaction
 
 ::: pydantic_ai_harness.compaction.SummarizingCompaction
+
+::: pydantic_ai_harness.compaction.CompactOnCacheExpiry
 
 ::: pydantic_ai_harness.compaction.WarnNearLimits
 

@@ -297,6 +297,7 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one per task owner and conversation; each delivers only its own reports, so several coexist'
     ),
     'ClearToolResults': Anonymous('several form an escalation ladder, like `TieredCompaction` tiers'),
+    'CompactOnCacheExpiry': Anonymous('wraps its own strategy; several run in order on the same expired request'),
     'DeduplicateFileReads': Anonymous('file-read identification is agent-specific; one per `file_key`'),
     'DynamicWorkflow': Anonymous('one per workflow definition'),
     'FallbackCompaction': Anonymous('drives a fallback chain; several independent chains compose'),
