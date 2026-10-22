@@ -94,7 +94,7 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
@@ -6203,6 +6203,48 @@ async def test_run_stream_records_response_returned_after_absorbing_cancellation
     # The run's live usage counts the response's tokens once (the stream handler recorded them) and the request once
     # (recording the response counted it).
     assert run_usages == snapshot([RunUsage(output_tokens=4, input_tokens=51, requests=1)])
+
+
+async def test_run_stream_cancellation_is_not_masked_by_usage_limit_of_response_returned_after_it():
+    """A response `wrap_model_request` returns once a cancelled `anyio` scope stopped the stream is recorded without
+    the usage-limit check, so `UsageLimitExceeded` can't mask the cancellation. Not a VCR test: no recorded response
+    can trigger the cancellation.
+    """
+    run_usages: list[RunUsage] = []
+
+    async def stream_then_fail_to_close(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        try:
+            yield 'hello'
+        finally:
+            raise RuntimeError('stream close failed')
+
+    class SubstituteOnError(AbstractCapability[None]):
+        async def wrap_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+        ) -> ModelResponse:
+            run_usages.append(ctx.usage)
+            try:
+                return await handler(request_context)
+            except RuntimeError:
+                return ModelResponse(parts=[TextPart('substitute')], usage=RequestUsage(output_tokens=1000))
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_then_fail_to_close),
+        deps_type=type(None),
+        capabilities=[SubstituteOnError()],
+    )
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        with capture_run_messages() as messages, anyio.CancelScope() as scope:
+            async with agent.run_stream('hello', usage_limits=UsageLimits(output_tokens_limit=100)) as result:
+                assert await anext(result.stream_text(delta=True, debounce_by=None))
+                scope.cancel()
+
+    assert scope.cancelled_caught
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == [TextPart('substitute')]
+    # The response's usage still counts towards the run, though it's over the limit.
+    assert run_usages == snapshot([RunUsage(output_tokens=1000, requests=1)])
 
 
 @pytest.mark.parametrize('delta', [True, False])

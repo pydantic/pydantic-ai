@@ -1750,9 +1750,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             model_response = e.response
                         except asyncio.CancelledError:
                             # `wrap_model_request` returned a response, but `wrap.result()` raised the `anyio`
-                            # cancellation instead: record the response before the cancellation propagates.
+                            # cancellation instead: record the response before the cancellation propagates. Skip the
+                            # usage-limit check; raising `UsageLimitExceeded` here would mask the cancellation.
                             if not wrap_task.cancelled():
-                                self._append_response(ctx, wrap_task.result(), record_usage=not _handler_usage_recorded)
+                                model_response = wrap_task.result()
+                                if not _handler_usage_recorded:
+                                    self._record_response_usage(ctx, model_response)
+                                self._append_response(ctx, model_response, record_usage=False)
                             raise
                     except exceptions.ModelRetry as e:
                         self._enforce_usage_limits(ctx, accounted_responses)
