@@ -374,16 +374,20 @@ def _extract_system_prompts(messages: list[ModelMessage]) -> list[SystemPromptPa
     return parts
 
 
+def _is_user_turn_part(part: ModelRequestPart) -> bool:
+    """Whether *part* is a user prompt that is neither harness bookkeeping nor harness data."""
+    return (
+        isinstance(part, UserPromptPart)
+        and not is_pinned(part)
+        and not is_receipt_part(part)
+        and not is_harness_data(part)
+    )
+
+
 def _first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
     """The first request holding a user part that is neither harness bookkeeping nor harness data."""
     for message in messages:
-        if isinstance(message, ModelRequest) and any(
-            isinstance(part, UserPromptPart)
-            and not is_pinned(part)
-            and not is_receipt_part(part)
-            and not is_harness_data(part)
-            for part in message.parts
-        ):
+        if isinstance(message, ModelRequest) and any(_is_user_turn_part(part) for part in message.parts):
             return message
     return None
 
@@ -394,19 +398,21 @@ def _kept_first_user_message(message: ModelRequest, system_parts: list[SystemPro
     Continuing a history merges consecutive requests, so after a compaction the first user message
     also holds that compaction's summary and whatever request followed it. The summary goes after the
     first user turn, so it and everything after it belong to later turns, which the new summary
-    covers. Receipts and an earlier release's summaries are superseded by the new ones, and its
-    leading system prompts are already copied into the new summary request.
-    Harness data in it isn't the user's message: it is summarized, not kept.
+    covers. A summary ahead of the first user turn, written while the first user message wasn't kept,
+    is superseded too, and the turn after it is the one to keep. Receipts and an earlier release's
+    summaries are superseded by the new ones, and its leading system prompts are already copied into
+    the new summary request. Harness data in it isn't the user's message: it is summarized, not kept.
     """
     carried = {part.content for part in system_parts}
-    first_turn = next(
-        (message.parts[:index] for index, part in enumerate(message.parts) if is_summary_part(part)), message.parts
-    )
+    parts = message.parts
+    user_turn = next((index for index, part in enumerate(parts) if _is_user_turn_part(part)), 0)
+    turn_end = next((index for index in range(user_turn, len(parts)) if is_summary_part(parts[index])), len(parts))
     kept = [
         part
-        for part in first_turn
+        for part in parts[:turn_end]
         if not is_receipt_part(part)
         and not is_harness_data(part)
+        and not is_summary_part(part)
         and not (is_legacy_summary(part) or (isinstance(part, SystemPromptPart) and part.content in carried))
     ]
     return message if len(kept) == len(message.parts) else replace(message, parts=kept)

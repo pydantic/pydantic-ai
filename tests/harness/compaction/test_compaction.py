@@ -75,6 +75,7 @@ from pydantic_ai_harness.compaction import (
     TieredCompaction,
     TranscriptHandleProvider,
     WarnNearLimits,
+    compact_now,
     drain_summary_events,
     estimate_context_tokens,
     estimate_message_tokens,
@@ -1752,6 +1753,51 @@ class TestPreserveFirstUserMessage:
         ctx = _make_ctx(messages)
         result = await sw.before_model_request(ctx, rc)
         assert len(result.messages) == 1
+
+    async def test_turning_preservation_on_after_a_compaction_keeps_the_first_surviving_prompt(self):
+        """A compaction that didn't keep the first user message leaves its summary ahead of the next prompt,
+        and continuing merges them into one request; turning preservation on keeps that prompt, not nothing."""
+        history: list[ModelMessage] = [
+            _user('original task'),
+            _assistant('a'),
+            _user('second ask'),
+            _assistant('b'),
+            _user('third ask'),
+            _assistant('c'),
+        ]
+        first = await compact_now(
+            SummarizingCompaction(
+                model=TestModel(custom_output_text='first summary'),
+                max_messages=1,
+                keep_messages=2,
+                preserve_first_user_message=False,
+            ),
+            history,
+            model=TestModel(),
+        )
+        continued = (await Agent(TestModel()).run('fourth ask', message_history=first)).all_messages()
+        merged = continued[0]
+        assert isinstance(merged, ModelRequest)
+        assert [type(part) for part in merged.parts] == [CompactionPart, UserPromptPart]
+
+        second = await compact_now(
+            SummarizingCompaction(
+                model=TestModel(custom_output_text='second summary'),
+                max_messages=1,
+                keep_messages=1,
+                preserve_first_user_message=True,
+            ),
+            continued,
+            model=TestModel(),
+        )
+
+        kept = second[0]
+        assert isinstance(kept, ModelRequest)
+        assert [(part.part_kind, getattr(part, 'content', None)) for part in kept.parts] == [
+            ('user-prompt', 'third ask')
+        ]
+        assert _summary_text(second) == 'second summary'
+        assert 'first summary' not in [getattr(part, 'content', None) for message in second for part in message.parts]
 
 
 # ---------------------------------------------------------------------------
