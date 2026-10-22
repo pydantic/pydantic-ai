@@ -502,6 +502,11 @@ LatestBedrockModelNames = Literal[
     # Moonshot AI Kimi
     'moonshot.kimi-k2-thinking',
     'moonshotai.kimi-k2.5',
+    # xAI Grok (require a cross-region inference profile)
+    'us.xai.grok-4.6',
+    'global.xai.grok-4.6',
+    'us.xai.grok-4.7',
+    'global.xai.grok-4.7',
 ]
 """Latest Bedrock models."""
 
@@ -864,12 +869,8 @@ class BedrockConverseModel(Model[BaseClient]):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> StructuredOutputMode:
         profile = cast(BedrockModelProfile, self.profile)
-        # Extended thinking rejects the forced tool choice Tool Output relies on, and thinking on the non-Anthropic
-        # variants other than GPT-5.6 and GPT-6 rejects output tools.
-        if (
-            model_request_parameters.output_tools
-            and _effective_thinking_type(model_settings, model_request_parameters, profile) == 'enabled'
-            and not _thinking_allows_output_tools(profile)
+        if model_request_parameters.output_tools and _thinking_rejects_tool_forcing(
+            _effective_thinking_type(model_settings, model_request_parameters, profile), profile
         ):
             return 'native' if profile.get('supports_json_schema_output', False) else 'prompted'
         return super()._default_structured_output_mode(model_settings, model_request_parameters)
@@ -889,8 +890,9 @@ class BedrockConverseModel(Model[BaseClient]):
             model_request_parameters.output_mode == 'tool'
             and not model_request_parameters.allow_text_output
             and profile.get('bedrock_thinking_variant') not in (None, 'anthropic')
-            and not _thinking_allows_output_tools(profile)
-            and _effective_thinking_type(settings, model_request_parameters, profile) is not None
+            and _thinking_rejects_tool_forcing(
+                _effective_thinking_type(settings, model_request_parameters, profile), profile
+            )
         ):
             # This would result in `toolChoice: any`, which isn't available here.
             suggested_output_type = (
@@ -1286,6 +1288,21 @@ class BedrockConverseModel(Model[BaseClient]):
                     'xhigh': 'high',
                 }
                 existing['reasoning_config'] = level_map[thinking]
+        elif variant == 'xai' and 'reasoning' not in existing:
+            # Grok always reasons on Converse, so `thinking=False` is silently ignored (like gpt-oss). `True` leaves
+            # the effort out where the profile records that the model's own default applies then (Grok 4.7: `high`).
+            if thinking is not False and not (thinking is True and profile.get('grok_default_effort_omitted', False)):
+                # Grok accepts `low`/`medium`/`high`/`xhigh` but not `minimal`, so that folds to `low`;
+                # `True` picks `medium` like the other always-on effort-based variants.
+                effort_map: dict[ThinkingLevel, str] = {
+                    True: 'medium',
+                    'minimal': 'low',
+                    'low': 'low',
+                    'medium': 'medium',
+                    'high': 'high',
+                    'xhigh': 'xhigh',
+                }
+                existing['reasoning'] = {'effort': effort_map[thinking]}
 
         return existing or None
 
@@ -2287,14 +2304,6 @@ def _add_anthropic_thinking_fields(existing: dict[str, Any], thinking: ThinkingL
         existing['thinking'] = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
 
 
-def _thinking_allows_output_tools(profile: BedrockModelProfile) -> bool:
-    """Whether the model accepts output tools while it thinks.
-
-    GPT-5.6 and GPT-6 do, unlike the other non-Anthropic variants, so they keep tool output while they think.
-    """
-    return profile.get('bedrock_thinking_variant') == 'openai_responses'
-
-
 def _effective_thinking_type(
     model_settings: ModelSettings | None,
     model_request_parameters: ModelRequestParameters | None,
@@ -2333,6 +2342,19 @@ def _effective_thinking_type(
     return None
 
 
+def _thinking_rejects_tool_forcing(
+    thinking_type: Literal['adaptive', 'enabled'] | None, profile: BedrockModelProfile
+) -> bool:
+    """Whether this request's thinking rejects the forced tool choice Tool Output relies on.
+
+    Extended thinking and thinking on the non-Anthropic variants do, except two. xAI Grok always reasons, and Converse
+    accepts a forced `toolChoice` with Grok 4.6 while it reasons (Grok 4.7 is assumed to match). OpenAI GPT-5.6 and
+    GPT-6 accept output tools while they think, offered without a forced `toolChoice` as their profile doesn't enable
+    forcing.
+    """
+    return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') not in ('xai', 'openai_responses')
+
+
 def _support_tool_forcing(
     model_name: str,
     profile: BedrockModelProfile,
@@ -2351,7 +2373,7 @@ def _support_tool_forcing(
         )
     else:
         unavailable_reason = FORCING_UNSUPPORTED_REASON
-    if unavailable_reason is None and thinking_type == 'enabled':
+    if unavailable_reason is None and _thinking_rejects_tool_forcing(thinking_type, profile):
         if profile.get('bedrock_thinking_variant') != 'anthropic':
             unavailable_reason = (
                 "Bedrock doesn't support forcing tool use with thinking enabled for this model. "

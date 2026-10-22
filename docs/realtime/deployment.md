@@ -87,13 +87,17 @@ other history refuses to attach; the other providers seed it when the sideband a
 
 A sideband does not own the audio transport: its `send_audio()`, `commit_audio()`, `clear_audio()`,
 and `stream_audio()` methods raise, and `audio_retention` must remain `'transcript_only'`. Enable
-[input transcription](audio.md#input-transcription) when user speech must appear in history, and use
+[input transcription](audio.md#input-transcription) when user speech must appear in history. On
+gpt-realtime and Azure OpenAI, use
 [`RealtimeOutputSpeechStartEvent`][pydantic_ai.realtime.RealtimeOutputSpeechStartEvent] /
 [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent] for speaking
-indicators — [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] clears the provider's
-outbound WebRTC audio buffer so [barge-in](turns.md#barge-in) stops playback. A
-dropped sideband follows the same [reconnect](lifecycle.md#reconnecting) rules, with one wrinkle
-covered there: a clean close is treated as the browser hanging up.
+indicators, and [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] clears the provider's
+outbound WebRTC audio buffer so [barge-in](turns.md#barge-in) stops playback. GPT-Live emits neither
+event and doesn't support `interrupt()` (see
+[its feature support](openai.md#gpt-live-feature-support-and-limitations)). A dropped sideband
+follows the same [reconnect](lifecycle.md#reconnecting) rules (except on GPT-Live, whose sideband
+is not reconnected), with one wrinkle covered there: a clean close is treated as the browser
+hanging up.
 
 Closing a sideband session, or leaving its `async with` block, only detaches your server: the
 browser's call stays up, and billed, until the browser hangs up. To end the call from the server,

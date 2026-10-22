@@ -28,8 +28,8 @@ import importlib.util
 import inspect
 import json
 import sys
-from collections.abc import AsyncGenerator, AsyncIterable, Callable, Iterator, Mapping, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Iterator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -45,6 +45,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
@@ -112,6 +113,8 @@ def inject_clock(monkeypatch: pytest.MonkeyPatch) -> Clock:
     still pass: route new time reads through `pydantic_ai._utils.now_utc`.
     """
     CLOCK.now = START
+    # Build the history schema first: built after the swap, it would see the clock's `datetime` subclass.
+    ModelMessagesTypeAdapter.validate_json(b'[]')
     for name, module in list(sys.modules.items()):
         if name.startswith('pydantic_ai') and getattr(module, 'datetime', None) is _real_datetime:
             monkeypatch.setattr(module, 'datetime', _ClockDatetime)
@@ -396,8 +399,24 @@ class Scenario:
     configure: Callable[[Agent[Any, Any], Clock], None] | None = None
     check_ids: bool = True
     """Whether every instruction block must have an `id`: framework blocks must, a user's own needn't."""
+    turns: tuple[Turn, ...] | None = None
+    """The model's responses for both runs, in place of the default script: for conversations that retry."""
+    output_type: Any = str
+    serialize_history: bool = False
+    """Whether the second run continues from the first run's history after a JSON round trip, as an app that
+    stores its conversations would, and the replays from the second run's."""
+    replay_text: str = 'Nothing else.'
+    """The final answer of each replay, which the output type must accept."""
+    run_kwargs: Mapping[str, Any] = field(default_factory=dict[str, Any])
+    """Extra arguments for every run, such as the `conversation_id` a capability files work under."""
+    around: Callable[[], AbstractAsyncContextManager[Any]] | None = None
+    """A context every run happens in, such as the task owner background delegation needs."""
+    between_runs: Callable[[], Awaitable[None]] | None = None
+    """Awaited after the first run, before the second: for work that settles in between."""
 
     def script(self) -> list[Turn]:
+        if self.turns is not None:
+            return list(self.turns)
         first, second = (*self.state_calls, None, None)[:2]
         return [
             # The first run: two steps of tool calls, then the answer.
@@ -450,6 +469,33 @@ class ConversationResult:
             else:
                 dropped.append(part)
         return None if remaining else dropped
+
+    def resent_request_scoped_prompts(self) -> list[tuple[int, str]]:
+        """Request-scoped system prompts (#9711) the model can still see after the request they were for.
+
+        Each is written for one request, retried steps included. Most providers leave it out of the next
+        request. Anthropic sends it again marked `clear_at: next_user_message`, which the API honours, so there
+        it is still visible to a later request that has no user message after it.
+        """
+        if self.provider == 'anthropic':
+            return [
+                (index, text)
+                for index in range(1, len(self.conversation))
+                for text in _uncleared_system_messages(self.conversation[index - 1], self.conversation[index])
+            ]
+        resent: list[tuple[int, str]] = []
+        for index in range(1, len(self.sent)):
+            later = [
+                part for message in self.sent[index] if isinstance(message, ModelRequest) for part in message.parts
+            ]
+            resent += [
+                (index, part.content)
+                for message in self.sent[index - 1]
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, SystemPromptPart) and part.scope == 'request' and part in later
+            ]
+        return resent
 
     def record_kind(self, part: ModelRequestPart) -> RecordKind | None:
         """What framework record a dropped part is, from its structure, or `None` for real history.
@@ -524,24 +570,38 @@ async def run_conversation(
         toolsets=[FunctionToolset([look_up], id='look_up')],
         name='append-only',
         capabilities=list(capabilities),
+        output_type=scenario.output_type,
     )
     if scenario.configure is not None:
         scenario.configure(agent, clock)
 
-    first = await agent.run('What is the weather and the news?')
-    # Streamed, so a streamed continuation is checked against the requests a non-streamed run built.
-    second = await agent.run('And what else?', message_history=first.all_messages(), event_stream_handler=drain_events)
-    conversation = list(transport.sent)
-    parameters = list(model.recorded_parameters)
+    def stored(messages: list[ModelMessage]) -> list[ModelMessage]:
+        if not scenario.serialize_history:
+            return messages
+        return ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
 
-    history = second.all_messages()
-    replay_at = clock.now
-    replays: list[bytes] = []
-    for _ in range(2):
-        clock.now = replay_at
-        transport.script = [Turn(text='Nothing else.')]
-        await agent.run('Anything more?', message_history=history)
-        replays.append(transport.sent[-1])
+    async with scenario.around() if scenario.around is not None else nullcontext():
+        first = await agent.run('What is the weather and the news?', **scenario.run_kwargs)
+        if scenario.between_runs is not None:
+            await scenario.between_runs()
+        # Streamed, so a streamed continuation is checked against the requests a non-streamed run built.
+        second = await agent.run(
+            'And what else?',
+            message_history=stored(first.all_messages()),
+            event_stream_handler=drain_events,
+            **scenario.run_kwargs,
+        )
+        conversation = list(transport.sent)
+        parameters = list(model.recorded_parameters)
+
+        history = stored(second.all_messages())
+        replay_at = clock.now
+        replays: list[bytes] = []
+        for _ in range(2):
+            clock.now = replay_at
+            transport.script = [Turn(text=scenario.replay_text)]
+            await agent.run('Anything more?', message_history=history, **scenario.run_kwargs)
+            replays.append(transport.sent[-1])
 
     assert len(parameters) == len(conversation)
     sent = model.recorded_messages[: len(conversation)]
@@ -960,7 +1020,7 @@ class Exempt:
     reason: str
 
 
-Check = Literal['prefix', 'ids', 'determinism']
+Check = Literal['prefix', 'ids', 'determinism', 'request-scope']
 
 RecordKind = Literal['request-scoped system prompt', 'request-only user prompt']
 """A framework record a request carries for itself only, identified by structure (see `ConversationResult.record_kind`)."""
@@ -1055,12 +1115,36 @@ def _violations(
             'contributed instruction blocks without an `id`, so changes to them rewrite the prefix',
             [Violation('instructions', identity, f'{identity}: {text}') for identity, text in unaddressable.items()],
         )
+    if resent := result.resent_request_scoped_prompts():
+        violations['request-scope'] = (
+            'still showed request-scoped system prompts after the request they were for',
+            [
+                Violation('messages', 'system-prompt', f'request {index} still shows: {_shorten(text, 120)}')
+                for index, text in resent
+            ],
+        )
     if (differences := result.nondeterministic_projection()) is not None:
         violations['determinism'] = (
             'built the same request twice from the same history with different bytes',
             _change_violations(differences),
         )
     return violations
+
+
+def _uncleared_system_messages(earlier: bytes, later: bytes) -> list[str]:
+    """Anthropic `clear_at` system messages the earlier request already sent that the later one still shows.
+
+    Such a message is cleared at the next user message, so it stays visible when none comes after it.
+    """
+    sent_before = len(json.loads(earlier)['messages'])
+    messages = json.loads(later)['messages']
+    return [
+        json.dumps(message['content'])[:120]
+        for position, message in enumerate(messages[:sent_before])
+        if message.get('role') == 'system'
+        and message.get('clear_at') == 'next_user_message'
+        and not any(other.get('role') == 'user' for other in messages[position + 1 :])
+    ]
 
 
 def _tail_record_violations(result: ConversationResult, index: int, records: tuple[RecordKind, ...]) -> list[Violation]:
