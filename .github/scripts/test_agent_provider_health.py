@@ -43,6 +43,18 @@ def _fake_github_run_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('GITHUB_RUN_ID', '43')
 
 
+@pytest.fixture(autouse=True)
+def _no_incident_reread_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Re-read open incidents without waiting unless a test records the delay."""
+    monkeypatch.setattr(health, '_INCIDENT_READ_DELAY_SECONDS', 0)
+
+
+@pytest.fixture(autouse=True)
+def _no_ci_step_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep controller output out of the summary of the CI job running these tests."""
+    monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
+
+
 def _quota_response(
     *,
     limit_type: str = 'TOKENS_LIMIT',
@@ -185,6 +197,9 @@ class FakeGitHub(health.GitHubClient):
             return {}
         raise AssertionError(f'unexpected request {method} {path}')
 
+    def send(self, method: str, path: str, payload: object | None = None) -> health.GitHubResponse:
+        return health.GitHubResponse(200, 'fake-request', self.request(method, path, payload))
+
     def attempt_jobs(self, run_id: str, attempt: int) -> list[dict[str, object]]:
         return self.jobs.get((run_id, attempt), [])
 
@@ -199,9 +214,14 @@ class FakeGitHub(health.GitHubClient):
 class FakeHTTPResponse:
     """A small Z.ai response for the trusted-runner command tests."""
 
-    def __init__(self, payload: dict[str, object] | bytes, status: int = 200) -> None:
+    def __init__(
+        self, payload: dict[str, object] | list[object] | bytes, status: int = 200, request_id: str | None = None
+    ) -> None:
         self.payload = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
         self.status = status
+        self.headers = Message()
+        if request_id is not None:
+            self.headers['X-GitHub-Request-Id'] = request_id
 
     def __enter__(self) -> FakeHTTPResponse:
         return self
@@ -1695,6 +1715,81 @@ def test_check_command_accepts_recovery_issue_only_on_default_dispatch_ref(
     assert decision.ready is (selected is not None)
 
 
+@pytest.mark.parametrize('blocker', ['provider_incident', 'quota_exhausted'])
+def test_agent_start_recheck_blocks_a_stale_ready_gate_and_replaces_its_decision(
+    blocker: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A queued agent acts on provider state when it starts, and the monitor reconciles that decision."""
+    client = FakeGitHub()
+    quota = health.Quota('healthy')
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: quota)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'CI Review')
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'CI Review:workflow_run:feature:head-a1b2:')
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'workflow_run')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
+    github_output = tmp_path / 'output'
+    monkeypatch.setenv('GITHUB_OUTPUT', str(github_output))
+    gate_decision = tmp_path / 'gate' / 'provider-health.json'
+    start_decision = tmp_path / 'agent-start' / 'provider-health.json'
+
+    assert health.main(['check', '--output', str(gate_decision)]) == 0
+    assert github_output.read_text() == 'ready=true\nreason=Provider health check passed\n'
+
+    if blocker == 'provider_incident':
+        client.issues.append(_issue(10572, health.IncidentMarker('provider', 'zai', 'rate_limit', '39', None)))
+    else:
+        quota = health.Quota('exhausted', reset_at='2026-10-24T00:00:00Z')
+    github_output.write_text('')
+    assert health.main(['check', '--output', str(start_decision)]) == 0
+    assert github_output.read_text().startswith('ready=false\n')
+
+    # The stop step fails the agent job after the recheck and before the engine step.
+    client.jobs[('43', 1)] = [
+        {
+            'name': 'agent',
+            'conclusion': 'failure',
+            'steps': [
+                {'name': health.AGENT_START_HEALTH_STEPS[0], 'conclusion': 'success'},
+                {'name': health.AGENT_START_HEALTH_STEPS[1], 'conclusion': 'success'},
+                {'name': health.AGENT_START_HEALTH_STEPS[2], 'conclusion': 'failure'},
+                {'name': 'Execute Claude Code CLI', 'conclusion': 'skipped'},
+            ],
+        }
+    ]
+    agent_artifact = tmp_path / 'agent'
+    agent_artifact.mkdir()
+    (agent_artifact / 'agent-stdio.log').write_text('')
+
+    def monitor(decision: Path) -> list[object]:
+        client.posts.clear()
+        args = argparse.Namespace(
+            repository=None,
+            run_id=43,
+            run_attempt=1,
+            conclusion='failure',
+            health_artifact=decision,
+            agent_artifact=agent_artifact,
+            dry_run=False,
+            recover_issue=None,
+        )
+        assert _monitor_command(args) == 0
+        return list(client.posts)
+
+    # Read against the stale gate decision, as when the replacement upload fails, the stop opens nothing.
+    assert monitor(gate_decision) == []
+    posts = monitor(start_decision)
+    if blocker == 'provider_incident':
+        assert posts == []
+    else:
+        assert [_marker_from_payload(post) for post in posts] == [
+            health.IncidentMarker('provider', 'zai', 'quota_exhausted', '43', '2026-10-24T00:00:00Z')
+        ]
+
+
 def test_fresh_dispatch_task_key_runs_without_recovery_issue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Manual task keys include the new run ID, so old task incidents do not block them."""
     task_key = 'CI Review:workflow_dispatch:main:head-a1b2:38977267972'
@@ -2277,6 +2372,22 @@ def test_monitor_classifies_post_agent_allowlist_restore_as_validation(
             ],
             'setup',
         ),
+        *(
+            (
+                [
+                    {
+                        'name': 'agent',
+                        'conclusion': 'failure',
+                        'steps': [
+                            {'name': name, 'conclusion': 'failure'},
+                            {'name': 'Execute Claude Code CLI', 'conclusion': 'skipped'},
+                        ],
+                    }
+                ],
+                None,
+            )
+            for name in health.AGENT_START_HEALTH_STEPS
+        ),
         ([{'name': 'agent', 'conclusion': 'failure', 'runner_name': None, 'steps': []}], None),
         ([{'name': 'provider_health', 'conclusion': 'failure', 'steps': []}], None),
         (
@@ -2505,6 +2616,141 @@ def test_open_incidents_read_normalized_issue_creation_time() -> None:
     issues = health.GitHubClient.open_incidents(client)
 
     assert [issue.created_at for issue in issues] == ['2026-10-15T11:00:00Z', None]
+
+
+def test_open_incidents_records_each_page_and_the_incidents_it_returned(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The job log and summary show what the Actions token's read returned, page by page."""
+    marker = health.IncidentMarker('provider', 'zai', 'quota_unknown', '1', None)
+
+    def entry(issue: health.Issue) -> dict[str, object]:
+        return {'number': issue.number, 'title': 't', 'body': issue.body, 'state': 'open', 'html_url': 'u'}
+
+    plain = [entry(health.Issue(number, 't', 'no marker', 'open', 'u', None)) for number in range(1, 99)]
+    unreadable: dict[str, object] = {'number': 99, 'title': 't', 'body': None, 'state': 'open', 'html_url': 'u'}
+    pages: list[FakeHTTPResponse] = [
+        FakeHTTPResponse([*plain, unreadable, entry(_issue(200, marker))], request_id='AAAA:1'),
+        FakeHTTPResponse([entry(_issue(201, marker))]),
+    ]
+
+    def open_url(
+        _opener: health.urllib.request.OpenerDirector,
+        _request: health.urllib.request.Request,
+        _data: object | None = None,
+        timeout: float = 30,
+    ) -> FakeHTTPResponse:
+        return pages.pop(0)
+
+    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', open_url)
+    summary = tmp_path / 'summary.md'
+    monkeypatch.setenv('GITHUB_STEP_SUMMARY', str(summary))
+
+    issues = health.GitHubClient('org/repo', 'token').open_incidents()
+
+    evidence = (
+        'Open-incident read: page 1 HTTP 200 with 100 issues, 1 unreadable (request AAAA:1); '
+        'page 2 HTTP 200 with 1 issues, 0 unreadable (request unknown); incidents: #200, #201'
+    )
+    assert len(issues) == 100
+    assert capsys.readouterr().out == f'{evidence}\n'
+    assert summary.read_text(encoding='utf-8') == f'{evidence}\n\n'
+
+
+def test_empty_open_incident_read_says_none(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """An empty read is logged as such instead of looking like a skipped read."""
+    monkeypatch.setattr(
+        health.urllib.request.OpenerDirector,
+        'open',
+        lambda *_: FakeHTTPResponse([], request_id='BBBB:2'),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    )
+
+    assert health.GitHubClient('org/repo', 'token').open_incidents() == []
+    assert capsys.readouterr().out == (
+        'Open-incident read: page 1 HTTP 200 with 0 issues, 0 unreadable (request BBBB:2); incidents: none\n'
+    )
+
+
+class DegradedGitHub(FakeGitHub):
+    """Serve open-incident reads that miss every incident, as GitHub did during its 2026-10-22 Issues degradation."""
+
+    def __init__(self, issues: list[health.Issue], misses: int) -> None:
+        super().__init__(issues)
+        self.misses = misses
+        self.reads = 0
+
+    def open_incidents(self) -> list[health.Issue]:
+        self.reads += 1
+        return [] if self.reads <= self.misses else self.issues
+
+
+def _run_gate(client: FakeGitHub, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'CI Review')
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'task-1')
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'pull_request')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
+    github_output = tmp_path / 'output'
+    monkeypatch.setenv('GITHUB_OUTPUT', str(github_output))
+
+    assert health.main(['check', '--output', str(tmp_path / 'provider-health.json')]) == 0
+    return github_output.read_text()
+
+
+def test_gate_rereads_an_incident_less_read_before_passing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A read that misses the open provider incident is re-read instead of letting inference through."""
+    client = DegradedGitHub([_issue(7, health.IncidentMarker('provider', 'zai', 'quota_unknown', '1', None))], misses=2)
+    delays: list[float] = []
+    monkeypatch.setattr(health, '_INCIDENT_READ_DELAY_SECONDS', 2)
+    monkeypatch.setattr(health.time, 'sleep', delays.append)
+
+    output = _run_gate(client, tmp_path, monkeypatch)
+
+    assert output == 'ready=false\nreason=Open operational incident #7 blocks inference\n'
+    assert client.reads == 3
+    assert delays == [2, 2]
+
+
+def test_gate_passes_only_after_every_read_finds_no_incident(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With nothing open, the gate spends its whole re-read budget before it passes."""
+    client = DegradedGitHub([], misses=0)
+
+    assert _run_gate(client, tmp_path, monkeypatch) == 'ready=true\nreason=Provider health check passed\n'
+    assert client.reads == health._INCIDENT_READS  # pyright: ignore[reportPrivateUsage]
+
+
+def test_gate_trusts_a_read_that_returns_another_scopes_incident(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A degraded read returns no incident at all, so a read with an unrelated incident passes without re-reading."""
+    other_task = _issue(8, health.IncidentMarker('task', 'CI Review:other-task', 'execution', '1', None))
+    client = DegradedGitHub([other_task], misses=0)
+
+    assert _run_gate(client, tmp_path, monkeypatch) == 'ready=true\nreason=Provider health check passed\n'
+    assert client.reads == 1
+
+
+@pytest.mark.parametrize('override', [False, True])
+@pytest.mark.parametrize(('misses', 'created'), [(4, False), (5, True)])
+def test_incident_reuse_rereads_until_it_finds_the_open_incident(override: bool, misses: int, created: bool) -> None:
+    """Reuse survives incident-less reads up to the re-read budget; only a budget of misses opens a duplicate."""
+    open_incident = _issue(7, health.IncidentMarker('provider', 'zai', 'quota_unknown', '1', None))
+    client = DegradedGitHub([open_incident], misses=misses)
+    result = health.RunResult('CI Review', 'task-1', 'pull_request', 1, health.Failure('rate_limit', 429, None))
+    marker = health.IncidentMarker('provider', 'zai', 'quota_unknown', '88', None) if override else None
+
+    issue = _create_or_reuse_incident(
+        client, result, '88', client.repo, 'Z.ai quota health is unknown', dry_run=False, marker_override=marker
+    )
+
+    assert issue is not None
+    assert (issue.number != open_incident.number) is created
+    assert len(client.posts) == int(created)
+    assert client.reads == misses + int(not created)
 
 
 def test_scheduled_monitor_creates_or_reuses_unknown_quota_incident(
