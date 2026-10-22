@@ -113,28 +113,6 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         caching: Literal['5m', '1h'] | None = None,
         forward_history: bool = False,
     ) -> None:
-        self._configure(
-            model,
-            mode=mode,
-            output_type=output_type,
-            max_uses=max_uses,
-            max_tokens=max_tokens,
-            caching=caching,
-            forward_history=forward_history,
-        )
-
-    def _configure(
-        self,
-        model: ModelSelection,
-        *,
-        mode: Literal['auto', 'native', 'local'],
-        output_type: OutputSpec[object],
-        max_uses: int | None,
-        max_tokens: int | None,
-        caching: Literal['5m', '1h'] | None,
-        forward_history: bool,
-    ) -> None:
-        """Validate the options and build the native factory and local tool from them."""
         if mode not in {'auto', 'native', 'local'}:
             raise ValueError("Advisor.mode must be 'auto', 'native', or 'local'")
         if max_uses is not None and max_uses < 1:
@@ -161,6 +139,12 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         if mode == 'native' and native_provider == 'openrouter' and max_uses is not None:
             raise ValueError("Advisor.max_uses is not supported by OpenRouter in mode='native'")
 
+        self._build_tools()
+
+    def _build_tools(self) -> None:
+        """Build the native factory and local tool from the fields, and initialise the base capability."""
+        model, mode, output_type = self.model, self.mode, self.output_type
+        max_uses, max_tokens, forward_history = self.max_uses, self.max_tokens, self.forward_history
         native: AgentNativeTool[AgentDepsT] | bool
         local: Tool[AgentDepsT] | bool
         if mode == 'native':
@@ -255,20 +239,14 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     def _rebuilt(self, *, max_uses: int | None) -> Self:
         """Copy this capability and rebuild its native factory and local tool from its fields.
 
-        Only `Advisor`'s own configuration runs, so a subclass keeps its type and fields without its
+        Only `Advisor`'s tool building runs, so a subclass keeps its type and fields without its
         `__init__` being called with arguments it may not take.
         """
         rebuilt = copy.copy(self)
-        rebuilt._configure(
-            self.model,
-            mode=self.mode,
-            output_type=self.output_type,
-            max_uses=max_uses,
-            max_tokens=self.max_tokens,
-            caching=self.caching,
-            forward_history=self.forward_history,
-        )
-        # `_configure` resets the inherited capability fields, which callers may set afterwards.
+        rebuilt.max_uses = max_uses
+        rebuilt._local_uses = 0
+        rebuilt._build_tools()
+        # `_build_tools` resets the inherited capability fields, which callers may set afterwards.
         rebuilt.id = self.id
         rebuilt.description = self.description
         rebuilt.defer_loading = self.defer_loading
