@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pydantic_ai.exceptions import ModelAPIError, ToolFailed, UnexpectedModelBehavior
+from pydantic_ai.messages import InstructionPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import WorkspaceError
@@ -12,6 +13,27 @@ from pydantic_ai_harness.smart_file_search._judge import JudgeModel, resolve_jud
 from pydantic_ai_harness.smart_file_search._search import DEFAULT_CANDIDATES, SmartFileSearchResult, search_code
 
 TOOL_NAME = 'smart_file_search'
+
+_INSTRUCTIONS = """\
+## Code discovery: smart_file_search first
+Use `smart_file_search` as your first tool for gathering code context about an unfamiliar implementation.
+Describe the behavior you need to find in plain English, scoped to the relevant directory. Do this
+instead of guessing symbol names, running exploratory grep chains, or listing and reading many files
+just to locate the implementation.
+
+Use the returned excerpts and line ranges to decide which files need a targeted read. Do not
+automatically read every match or repeat searches when the excerpts already answer the question.
+Read the relevant code before editing; `smart_file_search` is discovery, not a substitute for
+understanding it.
+
+Use regular text search for exact symbols, regexes, and exhaustive references, and read a known file
+directly when its location is already established.
+
+The lexical shortlist is not exhaustive, and no matches do not prove absence. If results are weak,
+rephrase or narrow the query, or fall back to exact search. If `smart_file_search` fails, fall back to
+regular search and targeted reads rather than retrying. `smart_file_search` sends selected source, paths and
+the query to the judge model's provider, so honor requests to keep code local by using local search
+instead."""
 
 
 class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
@@ -29,9 +51,11 @@ class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
         threshold: float,
         concurrency: int,
         cache_index: bool = False,
+        guidance: str | None = None,
         id: str | None = None,
     ) -> None:
         super().__init__(id=id)
+        self._guidance = _INSTRUCTIONS if guidance is None else guidance
         self._model = model
         self._threshold = threshold
         self._concurrency = concurrency
@@ -45,6 +69,12 @@ class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
         if not supports_commands(ctx.workspace):
             return {}
         return await super().get_tools(ctx)
+
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[InstructionPart] | None:
+        """The discovery policy, offered only with the tool: `smart_file_search` first, exact search for exact symbols."""
+        if not self._guidance or not supports_commands(ctx.workspace):
+            return None
+        return [InstructionPart(self._guidance)]
 
     async def smart_file_search(
         self,

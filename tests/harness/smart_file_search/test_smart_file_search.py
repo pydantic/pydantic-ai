@@ -397,11 +397,27 @@ def test_capability_validates_its_settings() -> None:
             SmartFileSearch[None](concurrency=concurrency)  # pyright: ignore[reportArgumentType]
 
 
-def test_guidance_replaces_or_disables_the_discovery_policy() -> None:
-    default = SmartFileSearch[None]().get_instructions()
-    assert isinstance(default, str) and 'smart_file_search first' in default
-    assert SmartFileSearch[None](guidance='Use it.').get_instructions() == 'Use it.'
-    assert SmartFileSearch[None](guidance='').get_instructions() is None
+@pytest.mark.parametrize(
+    ('guidance', 'expected'),
+    [(None, '## Code discovery: smart_file_search first'), ('Use it.', 'Use it.'), ('', None)],
+    ids=['default', 'custom', 'off'],
+)
+async def test_guidance_replaces_or_disables_the_discovery_policy(
+    tmp_path: Path, guidance: str | None, expected: str | None
+) -> None:
+    seen: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.instructions or '')
+        return ModelResponse(parts=[TextPart('done')])
+
+    capability = SmartFileSearch(model=FakeJev('x'), guidance=guidance)
+    await Agent(FunctionModel(respond), capabilities=[LocalWorkspace(tmp_path), capability]).run('hi')
+    [instructions] = seen
+    if expected is None:
+        assert 'smart_file_search' not in instructions
+    else:
+        assert expected in instructions
 
 
 def _calls_smart_file_search(**args: object) -> FunctionModel:
@@ -555,17 +571,18 @@ async def test_workspace_failure_is_reported_to_the_model(tmp_path: Path) -> Non
     assert 'read timed out' in str(_tool_return(result.all_messages()).content)
 
 
-async def test_tool_is_hidden_on_a_workspace_that_cannot_run_commands(tmp_path: Path) -> None:
-    seen: list[list[str]] = []
+async def test_tool_and_guidance_are_hidden_on_a_workspace_that_cannot_run_commands(tmp_path: Path) -> None:
+    seen: list[tuple[list[str], bool]] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        seen.append([tool.name for tool in info.function_tools])
+        guided = 'smart_file_search first' in (info.instructions or '')
+        seen.append(([tool.name for tool in info.function_tools], guided))
         return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(FunctionModel(respond), capabilities=[SmartFileSearch(model=FakeJev('x'))])
     await agent.run('hi', workspace=ReadOnlyWorkspace(_workspace(tmp_path)))
     await agent.run('hi', workspace=_workspace(tmp_path))
-    assert seen == [[], ['smart_file_search']]
+    assert seen == [([], False), (['smart_file_search'], True)]
 
 
 async def test_run_without_a_workspace_fails_at_its_start() -> None:

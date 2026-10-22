@@ -3,36 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai_harness.smart_file_search._toolset import SmartFileSearchToolset
-
-if TYPE_CHECKING:
-    from pydantic_ai._instructions import AgentInstructions
-
-_INSTRUCTIONS = """\
-## Code discovery: smart_file_search first
-Use `smart_file_search` as your first tool for gathering code context about an unfamiliar implementation.
-Describe the behavior you need to find in plain English, scoped to the relevant directory. Do this
-instead of guessing symbol names, running exploratory grep chains, or listing and reading many files
-just to locate the implementation.
-
-Use the returned excerpts and line ranges to decide which files need a targeted read. Do not
-automatically read every match or repeat searches when the excerpts already answer the question.
-Read the relevant code before editing; `smart_file_search` is discovery, not a substitute for
-understanding it.
-
-Use regular text search for exact symbols, regexes, and exhaustive references, and read a known file
-directly when its location is already established.
-
-The lexical shortlist is not exhaustive, and no matches do not prove absence. If results are weak,
-rephrase or narrow the query, or fall back to exact search. If `smart_file_search` fails, fall back to
-regular search and targeted reads rather than retrying. `smart_file_search` sends selected source, paths and
-the query to the judge model's provider, so honor requests to keep code local by using local search
-instead."""
 
 
 @dataclass
@@ -103,7 +78,7 @@ class SmartFileSearch(AbstractCapability[AgentDepsT]):
     """
 
     guidance: str | None = None
-    """Custom discovery guidance for the system prompt.
+    """Custom discovery guidance for the system prompt, added whenever the tool is offered.
 
     Leave as `None` for the default, which tells the model to reach for
     `smart_file_search` before exploratory text search, or set `''` to contribute no
@@ -117,12 +92,6 @@ class SmartFileSearch(AbstractCapability[AgentDepsT]):
         if not self.concurrency >= 1:
             raise ValueError(f'concurrency must be a positive integer, got {self.concurrency}')
 
-    def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        """The discovery policy: smart_file_search first for unfamiliar behaviour, exact search for exact symbols."""
-        if self.guidance is not None:
-            return self.guidance or None
-        return _INSTRUCTIONS
-
     def get_toolset(self) -> SmartFileSearchToolset[AgentDepsT]:
         """Build the toolset providing `smart_file_search`."""
         return SmartFileSearchToolset[AgentDepsT](
@@ -130,5 +99,6 @@ class SmartFileSearch(AbstractCapability[AgentDepsT]):
             threshold=self.threshold,
             concurrency=self.concurrency,
             cache_index=self.cache_index,
+            guidance=self.guidance,
             id=self.id or 'smart_file_search',
         )

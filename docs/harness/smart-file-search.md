@@ -115,11 +115,13 @@ search need. There are two ways to use one:
   [`SystemOneModel`][pydantic_ai.models.system_one.SystemOneModel]. This needs nothing beyond `pydantic-ai-slim`.
   It is never picked by default, as the model name depends on the server.
 - **[Jev](../models/typesafe.md) through TypeSafe's SDK**, which becomes the default once the SDK is installed
-  and `TYPESAFE_API_KEY` is set:
+  and `TYPESAFE_API_KEY` is set.
 
-  ```bash
-  pip/uv-add "pydantic-ai-slim[typesafe]"
-  ```
+To install TypeSafe's SDK:
+
+```bash
+pip/uv-add "pydantic-ai-slim[typesafe]"
+```
 
 Any language model works as well, since the two ratings are ordinary structured output. As one search makes
 up to `candidates` judge requests, prefer a small, fast model to the run's own when you are not using a
@@ -141,9 +143,10 @@ model [Ollama](../models/system-one.md#ollama) serves over the System One API.
 
 ## Instructions
 
-`SmartFileSearch` adds discovery guidance to the system prompt: reach for `smart_file_search` before exploratory text
-search when locating unfamiliar behavior, use exact search for known symbols and exhaustive references, and
-fall back to regular search when results are weak or the tool fails. Pass `guidance` to replace it, or
+Whenever the tool is offered, `SmartFileSearch` adds discovery guidance to the system prompt: reach for
+`smart_file_search` before exploratory text search when locating unfamiliar behavior, use exact search for
+known symbols and exhaustive references, and fall back to regular search when results are weak or the tool
+fails. Pass `guidance` to replace it, or
 `guidance=''` to add none.
 
 ## Telemetry
