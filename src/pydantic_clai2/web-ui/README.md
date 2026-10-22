@@ -19,7 +19,7 @@ that differs from the committed assets and audits development dependencies too.
 From the repository root, install Chromium and run the real-browser regressions:
 
 ```bash
-uv run --with playwright==1.63.0 playwright install chromium
+uv run --with playwright==1.63.0 playwright install --with-deps chromium
 CLAI2_BROWSER_TESTS=1 uv run --with playwright==1.63.0 pytest tests/clai2/browser
 ```
 

@@ -111,6 +111,7 @@ fi
         ([('src/pydantic_clai2/web-ui/src/App.tsx', '')], 'true'),
         ([('src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/app.py', '')], 'true'),
         ([('src/pydantic_clai2/pydantic_clai2/cli/web.py', '')], 'true'),
+        ([('src/pydantic_clai2/scripts/check_web_assets.py', '')], 'true'),
         ([('tests/clai2/test_web_keys.py', '')], 'true'),
         ([('tests/clai2/browser/test_security.py', '')], 'true'),
         ([('docs/harness/clai2.md', '')], 'true'),
