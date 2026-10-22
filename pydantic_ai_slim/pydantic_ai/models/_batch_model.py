@@ -41,7 +41,7 @@ from .._utils import cancel_and_drain
 from ..exceptions import ModelAPIError, ModelConnectionError, ModelHTTPError, SuspendedResponseExpired, UserError
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
-from . import Model, ModelRequestParameters, StreamedResponse
+from . import CompletedStreamedResponse, Model, ModelRequestParameters, StreamedResponse
 from ._batch_codec import BatchJobError
 from ._batch_settings import (
     DEFAULT_MAX_POLL_INTERVAL,
@@ -722,9 +722,10 @@ class BatchedModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
-        raise UserError('`BatchModelRequests` does not support streaming: a batch result arrives all at once.')
-        # Required to type the context manager; streaming always raises.
-        yield  # pragma: no cover
+        # A batch result arrives all at once, so it's waited for as `request` does, and its parts are then streamed as
+        # one event each, as a durable engine replays a recorded response.
+        response = await self.request(messages, model_settings, model_request_parameters)
+        yield CompletedStreamedResponse(response, model_request_parameters=model_request_parameters, replay_events=True)
 
     def continuation_delay(self, response: ModelResponse) -> float | None:
         if (ticket := _pending_ticket(response)) is None:

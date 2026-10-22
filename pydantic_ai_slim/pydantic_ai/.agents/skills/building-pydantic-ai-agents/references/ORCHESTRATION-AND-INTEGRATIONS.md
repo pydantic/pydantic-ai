@@ -93,7 +93,7 @@ For latency-tolerant work at batch prices, add the `BatchModelRequests` capabili
 runs in one process share batches, and so do agents and runs given the same instance. Don't write a submission
 or polling loop: a waiting request suspends the turn through the agent graph's continuation loop, so it works in
 a plain `agent.run(...)` and under every durable engine (put the capability on the agent there), and a run resumed
-from its message history picks up the same batch. Batching is non-streaming, and each tool turn or output retry is another batch round trip. For a job that submits and
+from its message history picks up the same batch. Streamed runs and event stream handlers work, getting each response's events all at once when its batch result arrives, and each tool turn or output retry is another batch round trip. For a job that submits and
 exits, add `PendingModelResponse` to `output_type`: the run ends with it once the request is submitted, and
 running the agent again with `result.all_messages()` checks the batch once and continues or ends pending
 again; the collecting agent needs `BatchModelRequests` too, or resuming raises `UserError`. A submit-only script

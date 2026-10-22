@@ -4815,6 +4815,36 @@ async def test_dbos_durability_batch_model_in_workflow(dbos: DBOS) -> None:
     assert step_names.count('DBOS.sleep') == 3
 
 
+async def test_dbos_durability_batch_model_streams_its_result_to_an_event_stream_handler(dbos: DBOS) -> None:
+    """A streamed request waits for its batch in its steps as `request` does, then streams the result's events."""
+    wrapped = SlowBatchTestModel(pending_checks=2)
+    events: list[AgentStreamEvent] = []
+
+    async def handle(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        events.extend([event async for event in stream])
+
+    agent = Agent(
+        wrapped,
+        name='durability_batch_stream',
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('go', event_stream_handler=handle)).output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        assert await run_durable_agent() == 'success (no tool calls)'
+
+    assert [event.part for event in events if isinstance(event, PartStartEvent)] == [
+        TextPart(content='success (no tool calls)')
+    ]
+    assert (len(wrapped.created), wrapped.status_checks) == (1, 3)
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps].count('DBOS.sleep') == 3
+
+
 async def test_dbos_durability_batch_model_resume_from_history(dbos: DBOS) -> None:
     """A run resumed from history ending in a pending batch response waits for that same batch.
 

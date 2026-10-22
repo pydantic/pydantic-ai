@@ -50,8 +50,8 @@ class BatchModelRequests(AbstractCapability[Any]):
     limit or server error, is submitted again in a new batch, up to `max_resubmissions` times, as a provider SDK
     retries a live request. Other errors, like an invalid request or a canceled batch, reach the run as usual.
 
-    The capability wraps whichever model serves each request, which must have a batch API. Requests can't be
-    streamed, and batching needs an `asyncio` event loop. Submissions and checks run as tasks shared by the requests
+    The capability wraps whichever model serves each request, which must have a batch API. A streamed request waits
+    for its batch too, and then streams each part of the result in one event. Batching needs an `asyncio` event loop. Submissions and checks run as tasks shared by the requests
     waiting on them; using the capability as an async context manager cancels any that are still running when it
     exits.
     """

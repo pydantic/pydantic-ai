@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
-from collections.abc import Sequence
+from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Any
@@ -21,6 +21,8 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import (
     Agent,
+    AgentRunResultEvent,
+    AgentStreamEvent,
     ModelRequest,
     NativeOutput,
     PendingModelResponse,
@@ -461,11 +463,68 @@ async def test_an_ended_batchs_results_are_kept_until_every_request_waiting_on_i
     assert wrapped.canceled == []
 
 
-async def test_streaming_is_rejected() -> None:
-    agent = Agent(TestModel(), capabilities=[BatchModelRequests()])
-    with pytest.raises(UserError, match='does not support streaming'):
-        async with agent.run_stream('Hello'):
-            pass  # pragma: no cover
+async def test_a_streamed_run_gets_the_batch_result_all_at_once() -> None:
+    """A streamed run waits for its batch like any run, and then streams each part of the result in one event."""
+    wrapped = SlowBatchTestModel(pending_checks=2)
+    agent = Agent(wrapped, capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)])
+
+    async with agent.run_stream('Hello') as result:
+        chunks = [chunk async for chunk in result.stream_text(delta=True)]
+        assert await result.get_output() == 'success (no tool calls)'
+    assert chunks == ['success (no tool calls)']
+    assert (len(wrapped.created), wrapped.status_checks) == (1, 3)
+
+
+async def test_event_stream_handlers_and_run_stream_events_get_a_batched_runs_events() -> None:
+    wrapped = SlowBatchTestModel(pending_checks=1)
+    agent = Agent(wrapped, capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)])
+
+    @agent.tool_plain
+    def get_city() -> str:
+        return 'Paris'
+
+    handled: list[AgentStreamEvent] = []
+
+    async def handle(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        handled.extend([event async for event in events])
+
+    result = await agent.run('Where?', event_stream_handler=handle)
+    assert result.output == snapshot('{"get_city":"Paris"}')
+    async with agent.run_stream_events('Where?') as stream:
+        streamed = [event async for event in stream]
+    assert isinstance(streamed[-1], AgentRunResultEvent)
+    assert streamed[-1].result.output == result.output
+    for events in (handled, streamed):
+        assert [type(event).__name__ for event in events if not isinstance(event, AgentRunResultEvent)] == snapshot(
+            [
+                'PartStartEvent',
+                'PartEndEvent',
+                'FunctionToolCallEvent',
+                'FunctionToolResultEvent',
+                'PartStartEvent',
+                'FinalResultEvent',
+                'PartEndEvent',
+            ]
+        )
+    assert len(wrapped.created) == 4
+
+
+async def test_a_streamed_run_can_end_pending_and_be_collected_later() -> None:
+    wrapped = SlowBatchTestModel(pending_checks=1)
+    agent = Agent(
+        wrapped, output_type=[str, PendingModelResponse], capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)]
+    )
+    async with agent.run_stream('Hello') as result:
+        pending = await result.get_output()
+    assert isinstance(pending, PendingModelResponse)
+    history = result.all_messages()
+
+    async with agent.run_stream(message_history=history) as result:
+        assert isinstance(await result.get_output(), PendingModelResponse)
+        history = result.all_messages()
+    async with agent.run_stream(message_history=history) as result:
+        assert await result.get_output() == 'success (no tool calls)'
+    assert (len(wrapped.created), wrapped.canceled) == (1, [])
 
 
 async def test_model_request_batch_returns_responses_and_errors_in_request_order() -> None:
