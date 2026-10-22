@@ -655,7 +655,7 @@ class Workspace(WorkspaceBackend):
         async with self._mount_lock:
             if self._mounts_due():
                 mounts = [mount for mount in self._mounts if mount.commands]
-                again = await backend.ensure_mounts(mounts, await self.working_dir())
+                again = await backend.ensure_mounts(mounts)
                 self._remount_at = None if again is None else again - _REMOUNT_MARGIN
 
     def _mounts_due(self) -> bool:
