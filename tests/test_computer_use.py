@@ -18,9 +18,10 @@ from pydantic_ai import (
     ToolReturnPart,
     UserError,
 )
-from pydantic_ai.capabilities import AbstractCapability, ComputerUse, computer_use as computer_use_module
+from pydantic_ai.capabilities import AbstractCapability, ComputerUse, SelectModel, computer_use as computer_use_module
 from pydantic_ai.capabilities.computer_use import _to_pixels  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import BinaryContent, BinaryImage
+from pydantic_ai.models import Model, ModelSelectionContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.workspaces import (
@@ -331,6 +332,22 @@ async def test_a_model_without_image_input_fails_at_its_start() -> None:
         await agent.run('Go.')
 
 
+async def test_a_model_selected_later_without_image_input_is_refused_before_its_request() -> None:
+    text_only = FunctionModel(
+        lambda messages, info: ModelResponse(parts=[TextPart('done')]),  # pragma: no cover
+        model_name='text-only',
+        profile=ModelProfile(supports_image_input=False),
+    )
+    first = _scripted([{'type': 'screenshot'}])
+
+    def select(ctx: ModelSelectionContext[Any]) -> Model:
+        return first if ctx.run_step == 1 else text_only
+
+    agent = Agent(None, capabilities=[SelectModel(select), InMemoryProvider().capability(), ComputerUse()])
+    with pytest.raises(UserError, match="needs a model that accepts images, and 'text-only' does not"):
+        await agent.run('Go.')
+
+
 @pytest.mark.parametrize(
     'actions', [[{'type': 'click', 'x': 1, 'y': 1}], [{'type': 'screenshot'}]], ids=['act', 'look']
 )
@@ -369,6 +386,26 @@ async def test_a_bad_screenshot_is_a_failed_call_that_says_what_ran(screenshot: 
     assert tool_return.outcome == 'failed'
     assert tool_return.content == f'Ran 1 action. {message}'
     assert provider.actions == [Click(x=1, y=1)]
+
+
+async def test_a_grid_model_whose_display_size_fails_gets_a_failed_call_and_nothing_runs() -> None:
+    provider = InMemoryProvider()
+
+    class NoSize(ProviderBackend):
+        async def display_size(self) -> tuple[int, int]:
+            raise WorkspaceError('xdotool: cannot open display')
+
+    class Supplier(AbstractCapability[Any]):
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+            return NoSize(provider, ref)
+
+    model = _scripted([{'type': 'click', 'x': 500, 'y': 500}], profile=ModelProfile(computer_use_coordinate_grid=1000))
+    agent = Agent(model, capabilities=[Supplier(), ComputerUse(settle_seconds=0)])
+    (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+
+    assert tool_return.outcome == 'failed'
+    assert tool_return.content == 'Reading the display size failed, so no action ran: xdotool: cannot open display'
+    assert provider.actions == []
 
 
 def test_settings_are_checked() -> None:

@@ -41,8 +41,8 @@ OpenAI can attach safety checks to a call; they are acknowledged automatically w
 - **A workspace with a display.** A run without a workspace, or a workspace without a display, fails at its start
   with an error saying so. A [read-only](../workspace.md#read-only-access) workspace allows screenshots and reports
   every mouse and keyboard action to the model as refused.
-- **A model that accepts images.** Every call returns a screenshot, so a text-only model fails at the start of the
-  run.
+- **A model that accepts images.** Every call returns a screenshot, so a request to a text-only model fails before
+  it is sent, including a model that [`SelectModel`](select-model.md) picks later in the run.
 
 ## Computer use, Playwright, or Browser Use
 

@@ -41,6 +41,15 @@ and `workspace.read_only` lets a tool provider leave write tools out. To disable
 for a run on purpose, pass `workspace=UnavailableWorkspace(reason=...)`: its operations raise
 `WorkspaceUnavailableError` with that reason, which a tool can catch as a `WorkspaceError`.
 
+A workspace may have a graphical display: `ctx.workspace.has_display` says so without I/O, and
+`display_size()`, `screenshot()` (PNG bytes) and `act(action)` control it, with coordinates in screenshot
+pixels. A backend offers one by implementing `SupportsComputerUse`, deciding `has_display` per instance;
+a Linux X server can be driven through `X11Computer`. `LocalWorkspace` has no display. `ComputerUse()`
+gives the model one `computer` tool over it, taking a list of actions and returning a screenshot; it
+fails a run whose workspace has no display, and a request to a model that can't take images.
+`require_approval=True` defers every call that does more than look or wait, and `keep_screenshots=N`
+sends only the newest N screenshots.
+
 `resolve()` is textual; `realpath()` asks the environment to resolve symlinks in the existing
 components (native through `SupportsRealpath`, `readlink` in the shell otherwise). With neither, it
 only normalizes the text, so a path check built on it cannot see through symlinks.
