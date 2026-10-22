@@ -241,7 +241,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             warnings.warn(
                 f"Merged `Advisor` capabilities combine `mode='native'` on OpenRouter with `max_uses={max_uses}`, "
                 "which OpenRouter's native advisor does not support, so `max_uses` is ignored. "
-                "This will raise `ValueError` in a future release: remove `max_uses`, or use `mode='auto'`.",
+                "This will raise `UserError` in a future release: remove `max_uses`, or use `mode='auto'`.",
                 HarnessDeprecationWarning,
                 stacklevel=_caller_stacklevel(),
             )

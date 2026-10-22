@@ -524,7 +524,9 @@ class TestAdvisor:
             seen.append(info.model_request_parameters)
             return ModelResponse(parts=[TextPart('done')])
 
-        with pytest.warns(HarnessDeprecationWarning, match=r'`max_uses=2`, .* is ignored') as warned:
+        with pytest.warns(
+            HarnessDeprecationWarning, match=r'`max_uses=2`, .* is ignored\. This will raise `UserError`'
+        ) as warned:
             agent = Agent(
                 _ProviderFunctionModel('openrouter', executor, supports_advisor=True),
                 capabilities=[
