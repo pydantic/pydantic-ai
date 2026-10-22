@@ -331,14 +331,20 @@ async def test_streaming_sequential_turns(allow_model_requests: None, recorded_r
 async def test_overlapping_runs_continue_on_their_own_lanes(
     allow_model_requests: None, recorded_responses: RecordedResponses
 ):
-    """A run that overlaps another takes a named lane, and each lane continues from its own store-false response."""
+    """A run that overlaps another takes a named lane, and each lane continues from its own store-false response.
+
+    The second request goes out after the first response's first text delta and before its terminal event, while
+    a long answer is still streaming, so the two responses are in flight on the socket at once.
+    """
     settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'auto', 'openai_store': False}
     async with recorded_responses.model.connect() as connected:
         agent = Agent(connected, model_settings=settings)
-        async with agent.run_stream('Reply with the word amber.') as first:
-            chunks = first.stream_text(delta=True)
+        async with agent.run_stream(
+            'Count from one to sixty in words, separated by spaces, then reply with the word amber.'
+        ) as first:
+            chunks = first.stream_text(delta=True, debounce_by=None)
             await anext(chunks)
-            # The first response's stream is still open, so the default lane is busy.
+            # The first response is still streaming, so the default lane is busy.
             second = await agent.run('Reply with the word cobalt.')
             async for _ in chunks:
                 pass
@@ -365,6 +371,19 @@ async def test_overlapping_runs_continue_on_their_own_lanes(
     # OpenAI echoes a named lane on every event of its responses and omits it on the default lane.
     received_lanes = {frame.data.get('stream_id') for frame in frames if frame.direction == 'received'}
     assert received_lanes == {None, 'lane-1'}
+    first_completed = next(
+        index
+        for index, frame in enumerate(frames)
+        if frame.direction == 'received' and frame.data['type'] == 'response.completed'
+    )
+    assert frames[first_completed].data.get('stream_id') is None
+    # The second request went out, and its response started arriving, before the first response completed.
+    assert any(
+        frame.direction == 'sent' and frame.data.get('stream_id') == 'lane-1' for frame in frames[:first_completed]
+    )
+    assert any(
+        frame.direction == 'received' and frame.data.get('stream_id') == 'lane-1' for frame in frames[:first_completed]
+    )
 
 
 async def test_cross_socket_continuation_replays_history(
