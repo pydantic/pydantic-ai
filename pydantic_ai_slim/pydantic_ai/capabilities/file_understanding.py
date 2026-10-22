@@ -3,9 +3,9 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterator
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, TypeAlias, TypeGuard, TypeVar
+from typing import TYPE_CHECKING, TypeGuard, TypeVar
 
-from pydantic_ai._file_input import SendableFile, unsupported_file_input
+from pydantic_ai._file_input import SendableFile, inferred_media_type, unsupported_file_input
 from pydantic_ai._utils import format_inlined_text_file, gather, is_text_like_media_type
 from pydantic_ai.messages import (
     BinaryContent,
@@ -27,7 +27,6 @@ from .durable_operation import durable_operation
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
-_File: TypeAlias = SendableFile
 _T = TypeVar('_T')
 
 _MAX_DESCRIPTIONS = 256
@@ -119,7 +118,7 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
 
         # Every file is found first, so the distinct ones can be described at once rather than one after another.
         descriptions: dict[str, str] = {}
-        pending: dict[str, _File] = {}
+        pending: dict[str, SendableFile] = {}
         unaccepted = False
         for content in _file_content(request_context.messages):
             if (item := _unaccepted_file(content, profile)) is None:
@@ -147,14 +146,14 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         return replace(request_context, messages=messages)
 
     async def _describe_pending(
-        self, ctx: RunContext[AgentDepsT], pending: dict[str, _File], descriptions: dict[str, str]
+        self, ctx: RunContext[AgentDepsT], pending: dict[str, SendableFile], descriptions: dict[str, str]
     ) -> None:
         """Describe the `pending` files at once into `descriptions`, adding what that costs to the run."""
         if (usage_limits := ctx.usage_limits) is not None:
             # The run checked its limits for this step's request before this hook, so the describing requests go
             # in front of it: a limit without room for all of them and the request itself stops the run before
             # any is sent.
-            requests = sum(1 for item in pending.values() if not is_text_like_media_type(item.media_type))
+            requests = sum(1 for item in pending.values() if _text_media_type(item) is None)
             if requests:
                 usage_limits.check_before_request(ctx.usage + RunUsage(requests=requests))
 
@@ -169,7 +168,7 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
                 self._descriptions[identity] = description
 
     @durable_operation(name='describe')
-    async def _describe(self, item: _File) -> tuple[str, RunUsage]:
+    async def _describe(self, item: SendableFile) -> tuple[str, RunUsage]:
         """The file as text, with the usage it cost.
 
         A text-like document is its own content, at no cost; anything else is described by `fallback_subagent_model`. The
@@ -178,7 +177,7 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         """
         from pydantic_ai.agent import Agent
 
-        if isinstance(item, DocumentUrl) and is_text_like_media_type(item.media_type):
+        if isinstance(item, DocumentUrl) and _text_media_type(item) is not None:
             return (await download_item(item, data_format='text'))['data'], RunUsage()
 
         agent: Agent[None, str] = Agent(
@@ -210,7 +209,7 @@ def _substitute(
             return content
         # What goes back is prose about the file, so it is text whatever the file was. A text-like document is
         # inlined as its own content instead of described, and that one keeps the media type it came with.
-        media_type = item.media_type if is_text_like_media_type(item.media_type) else 'text/plain'
+        media_type = _text_media_type(item) or 'text/plain'
         if _is_text_bytes(item):
             description = item.data.decode('utf-8')
         else:
@@ -229,7 +228,7 @@ def _substitute(
     return replace(message, parts=parts) if parts != original_parts else message
 
 
-def _identity(item: _File, conversation_id: str | None) -> str:
+def _identity(item: SendableFile, conversation_id: str | None) -> str:
     """What makes two items one file within this request: the reuse key, or for a URL with no conversation, the URL."""
     if (key := _reuse_key(item, conversation_id)) is not None:
         return key
@@ -237,7 +236,7 @@ def _identity(item: _File, conversation_id: str | None) -> str:
     return f'url:{item.url}'
 
 
-def _reuse_key(item: _File, conversation_id: str | None) -> str | None:
+def _reuse_key(item: SendableFile, conversation_id: str | None) -> str | None:
     """What identifies this file for reuse, or `None` when its description must not be reused.
 
     Bytes are their own identity, so a description of them holds for anyone who sends the same bytes. A URL is
@@ -252,12 +251,18 @@ def _reuse_key(item: _File, conversation_id: str | None) -> str | None:
     return f'{conversation_id}:{item.url}' if conversation_id is not None else None
 
 
-def _unaccepted_file(item: object, profile: ModelProfile) -> _File | None:
+def _unaccepted_file(item: object, profile: ModelProfile) -> SendableFile | None:
     """The file in `item` the model doesn't take as it is, or `None`; text and anything but a file is left alone."""
     if isinstance(item, SendableFile) and unsupported_file_input(item, profile) is not None:
         return item
     return None
 
 
-def _is_text_bytes(item: _File) -> TypeGuard[BinaryContent]:
+def _text_media_type(item: SendableFile) -> str | None:
+    """The media type of a text-like file, or `None`; a URL whose media type can't be inferred counts as not text."""
+    media_type = inferred_media_type(item)
+    return media_type if media_type is not None and is_text_like_media_type(media_type) else None
+
+
+def _is_text_bytes(item: SendableFile) -> TypeGuard[BinaryContent]:
     return isinstance(item, BinaryContent) and is_text_like_media_type(item.media_type)

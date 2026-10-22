@@ -171,6 +171,42 @@ A description of purr.
     assert describer.calls == 2
 
 
+async def test_urls_without_an_inferable_media_type_are_described():
+    """A URL with no extension has no media type to read, so it counts as not text and the describer fetches it."""
+    seen: list[list[ModelMessage]] = []
+
+    def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    text_only = FunctionModel(capture, profile=ModelProfile(supports_image_input=False, supports_document_input=False))
+    describer = Describer()
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
+    await agent.run(
+        [
+            DocumentUrl('https://example.com/download?id=1', identifier='doc'),
+            ImageUrl('https://example.com/render?id=2', identifier='img'),
+        ],
+        usage_limits=UsageLimits(request_limit=10),
+    )
+
+    assert describer.calls == 2
+    assert last_prompt(seen) == snapshot(
+        [
+            """\
+-----BEGIN FILE id="doc" type="text/plain"-----
+A description of doc.
+-----END FILE id="doc"-----\
+""",
+            """\
+-----BEGIN FILE id="img" type="text/plain"-----
+A description of img.
+-----END FILE id="img"-----\
+""",
+        ]
+    )
+
+
 async def test_custom_instructions_reach_the_describer():
     seen: list[list[ModelMessage]] = []
 

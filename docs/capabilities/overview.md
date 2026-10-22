@@ -58,7 +58,7 @@ Abilities the provider executes natively, and connections to any MCP server.
 |---|---|---|
 | [MCP](mcp.md) | Core | Connect any MCP server's tools; local by default, provider-native connectors opt-in |
 | [Image Generation](image-generation.md) | Core | Generate and edit images; provider-native where supported, direct image-model fallback elsewhere |
-| [File Understanding](file-understanding.md) | Core | Describe images, documents and video the model cannot read, with a model that can |
+| [File Understanding](file-understanding.md) | Core | Describe images, documents, audio and video the model cannot read, with a model that can |
 | [Native Tool](../native-tools.md) | Core | Register any provider-native tool with the agent |
 
 ### Integrations {#integrations}
