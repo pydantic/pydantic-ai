@@ -46,6 +46,16 @@ on its `PATH`, which lists the files to search. The `coder` extra installs `rg` 
 sandbox image needs it installed. The tool is not offered on a workspace that cannot run commands, and a run
 without a workspace fails at its start.
 
+## Settings
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `model` | required | The judge: any model or model name. A judge given by name times out each request after 30 seconds; a model instance keeps its own `settings`. |
+| `threshold` | `0.5` | Relevance (the product of the two judgments, 0 to 1) a snippet needs to be returned. Tuned for Jev; see [Choosing the judge](#choosing-the-judge). |
+| `concurrency` | `8` | Snippets judged at once. |
+| `cache_index` | `False` | Keep each searched directory's index in memory between searches; see [Large codebases](#large-codebases). |
+| `guidance` | `None` | Discovery instructions added whenever the tool is offered: `None` for the default, which has the model reach for `smart_file_search` before exploratory text search, `''` for none. |
+
 ## Tool
 
 | Tool | Purpose |

@@ -37,8 +37,25 @@ a key); TypeSafe's Jev is `'typesafe:jev-latest'`. Each judged snippet counts as
 `request_limit` (50 by default), and a search spends at most half of what is left, so raise it for full
 128-snippet searches.
 
+The workspace must be able to run commands and have [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) on its
+`PATH`; the `coder` extra installs it for a local workspace. The tool is not offered on a workspace that cannot run
+commands, and a run without a workspace fails at its start.
+
 A search sends the query, the shortlisted snippets and their paths to the judge model's provider, and only searches
 inside the workspace's working directory. If no source may leave the machine, judge with a local model.
+
+## Settings
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `model` | required | The judge: any model or model name. A judge given by name times out each request after 30 seconds; a model instance keeps its own `settings`. |
+| `threshold` | `0.5` | Relevance (the product of the two judgments, 0 to 1) a snippet needs to be returned. Tuned for Jev; check a few searches and retune for another judge. |
+| `concurrency` | `8` | Snippets judged at once. |
+| `cache_index` | `False` | Keep each searched directory's index in memory between searches, for the life of the agent. Up to four directories (each with its `glob`) are kept, least recently searched evicted first; later searches re-read every file but only re-index changed ones. |
+| `guidance` | `None` | Discovery instructions added whenever the tool is offered: `None` for the default, which has the model reach for `smart_file_search` before exploratory text search, `''` for none. |
+
+A search is capped at 200,000 files (counted after `glob`), 50 million lines and 2 GiB of source; past that it asks
+the model to narrow `directory` or `glob`.
 
 ## Telemetry
 
@@ -58,4 +75,4 @@ A failed search records no exception on this span; the enclosing tool span repor
 is added to the run's.
 
 See the [Smart File Search docs](https://pydantic.dev/docs/ai/harness/smart-file-search/) for the search
-pipeline, the result shape, choosing the judge and tuning `threshold`.
+pipeline, the result shape, choosing the judge, usage limits, caching and tuning `threshold`.
