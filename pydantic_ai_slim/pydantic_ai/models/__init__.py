@@ -673,8 +673,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     like `temperature`, are ignored silently. Empty by default, so a model class that declares nothing never warns.
 
     This covers the fields a model class sends to its provider. `request_timeout` is enforced by Pydantic AI for
-    every model, and `thinking`, `thinking_summary`, `cache` and `tool_choice` are resolved through the model
-    profile, so they're not listed here.
+    every model, `thinking`, `cache` and `tool_choice` are resolved through the model profile, and
+    `thinking_summary` is translated per adapter only where the API has a switch for it, so they're not listed
+    here.
 
     It's declared on the model class because whether a setting reaches the provider is mostly decided by the API and
     SDK the class speaks. The OpenAI model classes add the ignored settings their profile lists in
