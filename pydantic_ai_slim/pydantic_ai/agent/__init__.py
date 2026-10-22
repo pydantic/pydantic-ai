@@ -37,7 +37,12 @@ from pydantic.alias_generators import to_snake
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import TypeForm, TypeIs, TypeVar
 
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+from pydantic_ai._instrumentation import (
+    DEFAULT_INSTRUMENTATION_VERSION,
+    mcp_telemetry_url_ids,
+    mcp_telemetry_url_tool_names,
+    mcp_telemetry_url_toolset_ids,
+)
 from pydantic_ai._spec import load_from_registry
 from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabilityLoader
 
@@ -119,6 +124,10 @@ from ..tools import (
     DeferredToolResults,
     DocstringFormat,
     GenerateToolJsonSchema,
+    KindArgsT,
+    KindContentT,
+    KindedToolDecorator,
+    KindedToolPlainDecorator,
     NativeToolFunc,
     RunContext,
     SystemPromptFunc,
@@ -432,10 +441,23 @@ def _agent_instruction_source(instruction: _instructions.AgentInstruction[Any]) 
     """The source to attribute one of the agent's configured instructions to.
 
     Only the literal instructions the agent was built with are addressed by the agent's own key: an
-    instruction function becomes addressable when `@agent.instructions(name=...)` names it, so a bare
-    callable speaks for nobody and stays unidentified.
+    instruction function becomes addressable when `@agent.instructions(name=...)` names it, or when it
+    returns an `InstructionPart` with a `name`, so a bare callable speaks for nobody and stays
+    unidentified.
     """
     return _messages.AgentInstructionSource() if isinstance(instruction, (str, _messages.InstructionPart)) else None
+
+
+def _run_instruction_source(instruction: _instructions.AgentInstruction[Any]) -> _messages.InstructionSource | None:
+    """The source to attribute one of the instructions passed to a single run to.
+
+    Only a named `InstructionPart` is addressed, as `'run:<name>'`, so the same block passed to a later
+    run of the conversation can append its changes. Anything unnamed stays unidentified: nothing says a
+    later run's unnamed text is the same block.
+    """
+    if isinstance(instruction, _messages.InstructionPart) and instruction.name is not None:
+        return _messages.RunInstructionSource()
+    return None
 
 
 def _normalize_agent_retries(retries: AgentRetries, *, default: int = 1) -> _ResolvedAgentRetries:
@@ -764,7 +786,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The agent's own literal instructions are one addressable part; instruction functions are
         # only addressable if `@agent.instructions(name=...)` names them.
         self._instructions = [
-            _instructions.sourced_instruction(instruction, _agent_instruction_source(instruction))
+            _instructions.sourced_instruction(
+                instruction, _agent_instruction_source(instruction), name_source=_messages.AgentInstructionSource()
+            )
             for instruction in _instructions.normalize_instructions(instructions)
         ]
 
@@ -903,7 +927,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
-        output_type: OutputSpec[Any] = str,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
@@ -930,7 +953,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
-        output_type: OutputSpec[Any] = str,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
@@ -947,6 +969,59 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
     ) -> Agent[T, str]: ...
+
+    @overload
+    @classmethod
+    def from_spec(
+        cls,
+        spec: dict[str, Any] | AgentSpec,
+        *,
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        model: models.Model | models.KnownModelName | str | None = None,
+        output_type: OutputSpec[RunOutputDataT],
+        instructions: AgentInstructions[Any] = None,
+        system_prompt: str | Sequence[str] = (),
+        name: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
+        model_settings: ModelSettings | None = None,
+        retries: int | AgentRetries | None = None,
+        validation_context: Any = None,
+        tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
+        toolsets: Sequence[AgentToolset[Any]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy | None = None,
+        metadata: AgentMetadata[Any] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AgentCapability[Any]] | None = None,
+    ) -> Agent[object, RunOutputDataT]: ...
+
+    @overload
+    @classmethod
+    def from_spec(
+        cls,
+        spec: dict[str, Any] | AgentSpec,
+        *,
+        deps_type: type[T],
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        model: models.Model | models.KnownModelName | str | None = None,
+        output_type: OutputSpec[RunOutputDataT],
+        instructions: AgentInstructions[Any] = None,
+        system_prompt: str | Sequence[str] = (),
+        name: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
+        model_settings: ModelSettings | None = None,
+        retries: int | AgentRetries | None = None,
+        validation_context: Any = None,
+        tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
+        toolsets: Sequence[AgentToolset[Any]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy | None = None,
+        metadata: AgentMetadata[Any] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AgentCapability[Any]] | None = None,
+    ) -> Agent[T, RunOutputDataT]: ...
 
     @classmethod
     def from_spec(
@@ -1067,7 +1142,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         fmt: Literal['yaml', 'json'] | None = None,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
-        output_type: OutputSpec[Any] = str,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
@@ -1095,7 +1169,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
-        output_type: OutputSpec[Any] = str,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
@@ -1112,6 +1185,61 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
     ) -> Agent[T, str]: ...
+
+    @overload
+    @classmethod
+    def from_file(
+        cls,
+        path: Path | str,
+        *,
+        fmt: Literal['yaml', 'json'] | None = None,
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        model: models.Model | models.KnownModelName | str | None = None,
+        output_type: OutputSpec[RunOutputDataT],
+        instructions: AgentInstructions[Any] = None,
+        system_prompt: str | Sequence[str] = (),
+        name: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
+        model_settings: ModelSettings | None = None,
+        retries: int | AgentRetries | None = None,
+        validation_context: Any = None,
+        tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
+        toolsets: Sequence[AgentToolset[Any]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy | None = None,
+        metadata: AgentMetadata[Any] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AgentCapability[Any]] | None = None,
+    ) -> Agent[object, RunOutputDataT]: ...
+
+    @overload
+    @classmethod
+    def from_file(
+        cls,
+        path: Path | str,
+        *,
+        fmt: Literal['yaml', 'json'] | None = None,
+        deps_type: type[T],
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        model: models.Model | models.KnownModelName | str | None = None,
+        output_type: OutputSpec[RunOutputDataT],
+        instructions: AgentInstructions[Any] = None,
+        system_prompt: str | Sequence[str] = (),
+        name: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
+        model_settings: ModelSettings | None = None,
+        retries: int | AgentRetries | None = None,
+        validation_context: Any = None,
+        tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
+        toolsets: Sequence[AgentToolset[Any]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy | None = None,
+        metadata: AgentMetadata[Any] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AgentCapability[Any]] | None = None,
+    ) -> Agent[T, RunOutputDataT]: ...
 
     @classmethod
     def from_file(
@@ -1586,6 +1714,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             effective_output_retries = override_output_retries.value
         effective_tool_retries_resolved = self._resolve_tool_retries(effective_tool_retries)
 
+        # Resolve the effective per-output-tool default: override > run arg > spec > agent init default
+        effective_output_toolset_max_retries = self._resolve_output_retries(effective_output_retries)
+
         deps = self._get_deps(deps)
         usage = usage or _usage.RunUsage()
 
@@ -1634,67 +1765,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 resolved_models=resolved_models_by_selection,
                 run_built_models=run_built_models,
             )
-        if model_contribution is not None:
-            selection_messages, selection_prompt = _agent_graph.first_step_selection_messages(
-                message_history, user_prompt, has_deferred_tool_results=deferred_tool_results is not None
-            )
-            selection_ctx = models.ModelSelectionContext(
-                agent=self,
-                deps=deps,
-                model=default_model,
-                run_step=1,
-                prompt=selection_prompt,
-                messages=selection_messages,
-                usage=usage,
-            )
-            model_used, model_id = await self._evaluate_model_contribution(
-                model_contribution,
-                capability=bootstrap_capability,
-                ctx=selection_ctx,
-                resolved_models=resolved_models_by_selection,
-            )
-        elif default_model is not None:
-            model_used = default_model
-        else:
-            raise exceptions.UserError('`model` must either be set on the agent or included when calling it.')
-        del model
-        output_schema = self._prepare_output_schema(output_type)
 
-        output_type_ = output_type or self.output_type
-
-        # We consider it a user error if a user tries to restrict the result type while having an output validator that
-        # may change the result type from the restricted type to something else. Therefore, we consider the following
-        # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
-        output_validators = self._output_validators
-
-        # Resolve the effective per-output-tool default: run arg > spec > agent init default
-        effective_output_toolset_max_retries = (
-            effective_output_retries if effective_output_retries is not None else self._max_output_retries
-        )
-
-        output_toolset = self._output_toolset
-        if output_schema != self._output_schema or output_validators:
-            output_toolset = output_schema.toolset
-            if output_toolset:
-                # Clone before mutating max_retries when the toolset is the shared agent-level
-                # instance (output_schema == self._output_schema, branch hit via output_validators);
-                # when output_schema differs, output_schema.toolset is already a fresh per-run instance.
-                if output_toolset is self._output_toolset and effective_output_retries is not None:
-                    output_toolset = copy(output_toolset)
-                if output_toolset.max_retries is None or effective_output_retries is not None:
-                    output_toolset.max_retries = effective_output_toolset_max_retries
-                output_toolset.output_validators = output_validators
-        elif output_toolset is not None and effective_output_retries is not None:
-            # Clone before mutating max_retries so concurrent runs don't race on the
-            # shared agent-level toolset.
-            output_toolset = copy(output_toolset)
-            output_toolset.max_retries = effective_output_toolset_max_retries
-
-        # Build the graph
-        graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
-
-        # Build the initial state. Inside a durable workflow or flow, the durability capability supplies
-        # the default ids, so a re-execution of this code gets the same ones.
+        # Build the initial state before the step-one model selector runs (but after the default model is
+        # resolved, as before), so its `ModelSelectionContext` sees the run's ids, deadline and usage limits
+        # like later steps' do. Inside a durable workflow or flow, the durability capability supplies the
+        # default ids, so a re-execution of this code gets the same ones.
         resolved_run_id = _agent_graph.resolve_run_id(
             run_id if run_id is not None else bootstrap_capability._default_run_id(),  # pyright: ignore[reportPrivateUsage]
             message_history,
@@ -1722,6 +1797,67 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             start = await bootstrap_capability._run_start_time(resolved_run_id) or run_clock()  # pyright: ignore[reportPrivateUsage]
             own_deadline = start + timedelta(seconds=timeout)
             deadline = own_deadline if deadline is None else min(own_deadline, deadline)
+        usage_limits = usage_limits or _usage.UsageLimits()
+
+        if model_contribution is not None:
+            selection_messages, selection_prompt = _agent_graph.first_step_selection_messages(
+                message_history, user_prompt, has_deferred_tool_results=deferred_tool_results is not None
+            )
+            selection_ctx = models.ModelSelectionContext(
+                agent=self,
+                deps=deps,
+                model=default_model,
+                run_step=1,
+                prompt=selection_prompt,
+                messages=selection_messages,
+                usage=usage,
+                max_retries=effective_output_toolset_max_retries,
+                usage_limits=usage_limits,
+                deadline=deadline,
+                run_id=state.run_id,
+                conversation_id=state.conversation_id,
+            )
+            model_used, model_id = await self._evaluate_model_contribution(
+                model_contribution,
+                capability=bootstrap_capability,
+                ctx=selection_ctx,
+                resolved_models=resolved_models_by_selection,
+            )
+        elif default_model is not None:
+            model_used = default_model
+        else:
+            raise exceptions.UserError('`model` must either be set on the agent or included when calling it.')
+        del model
+        output_schema = self._prepare_output_schema(output_type)
+
+        output_type_ = output_type or self.output_type
+
+        # We consider it a user error if a user tries to restrict the result type while having an output validator that
+        # may change the result type from the restricted type to something else. Therefore, we consider the following
+        # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
+        output_validators = self._output_validators
+
+        output_toolset = self._output_toolset
+        if output_schema != self._output_schema or output_validators:
+            output_toolset = output_schema.toolset
+            if output_toolset:
+                # Clone before mutating max_retries when the toolset is the shared agent-level
+                # instance (output_schema == self._output_schema, branch hit via output_validators);
+                # when output_schema differs, output_schema.toolset is already a fresh per-run instance.
+                if output_toolset is self._output_toolset and effective_output_retries is not None:
+                    output_toolset = copy(output_toolset)
+                if output_toolset.max_retries is None or effective_output_retries is not None:
+                    output_toolset.max_retries = effective_output_toolset_max_retries
+                output_toolset.output_validators = output_validators
+        elif output_toolset is not None and effective_output_retries is not None:
+            # Clone before mutating max_retries so concurrent runs don't race on the
+            # shared agent-level toolset.
+            output_toolset = copy(output_toolset)
+            output_toolset.max_retries = effective_output_toolset_max_retries
+
+        # Build the graph
+        graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
+
         historical_response = next(
             (message for message in reversed(state.message_history) if isinstance(message, _messages.ModelResponse)),
             None,
@@ -1764,8 +1900,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         f"return a callable from a capability's `get_model_settings()` to vary `tool_choice` per "
                         f'step, or use `pydantic_ai.direct.model_request` for single-shot model calls.'
                     )
-
-        usage_limits = usage_limits or _usage.UsageLimits()
 
         # Resolve instrumentation: an explicit `InstrumentedModel` (passed by the user
         # to `Agent(model=...)`, e.g. by `logfire.instrument_pydantic_ai(model)`) wins,
@@ -2420,16 +2554,40 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @overload
     def instructions(
-        self, /, *, name: str | None = None
-    ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
+        self, func: Callable[[RunContext[AgentDepsT]], str | _messages.InstructionPart | None], /
+    ) -> Callable[[RunContext[AgentDepsT]], str | _messages.InstructionPart | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str | _messages.InstructionPart | None]], /
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str | _messages.InstructionPart | None]]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[], str | _messages.InstructionPart | None], /
+    ) -> Callable[[], str | _messages.InstructionPart | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[], Awaitable[str | _messages.InstructionPart | None]], /
+    ) -> Callable[[], Awaitable[str | _messages.InstructionPart | None]]: ...
+
+    @overload
+    def instructions(
+        self, /, *, name: str | None = None, on_change: _messages.InstructionChangePolicy = 'rewrite'
+    ) -> Callable[[_instructions.InstructionFunc[AgentDepsT]], _instructions.InstructionFunc[AgentDepsT]]: ...
 
     def instructions(
         self,
-        func: SystemPromptFunc[AgentDepsT] | None = None,
+        func: _instructions.InstructionFunc[AgentDepsT] | None = None,
         /,
         *,
         name: str | None = None,
-    ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
+        on_change: _messages.InstructionChangePolicy = 'rewrite',
+    ) -> (
+        Callable[[_instructions.InstructionFunc[AgentDepsT]], _instructions.InstructionFunc[AgentDepsT]]
+        | _instructions.InstructionFunc[AgentDepsT]
+    ):
         """Decorator to register an instructions function.
 
         Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
@@ -2461,6 +2619,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 `'agent:<name>'` on [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] so an
                 application can address this part specifically, where the bare `'agent'` key addresses
                 the agent's literal instructions. See [instruction parts](../agent.md#instruction-parts).
+            on_change: Whether to rewrite the instruction prefix (the default) or append full
+                replacements when this block changes. Appending requires an addressable instruction
+                identity; otherwise it warns and rewrites. The function still runs on every request.
+                Use `'append'` for instructions that change mid-conversation, to keep the cached
+                prefix; see [appending instruction changes](../agent.md#appending-instruction-changes).
+                Build the text only from state you control; see [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
         """
         if name is not None:
             _instructions.validate_instruction_name(name)
@@ -2469,10 +2633,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         def decorator(
-            func_: SystemPromptFunc[AgentDepsT],
-        ) -> SystemPromptFunc[AgentDepsT]:
+            func_: _instructions.InstructionFunc[AgentDepsT],
+        ) -> _instructions.InstructionFunc[AgentDepsT]:
             self._instructions.append(
-                _instructions.SourcedInstruction(func_, name=name, id=instruction_id, dynamic=True)
+                _instructions.SourcedInstruction(
+                    func_,
+                    name=name,
+                    id=instruction_id,
+                    source=_messages.AgentInstructionSource(),
+                    dynamic=True,
+                    on_change=on_change,
+                )
             )
             return func_
 
@@ -2516,6 +2687,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     prompt=selection_prompt,
                     messages=selection_messages,
                     usage=usage,
+                    max_retries=self._resolve_output_retries(),
                 )
                 selected_model, _ = await self._evaluate_model_contribution(
                     contribution, capability=capability, ctx=selection_ctx
@@ -2768,6 +2940,29 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ...] | None = None,
+        docstring_format: DocstringFormat = 'auto',
+        require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
+        sequential: bool = False,
+        requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
+        tool_kind: _messages.ToolKind[KindArgsT, KindContentT],
+        timeout: float | None = None,
+        defer_loading: bool = False,
+        include_return_schema: bool | None = None,
+    ) -> KindedToolDecorator[AgentDepsT, KindArgsT, KindContentT]: ...
+
+    @overload
+    def tool(
+        self,
+        /,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -2776,6 +2971,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: _messages.ToolPartKind | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -2798,6 +2994,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -2858,6 +3055,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            tool_kind: What the tool is, independent of its name: a [`ToolKind`][pydantic_ai.messages.ToolKind], or the id of one.
+                Its call and return parts are then promoted to the typed parts registered for the kind.
+                See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
@@ -2886,6 +3086,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                tool_kind=tool_kind,
                 timeout=timeout,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
@@ -2906,6 +3107,29 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ...] | None = None,
+        docstring_format: DocstringFormat = 'auto',
+        require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
+        sequential: bool = False,
+        requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
+        tool_kind: _messages.ToolKind[KindArgsT, KindContentT],
+        timeout: float | None = None,
+        defer_loading: bool = False,
+        include_return_schema: bool | None = None,
+    ) -> KindedToolPlainDecorator[KindArgsT, KindContentT]: ...
+
+    @overload
+    def tool_plain(
+        self,
+        /,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -2914,6 +3138,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: _messages.ToolPartKind | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -2936,6 +3161,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -2997,6 +3223,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            tool_kind: What the tool is, independent of its name: a [`ToolKind`][pydantic_ai.messages.ToolKind], or the id of one.
+                Its call and return parts are then promoted to the typed parts registered for the kind.
+                See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
@@ -3023,6 +3252,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                tool_kind=tool_kind,
                 timeout=timeout,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
@@ -3146,6 +3376,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if override is not None:
             return override.value
         return retries if retries is not None else self._max_tool_retries
+
+    def _resolve_output_retries(self, retries: int | None = None) -> int:
+        """Resolve the effective output-retry budget: override > run/spec > agent default."""
+        override = self._override_output_retries.get()
+        if override is not None:
+            return override.value
+        return retries if retries is not None else self._max_output_retries
 
     def _base_run_capability(self) -> tuple[CombinedCapability[AgentDepsT], bool]:
         """The base capability layer for a run, plus whether it came from `override(root_capability=...)`.
@@ -3483,7 +3720,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Override replaces all instructions, including capability contributions, so what it
             # provides takes the place of (and the id of) the agent's own instructions.
             instructions = [
-                _instructions.sourced_instruction(instruction, _agent_instruction_source(instruction))
+                _instructions.sourced_instruction(
+                    instruction, _agent_instruction_source(instruction), name_source=_messages.AgentInstructionSource()
+                )
                 for instruction in override_instructions.value
             ]
         else:
@@ -3491,9 +3730,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instructions.extend(cap_instructions if cap_instructions is not None else self._cap_instructions)
             if additional_instructions is not None:
                 # Instructions passed to a specific run are already the caller's to change, and
-                # aren't part of the agent's own configured instructions.
+                # aren't part of the agent's own configured instructions, so a named part is keyed
+                # beneath the run (`'run:<name>'`) rather than the agent.
                 instructions.extend(
-                    _instructions.sourced_instruction(instruction, None)
+                    _instructions.sourced_instruction(instruction, _run_instruction_source(instruction))
                     for instruction in _instructions.normalize_instructions(additional_instructions)
                 )
 
@@ -3952,7 +4192,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # KEEP IN SYNC with the graph's `_get_instructions` / `ModelRequestNode`.
             instruction_parts = await _instructions.resolve_sourced_instructions(sourced_instructions, run_context)
             instruction_parts.extend(await collect_toolset_instructions(tool_manager.toolset, run_context))
-            resolved_instructions = _messages.InstructionPart.join(_messages.InstructionPart.sorted(instruction_parts))
+            if appended := _instructions.explicitly_appended_blocks(sourced_instructions, instruction_parts):
+                warnings.warn(
+                    "`on_change='append'` is not supported by realtime sessions, so instruction blocks "
+                    f'{", ".join(map(repr, appended))} are sent as session instructions and their changes are not '
+                    'appended.',
+                    UserWarning,
+                    stacklevel=2,
+                )
+            # Nothing appends here, so an empty append-mode block has no withdrawal to record.
+            instruction_parts = _messages.InstructionPart.sorted([part for part in instruction_parts if part.content])
+            resolved_instructions = _messages.InstructionPart.join(instruction_parts)
             request_messages = [
                 *(message_history or ()),
                 _messages.ModelRequest(parts=[], instructions=resolved_instructions or None),
@@ -3960,6 +4210,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_request_parameters = models.ModelRequestParameters(
                 function_tools=tool_defs,
                 native_tools=native_tools,
+                # Set even when empty: unset parts make providers read `ModelRequest.instructions` from
+                # `message_history`, which a client may have supplied.
+                instruction_parts=instruction_parts,
+                _telemetry_mcp_url_ids=mcp_telemetry_url_ids(run_context.capabilities.values(), tool_manager.toolset),
+                _telemetry_mcp_url_tool_names=mcp_telemetry_url_tool_names(tool_manager.tools),
+                _telemetry_mcp_url_toolset_ids=mcp_telemetry_url_toolset_ids(tool_manager.toolset),
             )
             # Resolve `include_return_schema` exactly as `Model.prepare_request` does: return schemas
             # are cleared on tools that didn't opt in, kept as-is for a model that renders them
@@ -4878,7 +5134,7 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
     assembly, which also covers capabilities supplied per-run or returned by `for_run` and so can't
     be checked at construction.
     """
-    owners: dict[str, type[AbstractCapability[Any]]] = {}
+    owners: dict[str, AbstractCapability[Any]] = {}
     for cap in capabilities:
         if cap.defer_loading is True and cap._has_get_workspace:  # pyright: ignore[reportPrivateUsage]
             raise exceptions.UserError(
@@ -4898,10 +5154,10 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
         # one order through and reject the other.
         owner = owners.get(cap.id)
         if owner is not None:
-            _reject_class_crossing_id(cap.id, {owner, type(cap)})
+            _reject_class_crossing_id(cap.id, {type(owner), type(cap)})
             if not _declares_default_id(type(cap)):
-                raise exceptions.UserError(_repeated_id_message(cap.id))
-        owners.setdefault(cap.id, type(cap))
+                raise exceptions.UserError(_repeated_id_message(cap.id, [owner, cap]))
+        owners.setdefault(cap.id, cap)
     return set(owners)
 
 

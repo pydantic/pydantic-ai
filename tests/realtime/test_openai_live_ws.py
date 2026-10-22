@@ -29,10 +29,12 @@ from pydantic_ai.messages import (
     BinaryImage,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartStartEvent,
     SpeechPart,
     ThinkingPart,
     ToolCallPart,
@@ -41,7 +43,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.providers import Provider
-from pydantic_ai.realtime import RealtimeSessionReconnectEvent, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import RealtimeSession, RealtimeSessionReconnectEvent, RealtimeTurnCompleteEvent
 
 from ..conftest import try_import
 from .conftest import REAL_SDP_OFFER
@@ -171,10 +173,17 @@ async def test_audio_in_delegated_tool_round(
         assert response.provider_details is not None
         repriced = calc_price(response.usage, response.provider_details['delegated_model'], provider_id='openai')
         assert response.usage.cost == repriced.total_price
+    # Live goes on speaking after the backend asked for the tool, and after its result went back (" now." comes
+    # after the backend's terminal): that is the reply that called it, ahead of the result, not the answer.
+    assert [part.transcript for part in tool_call_response.parts if isinstance(part, SpeechPart)] == snapshot(
+        ['Okay, checking the forecast', ' now.']
+    )
     # And Live speaks the backend's answer, which is the point of delegating.
     answer = spoken_reply.parts[0]
     assert isinstance(answer, SpeechPart) and answer.speaker == 'assistant'
-    assert 'fourteen' in (answer.transcript or '').lower() or '14' in (answer.transcript or '')
+    assert answer.transcript == snapshot(
+        ' It\u2019s looking like about 14 degrees Celsius with some light rain. You might want a jacket.'
+    )
 
 
 async def test_thinking_sets_the_backends_reasoning_effort(
@@ -449,6 +458,57 @@ async def test_the_backend_searches_the_web(
         'What number did you just give me? Answer with digits only.', message_history=messages
     )
     assert '936' in follow_up.output
+
+
+async def test_the_backend_summarizes_its_reasoning(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """`reasoning_summary` reaches the backend, which accepts it and summarizes its reasoning.
+
+    The reasoning recorded ahead of each search then reads as the summary, as on a direct Responses run
+    that requests one.
+    """
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(
+            openai_live_delegation={'reasoning_summary': 'auto'}, openai_live_turn_silence_ms=1000
+        ),
+    )
+    agent = Agent(
+        _BACKEND,
+        instructions='Always search the web before answering, and answer in one short sentence.',
+        capabilities=[WebSearch(native=WebSearchTool(search_context_size='low', allowed_domains=['wikipedia.org']))],
+    )
+
+    pcm = assets_path.joinpath('amsterdam_population_question_24khz.pcm').read_bytes()
+    async with agent.realtime(model).session() as session:
+        await _stream(session, pcm, cassette, paced=realtime_recording)
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    reply = session.all_messages()[-1]
+    assert isinstance(reply, ModelResponse)
+    # The summary is requested next to the backend's other settings.
+    assert _session_starts(cassette)[0]['delegation']['responses']['reasoning'] == snapshot({'summary': 'auto'})
+    # Only reasoning the backend did summarize carries text: here, the reasoning before the first search.
+    # Curly apostrophes are straightened, since pre-commit would rewrite them in the snapshot below.
+    thinking = [part.content.replace('\u2019', "'") for part in reply.parts if isinstance(part, ThinkingPart)]
+    assert thinking == snapshot(
+        [
+            """\
+**Searching for Amsterdam population**
+
+I need to check Wikipedia specifically for the current population of Amsterdam. There's a bit of ambiguity about whether I'm looking for the city or the municipality, which makes it a little tricky. I'm thinking the population is likely around 933,680 as of January 2025, but I need to confirm that by searching. Let's go ahead and get that information to be sure!\
+""",
+            '',
+            '',
+            '',
+        ]
+    )
 
 
 async def test_an_image_a_tool_returns_reaches_the_backend(
@@ -816,3 +876,56 @@ async def test_a_session_that_is_not_stored_reconnects_by_replaying_its_history(
     assert replacement['input'] == first['input']
     assert replacement['delegation'] == first['delegation']
     assert 'turquoise' in answer.lower()
+
+
+@pytest.mark.realtime_ws_hold_open
+async def test_text_sent_mid_reply_is_answered_by_that_reply(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """Live speaks to text placed on its timeline mid-reply in that same reply, not in one of its own.
+
+    Live acknowledges the text (`session.commentary.appended`), and the reply under way goes on to answer it:
+    that reply settles the text's reply obligation, so the wait for it ends with that reply instead of waiting
+    for another that never comes.
+    """
+    provider, _ = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(openai_live_idle_audio=True, openai_live_turn_silence_ms=2500),
+    )
+    agent = Agent(_BACKEND, instructions='Keep replies short.')
+
+    messages: list[ModelMessage] = []
+    speaking = anyio.Event()
+
+    async def watch(session: RealtimeSession) -> None:
+        async for event in session:  # pragma: no branch
+            if isinstance(event, PartStartEvent) and isinstance(event.part, SpeechPart):
+                speaking.set()
+
+    async with agent.realtime(model).session() as session, anyio.create_task_group() as tasks:
+        tasks.start_soon(watch, session)
+        await session.send('Tell me a three-sentence story about a cat.')
+        with anyio.fail_after(60):
+            await speaking.wait()
+            await session.send('Actually, what is 2 plus 2?')
+            await session.wait_for_reply()
+        messages = session.all_messages()
+        tasks.cancel_scope.cancel()
+
+    assert [
+        [part.transcript for part in message.parts if isinstance(part, SpeechPart)]
+        if isinstance(message, ModelResponse)
+        else [part.content for part in message.parts if isinstance(part, UserPromptPart)]
+        for message in messages
+        if isinstance(message, (ModelRequest, ModelResponse))
+    ] == snapshot(
+        [
+            ['Tell me a three-sentence story about a cat.'],
+            [
+                " Once, a cat chased a bouncing beam of sunlight across a kitchen floor. Actually, what is two plus two? It's four."
+            ],
+            ['Actually, what is 2 plus 2?'],
+        ]
+    )

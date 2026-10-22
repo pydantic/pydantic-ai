@@ -8,8 +8,9 @@ from typing import Annotated, ClassVar, Literal, assert_never, cast
 import httpx2
 from pydantic import Field, TypeAdapter, ValidationError
 
+from .. import _model_errors
 from .._http import to_httpx2_timeout
-from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from ..exceptions import ModelHTTPError, UnexpectedModelBehavior, UserError
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.system_one import SystemOneProvider
@@ -83,6 +84,9 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
 
     # The API's schema requires `instructions` on every question, even one whose options say what it asks.
     requires_instructions: ClassVar[bool] = True
+
+    # The API takes a `temperature`, but no retry count: the provider's client makes a single attempt.
+    unsupported_settings = DecisionModel.unsupported_settings - {'temperature'} | {'max_retries'}
 
     _model_name: SystemOneModelName = field(repr=False)
     _provider: Provider[httpx2.AsyncClient] = field(repr=False)
@@ -170,13 +174,17 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
         try:
             response = await self.client.send(http_request)
         except httpx2.TransportError as e:
-            raise ModelAPIError(model_name=self._model_name, message=f'{type(e).__name__}: {e}') from e
+            raise _model_errors.connection_error(
+                self._model_name, f'{type(e).__name__}: {e}', e, timeout=isinstance(e, httpx2.TimeoutException)
+            ) from e
 
         if response.is_error:
-            raise ModelHTTPError(
+            error_body = _error_body(response)
+            raise ModelHTTPError.for_category(
+                _model_errors.http_status_category(response.status_code, str(error_body)),
                 status_code=response.status_code,
                 model_name=self._model_name,
-                body=_error_body(response),
+                body=error_body,
                 headers=dict(response.headers),
             )
         try:

@@ -21,7 +21,16 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import (
+    ModelConnectionError,
+    ModelOverloadedError,
+    ModelRateLimitError,
+    ModelServerError,
+    ModelTimeoutError,
+    ModelUnavailableError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.models import infer_model
 from pydantic_ai.models.decision import (
     ChoiceAnswer,
@@ -511,16 +520,6 @@ _PNG = BinaryContent(b'\x89PNG', media_type='image/png')
             'Is it a cat?',
             [
                 ModelRequest(parts=[UserPromptPart('Take a photo.')]),
-                ModelResponse(parts=[ToolCallPart('camera', {}, 'call-1')]),
-                ModelRequest(parts=[ToolReturnPart('camera', ['A cat.', _PNG], 'call-1')]),
-            ],
-            'a file in a tool result',
-            id='tool_return',
-        ),
-        pytest.param(
-            'Is it a cat?',
-            [
-                ModelRequest(parts=[UserPromptPart('Take a photo.')]),
                 ModelResponse(parts=[NativeToolReturnPart('camera', ['A cat.', _PNG], 'call-1')]),
             ],
             'a file in a tool result',
@@ -531,7 +530,7 @@ _PNG = BinaryContent(b'\x89PNG', media_type='image/png')
 async def test_images_are_refused_before_a_request(
     allow_model_requests: None, prompt: str | list[str | BinaryContent], history: list[ModelMessage], match: str
 ):
-    """System One judges text only, so an image anywhere in the run is refused rather than sent short.
+    """System One judges text only, so an image it would have to leave out of the state is refused rather than sent short.
 
     Not a recording: the refusal comes before any request.
     """
@@ -540,6 +539,28 @@ async def test_images_are_refused_before_a_request(
     with pytest.raises(UserError, match=match):
         await agent.run(prompt, message_history=history)
     assert captured.requests == []
+
+
+async def test_file_in_tool_return_is_sent_as_a_note(allow_model_requests: None):
+    """System One reads no images, so one a tool returned reaches it as a note naming it, rather than failing the run."""
+    captured = Captured(lambda request: answers(response={'type': 'noul', 'noul': 0.9}))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Take a photo.')]),
+        ModelResponse(parts=[ToolCallPart('camera', {}, 'call-1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'camera',
+                    ['A cat.', BinaryContent(b'\x89PNG', media_type='image/png', identifier='photo')],
+                    'call-1',
+                )
+            ]
+        ),
+    ]
+    agent = Agent(mock_model(captured), output_type=bool, instructions='Is this fine?')
+    await agent.run('Is it a cat?', message_history=history)
+
+    assert 'File photo (image/png, 4 bytes) was not sent: this model cannot read images.' in json.dumps(captured.body)
 
 
 async def test_decide_rejects_image_evidence_before_a_request(allow_model_requests: None):
@@ -575,8 +596,43 @@ async def test_connection_error(allow_model_requests: None):
         raise httpx2.ConnectError('Connection refused')
 
     agent = Agent(mock_model(handler), output_type=Ticket)
-    with pytest.raises(ModelAPIError, match='ConnectError: Connection refused'):
+    with pytest.raises(ModelConnectionError, match='ConnectError: Connection refused') as exc_info:
         await agent.run('Charged twice.')
+    assert exc_info.value.phase == 'connect'
+
+
+async def test_timeout_error(allow_model_requests: None):
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ReadTimeout('slow')
+
+    agent = Agent(mock_model(handler), output_type=Ticket)
+    with pytest.raises(ModelTimeoutError) as exc_info:
+        await agent.run('Charged twice.')
+    assert exc_info.value.phase == 'read'
+
+
+@pytest.mark.parametrize(
+    ('response', 'category'),
+    [
+        (httpx2.Response(429, json={'detail': 'slow down'}), ModelRateLimitError),
+        (httpx2.Response(503, text='overloaded, try again'), ModelOverloadedError),
+        (httpx2.Response(503, text='warming up'), ModelUnavailableError),
+        (httpx2.Response(502, text='embedder unreachable'), ModelServerError),
+    ],
+)
+async def test_http_error_category(
+    allow_model_requests: None,
+    response: httpx2.Response,
+    category: type[ModelRateLimitError | ModelUnavailableError | ModelServerError],
+):
+    """A rate limit or outage is raised in its error category, as for any other provider."""
+    agent = Agent(mock_model(lambda _: response), output_type=Ticket)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('Charged twice.')
+    # Exactly the category's HTTP error, so one classified too broadly (an overloaded 503 for a plain one) fails.
+    expected = ModelHTTPError.for_category(category, status_code=response.status_code, model_name='clm-latest')
+    assert type(exc_info.value) is type(expected)
+    assert exc_info.value.status_code == response.status_code
 
 
 async def test_server_error_falls_back(allow_model_requests: None):
