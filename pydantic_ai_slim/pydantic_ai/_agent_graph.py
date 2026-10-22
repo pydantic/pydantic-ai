@@ -92,6 +92,7 @@ from .messages import (
 # `_ContinuationStreamedResponse` is an intentionally-exported member of the private
 # `_continuation` module (see its `__all__`); the leading underscore is a module-privacy
 # marker, not a within-package one, so the private-usage check doesn't apply here.
+from .models._batch_model import check_collectable
 from .models._continuation import (
     MAX_BACKGROUND_POLLS,
     MAX_GENERATION_CONTINUATIONS,
@@ -1136,7 +1137,7 @@ def _keep_default_output_mode(
 
 
 def _split_resume_seed(
-    messages: Sequence[_messages.ModelMessage],
+    messages: Sequence[_messages.ModelMessage], model: models.Model
 ) -> tuple[list[_messages.ModelMessage], _messages.ModelResponse | None]:
     """Split a trailing suspended `ModelResponse` off `messages` as the continuation seed.
 
@@ -1144,9 +1145,10 @@ def _split_resume_seed(
     encoding of a paused turn to resume: the continuation loop echoes that response back to
     the provider itself, so it must not be part of the base history handed to the model.
     A normal request ends in a `ModelRequest`, so the seed is `None` and the messages pass
-    through untouched.
+    through untouched. A seed waiting on a batch request that `model` doesn't collect raises.
     """
     if (seed := resumed_response(messages)) is not None:
+        check_collectable(model, seed)
         # Resuming is a new request, so the deadline a `FallbackModel` carried on the suspended response is dropped.
         return list(messages[:-1]), without_carried_deadline(seed)
     return list(messages), None
@@ -1256,7 +1258,7 @@ async def model_request(  # noqa: C901
     Returns:
         The (merged) model response.
     """
-    base_messages, seed = _split_resume_seed(request_context.messages)
+    base_messages, seed = _split_resume_seed(request_context.messages, model)
 
     # Two independent ceilings distinguished by the generic `merge_mode` signal, mirroring the
     # streamed composite in `_continuation`: every *fresh-generation* re-suspension (accumulate
@@ -1402,7 +1404,7 @@ async def model_request_stream(
     Yields:
         A `StreamedResponse` to iterate inside the durable boundary.
     """
-    base_messages, seed = _split_resume_seed(request_context.messages)
+    base_messages, seed = _split_resume_seed(request_context.messages, model)
     with set_current_run_context(run_context):
         sr = _ContinuationStreamedResponse(
             model_request_parameters=request_context.model_request_parameters,

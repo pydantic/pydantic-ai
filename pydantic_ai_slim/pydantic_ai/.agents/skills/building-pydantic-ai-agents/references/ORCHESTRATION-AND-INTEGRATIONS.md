@@ -96,9 +96,12 @@ a plain `agent.run(...)` and under every durable engine (put the capability on t
 from its message history picks up the same batch. Batching is non-streaming, and each tool turn or output retry is another batch round trip. For a job that submits and
 exits, add `PendingModelResponse` to `output_type`: the run ends with it once the request is submitted, and
 running the agent again with `result.all_messages()` checks the batch once and continues or ends pending
-again. The same works for OpenAI background mode. Don't write resubmission logic either: requests a batch didn't
+again; the collecting agent needs `BatchModelRequests` too, or resuming raises `UserError`. A submit-only script
+can lower `max_wait` (default 30 seconds) so it doesn't wait for more requests to join the batch. The same works for
+OpenAI background mode. Don't write resubmission logic either: requests a batch didn't
 run (expired or missing, not canceled) or that failed with a rate limit or server error are submitted again
-automatically, up to `max_resubmissions` (default 2), and a history whose batch the provider no longer has raises
+automatically, up to `max_resubmissions` (default 2), a check that fails transiently is retried at the next poll,
+and a history whose batch the provider no longer has raises
 `SuspendedResponseExpired`.
 
 Capability hooks that must behave differently in deterministic workflow code check `ctx.in_durable_context`: `True` inside the durable workflow or flow, `False` in Temporal activities and DBOS steps (where tools run) and outside durable execution. Prefect tasks inherit their flow's context, so it is `True` there. Don't detect the engine by module or class name.

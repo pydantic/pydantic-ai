@@ -38,7 +38,7 @@ from typing_extensions import TypedDict
 from .._instrumentation import model_attributes, open_request_policy
 from .._run_context import RunContext
 from .._utils import cancel_and_drain
-from ..exceptions import ModelAPIError, ModelHTTPError, SuspendedResponseExpired, UserError
+from ..exceptions import ModelAPIError, ModelConnectionError, ModelHTTPError, SuspendedResponseExpired, UserError
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
 from . import Model, ModelRequestParameters, StreamedResponse
@@ -60,6 +60,8 @@ from .wrapper import WrapperModel
 _TICKET_KEY = 'batch'
 _RESULTS_CACHE_SIZE = 32
 _SUBMITTED_BATCHES_SIZE = 1024
+_MAX_FAILED_CHECKS = 3
+"""How many checks of a batch in a row may fail in a way a live request is retried on before the request raises."""
 # Used directly rather than through the global propagator, which can be configured to propagate more, or to warn.
 _TRACE_CONTEXT = TraceContextTextMapPropagator()
 _EXITED_MESSAGE = '`BatchModelRequests` exited while the request was waiting for its batch.'
@@ -75,6 +77,8 @@ class _Ticket(TypedDict):
     custom_id: str
     batch: Batch
     polls: int
+    failed_checks: NotRequired[int]
+    """How many checks in a row failed in a way a live request is retried on, which bounds further checks."""
     resubmissions: NotRequired[int]
     """How many times the request was submitted again after a transient failure, which bounds further resubmissions."""
     continued_response_id: NotRequired[str]
@@ -107,6 +111,28 @@ def _pending_ticket(message: ModelMessage | None) -> _Ticket | None:
     if message.provider_response_id != _response_id(ticket['batch'].id, ticket['custom_id']):
         return None
     return ticket
+
+
+def check_collectable(model: Model, response: ModelResponse) -> None:
+    """Raise if `response` waits on a batch request that `model` won't collect, as it isn't batched.
+
+    The provider's model would otherwise send the history ending in it as a new, full-price request, and the batch's
+    result, which is billed too, would never be read.
+    """
+    if (ticket := _pending_ticket(response)) is not None and model.continuation_delay(response) is None:
+        raise UserError(
+            f'The message history ends in a request waiting for its result from batch {ticket["batch"].id!r}, '
+            'which only `BatchModelRequests` collects: add the capability to the agent or run that resumes it.'
+        )
+
+
+def _checked_again(pending: ModelResponse, ticket: _Ticket) -> ModelResponse:
+    """`pending` with the `ticket` of a check that found its batch still running, or couldn't tell.
+
+    Unchanged apart from the ticket: the same `provider_response_id` makes the graph replace the pending response with
+    this one, so content the response accumulated before the batch is kept.
+    """
+    return replace(pending, provider_details={**(pending.provider_details or {}), **_ticket_details(ticket)})
 
 
 def _span_context(trace_context: dict[str, str] | None) -> SpanContext | None:
@@ -672,13 +698,22 @@ class BatchedModel(WrapperModel):
                     ticket, pending, history, model_settings, model_request_parameters, requester
                 )
             raise
+        except ModelAPIError as error:
+            # A check that failed the way a live request is retried on, like a dropped connection or a server error,
+            # says nothing about the batch, so it's checked again at the next poll.
+            failed_checks = ticket.get('failed_checks', 0) + 1
+            if failed_checks > _MAX_FAILED_CHECKS or not (transient(error) or isinstance(error, ModelConnectionError)):
+                raise
+            checked = ticket.copy()
+            checked['polls'] += 1
+            checked['failed_checks'] = failed_checks
+            return _checked_again(pending, checked)
         if results is None:
-            # Unchanged apart from the poll count: the same `provider_response_id` makes the graph replace the pending
-            # response with this one, so content the response accumulated before the batch is kept.
             checked = ticket.copy()
             checked['batch'] = batch
             checked['polls'] += 1
-            return replace(pending, provider_details={**(pending.provider_details or {}), **_ticket_details(checked)})
+            checked.pop('failed_checks', None)
+            return _checked_again(pending, checked)
         if (result := results.get(ticket['custom_id'])) is None and (
             unlisted := self.wrapped._batch_unlisted_status(batch)
         ) is not None:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -30,12 +30,14 @@ from pydantic_ai.capabilities import BatchModelRequests, SelectModel
 from pydantic_ai.direct import model_request_batch
 from pydantic_ai.exceptions import (
     ModelAPIError,
+    ModelConnectionError,
     ModelContextWindowExceededError,
     ModelHTTPError,
     ModelOverloadedError,
     ModelQuotaExceededError,
     ModelRateLimitError,
     ModelServerError,
+    ModelTimeoutError,
     ModelUnavailableError,
     SuspendedResponseExpired,
     UserError,
@@ -290,13 +292,97 @@ async def test_a_batch_the_provider_no_longer_has_is_expired(method: str) -> Non
     assert len(wrapped.created) == 1
 
 
-async def test_other_errors_checking_a_batch_reach_the_run() -> None:
-    class FailingStatusModel(SlowBatchTestModel):
-        async def batch_status(self, batch: Batch) -> Batch:
-            raise ModelHTTPError(status_code=500, model_name='test', body={'error': 'boom'})
+class FlakyCheckModel(SlowBatchTestModel):
+    """Fails the status checks and results downloads of its batches with `errors`, in order, before answering them."""
 
-    with pytest.raises(ModelHTTPError, match='status_code: 500'):
-        await Agent(FailingStatusModel(), capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)]).run('Hello')
+    def __init__(self, *errors: ModelAPIError, method: str = 'batch_status', pending_checks: int = 0) -> None:
+        super().__init__(pending_checks=pending_checks)
+        self.errors = list(errors)
+        self.method = method
+        self.failed = 0
+
+    def _fail(self, method: str) -> None:
+        if method == self.method and self.errors:
+            self.failed += 1
+            raise self.errors.pop(0)
+
+    async def batch_status(self, batch: Batch) -> Batch:
+        self._fail('batch_status')
+        return await super().batch_status(batch)
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        self._fail('batch_results')
+        return await super().batch_results(batch)
+
+
+def _server_error() -> ModelHTTPError:
+    return ModelHTTPError(status_code=502, model_name='test', body='<html>Bad Gateway</html>')
+
+
+@pytest.mark.parametrize('method', ['batch_status', 'batch_results'])
+@pytest.mark.parametrize(
+    'make_error',
+    [
+        pytest.param(_server_error, id='server-error'),
+        pytest.param(lambda: ModelHTTPError(status_code=429, model_name='test', body=None), id='rate-limit'),
+        pytest.param(lambda: _categorized(ModelOverloadedError, 529), id='overloaded-category'),
+        pytest.param(lambda: ModelConnectionError('test', 'Connection reset'), id='connection'),
+        pytest.param(lambda: ModelTimeoutError('test', 'Read timed out'), id='timeout'),
+    ],
+)
+async def test_a_check_that_fails_transiently_is_tried_again_at_the_next_poll(
+    method: str, make_error: Callable[[], ModelAPIError]
+) -> None:
+    """A check that fails the way a live request is retried on says nothing about the batch, which keeps the request."""
+    wrapped = FlakyCheckModel(make_error(), make_error(), method=method)
+    result = await Agent(wrapped, capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)]).run('Hello')
+
+    assert result.output == 'success (no tool calls)'
+    assert wrapped.failed == 2
+    assert len(wrapped.created) == 1
+
+
+async def test_a_pending_response_counts_failed_checks_until_a_check_succeeds() -> None:
+    wrapped = FlakyCheckModel(_server_error(), _server_error(), pending_checks=3)
+    agent = Agent(
+        wrapped, output_type=[str, PendingModelResponse], capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)]
+    )
+    stored = (await agent.run('Hello')).all_messages()
+
+    failed_checks: list[int | None] = []
+    for _ in range(3):
+        stored = (await agent.run(message_history=stored)).all_messages()
+        response = stored[-1]
+        assert isinstance(response, ModelResponse) and response.provider_details is not None
+        failed_checks.append(response.provider_details['batch'].get('failed_checks'))
+    assert failed_checks == [1, 2, None]
+    assert len(wrapped.created) == 1
+
+
+async def test_checks_that_keep_failing_reach_the_run() -> None:
+    wrapped = FlakyCheckModel(*(_server_error() for _ in range(10)))
+
+    with pytest.raises(ModelHTTPError, match='status_code: 502'):
+        await Agent(wrapped, capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)]).run('Hello')
+    assert wrapped.failed == 4
+    assert len(wrapped.created) == 1
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        pytest.param(ModelHTTPError(status_code=401, model_name='test', body={'error': 'denied'}), id='unauthorized'),
+        pytest.param(_categorized(ModelQuotaExceededError, 429), id='quota'),
+        pytest.param(ModelAPIError('test', 'Unreadable status'), id='uncategorized'),
+    ],
+)
+async def test_a_check_that_would_fail_again_reaches_the_run(error: ModelAPIError) -> None:
+    wrapped = FlakyCheckModel(error)
+
+    with pytest.raises(type(error)) as exc_info:
+        await Agent(wrapped, capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)]).run('Hello')
+    assert exc_info.value is error
+    assert wrapped.failed == 1
 
 
 async def test_a_history_waiting_on_another_providers_batch_is_rejected() -> None:
@@ -317,6 +403,35 @@ async def test_a_history_waiting_on_another_providers_batch_is_rejected() -> Non
     agent = Agent(TestModel(), capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)])
     with pytest.raises(UserError, match="waits on a batch submitted to 'anthropic'"):
         await agent.run(message_history=[*pending[:-1], other])
+
+
+@pytest.mark.parametrize('stream', [False, True], ids=['run', 'run_stream'])
+async def test_resuming_a_pending_batch_request_without_batching_raises(stream: bool) -> None:
+    """The model would otherwise send the history as a new, full-price request, and the batch's result would be lost."""
+    pending = (
+        await Agent(
+            SlowBatchTestModel(pending_checks=1),
+            output_type=[str, PendingModelResponse],
+            capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)],
+        ).run('Hello')
+    ).all_messages()
+    response = pending[-1]
+    assert isinstance(response, ModelResponse) and response.provider_details is not None
+    batch_id = response.provider_details['batch']['batch']['id']
+
+    unbatched = TestModel()
+    agent = Agent(unbatched)
+    with pytest.raises(UserError) as exc_info:
+        if stream:
+            async with agent.run_stream(message_history=pending):
+                pass  # pragma: no cover
+        else:
+            await agent.run(message_history=pending)
+    assert str(exc_info.value) == (
+        f'The message history ends in a request waiting for its result from batch {batch_id!r}, which only '
+        '`BatchModelRequests` collects: add the capability to the agent or run that resumes it.'
+    )
+    assert unbatched.last_model_request_parameters is None
 
 
 async def test_checks_of_a_batch_within_the_poll_interval_share_its_status() -> None:
