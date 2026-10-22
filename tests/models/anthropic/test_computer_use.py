@@ -459,7 +459,7 @@ async def test_a_responses_member_calls_are_one_call_streamed_or_not(allow_model
 async def test_a_streamed_member_cut_off_mid_input_keeps_only_what_parsed(allow_model_requests: None) -> None:
     events = _stream(_tool_use('toolu_1', 'type', {'text': 'hello'}))
     (delta,) = [event for event in events if isinstance(event, BetaRawContentBlockDeltaEvent)]
-    delta.delta = BetaInputJSONDelta(type='input_json_delta', partial_json='{"text": "hel')
+    delta.delta = BetaInputJSONDelta(type='input_json_delta', partial_json='{"text": "unfinished')
     model = AnthropicModel(
         'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(events))
     )
@@ -468,7 +468,7 @@ async def test_a_streamed_member_cut_off_mid_input_keeps_only_what_parsed(allow_
         async for _ in stream:
             pass
 
-    # The half-typed text is dropped, so the tool refuses the empty `type` instead of typing `hel`.
+    # The cut-off text is dropped, so the tool refuses the empty `type` instead of typing part of it.
     (call,) = [part for part in stream.get().parts if isinstance(part, ToolCallPart)]
     assert call.args_as_dict() == {'actions': [{'type': 'type', 'text': ''}]}
 
