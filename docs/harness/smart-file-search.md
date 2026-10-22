@@ -144,7 +144,7 @@ have tuned `threshold` against it.
 ## Usage and limits
 
 Each judged snippet counts as one request in the run's [usage](../agent.md#usage-limits), and the judge's tokens
-are added to it, so `result.usage` and the run's `UsageLimits` cover the search. So that one search cannot use up
+are added to it, so `result.usage` and the run's [`UsageLimits`][pydantic_ai.usage.UsageLimits] cover the search. So that one search cannot use up
 the run, it judges at most half of the requests the run's `request_limit` has left, after one kept for the model's
 next turn. The shortlist's best-ranked snippets are judged first, and a warning says how many were left unjudged.
 Under the default `request_limit` of 50, a run's first search judges 24 snippets. Raise the limit for full
