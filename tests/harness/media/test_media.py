@@ -306,6 +306,27 @@ class TestSqliteMediaStore:
         finally:
             connection.close()
 
+    async def test_first_call_inside_a_caller_transaction_commits_none_of_it(self, tmp_path: Path) -> None:
+        """Creating the table on the first call leaves the caller's pending work to the caller."""
+        database = tmp_path / 'media.db'
+        connection = sqlite3.connect(database, check_same_thread=False)
+        try:
+            connection.execute('CREATE TABLE app (x)')
+            connection.commit()
+            connection.execute('INSERT INTO app VALUES (1)')
+            store = SqliteMediaStore(connection=connection)
+            # The first call creates the table, inside the caller's transaction.
+            assert await store.exists(media_uri_for(b'first call')) is False
+            uri = await store.put(b'first call')
+            assert connection.in_transaction
+            connection.rollback()
+            assert connection.execute('SELECT count(*) FROM app').fetchone() == (0,)
+            # The rollback took the media table with it, and the store creates it again.
+            assert await store.exists(uri) is False
+            assert await store.get(await store.put(b'again')) == b'again'
+        finally:
+            connection.close()
+
     async def test_dedup_via_insert_or_ignore(self, tmp_path: Path) -> None:
         store = SqliteMediaStore(database=tmp_path / 'm.db')
         uri = ''
