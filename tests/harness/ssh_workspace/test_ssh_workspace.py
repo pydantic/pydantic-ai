@@ -177,14 +177,14 @@ async def test_resolving_the_working_dir_counts_against_the_first_timeout(
     tools: FakeRemoteTools, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The stop after the timeout reaches a host that stalls too (for 30 seconds), so it gives up
-    # after its grace period, shortened here from 2 seconds.
+    # after its grace period, shortened here from 2 seconds. The bound only has to tell that from the stall.
     monkeypatch.setattr(ssh_backend, '_STOP_TIMEOUT', 0.5)
     started = anyio.current_time()
 
     with pytest.raises(WorkspaceTimeoutError):
         await SSHWorkspaceBackend('slow').run(['true'], timeout=0.5)
 
-    assert anyio.current_time() - started < 2.5
+    assert anyio.current_time() - started < 10
 
 
 async def test_stderr_from_a_background_child_after_the_command_is_kept(tools: FakeRemoteTools) -> None:
@@ -232,7 +232,7 @@ async def test_an_empty_argv_is_rejected(tools: FakeRemoteTools) -> None:
 
 
 async def test_a_timeout_is_raised_about_on_time(tools: FakeRemoteTools) -> None:
-    """Stopping the remote command costs one round trip, not the `SIGKILL` grace period."""
+    """Stopping the remote command costs one round trip, not a 2-second grace period."""
     backend = SSHWorkspaceBackend('box')
     await backend.working_dir()
     started = anyio.current_time()
@@ -240,8 +240,9 @@ async def test_a_timeout_is_raised_about_on_time(tools: FakeRemoteTools) -> None
     with pytest.raises(WorkspaceTimeoutError):
         await backend.run(['sleep', '30'], timeout=0.5)
 
-    # About 0.6s here; waiting out the grace period would make it at least 1.5s.
-    assert anyio.current_time() - started < 1.45
+    # About 0.6s here. The fake runs the command locally, so the timeout's kill already ends it and the stop finds
+    # nothing to kill. Waiting out a 2-second grace (the stop's timeout, the reap, a held pipe) takes 2.5s or more.
+    assert anyio.current_time() - started < 2.4
 
 
 async def test_the_capability_attaches_by_ref_only_to_its_own_host(tools: FakeRemoteTools, tmp_path: Path) -> None:
