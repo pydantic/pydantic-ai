@@ -4758,7 +4758,7 @@ def test_prefect_durability_without_handler_does_not_wrap_event_stream() -> None
     assert PrefectDurability().has_wrap_run_event_stream is False
 
 
-async def test_prefect_durability_runtime_handler_receives_buffered_events() -> None:
+async def test_prefect_durability_runtime_handler_receives_replayed_events() -> None:
     """A per-run `event_stream_handler` passed to `agent.run()` inside a flow receives events.
 
     The task's live deltas stay out of the flow: the per-run handler sees each part once, complete.
@@ -4937,8 +4937,8 @@ async def test_prefect_cancellation_rejects_enqueue() -> None:
 async def test_prefect_durability_streaming_continuation_chain_in_flow() -> None:
     """A streamed suspended → complete chain is stitched across per-segment tasks.
 
-        `ProcessEventStream` receives each captured segment in flow code, and the
-    final response merges both segments' text with usage summed once.
+        `ProcessEventStream` receives each segment's final response in flow code, one event per
+    part, and the final response merges both segments' text with usage summed once.
     """
     model = ScriptedContinuationModel(
         segments=[

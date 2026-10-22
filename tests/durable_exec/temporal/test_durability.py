@@ -2219,7 +2219,7 @@ async def test_durability_run_stream_in_workflow(client: Client) -> None:
 
     The model streams inside the request-stream activity — the capability's handler sees the model
     events with `activity.in_activity()` true — and the workflow-side `StreamedRunResult` is fed by
-    the events the activity captured off the live stream, so it stays deterministic across replays.
+    the activity's final response, one event per part, so it stays deterministic across replays.
     The single text delta is not a durability artifact: `run_stream()` consumes events up to the
     `FinalResultEvent` before yielding, so `stream_text(delta=True)` returns the same one chunk for
     this model outside a workflow.
@@ -5318,8 +5318,8 @@ def _text_part_indices(events: list[AgentStreamEvent]) -> list[tuple[str, int]]:
 async def test_durability_streaming_continuation_chain_in_workflow(client: Client):
     """A streamed suspended → complete chain is stitched across per-segment activities.
 
-    `ProcessEventStream` receives each captured segment in workflow code, and the
-    final response merges both segments' text with usage summed once.
+    `ProcessEventStream` receives each segment's final response in workflow code, one event per
+    part, and the final response merges both segments' text with usage summed once.
     """
     _continuation_stream_model.reset(
         segments=[
