@@ -99,8 +99,17 @@ def _run_step(
     labels: list[str],
     pages: list[list[ChangedFile]],
     overrides: dict[str, str] | None = None,
+    attributes: dict[str, str] | None = None,
 ) -> StepResult:
     tmp_path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(['git', 'init', '--quiet', str(tmp_path)], check=True)
+    (tmp_path / '.gitattributes').write_text(
+        (WORKFLOW.parents[2] / '.gitattributes').read_text(encoding='utf-8'), encoding='utf-8'
+    )
+    for filename, content in (attributes or {}).items():
+        path = tmp_path / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding='utf-8')
     gh = tmp_path / 'gh'
     gh.write_text(FAKE_GH, encoding='utf-8')
     gh.chmod(0o755)
@@ -112,6 +121,7 @@ def _run_step(
         ['bash', '-e', '-o', 'pipefail', '-c', script],
         capture_output=True,
         text=True,
+        cwd=tmp_path,
         env={
             **os.environ,
             'PATH': f'{tmp_path}{os.pathsep}{os.environ["PATH"]}',
@@ -133,7 +143,7 @@ def _run_step(
 def script() -> str:
     """Load the candidate run block without executing privileged workflow jobs."""
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding='utf-8'))
-    return workflow['jobs']['size-label']['steps'][0]['run']
+    return next(step['run'] for step in workflow['jobs']['size-label']['steps'] if 'run' in step)
 
 
 @pytest.mark.parametrize(
@@ -246,6 +256,7 @@ def test_stale_event_labels(tmp_path: Path, script: str):
     ('overrides', 'expected_calls'),
     [
         ({'FAKE_FAILURE': 'files'}, [f'GET {PULL}/files']),
+        ({'GIT_DIR': '/nonexistent-size-label-repository'}, [f'GET {PULL}/files']),
         ({'FAKE_FILE_RESPONSE': 'not json'}, [f'GET {PULL}/files']),
         ({'FAKE_FAILURE': 'labels'}, [f'GET {PULL}/files', f'GET {PULL}']),
         *[
@@ -268,3 +279,84 @@ def test_api_errors(tmp_path: Path, script: str, overrides: dict[str, str], expe
     assert result.calls == expected_calls
     assert 'Set label:' not in result.process.stdout
     assert 'chore' in result.labels
+
+
+@pytest.mark.parametrize(
+    ('filename', 'score'),
+    [
+        ('.github/workflows/pydantic-ai-pr-review.lock.yml', 0),
+        ('src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static/index.html', 0),
+        ('src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static/assets/app.js', 0),
+        ('src/pydantic_clai2/web-ui/package-lock.json', 0),
+        ('.github/workflows/pydantic-ai-pr-review.md', 1000),
+        ('src/pydantic_clai2/web-ui/src/app.ts', 2000),
+        ('src/pydantic_clai2/web-ui/package.json', 2000),
+    ],
+)
+def test_generated_files(tmp_path: Path, script: str, filename: str, score: int):
+    """Exclude generated artifacts while preserving their editable source neighbors."""
+    changes: list[ChangedFile] = [{'filename': filename, 'additions': 1000, 'deletions': 1000}]
+    result = _run_step(tmp_path, script, [], [changes])
+
+    assert result.process.returncode == 0, result.process.stderr
+    assert f'Weighted score: {score}\n' in result.process.stdout
+
+
+def test_attribute_overrides(tmp_path: Path, script: str):
+    """Resolve nested declarations, explicit opt-outs and bare boolean attributes."""
+    filenames = [
+        'src/generated.js',
+        'src/handwritten.js',
+        'src/bare.js',
+        'src/unset.js',
+        'src/unspecified.js',
+        'docs/generated.md',
+        'tests/generated.py',
+    ]
+    changes: list[ChangedFile] = [{'filename': filename, 'additions': 10, 'deletions': 10} for filename in filenames]
+    result = _run_step(
+        tmp_path,
+        script,
+        [],
+        [changes],
+        attributes={
+            '.gitattributes': '*.js linguist-generated=true\ndocs/** linguist-generated=true\n'
+            'tests/** linguist-generated=true\n',
+            'src/.gitattributes': 'handwritten.js linguist-generated=false\nbare.js linguist-generated\n'
+            'unset.js -linguist-generated\nunspecified.js !linguist-generated\n',
+        },
+    )
+
+    assert result.process.returncode == 0, result.process.stderr
+    assert 'Code: 60, Docs: 0, Tests: 0\n' in result.process.stdout
+    assert 'Weighted score: 60\n' in result.process.stdout
+    assert result.labels == ['size: S']
+
+
+def test_generated_paths_on_later_pages(tmp_path: Path, script: str):
+    """Handle deleted or new paths, shell metacharacters and NUL-delimited Git output."""
+    filenames = ['new file.js', 'quote".js', 'line\nbreak.js', '$(touch injected).js', '-option.js', 'café.js']
+    changes: list[ChangedFile] = [{'filename': filename, 'additions': 1000, 'deletions': 1000} for filename in filenames]
+    result = _run_step(
+        tmp_path,
+        script,
+        [],
+        [[{'filename': 'src/code.py', 'additions': 50, 'deletions': 51}], changes],
+        attributes={'.gitattributes': '*.js linguist-generated=true\n'},
+    )
+
+    assert result.process.returncode == 0, result.process.stderr
+    assert 'Weighted score: 101\n' in result.process.stdout
+    assert result.labels == ['size: M']
+    assert result.calls == [f'GET {PULL}/files', f'GET {PULL}/files', f'GET {PULL}', f'POST {LABELS}']
+    assert not (tmp_path / 'injected').exists()
+
+
+def test_trusted_checkout():
+    """Pin declarations to base code without persisting the privileged token."""
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding='utf-8'))
+    steps = workflow['jobs']['size-label']['steps']
+
+    assert steps[0]['uses'].startswith('actions/checkout@')
+    assert steps[0]['with'] == {'ref': '${{ github.event.pull_request.base.sha }}', 'persist-credentials': False}
+    assert steps[1]['name'] == 'Calculate PR size and set label'
