@@ -191,8 +191,8 @@ def _clip(text: str, limit: int, terms: frozenset[str] | None) -> str:
 def _retry_text(content: list[ErrorDetails] | str) -> str:
     """Retry feedback as text: the plain message, or its validation errors as compact JSON.
 
-    Serialized with core's `error_details_ta`, without `ctx`, which is the JSON a retried
-    `ToolReturnPart` renders, so every retry part indexes the same text.
+    Serialized with core's `error_details_ta`, without `ctx`, like the errors of a retried
+    `ToolReturnPart` (which core also strips of an `input` repeated across root-level errors).
     `RetryFeedbackPart.model_response()` would also add the fence and the line that says the
     application is speaking, which do not help a search. The excerpt is clipped like the rest.
     """
