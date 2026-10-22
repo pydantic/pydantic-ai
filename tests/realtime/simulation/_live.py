@@ -6,6 +6,8 @@ GPT-Live has no turn events at all, which is what makes it a protocol family of 
   words as timeline-stamped transcript fragments; the *connection* ends a reply once the model has been
   quiet for `openai_live_turn_silence_ms` (so here, once virtual time moves past that silence);
 - the user's words arrive the same way, as input transcript fragments with no end;
+- typed text is the user's message to the backend (`response.item.create`), and the client's `response.create` has
+  the model open a delegation that answers it, under the client's `event_id`;
 - work is delegated: `session.delegation.created` opens a delegation whose Responses backend runs inside
   `response.event` frames: `response.created`, function calls as `response.output_item.done`, and a
   terminal (`response.completed`, with the backend's token usage) per backend response; the client
@@ -97,8 +99,12 @@ class LiveServer:
         self.last_voice: float | None = None
         self.triggers: list[str] = []
         self.inline: list[str] = []
-        """Text placed on the timeline while a reply goes on: that reply answers it if it says anything more, as Live
-        speaks to text in the reply under way (seen live), and the next reply otherwise."""
+        """Text taken up while a reply goes on: that reply answers it if it says anything more, as Live speaks to text
+        in the reply under way (seen live), and the next reply otherwise."""
+        self.typed: list[str] = []
+        """Typed text queued for the backend, which the next `response.create` runs it on."""
+        self.queued_texts: list[tuple[list[str], str | None]] = []
+        """Text turns whose `response.create` came while a backend response ran: Live runs each once that one ends."""
         self.delegations: dict[str, _Delegation] = {}
         self.seconds = 0.0
         self.backend_terminals_read = 0
@@ -142,28 +148,18 @@ class LiveServer:
                 {'type': 'session.started', 'session': {'id': 'live_simulated', 'model': 'gpt-live-1'}},
                 immediately=True,
             )
-        elif kind == 'session.commentary.append':
-            text = frame.get('content', '')
-            self.truth.add_input(text, 'text', solicits=True)
-            start, end = self._timeline()
-            # Live acknowledges commentary as it places it on its timeline, under the client's `event_id`.
-            self._emit(
-                {
-                    'type': 'session.commentary.appended',
-                    'start_ms': start,
-                    'end_ms': end,
-                    'client_event_id': frame.get('event_id'),
-                }
-            )
-            if self.speaking is not None and self.speaking.status == 'in_progress' and not self._quiet():
-                self.inline.append(text)
-            else:
-                self.triggers.append(text)
         elif kind == 'session.thinking.append':
-            self.truth.add_input(frame.get('content', ''), 'context')
+            content = frame.get('content', '')
+            # (What a typed turn tells the model it was asked is that turn, recorded as its message.)
+            if not content.startswith(live_module._TYPED_TEXT_PREFIX):  # pyright: ignore[reportPrivateUsage]
+                self.truth.add_input(content, 'context')
         elif kind == 'response.item.create':
             item = frame.get('item', {})
-            if item.get('type') == 'function_call_output':  # pragma: no branch
+            if item.get('type') == 'message':
+                text = item['content'][0]['text']
+                self.truth.add_input(text, 'text', solicits=True)
+                self.typed.append(text)
+            elif item.get('type') == 'function_call_output':  # pragma: no branch
                 call_id = item['call_id']
                 self.truth.tool_calls[call_id].output_received = True
                 self.truth.add_input(call_id, 'tool_output')
@@ -173,8 +169,15 @@ class LiveServer:
                         delegation.outputs.append(call_id)
         elif kind == 'response.create':
             delegation = next((d for d in self.delegations.values() if d.backend is None and d.outputs), None)
-            if delegation is not None:  # pragma: no branch
+            if delegation is not None:
                 self._start_backend(delegation)
+            elif self.typed:
+                texts, self.typed = self.typed, []
+                if self.running_delegation() is not None:
+                    # Live runs it once the backend response under way ends (seen live).
+                    self.queued_texts.append((texts, frame.get('event_id')))
+                else:
+                    self._take_up(texts, frame.get('event_id'))
 
     def on_client_read(self, socket: FakeWebSocket, frame: dict[str, Any]) -> None:
         """Nothing: the connection reads a frame ahead of handling it, so a read proves nothing (see `on_frame_handled`)."""
@@ -264,7 +267,16 @@ class LiveServer:
         for _ in range(frames):
             self._emit({'type': 'session.output_audio.delta', 'delta': SILENT})
 
-    def delegate(self) -> str:
+    def _take_up(self, texts: list[str], client_event_id: str | None) -> None:
+        """The model opens a delegation for typed text, in the reply under way if it goes on, and a new one otherwise."""
+        if self.speaking is not None and self.speaking.status == 'in_progress' and not self._quiet():
+            self.inline.extend(texts)
+        else:
+            self.triggers.extend(texts)
+            self._spoken_response()
+        self.delegate(client_event_id=client_event_id)
+
+    def delegate(self, client_event_id: str | None = None) -> str:
         """The model hands the request to its Responses backend."""
         response = (
             self.speaking
@@ -286,6 +298,7 @@ class LiveServer:
                     'response_id': 'resp_pending',
                     'target': 'responses',
                 },
+                **({'client_event_id': client_event_id} if client_event_id is not None else {}),
                 '_simulation': {'response': response.key},
             }
         )
@@ -409,6 +422,9 @@ class LiveServer:
             # A settled delegation restarts the turn clock, as the model's voice does.
             self.last_voice = self._now()
         # Otherwise the backend waits for the results and the client's `response.create` to continue it.
+        if self.queued_texts and self.running_delegation() is None:
+            texts, client_event_id = self.queued_texts.pop(0)
+            self._take_up(texts, client_event_id)
 
     def bill(self) -> None:
         self.seconds += 1.0
@@ -555,6 +571,9 @@ class LiveSimulation(Simulation):
             return True
         if server.running_delegation() is not None:
             server.backend_finish()
+        elif server.inline:
+            # The model speaks to the text it took up in the reply under way (as it did live, every time).
+            server.speak(1)
         elif server.speaking is not None and server.speaking.terminal_read is None:
             # Let the model's silence end its reply (before it answers anything else).
             server.idle(1)

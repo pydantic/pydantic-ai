@@ -633,8 +633,9 @@ def test_audio_seconds_are_priced_as_the_live_model() -> None:
     assert reported.usage.cost == snapshot(Decimal('0.03'))
 
 
-async def test_text_is_sent_as_context_not_a_user_turn() -> None:
-    """Live has no user-message event: speakable text is commentary, silent context is thinking."""
+async def test_text_turn_runs_the_backend_and_context_is_thinking() -> None:
+    """Live has no user-message event: a text turn is the backend's user message, which it is run on, and Live hears
+    what was asked as silent context; text sent as context alone is only that."""
     sent: list[dict[str, Any]] = []
 
     class _Recorder(OpenAILiveConnection):
@@ -642,17 +643,25 @@ async def test_text_is_sent_as_context_not_a_user_turn() -> None:
             sent.append(event)
 
     connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
-    await connection.send('Say this out loud.')
+    await connection.send('What is the weather in London?')
     await connection.send(TextContext('Know this quietly.'))
 
     assert sent == snapshot(
         [
             {
-                'type': 'session.commentary.append',
-                'event_id': 'pydantic_ai.commentary.0',
+                'type': 'session.thinking.append',
                 'delegation_id': None,
-                'content': 'Say this out loud.',
+                'content': 'The user typed: What is the weather in London?',
             },
+            {
+                'type': 'response.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [{'type': 'input_text', 'text': 'What is the weather in London?'}],
+                },
+            },
+            {'type': 'response.create', 'event_id': 'pydantic_ai.text.0'},
             {'type': 'session.thinking.append', 'delegation_id': None, 'content': 'Know this quietly.'},
         ]
     )
@@ -2269,8 +2278,17 @@ def _text_of(tokens: int) -> str:
     return ' '.join(['hello'] * tokens)
 
 
-@pytest.mark.parametrize('respond', [True, False])
-async def test_context_text_over_the_cap_is_refused_before_sending(respond: bool) -> None:
+@pytest.mark.parametrize(
+    ('respond', 'cap', 'sent_types'),
+    [
+        # A text turn's context says the user typed it, in tokens of the cap's own.
+        (True, 496, ['session.thinking.append', 'response.item.create', 'response.create']),
+        (False, 500, ['session.thinking.append']),
+    ],
+)
+async def test_context_text_over_the_cap_is_refused_before_sending(
+    respond: bool, cap: int, sent_types: list[str]
+) -> None:
     """Live rejects context over 500 tokens with an error that arrives after `send()` has returned.
 
     By then the text was recorded as sent, and a `respond=True` send left `wait_for_reply()` waiting for
@@ -2280,18 +2298,17 @@ async def test_context_text_over_the_cap_is_refused_before_sending(respond: bool
     ws = _FakeWebSocket([started])
     with _patched_connect(ws):
         async with Agent().realtime(OpenAILiveModel('gpt-live-1', provider='openai')).session() as session:
-            with pytest.raises(UserError, match='at most 500 tokens of text per `send\\(\\)`, and this is 501'):
-                await session.send(_text_of(501), respond=respond)
+            with pytest.raises(
+                UserError, match=f'at most {cap} tokens of text per `send\\(\\)`, and this is {cap + 1}'
+            ):
+                await session.send(_text_of(cap + 1), respond=respond)
             with anyio.fail_after(1):
                 await session.wait_for_reply()
             assert session.all_messages() == []
-            # 500 is within the cap, and goes out.
-            await session.send(_text_of(500), respond=respond)
+            # The cap itself is within it, and goes out.
+            await session.send(_text_of(cap), respond=respond)
 
-    assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == [
-        'session.commentary.append' if respond else 'session.thinking.append',
-        'session.close',
-    ]
+    assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == [*sent_types, 'session.close']
 
 
 def test_a_new_transcript_segment_is_spaced_from_the_last() -> None:
@@ -2710,9 +2727,9 @@ async def test_special_token_text_is_counted_as_live_counts_it() -> None:
             sent.append(event)
 
     connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
-    await connection.send(_text_of(499) + '<|endoftext|>')
+    await connection.send(TextContext(_text_of(499) + '<|endoftext|>'))
     with pytest.raises(UserError, match='and this is 501'):
-        await connection.send(_text_of(500) + '<|endoftext|>')
+        await connection.send(TextContext(_text_of(500) + '<|endoftext|>'))
     assert len(sent) == 1
 
 

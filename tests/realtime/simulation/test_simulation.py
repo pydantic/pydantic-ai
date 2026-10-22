@@ -1318,8 +1318,8 @@ def test_live_call_that_raises_is_answered_with_its_failure() -> None:
 
     sim = LiveSimulation()
     run_clean(sim, scenario)
-    # The round's results continued the delegation: the backend answered twice.
-    assert len(sim.server.truth.usage_read) == 2
+    # The round's results continued the delegation: the backend answered twice, and then once more for the text.
+    assert len(sim.server.truth.usage_read) == 3
 
 
 def test_live_call_that_raises_after_its_siblings_answered_is_answered_with_its_failure() -> None:
@@ -1651,7 +1651,6 @@ def test_live_abandoned_call_still_running_doesnt_hold_the_exchange_open() -> No
 
     def scenario(sim: LiveSimulation) -> None:
         sim.send_text()
-        sim.delegate()
         sim.backend_call()
         sim.backend_finish(status='failed')
         # The reply that delegated is over, and the abandoned call owes nothing, though it still runs.
@@ -1659,6 +1658,7 @@ def test_live_abandoned_call_still_running_doesnt_hold_the_exchange_open() -> No
         assert len(sim.turn_completes) == 1
         sim.send_text()
         waiter = sim.wait_for_reply(ticks=0)
+        sim.backend_finish()
         sim.speak()
         sim.advance_time(1.0)
         # The reply to the interjection ends its exchange as it ends, not once the call finishes.
@@ -2643,15 +2643,29 @@ def test_scenario_gemini_tool_result_sent_on_a_dropped_connection() -> None:
 
 
 @known('8763c #3')
-def test_known_live_text_sent_while_an_unread_reply_speaks() -> None:
+def test_known_gemini_text_sent_while_an_unread_reply_speaks() -> None:
     """Text sent while a reply the client hasn't read yet is under way: that reply is taken for the text's own."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.speak(deliver=False)
+        sim.send_text(respond=True)
+        sim.settle()
+
+    reproduce('8763c #3', GeminiSimulation(), scenario)
+
+
+def test_live_text_sent_while_an_unread_reply_speaks_is_answered_by_it() -> None:
+    """Text sent while a reply the client hasn't read yet is under way is taken for that reply's, and it is (8763c #3).
+
+    Live opens a delegation for the text in the reply under way, and goes on to speak its outcome there.
+    """
 
     def scenario(sim: LiveSimulation) -> None:
         sim.speak(deliver=False)
         sim.send_text(respond=True)
         sim.settle()
 
-    reproduce('8763c #3', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
 
 
 def test_live_delegation_during_a_tool_round_joins_the_reply() -> None:
