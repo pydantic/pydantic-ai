@@ -44,6 +44,9 @@ __all__ = [
 KnownImageGenerationModelName = TypeAliasType(
     'KnownImageGenerationModelName',
     Literal[
+        'cloudflare:@cf/black-forest-labs/flux-1-schnell',
+        'cloudflare:@cf/black-forest-labs/flux-2-klein-4b',
+        'cloudflare:@cf/leonardo/lucid-origin',
         'google-cloud:gemini-2.5-flash-image',
         'google-cloud:gemini-3-pro-image',
         'google-cloud:gemini-3.1-flash-image',
@@ -100,7 +103,14 @@ def infer_image_generation_model(
 
     provider = provider_factory(provider_name)
 
-    if model_kind == 'openai':
+    if model_kind == 'cloudflare':
+        from ..providers.cloudflare import CloudflareProvider
+        from .cloudflare import CloudflareImageGenerationModel
+
+        if not isinstance(provider, CloudflareProvider):
+            raise UserError('Cloudflare images require a `CloudflareProvider`.')
+        return CloudflareImageGenerationModel(model_name, provider=provider)
+    elif model_kind == 'openai':
         from .openai import OpenAIImageGenerationModel
 
         return OpenAIImageGenerationModel(model_name, provider=provider)

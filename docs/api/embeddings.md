@@ -18,6 +18,8 @@
 
 ::: pydantic_ai.embeddings.voyageai
 
+::: pydantic_ai.embeddings.cloudflare
+
 ::: pydantic_ai.embeddings.sentence_transformers
 
 ::: pydantic_ai.embeddings.test

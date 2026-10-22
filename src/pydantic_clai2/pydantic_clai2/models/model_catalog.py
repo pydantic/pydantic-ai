@@ -7,6 +7,7 @@ function returning `CatalogModel`s and merge it in `catalog()`.
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
+from importlib import import_module
 from importlib.metadata import metadata
 
 from genai_prices.data_snapshot import get_snapshot
@@ -58,6 +59,11 @@ def check_installed(name: str) -> None:
     provider = provider_of(name)
     try:
         infer_provider_class(provider)
+        if provider == 'cloudflare' and name.partition(':')[2] not in (
+            '@cf/cloudflare/clef',
+            '@cf/cloudflare/clef-flash',
+        ):
+            import_module('pydantic_ai.models.cloudflare')
     except ValueError:
         return  # Not a core provider, like CLAI's own `vllm:`; the turn resolves or reports it.
     except ImportError as exc:
@@ -74,6 +80,7 @@ def check_installed(name: str) -> None:
 def genai_prices_models() -> list[CatalogModel]:
     """Current (not deprecated) models from genai-prices, for providers core can run."""
     providers = runnable_providers()
+    known_names = frozenset(known_model_names())
     found: list[CatalogModel] = []
     for provider in get_snapshot().providers:
         if provider.id not in providers:
@@ -81,9 +88,13 @@ def genai_prices_models() -> list[CatalogModel]:
         for model in provider.models:
             if model.deprecated or ':' in model.id:
                 continue
+            name = f'{provider.id}:{model.id}'
+            # Pricing rows do not identify tasks; only offer verified Agent model IDs here.
+            if provider.id == 'cloudflare' and name not in known_names:
+                continue
             found.append(
                 CatalogModel(
-                    name=f'{provider.id}:{model.id}',
+                    name=name,
                     provider=provider.id,
                     label=model.name or model.id,
                     context_window=model.context_window,

@@ -1,5 +1,5 @@
 ---
-description: "Generate and edit images from Python with the Pydantic AI ImageGenerator API, using GPT Image, Gemini and Grok Imagine models from OpenAI, Google and xAI."
+description: 'Generate and edit images from Python with the Pydantic AI ImageGenerator API, using OpenAI, Google, xAI and Cloudflare Workers AI.'
 ---
 
 # Image Generation
@@ -114,6 +114,14 @@ reports OpenAI's image endpoints as unsupported, and it has no xAI upstream. The
 image-only output, matching the `ImageGenerator` result contract and avoiding unused text output.
 
 ## Providers
+
+### Cloudflare Workers AI
+
+[`CloudflareImageGenerationModel`][pydantic_ai.images.cloudflare.CloudflareImageGenerationModel]
+uses Cloudflare's native image endpoints with the `cloudflare:` prefix. FLUX.2 accepts reference
+images through multipart requests; other native image models use JSON for text-to-image generation.
+See [Cloudflare image generation](models/cloudflare.md#image-generation) for account setup,
+supported controls and reference-image limits. This adapter requires no optional provider SDK.
 
 A `'provider:model-name'` string configures the provider from its usual environment variables.
 
@@ -264,6 +272,8 @@ Use one of these settings to control output geometry:
 prefixed because the providers use different concepts and value ranges. An explicit provider-specific geometry setting
 takes precedence over the value a portable setting maps to, and warns only when the two disagree.
 
+The Cloudflare image models add `cloudflare_steps`, `cloudflare_seed`, `cloudflare_guidance`, and `cloudflare_negative_prompt`; see [Cloudflare](models/cloudflare.md#image-generation).
+
 Gemini takes the aspect ratio as a native request field, so the ratio you ask for is sent as-is and Gemini decides
 whether it can honor it; a rejection arrives as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. OpenAI and
 xAI cannot carry every ratio: OpenAI has no ratio field at all, so Pydantic AI maps the ratio to one of the model
@@ -320,6 +330,11 @@ the request cannot carry them.
 | `21:9` | — | `1568×672` | `1536×672` | `1584×672` | `1584×672` | — |
 
 ### Supported Exact `dimensions`
+
+Cloudflare forwards exact dimensions as width/height for the provider to validate. FLUX.1 Schnell
+has no size control and rejects geometry settings. Cloudflare maps `aspect_ratio` to integral
+dimensions preserving the ratio with the longest edge at most 1024 pixels; its model-specific
+limits can reject a resulting shape. See [Cloudflare](models/cloudflare.md#image-generation).
 
 `dimensions` also accepts non-canonical geometries when the selected model documents or has been verified to produce
 them exactly:

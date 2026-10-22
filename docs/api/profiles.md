@@ -41,3 +41,5 @@
 ::: pydantic_ai.profiles.zai
 
 ::: pydantic_ai.profiles.decision
+
+::: pydantic_ai.profiles.cloudflare

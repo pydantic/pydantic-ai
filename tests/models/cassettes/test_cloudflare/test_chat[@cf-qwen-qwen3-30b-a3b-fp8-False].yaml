@@ -1,0 +1,79 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.cloudflare.com/client/v4/accounts/ACCOUNT/ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "161"
+      content-type:
+      - application/json
+      host:
+      - api.cloudflare.com
+    body:
+      type: json
+      content:
+        model: "@cf/qwen/qwen3-30b-a3b-fp8"
+        stream: false
+        messages:
+        - role: system
+          content: Reply with one short greeting.
+        - role: user
+          content: Hello
+  response:
+    status: 200
+    headers:
+      api-version:
+      - 2026-10-01.epoch
+      cache-control:
+      - no-store
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: id-1792685135476
+        object: chat.completion
+        created: 1792685135
+        model: "@cf/qwen/qwen3-30b-a3b-fp8"
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: |-
+
+
+              Hi there!
+            refusal: null
+            annotations: null
+            audio: null
+            function_call: null
+            reasoning: |
+
+              Okay, the user said "Hello". I need to respond with a short greeting. Let me think... The user might be testing if I'm responsive. They probably want a friendly reply. Maybe something like "Hi there!" or "Hello!" to keep it simple. I should make sure it's concise and polite. Let me go with "Hi there!" since it's friendly and short.
+            reasoning_content: |
+
+              Okay, the user said "Hello". I need to respond with a short greeting. Let me think... The user might be testing if I'm responsive. They probably want a friendly reply. Maybe something like "Hi there!" or "Hello!" to keep it simple. I should make sure it's concise and polite. Let me go with "Hi there!" since it's friendly and short.
+          logprobs: null
+          finish_reason: stop
+          stop_reason: null
+          token_ids: null
+          routed_experts: null
+        usage:
+          prompt_tokens: 20
+          completion_tokens: 87
+          total_tokens: 107
+          prompt_tokens_details:
+            cached_tokens: 0
+          neurons: 2.7437965869903564
+  recorded_at: 2026-10-22T16:05:35.488575+00:00

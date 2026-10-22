@@ -36,6 +36,8 @@ __all__ = [
 KnownEmbeddingModelName = TypeAliasType(
     'KnownEmbeddingModelName',
     Literal[
+        'cloudflare:@cf/baai/bge-small-en-v1.5',
+        'cloudflare:@cf/baai/bge-m3',
         'google-cloud:gemini-embedding-001',
         'google-cloud:gemini-embedding-2-preview',
         'google-cloud:gemini-embedding-2',
@@ -102,7 +104,14 @@ def infer_embedding_model(
 
         model_kind = normalize_gateway_provider(model_kind)
 
-    if model_kind in (
+    if model_kind == 'cloudflare':
+        from ..providers.cloudflare import CloudflareProvider
+        from .cloudflare import CloudflareEmbeddingModel
+
+        if not isinstance(provider, CloudflareProvider):
+            raise UserError('Cloudflare embeddings require a `CloudflareProvider`.')
+        return CloudflareEmbeddingModel(model_name, provider=provider)
+    elif model_kind in (
         'openai',
         # For now, we assume that every chat and completions-compatible provider also
         # supports the embeddings endpoint, as at worst the user would get an `ModelHTTPError`.

@@ -213,6 +213,10 @@ def test_normalize_uri_erases_region_project_and_account():
         'https://aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/publishers/google/models/gemini:generateContent'
     )
     assert normalize_uri('https://api.openai.com/v1/responses') == 'https://api.openai.com/v1/responses'
+    uri = 'https://api.cloudflare.com/client/v4/accounts/private-account/ai/v1/chat/completions'
+    expected = 'https://api.cloudflare.com/client/v4/accounts/ACCOUNT/ai/v1/chat/completions'
+    assert normalize_uri(uri) == expected
+    assert before_record_request(_request(uri)).uri == expected
 
 
 def test_scrub_xml_credentials_redacts_sts_tokens():

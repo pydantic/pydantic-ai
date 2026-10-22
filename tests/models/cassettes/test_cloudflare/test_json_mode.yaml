@@ -1,0 +1,80 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.cloudflare.com/client/v4/accounts/ACCOUNT/ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "287"
+      content-type:
+      - application/json
+      host:
+      - api.cloudflare.com
+    body:
+      type: json
+      content:
+        model: "@cf/meta/llama-4-scout-17b-16e-instruct"
+        stream: false
+        messages:
+        - role: user
+          content: Return true.
+        response_format:
+          type: json_schema
+          json_schema:
+            name: bool
+            schema:
+              properties:
+                response:
+                  type: boolean
+              required:
+              - response
+              type: object
+  response:
+    status: 200
+    headers:
+      api-version:
+      - 2026-10-01.epoch
+      cache-control:
+      - no-store
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: id-1792685145326
+        object: chat.completion
+        created: 1792685145
+        model: "@cf/meta/llama-4-scout-17b-16e-instruct"
+        choices:
+        - finish_reason: stop
+          index: 0
+          logprobs: null
+          message:
+            annotations: null
+            audio: null
+            content: "{ \"response\": true }"
+            function_call: null
+            reasoning: null
+            refusal: null
+            role: assistant
+          routed_experts: null
+          stop_reason: null
+          token_ids: null
+        usage:
+          prompt_tokens: 13
+          completion_tokens: 7
+          total_tokens: 20
+          prompt_tokens_details:
+            cached_tokens: 0
+          neurons: 0.8600000143051147
+  recorded_at: 2026-10-22T16:05:45.335053+00:00

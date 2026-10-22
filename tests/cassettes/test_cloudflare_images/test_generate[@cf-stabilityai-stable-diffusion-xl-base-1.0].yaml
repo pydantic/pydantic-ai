@@ -1,0 +1,43 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://api.cloudflare.com/client/v4/accounts/ACCOUNT/ai/run/@cf/stabilityai/stable-diffusion-xl-base-1.0
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "81"
+      content-type:
+      - application/json
+      host:
+      - api.cloudflare.com
+    body:
+      type: json
+      content:
+        prompt: A simple blue circle on a white background.
+        width: 256
+        height: 256
+  response:
+    status: 200
+    headers:
+      api-version:
+      - 2026-10-01.epoch
+      cache-control:
+      - no-store
+      connection:
+      - keep-alive
+      content-length:
+      - "270"
+      content-type:
+      - image/png
+    body:
+      type: binary
+      content: >-
+        89504e470d0a1a0a0000000d4948445200000100000001000802000000d3103f31000000d549444154789cedc13101000000c2a0f54fed650ba000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000801b012d0001cca538070000000049454e44ae426082
+  recorded_at: 2026-10-22T16:06:27.571891+00:00

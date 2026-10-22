@@ -14,6 +14,8 @@
 
 ::: pydantic_ai.images.xai
 
+::: pydantic_ai.images.cloudflare
+
 ::: pydantic_ai.images.test
 
 ::: pydantic_ai.images.wrapper

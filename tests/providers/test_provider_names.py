@@ -8,6 +8,7 @@ import pytest
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers import Provider, infer_provider, infer_provider_class
+from pydantic_ai.providers.cloudflare import CloudflareProvider
 
 from ..conftest import try_import
 
@@ -47,6 +48,7 @@ with try_import() as imports_successful:
     test_infer_provider_params = [
         ('anthropic', AnthropicProvider, 'ANTHROPIC_API_KEY'),
         ('cohere', CohereProvider, 'CO_API_KEY'),
+        ('cloudflare', CloudflareProvider, 'CLOUDFLARE_API_TOKEN'),
         ('deepseek', DeepSeekProvider, 'DEEPSEEK_API_KEY'),
         ('elevenlabs', ElevenLabsProvider, 'ELEVENLABS_API_KEY'),
         ('openrouter', OpenRouterProvider, 'OPENROUTER_API_KEY'),

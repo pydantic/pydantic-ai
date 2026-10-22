@@ -1,0 +1,288 @@
+version: 1
+interactions:
+- request:
+    method: GET
+    uri: >-
+      https://api.cloudflare.com/client/v4/accounts/ACCOUNT/ai/models/search?task=Text+Embeddings&include_deprecated=false&per_page=100&page=1
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      host:
+      - api.cloudflare.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      api-version:
+      - 2026-10-01.epoch
+      cache-control:
+      - no-store
+      cdn-cache-control:
+      - public, max-age=3600, stale-while-revalidate=600
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      ratelimit:
+      - "\"default\";r=1199;t=1"
+      ratelimit-policy:
+      - "\"default\";q=1200;w=300"
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+    body:
+      type: json
+      content:
+        success: true
+        result:
+        - id: eed32bc1-8775-4985-89ce-dd1405508ad8
+          source: 1
+          name: "@cf/baai/bge-m3"
+          description: Multi-Functionality, Multi-Linguality, and Multi-Granularity embeddings model.
+          task:
+            id: 0137cdcf-162a-4108-94f2-1ca59e8c65ee
+            name: Text Embeddings
+            description: >-
+              Feature extraction models transform raw data into numerical features that can
+              be processed while preserving the information in the original dataset. These
+              models are ideal as part of building vector search applications or Retrieval Augmented
+              Generation workflows with Large Language Models (LLM).
+          created_at: 2024-05-22 19:27:09.781
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "60000"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.0118
+              currency: USD
+        - id: cb254e3b-372b-4d4e-8526-ada79940427a
+          source: 1
+          name: "@cf/qwen/qwen3-embedding-0.6b"
+          description: >-
+            The Qwen3 Embedding model series is the latest proprietary model of the Qwen
+            family, specifically designed for text embedding and ranking tasks.
+          task:
+            id: 0137cdcf-162a-4108-94f2-1ca59e8c65ee
+            name: Text Embeddings
+            description: >-
+              Feature extraction models transform raw data into numerical features that can
+              be processed while preserving the information in the original dataset. These
+              models are ideal as part of building vector search applications or Retrieval Augmented
+              Generation workflows with Large Language Models (LLM).
+          created_at: 2025-06-18 20:23:22.086
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "8192"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.0118
+              currency: USD
+        - id: bc2b61f6-7eb3-4cdf-94f5-ffc128bd6aa4
+          source: 1
+          name: "@cf/pfnet/plamo-embedding-1b"
+          description: |-
+            PLaMo-Embedding-1B is a Japanese text embedding model developed by Preferred Networks, Inc.
+
+            It can convert Japanese text input into numerical vectors and can be used for a wide range of applications, including information retrieval, text classification, and clustering.
+          task:
+            id: 0137cdcf-162a-4108-94f2-1ca59e8c65ee
+            name: Text Embeddings
+            description: >-
+              Feature extraction models transform raw data into numerical features that can
+              be processed while preserving the information in the original dataset. These
+              models are ideal as part of building vector search applications or Retrieval Augmented
+              Generation workflows with Large Language Models (LLM).
+          created_at: 2025-09-24 18:42:05.576
+          tags: []
+          properties:
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.0186
+              currency: USD
+        - id: 57fbd08a-a4c4-411c-910d-b9459ff36c20
+          source: 1
+          name: "@cf/baai/bge-small-en-v1.5"
+          description: >-
+            BAAI general embedding (Small) model that transforms any given text into a
+            384-dimensional vector
+          task:
+            id: 0137cdcf-162a-4108-94f2-1ca59e8c65ee
+            name: Text Embeddings
+            description: >-
+              Feature extraction models transform raw data into numerical features that can
+              be processed while preserving the information in the original dataset. These
+              models are ideal as part of building vector search applications or Retrieval Augmented
+              Generation workflows with Large Language Models (LLM).
+          created_at: 2023-11-07 15:43:58.042
+          tags: []
+          properties:
+          - property_id: async_queue
+            value: "true"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.0202
+              currency: USD
+          - property_id: info
+            value: https://huggingface.co/BAAI/bge-small-en-v1.5
+          - property_id: max_input_tokens
+            value: "512"
+          - property_id: output_dimensions
+            value: "384"
+        - id: 429b9e8b-d99e-44de-91ad-706cf8183658
+          source: 1
+          name: "@cf/baai/bge-base-en-v1.5"
+          description: >-
+            BAAI general embedding (Base) model that transforms any given text into a
+            768-dimensional vector
+          task:
+            id: 0137cdcf-162a-4108-94f2-1ca59e8c65ee
+            name: Text Embeddings
+            description: >-
+              Feature extraction models transform raw data into numerical features that can
+              be processed while preserving the information in the original dataset. These
+              models are ideal as part of building vector search applications or Retrieval Augmented
+              Generation workflows with Large Language Models (LLM).
+          created_at: 2023-09-25 19:21:11.898
+          tags: []
+          properties:
+          - property_id: async_queue
+            value: "true"
+          - property_id: context_window
+            value: "153600"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.0666
+              currency: USD
+          - property_id: info
+            value: https://huggingface.co/BAAI/bge-base-en-v1.5
+          - property_id: max_input_tokens
+            value: "512"
+          - property_id: output_dimensions
+            value: "768"
+        - id: 15631501-2742-4346-a469-22fe202188a2
+          source: 1
+          name: "@cf/google/embeddinggemma-300m"
+          description: >-
+            EmbeddingGemma is a 300M parameter, state-of-the-art for its size, open
+            embedding model from Google, built from Gemma 3 (with T5Gemma initialization) and the
+            same research and technology used to create Gemini models. EmbeddingGemma produces
+            vector representations of text, making it well-suited for search and retrieval
+            tasks, including classification, clustering, and semantic similarity search. This
+            model was trained with data in 100+ spoken languages.
+          task:
+            id: 0137cdcf-162a-4108-94f2-1ca59e8c65ee
+            name: Text Embeddings
+            description: >-
+              Feature extraction models transform raw data into numerical features that can
+              be processed while preserving the information in the original dataset. These
+              models are ideal as part of building vector search applications or Retrieval Augmented
+              Generation workflows with Large Language Models (LLM).
+          created_at: 2025-09-04 16:38:44.980
+          tags: []
+          properties:
+          - property_id: beta
+            value: "true"
+        - id: 01bc2fb0-4bca-4598-b985-d2584a3f46c0
+          source: 1
+          name: "@cf/baai/bge-large-en-v1.5"
+          description: >-
+            BAAI general embedding (Large) model that transforms any given text into a
+            1024-dimensional vector
+          task:
+            id: 0137cdcf-162a-4108-94f2-1ca59e8c65ee
+            name: Text Embeddings
+            description: >-
+              Feature extraction models transform raw data into numerical features that can
+              be processed while preserving the information in the original dataset. These
+              models are ideal as part of building vector search applications or Retrieval Augmented
+              Generation workflows with Large Language Models (LLM).
+          created_at: 2023-11-07 15:43:58.042
+          tags: []
+          properties:
+          - property_id: async_queue
+            value: "true"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.204
+              currency: USD
+          - property_id: info
+            value: https://huggingface.co/BAAI/bge-large-en-v1.5
+          - property_id: max_input_tokens
+            value: "512"
+          - property_id: output_dimensions
+            value: "1024"
+        errors: []
+        messages: []
+        result_info:
+          count: 7
+          page: 1
+          per_page: 100
+          total_count: 326
+  recorded_at: 2026-10-22T16:14:00.499386+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.cloudflare.com/client/v4/accounts/ACCOUNT/ai/models/search?task=Text+Embeddings&include_deprecated=false&per_page=100&page=2
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      host:
+      - api.cloudflare.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      api-version:
+      - 2026-10-01.epoch
+      cache-control:
+      - no-store
+      cdn-cache-control:
+      - public, max-age=3600, stale-while-revalidate=600
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      ratelimit:
+      - "\"default\";r=1199;t=1"
+      ratelimit-policy:
+      - "\"default\";q=1200;w=300"
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+    body:
+      type: json
+      content:
+        success: true
+        result: []
+        errors: []
+        messages: []
+        result_info:
+          count: 0
+          page: 2
+          per_page: 100
+          total_count: 326
+  recorded_at: 2026-10-22T16:14:01.362194+00:00

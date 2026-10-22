@@ -174,6 +174,7 @@ Need deterministic, fast tests?
 | TypeSafe (Jev, structured output only) | `typesafe:` | `typesafe:jev-latest` |
 | OpenAI Decisions API (text and image input; structured output only) | `openai-decisions:` | `openai-decisions:gpt-6-luna` |
 | Decision models on the `/v1/systemone` API (CLM, Laya; structured output only; needs `SYSTEM_ONE_BASE_URL`) | `system-one:` | `system-one:clm-latest` |
+| Cloudflare Workers AI (native chat or Clef decisions; separate Embedder/ImageGenerator interfaces; needs `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`) | `cloudflare:` | `cloudflare:@cf/meta/llama-4-scout-17b-16e-instruct` |
 | AWS Bedrock | `bedrock:` | `bedrock:anthropic.claude-sonnet-4-6` |
 | AWS Bedrock Mantle | `bedrock-mantle:` | `bedrock-mantle:openai.gpt-oss-120b` |
 | Azure | `azure:` | `azure:gpt-5.2` |

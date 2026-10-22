@@ -165,6 +165,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI
     * Anthropic
     * Google
@@ -195,6 +196,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI
     * Anthropic
     * Google
@@ -226,6 +228,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI
     * Anthropic
     * Google
@@ -275,6 +278,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI
     * OpenAI ChatGPT
     * OpenAI Codex
@@ -292,6 +296,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock Mantle
     * TypeSafe
     * System One
+    * Cloudflare Clef
     * OpenAI Decisions
     """
 
@@ -328,6 +333,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI
     * OpenAI ChatGPT
     * OpenAI Codex
@@ -354,6 +360,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI (some models, not o1)
     * OpenAI ChatGPT
     * OpenAI Codex
@@ -396,6 +403,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions (sent, but endpoint acceptance is unverified)
     * OpenAI
     * Anthropic (`'required'` and specific tools not supported with thinking enabled)
     * Google
@@ -420,6 +428,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI Chat Completions
     * Google
     * Groq
@@ -442,6 +451,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI Chat Completions
     * Google
     * Groq
@@ -464,6 +474,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI Chat Completions
     * Google
     * Groq
@@ -486,6 +497,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI Chat Completions
     * Groq
     * HuggingFace
@@ -503,6 +515,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI Chat Completions
     * Anthropic
     * Google
@@ -528,6 +541,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI
     * OpenAI ChatGPT
     * OpenAI Codex
@@ -545,6 +559,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock Mantle
     * TypeSafe
     * System One
+    * Cloudflare Clef
     * OpenAI Decisions
     """
 
@@ -642,6 +657,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI
     * OpenAI Codex
     * Anthropic
@@ -666,6 +682,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI
     * OpenAI ChatGPT
     * OpenAI Codex
@@ -682,6 +699,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock Mantle
     * TypeSafe
     * System One
+    * Cloudflare Clef
     * OpenAI Decisions
 
     On the OpenAI-derived models that build their own `extra_body` (Cerebras, OpenRouter, Snowflake,

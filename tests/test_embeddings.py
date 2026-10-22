@@ -54,6 +54,7 @@ with try_import() as logfire_imports_successful:
 with try_import() as openai_imports_successful:
     from openai import AsyncOpenAI
 
+    from pydantic_ai.embeddings.cloudflare import CloudflareEmbeddingModelName
     from pydantic_ai.embeddings.openai import LatestOpenAIEmbeddingModelNames, OpenAIEmbeddingModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -2296,6 +2297,7 @@ def test_known_embedding_model_names():  # pragma: lax no cover
             else:
                 yield from get_model_names(arg)
 
+    cloudflare_names = [f'cloudflare:{n}' for n in get_model_names(CloudflareEmbeddingModelName)]
     openai_names = [f'openai:{n}' for n in get_model_names(LatestOpenAIEmbeddingModelNames)]
     cohere_names = [f'cohere:{n}' for n in get_model_names(LatestCohereEmbeddingModelNames)]
     google_names = [f'google:{n}' for n in get_model_names(LatestGoogleGLAEmbeddingModelNames)]
@@ -2304,7 +2306,13 @@ def test_known_embedding_model_names():  # pragma: lax no cover
     bedrock_names = [f'bedrock:{n}' for n in get_model_names(LatestBedrockEmbeddingModelNames)]
 
     generated_names = sorted(
-        openai_names + cohere_names + google_names + google_cloud_names + voyageai_names + bedrock_names
+        cloudflare_names
+        + openai_names
+        + cohere_names
+        + google_names
+        + google_cloud_names
+        + voyageai_names
+        + bedrock_names
     )
 
     known_model_names = sorted(get_args(KnownEmbeddingModelName.__value__))

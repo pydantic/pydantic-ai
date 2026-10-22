@@ -41,6 +41,7 @@ from typing import (
 
 import anyio
 from anyio.to_thread import run_sync
+import httpx2
 from pydantic import BaseModel, TypeAdapter
 from pydantic._internal import _decorators, _typing_extra
 from pydantic.json_schema import JsonSchemaValue
@@ -1198,3 +1199,10 @@ def enum_member_docstrings(cls: type[Enum]) -> dict[str, str]:
         for name in [target.id for target in targets if isinstance(target, ast.Name) and target.id in cls.__members__]:
             docstrings[name] = inspect.cleandoc(node.value.value)
     return docstrings
+
+
+def error_body(response: httpx2.Response) -> object:
+    try:
+        return response.json()
+    except ValueError:
+        return response.text

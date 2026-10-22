@@ -1,10 +1,13 @@
 """The `/model` commands and menus, the catalog behind it, and per-model settings."""
 
 import sys
+from dataclasses import replace
 from io import StringIO
 from pathlib import Path
 
 import pytest
+from genai_prices.data_snapshot import get_snapshot
+from genai_prices.types import Provider
 from pydantic import JsonValue, ValidationError
 from rich.console import Console
 from termflow.tui import MenuItem
@@ -53,6 +56,39 @@ def test_catalog_merges_sources_and_only_lists_runnable_providers() -> None:
     assert astra.provider == 'openai-codex' and astra.context_window is None and astra.prices is None
     sonnet = next(model for model in merged if model.name.startswith('anthropic:claude') and model.prices)
     assert sonnet.context_window and 'MTok' in (sonnet.prices or '')
+
+
+def test_catalog_only_suggests_supported_cloudflare_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    snapshot = get_snapshot()
+    cloudflare = next(provider for provider in snapshot.providers if provider.id == 'cloudflare')
+    openai = next(provider for provider in snapshot.providers if provider.id == 'openai')
+    cloudflare_ids = (
+        '@cf/cloudflare/clef',
+        '@cf/cloudflare/clef-flash',
+        '@cf/meta/llama-4-scout-17b-16e-instruct',
+        '@cf/cloudflare/clef-omni',
+        '@cf/meta/llama-3.1-8b-instruct-fp8',
+        '@cf/baai/bge-base-en-v1.5',
+    )
+    providers: list[Provider] = [
+        replace(cloudflare, models=[replace(cloudflare.models[0], id=name) for name in cloudflare_ids]),
+        replace(openai, models=[replace(openai.models[0], id='catalog-only')]),
+    ]
+    monkeypatch.setattr(
+        'pydantic_clai2.models.model_catalog.get_snapshot', lambda: replace(snapshot, providers=providers)
+    )
+    supported = {
+        'cloudflare:@cf/cloudflare/clef',
+        'cloudflare:@cf/cloudflare/clef-flash',
+        'cloudflare:@cf/meta/llama-4-scout-17b-16e-instruct',
+    }
+    priced = genai_prices_models()
+    assert {model.name for model in priced if model.provider == 'cloudflare'} == supported
+    assert 'openai:catalog-only' in {model.name for model in priced}
+    suggested = supported | {'cloudflare:@cf/qwen/qwen3-30b-a3b-fp8', 'cloudflare:@cf/openai/gpt-oss-20b'}
+    assert {model.name for model in catalog() if model.provider == 'cloudflare'} == suggested
+    custom = 'cloudflare:custom-model'
+    assert {model.name for model in catalog(include=[custom]) if model.provider == 'cloudflare'} == suggested | {custom}
 
 
 def test_settings_form_validates_and_converts() -> None:
