@@ -212,6 +212,29 @@ async def test_failed_pinned_continuation_on_the_last_model_exhausts_the_chain()
     assert [attempt.model_name for attempt in exc_info.value.attempts] == ['pinned']
 
 
+async def test_failed_continuation_pinned_to_the_run_model_moves_on_past_it():
+    """When the run's model already is the one the continuation is pinned to, a failure still moves on past it.
+
+    Not back to the models before it in the chain, which it would otherwise start over from.
+    """
+    calls: list[str] = []
+
+    def candidate(name: str, *, fails: bool = False) -> FunctionModel:
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append(name)
+            if fails:
+                raise ModelAPIError(model_name=name, message='failed continuation')
+            return ModelResponse(parts=[TextPart(name)])
+
+        return FunctionModel(respond, model_name=name)
+
+    a, b, c = candidate('a'), candidate('b', fails=True), candidate('c')
+    agent = Agent(a, capabilities=[ModelFallback(a, b, c)])
+    result = await agent.run(model=b, message_history=_suspended_history(b.model_id))
+    assert calls == ['b', 'c']
+    assert result.output == 'c'
+
+
 async def test_streamed_resumed_continuation_goes_to_the_pinned_model():
     async def step_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         raise AssertionError('the continuation must not go to the step model')  # pragma: no cover

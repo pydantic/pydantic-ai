@@ -175,13 +175,15 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         if not self._pin_checked:
             self._pin_checked = True
             if (pinned := self._pinned_candidate(request_context)) is not None:
-                # The step would continue a provider-side job on a model other than the one that
-                # started it; send it to that model instead, before anything is sent. Should that
-                # continuation fail, the chain moves on from there, like it would have when the job
-                # was started, instead of starting over with a model that would just start another.
+                # Should the continuation fail, the chain moves on from the model it's pinned to, like it
+                # would have when the job was started, instead of starting over with a model that would
+                # just start another. That holds whether or not the step's model already is that model.
                 index, candidate = pinned
                 self._cursor = index + 1
-                raise RetryModelRequest(candidate)
+                if candidate is not None:
+                    # The step would continue a provider-side job on a model other than the one that
+                    # started it; send it to that model instead, before anything is sent.
+                    raise RetryModelRequest(candidate)
         self._attempted_models.append(request_context.model)
         if request_context.model_id is not None:
             self._attempted_ids.add(request_context.model_id)
@@ -241,24 +243,28 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             self._chain = self._new_chain()
             self._pin_checked = False
 
-    def _pinned_candidate(self, request_context: ModelRequestContext) -> tuple[int, Model | str] | None:
-        """The candidate a resumed suspended response is pinned to, and its index, if that isn't the step's model."""
+    def _pinned_candidate(self, request_context: ModelRequestContext) -> tuple[int, Model | str | None] | None:
+        """Where in the chain a resumed suspended response is pinned, if it's pinned to one of this capability's models.
+
+        Returns the pinned model's index among `models`, and the model to move the request to, or `None` when the
+        step's model already is the pinned one. The index is `-1` when the pin is to the step's model alone.
+        """
         messages = request_context.messages
         if not (messages and isinstance(last := messages[-1], ModelResponse) and last.state == 'suspended'):
             return None
         pin = continuation_pin(last, key=FALLBACK_CAPABILITY_PIN_KEY)
-        if pin is None or pin == _pin_id(request_context.model_id or request_context.model):
+        if pin is None:
             return None
-        pinned = next(
-            ((index, candidate) for index, candidate in enumerate(self.models) if _pin_id(candidate) == pin), None
-        )
-        if pinned is None:
+        index = next((index for index, candidate in enumerate(self.models) if _pin_id(candidate) == pin), None)
+        if pin == _pin_id(request_context.model_id or request_context.model):
+            return (-1 if index is None else index), None
+        if index is None:
             raise UserError(
                 f'Cannot resume this suspended response: it was started by {pin!r}, which is neither the '
                 "model selected for this step nor one of `ModelFallback`'s models. Pass that model explicitly to "
                 '`run(model=...)` when resuming.'
             )
-        return pinned
+        return index, self.models[index]
 
     def _advance(self) -> RetryModelRequest:
         """Return the exception that moves to the next untried candidate, or the aggregated failure."""
