@@ -301,10 +301,17 @@ class ToolRoundsOver:
 
 @dataclass(frozen=True)
 class ExchangeOver:
-    """A response ended, and with it everything the model owed: what `wait_for_reply()` waits for is over."""
+    """The exchange is over: what `wait_for_reply()` waits for is over.
+
+    Either a response ended with nothing more owed, or the exchange was abandoned with no response left to end it (see
+    `ExchangeAbandoned`).
+    """
 
     interrupted: bool
-    """Whether the response that ended it was cut off (the user barged in, or the caller interrupted it)."""
+    """Whether the response that ended it was cut off (the user barged in, or the caller interrupted it).
+
+    `False` for an exchange that was abandoned.
+    """
 
 
 Effect: TypeAlias = (
