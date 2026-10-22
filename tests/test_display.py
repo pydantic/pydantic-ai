@@ -94,6 +94,8 @@ def reset_banner(monkeypatch: pytest.MonkeyPatch):
     # Colour is asserted on its own; everywhere else it would only obscure what's being asserted.
     monkeypatch.setenv('NO_COLOR', '1')
     monkeypatch.setattr(importlib.util, 'find_spec', find_spec_without_harness)
+    # Runtime callers detect `uvx`, but rendering tests must not inspect the test machine's PATH.
+    monkeypatch.setattr(_display.shutil, 'which', lambda _: None)
     yield
     _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
     pydantic_ai.BANNER_ENABLED = True
