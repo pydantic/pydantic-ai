@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import sys
+import threading
 import uuid
 from collections.abc import Generator, Mapping
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from types import ModuleType
 from typing import TYPE_CHECKING, TypeGuard
 
@@ -61,6 +62,22 @@ def _module_name(path: Path, code: bytes) -> str:
     """The `sys.modules` key for `code` loaded from `path`, derived from its resolved path and the code."""
     digest = hashlib.sha256(str(path.resolve()).encode() + b'\0' + code).hexdigest()[:12]
     return f'_authored_capability_{path.stem}_{digest}'
+
+
+_LOAD_LOCKS: dict[str, threading.RLock] = {}
+_LOAD_LOCKS_GUARD = threading.Lock()
+
+
+def _load_lock(name: str) -> threading.RLock:
+    """The lock that loads registering the module `name` take turns on.
+
+    Two loads of the same source would otherwise swap each other's module in
+    `sys.modules` while it runs, and could leave a failed one behind. Loads of
+    other sources do not wait for each other. The lock is reentrant, so authored
+    code that loads its own source runs that load instead of waiting on itself.
+    """
+    with _LOAD_LOCKS_GUARD:
+        return _LOAD_LOCKS.setdefault(name, threading.RLock())
 
 
 @contextmanager
@@ -121,8 +138,9 @@ def _construct(source: Path, file: Path, *, keep: bool) -> AbstractCapability[ob
     With `keep`, a module that passes stays in `sys.modules` under a key derived
     from `file` and the source, so loading unchanged source again replaces its
     entry, while classes loaded from an earlier version keep resolving names
-    through theirs. Without it, the module gets a key of its own and is removed
-    again. A module that fails is never kept.
+    through theirs, and loads of the same source take turns. Without it, the
+    module gets a key of its own and is removed again. A module that fails is
+    never kept.
     """
     try:
         code = source.read_bytes()
@@ -130,7 +148,8 @@ def _construct(source: Path, file: Path, *, keep: bool) -> AbstractCapability[ob
         module = ModuleType(name)
         module.__file__ = str(file.resolve())
         compiled = compile(code, str(file), 'exec', dont_inherit=True)
-        with _registered(module, keep=keep):
+        turn: AbstractContextManager[object] = _load_lock(name) if keep else nullcontext()
+        with turn, _registered(module, keep=keep):
             exec(compiled, module.__dict__)
             cls = _find_capability_class(module)
             instance = cls()
