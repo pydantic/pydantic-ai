@@ -388,17 +388,22 @@ print(request.instructions)
 ```
 
 Parameters: `name` (positional; declared as the variable `prompt__<name>`, with hyphens turned into
-underscores), or a prebuilt `logfire.variables.Variable`; `default` (required with a name); `label`;
+underscores; ASCII letters, digits, hyphens, and underscores only), or a prebuilt
+`logfire.variables.Variable` (not a `TemplateVariable`); `default` (required with a name); `label`;
 `targeting_key` and `attributes` (static or `ctx -> value`); `render_template=False` (Handlebars against
 `deps`; needs `pydantic-ai-slim[spec]`); `logfire_instance`. Call `logfire.configure()` in your app to
 get remote values. Until then, and whenever no remote value is published, `default` is used.
 
 Gotchas: pin `label='production'` to keep the provider prompt cache warm, because rollouts across
-labels split it. A label change mid-run applies from the next run; in a conversation continued from
-`message_history`, a new version is appended as a change instead of rewriting the cached prefix. The `id` is
-derived from the name (`managed-prompt-support_agent`), so two of one name on an agent raise `UserError`. The capability orders itself
-outermost, wrapping `Instrumentation`. `ManagedPrompt.resolved` exposes the current run's
-`ResolvedVariable`, and is `None` outside a run.
+labels split it; a pinned label that doesn't exist falls back to the rollout. A label change mid-run
+applies from the next run; in a conversation continued from `message_history`, a new version is
+appended as a change instead of rewriting the cached prefix. The `id` is derived from the name
+(`managed-prompt-support_agent`), so two of one name on an agent raise `UserError`. With
+`render_template=True`, anyone who can edit the prompt in Logfire can place any `deps` field in the
+system prompt, and a remote prompt that isn't a valid template falls back to `default` with a
+`RuntimeWarning` and a Logfire warning log. Logfire's `Resolve variable` span records the prompt text
+even with `include_content=False`. The capability orders itself outermost, wrapping `Instrumentation`.
+`ManagedPrompt.resolved` exposes the current run's `ResolvedVariable`, and is `None` outside a run.
 
 ## CapabilityCreation
 
