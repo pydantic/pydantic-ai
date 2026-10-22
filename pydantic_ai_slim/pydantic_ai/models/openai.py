@@ -2637,9 +2637,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Yield a model bound to one caller-owned Responses WebSocket.
 
         The source model continues to use HTTP. Pass the yielded model to an Agent,
-        an individual run, or a model-selection capability. On OpenAI's API, concurrent
-        requests run on separate `stream_id` lanes of the one socket; on other endpoints
-        they take turns. A provider error, a stream closed early, or a cancellation ends
+        an individual run, or a model-selection capability. Concurrent requests run on
+        separate `stream_id` lanes of the one socket when the profile sets
+        `openai_responses_supports_websocket_stream_id`, as `OpenAIProvider` does whatever
+        its `base_url`; otherwise they take turns. A provider error, a stream closed early, or a cancellation ends
         only its own request; a transport failure fails the socket, and later requests
         raise `ModelConnectionError`. The socket closes when the context exits, and a
         request still running then raises `UserError`.
@@ -2864,11 +2865,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         check_allow_model_requests()
         if self._websocket is not None and self._websocket.closed:
             raise UserError('This Responses WebSocket is closed. Open a new `model.connect()` context.')
-        model_settings, model_request_parameters = self.prepare_request(
+        # `/compact` is always HTTP, even when this model is bound to a WebSocket: its cache-only response IDs
+        # cannot anchor an HTTP compaction request, and the SDK's retries apply.
+        http_model = _utils.replace_no_init(self, _websocket=None) if self._websocket is not None else self
+        model_settings, model_request_parameters = http_model.prepare_request(
             request_context.model_settings,
             request_context.model_request_parameters,
         )
-        response = await self._responses_compact(
+        response = await http_model._responses_compact(
             list(request_context.messages),
             cast(OpenAIResponsesModelSettings, model_settings or {}),
             model_request_parameters,
@@ -2914,10 +2918,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         instructions_override: str | None = None,
     ) -> responses.CompactedResponse | ModelResponse:
         """Call the OpenAI Responses compaction endpoint."""
-        # `/compact` is always HTTP, even when this model is bound to a WebSocket.
-        # Its cache-only response IDs cannot anchor an HTTP compaction request.
-        http_model = _utils.replace_no_init(self, _websocket=None) if self._websocket is not None else self
-        previous_response_id, messages = http_model._resolve_previous_response_id(
+        previous_response_id, messages = self._resolve_previous_response_id(
             model_settings.get('openai_previous_response_id'), messages, allow_no_new_messages=True
         )
 
@@ -3058,7 +3059,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 f'Server-side token counting is not available for {self.system} models '
                 f'({self.model_name!r}); the provider does not expose the input-tokens endpoint.'
             )
-        model_settings, model_request_parameters = self.prepare_request(
+        # Token counting is an HTTP request, so a connected model must not reuse a
+        # response ID that exists only in its WebSocket's connection-local cache, and the SDK's retries apply.
+        http_model = _utils.replace_no_init(self, _websocket=None) if self._websocket is not None else self
+        model_settings, model_request_parameters = http_model.prepare_request(
             model_settings,
             model_request_parameters,
         )
@@ -3073,9 +3077,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             raise UserError('Cannot count tokens without any messages or a previous response ID.')
 
         profile = self.profile
-        # Token counting is an HTTP request, so a connected model must not reuse a
-        # response ID that exists only in its WebSocket's connection-local cache.
-        http_model = _utils.replace_no_init(self, _websocket=None) if self._websocket is not None else self
         request_params = await http_model._build_responses_request_params(
             messages,
             settings,

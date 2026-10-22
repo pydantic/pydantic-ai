@@ -1474,6 +1474,8 @@ async def test_connected_model_http_operations_replay_socket_history(
         )
 
     settings: OpenAIResponsesModelSettings = {'openai_store': False, 'openai_previous_response_id': 'auto'}
+    # Both operations go over HTTP, where the SDK honors `max_retries`, so they don't warn that it's ignored.
+    http_settings: OpenAIResponsesModelSettings = {**settings, 'max_retries': 0}
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(http_handler)) as http_client:
         source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test', http_client=http_client))
         async with source.connect() as connected:
@@ -1483,13 +1485,13 @@ async def test_connected_model_http_operations_replay_socket_history(
             context = ModelRequestContext(
                 model=connected,
                 messages=[first_request, first_response, ModelRequest.user_text_prompt('next')],
-                model_settings=settings,
+                model_settings=http_settings,
                 model_request_parameters=ModelRequestParameters(),
             )
-            counted = await connected.count_tokens(context.messages, settings, context.model_request_parameters)
+            counted = await connected.count_tokens(context.messages, http_settings, context.model_request_parameters)
             compacted = await connected.compact_messages(context)
         with pytest.raises(UserError, match='WebSocket is closed'):
-            await connected.count_tokens(context.messages, settings, context.model_request_parameters)
+            await connected.count_tokens(context.messages, http_settings, context.model_request_parameters)
         with pytest.raises(UserError, match='WebSocket is closed'):
             await connected.compact_messages(context)
 
