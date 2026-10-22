@@ -125,7 +125,7 @@ from pydantic_ai.workspaces import CommandResult, Workspace, WorkspaceBackend, W
 from pydantic_graph import GraphBuilder, StepContext
 
 from ..._inline_snapshot import snapshot
-from ...batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, SlowBatchTestModel
+from ...batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, FailingBatchTestModel, SlowBatchTestModel
 from ...continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 try:
@@ -5629,6 +5629,103 @@ async def test_durability_continuation_ceiling_surfaces_unexpected_model_behavio
     assert _continuation_ceiling_model.request_calls == 11
     # Giving up on a still-suspended job cancels it inside the activity so it doesn't leak.
     assert len(_continuation_ceiling_model.cancelled) == 1
+
+
+# --- `ModelFallback` moves a failed batch on to a batch on the next model ---
+
+_fallback_batch_calls: list[tuple[str, str, bool]] = []
+"""Each batch call the models below make: the model, the method, and whether it ran in an activity."""
+
+
+def _record_fallback_batch_call(model_name: str) -> Callable[[str], None]:
+    def record(method: str) -> None:
+        _fallback_batch_calls.append((model_name, method, activity.in_activity()))
+
+    return record
+
+
+_fallback_batch_primary = FailingBatchTestModel(
+    pending_checks=1, on_batch_call=_record_fallback_batch_call('primary'), model_name='primary'
+)
+_fallback_batch_fallback = SlowBatchTestModel(
+    pending_checks=1, on_batch_call=_record_fallback_batch_call('fallback'), model_name='fallback'
+)
+
+_fallback_batch_agent = Agent(
+    _fallback_batch_primary,
+    name='durability_fallback_batch_agent',
+    capabilities=[
+        ModelFallback('batch_fallback'),
+        BatchModelRequests(**FAST_BATCH_SETTINGS),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, models={'batch_fallback': _fallback_batch_fallback}),
+    ],
+)
+
+
+@workflow.defn
+class DurabilityFallbackBatchWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str]:
+        return await _fallback_batch_agent.run(prompt)
+
+
+async def test_durability_fallback_batches_the_next_model_when_a_batch_fails(client: Client):
+    """When the primary model's batch result fails, `ModelFallback` moves the request into a batch on the fallback.
+
+    The workflow wraps each attempt's model to answer `continuation_delay`, and the model-request activities wrap the
+    model they rebuild, the primary's and then the fallback's, so both batches are submitted and checked in activities.
+    """
+    _fallback_batch_calls.clear()
+    _fallback_batch_primary.reset(pending_checks=1)
+    _fallback_batch_fallback.reset(pending_checks=1)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityFallbackBatchWorkflow],
+        plugins=[AgentPlugin(_fallback_batch_agent)],
+    ):
+        wf = await client.start_workflow(
+            DurabilityFallbackBatchWorkflow.run,
+            args=['go'],
+            id=DurabilityFallbackBatchWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        result = await wf.result()
+        history = await wf.fetch_history()
+
+    assert result.output == 'success (no tool calls)'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.model_name == 'fallback'
+    assert [(attempt.model_name, attempt.outcome) for attempt in response.failed_attempts or []] == [
+        ('primary', 'error')
+    ]
+    assert _fallback_batch_calls == [
+        ('primary', 'batch_create', True),
+        ('primary', 'batch_status', True),
+        ('primary', 'batch_status', True),
+        ('fallback', 'batch_create', True),
+        ('fallback', 'batch_status', True),
+        ('fallback', 'batch_status', True),
+    ]
+    # Per model: one activity submits the request, then one per check, with a durable timer before each check. The
+    # failed check is followed by the cancellation of the primary's suspended response, as any failed continuation is.
+    assert [
+        e.activity_task_scheduled_event_attributes.activity_type.name.rsplit('__', 1)[-1]
+        for e in history.events
+        if e.HasField('activity_task_scheduled_event_attributes')
+    ] == snapshot(
+        [
+            'model_request',
+            'model_request',
+            'model_request',
+            'model_cancel_suspended_response',
+            'model_request',
+            'model_request',
+            'model_request',
+        ]
+    )
+    assert _timer_count(history) == 4
 
 
 # --- Streaming continuation chains inside the activity ---

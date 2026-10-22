@@ -20,6 +20,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PendingModelResponse,
     RunContext,
     TextPart,
     UserPromptPart,
@@ -27,6 +28,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import (
     AbstractCapability,
+    BatchModelRequests,
     CapabilityOrdering,
     Instrumentation,
     ModelFallback,
@@ -54,6 +56,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
+from .batch_utils import FAST_BATCH_SETTINGS, FailingBatchTestModel, SlowBatchTestModel
 from .conftest import try_import
 from .continuation_utils import ScriptedContinuationModel, StreamSegment
 from .model_lifecycle_utils import LifecycleTrackingModel
@@ -1307,3 +1310,56 @@ async def test_a_failed_continuation_delay_before_priming_cancels_the_resumed_jo
         async with agent.run_stream(message_history=history) as stream:
             await stream.get_output()  # pragma: no cover
     assert [response.provider_response_id for response in served.cancelled] == ['job-1']
+
+
+async def test_the_fallback_model_is_batched_after_the_primary_batch_fails():
+    """With `BatchModelRequests`, the attempt `ModelFallback` moves to also goes into a batch, on the fallback model."""
+    primary = FailingBatchTestModel(model_name='primary')
+    fallback = SlowBatchTestModel(pending_checks=1, model_name='fallback')
+    agent = Agent(primary, capabilities=[ModelFallback(fallback), BatchModelRequests(**FAST_BATCH_SETTINGS)])
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'success (no tool calls)'
+    assert (len(primary.created), len(fallback.created)) == (1, 1)
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.model_name == 'fallback'
+    assert [(attempt.model_name, attempt.outcome) for attempt in response.failed_attempts or []] == [
+        ('primary', 'error')
+    ]
+    assert result.usage.requests == 1
+
+
+async def test_a_failed_batch_moves_on_down_the_chain_across_resumed_runs():
+    """A run that ends on a pending batch and is resumed from its history moves on from a failed batch result.
+
+    Each run either submits a batch or checks on the one its history ends in. When a check fails, the next model in the
+    chain gets a batch, rather than the first model, which would accept a new batch and never let the chain move on.
+    """
+    primary = FailingBatchTestModel(model_name='primary')
+    second = FailingBatchTestModel(model_name='second')
+    third = SlowBatchTestModel(model_name='third')
+
+    def batched_agent() -> Agent[None, str | PendingModelResponse]:
+        # A new agent for every run, as a run resumed in another process would have.
+        return Agent(
+            primary,
+            output_type=[str, PendingModelResponse],
+            capabilities=[ModelFallback(second, third), BatchModelRequests(**FAST_BATCH_SETTINGS)],
+        )
+
+    runs = [await batched_agent().run('Hello')]
+    # Bounded, as a chain that started over after a failed check would cycle through new batches forever.
+    while isinstance(runs[-1].output, PendingModelResponse) and len(runs) < 5:
+        runs.append(await batched_agent().run(message_history=runs[-1].all_messages()))
+
+    assert runs[-1].output == 'success (no tool calls)'
+    # The model each pending run ended waiting on, as its response is pinned to.
+    assert [
+        (run.output.response.metadata or {}).get('__pydantic_ai__', {}).get('fallback_candidate')
+        for run in runs
+        if isinstance(run.output, PendingModelResponse)
+    ] == ['test:primary', 'test:second', 'test:third']
+    # Every model got one batch: none was submitted to again after its result failed.
+    assert (len(primary.created), len(second.created), len(third.created)) == (1, 1, 1)

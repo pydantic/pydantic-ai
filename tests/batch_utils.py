@@ -14,8 +14,12 @@ import anyio
 import anyio.lowlevel
 from typing_extensions import TypedDict
 
+from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.batch import Batch, BatchRequest, EncodedBatchRequest
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 
 
 class FastPolling(TypedDict):
@@ -43,8 +47,10 @@ class SlowBatchTestModel(TestModel):
     boundary it ran in.
     """
 
-    def __init__(self, pending_checks: int = 0, on_batch_call: Callable[[str], None] | None = None) -> None:
-        super().__init__()
+    def __init__(
+        self, pending_checks: int = 0, on_batch_call: Callable[[str], None] | None = None, *, model_name: str = 'test'
+    ) -> None:
+        super().__init__(model_name=model_name)
         self.pending_checks = pending_checks
         self.on_batch_call = on_batch_call
         self.encoded = 0
@@ -106,6 +112,18 @@ class SlowBatchTestModel(TestModel):
     def _record(self, method: str) -> None:
         if self.on_batch_call is not None:
             self.on_batch_call(method)
+
+
+class FailingBatchTestModel(SlowBatchTestModel):
+    """Ends every request in its batches with an invalid-request error, which isn't submitted again."""
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        raise ModelHTTPError(400, self.model_name, body={'error': 'invalid request'})
 
 
 UNRUN_MESSAGES = {
