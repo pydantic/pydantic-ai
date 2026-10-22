@@ -35,6 +35,7 @@ from pydantic_ai.models.decision import (
     NoulAnswer,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace, WorkspaceTimeoutError
 from pydantic_ai_harness.smart_file_search import SmartFileSearch, SmartFileSearchResult
 
@@ -157,7 +158,7 @@ def calls_smart_file_search(*calls: Mapping[str, object]) -> FunctionModel:
 
 def search_agent(
     root: Path | None,
-    model: Model | str | None,
+    model: Model | str,
     *,
     threshold: float = 0.5,
     concurrency: int = 8,
@@ -174,7 +175,13 @@ def search_agent(
 async def search_messages(
     agent: Agent[None, str], *calls: Mapping[str, object], workspace: Workspace | None = None
 ) -> list[ModelMessage]:
-    result = await agent.run('find it', model=calls_smart_file_search(*calls), workspace=workspace)
+    # Unlimited requests: each judgment counts as one, and the request limit is tested on its own.
+    result = await agent.run(
+        'find it',
+        model=calls_smart_file_search(*calls),
+        workspace=workspace,
+        usage_limits=UsageLimits(request_limit=None),
+    )
     return result.all_messages()
 
 

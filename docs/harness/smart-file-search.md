@@ -24,7 +24,7 @@ only finds what you can already name.
 
 ## Usage
 
-Pass the judge as `model` (see [Choosing the judge](#choosing-the-judge)). `SmartFileSearch` searches the run's
+Pass the judge as `model`, which is required (see [Choosing the judge](#choosing-the-judge)). `SmartFileSearch` searches the run's
 [workspace](../workspace.md), so attach one next to it:
 
 ```python {test="skip"}
@@ -99,11 +99,8 @@ source they hold.
 
 ## Choosing the judge
 
-The judge is any Pydantic AI model, set with `model`:
-
-- **Unset** (the default): TypeSafe's Jev (`'typesafe:jev-latest'`) when the `typesafe` SDK is installed and
-  `TYPESAFE_API_KEY` is set, and the run's own model otherwise.
-- **A model or model name**: that model, whatever is installed or set in the environment.
+The judge is required, and is any Pydantic AI model or model name, passed as `model`. It decides which provider
+receives the searched source, so it is never picked for you.
 
 A [decision model](../models/decision.md) is the recommended judge: it answers each relevance question with a
 probability in a fraction of the time a language model takes to write one, which is what 128 judgments per
@@ -113,9 +110,8 @@ search need. There are two ways to use one:
   [Ollama](../models/system-one.md#ollama) runs locally. Set `SYSTEM_ONE_BASE_URL`, and `SYSTEM_ONE_API_KEY` if
   the API needs a key, then pass `model='system-one:<name>'`, or a
   [`SystemOneModel`][pydantic_ai.models.system_one.SystemOneModel]. This needs nothing beyond `pydantic-ai-slim`.
-  It is never picked by default, as the model name depends on the server.
-- **[Jev](../models/typesafe.md) through TypeSafe's SDK**, which becomes the default once the SDK is installed
-  and `TYPESAFE_API_KEY` is set.
+- **[Jev](../models/typesafe.md) through TypeSafe's SDK**, as `model='typesafe:jev-latest'`, with
+  `TYPESAFE_API_KEY` set.
 
 To install TypeSafe's SDK:
 
@@ -128,13 +124,21 @@ A judge given by name times out each request after 30 seconds; a model instance 
 
 Any language model works as well, since the two ratings are ordinary structured output. As one search makes
 up to `candidates` judge requests, prefer a small, fast model to the run's own when you are not using a
-decision model. The judge's token usage is not counted in the run's usage or checked against its usage
-limits, so bound its cost with `candidates`.
+decision model.
 
 `threshold` (0.5 by default) is tuned for Jev's probabilities. Another decision model's probabilities, and
 even more so a language model's ratings, can be calibrated differently, so check a few searches and adjust it
 if results are too sparse or too noisy. Pin a model version (for example `'typesafe:jev-1.13.0'`) once you
 have tuned `threshold` against it.
+
+## Usage and limits
+
+Each judged snippet counts as one request in the run's [usage](../agent.md#usage-limits), and the judge's tokens
+are added to it, so `result.usage` and the run's `UsageLimits` cover the search. A search judges no more snippets
+than the run's `request_limit` leaves room for, keeping one request for the model to read the result: the lowest
+ranked are left unjudged, and a warning says so. With no room left at all, the search fails and the model is told
+to use regular search. The default `request_limit` is 50, so raise it, for example with
+`agent.run(..., usage_limits=UsageLimits(request_limit=500))`, for full 128-snippet searches.
 
 ## Privacy
 

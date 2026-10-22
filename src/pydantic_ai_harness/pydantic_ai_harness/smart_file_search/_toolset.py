@@ -9,7 +9,7 @@ from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._workspace import raise_tool_failure, require_workspace, supports_commands
 from pydantic_ai_harness.smart_file_search._index import MAX_CACHED_INDEXES, SnippetIndexes
-from pydantic_ai_harness.smart_file_search._judge import JudgeModel, resolve_judge_model
+from pydantic_ai_harness.smart_file_search._judge import JudgeModel
 from pydantic_ai_harness.smart_file_search._search import DEFAULT_CANDIDATES, SmartFileSearchResult, search_code
 
 TOOL_NAME = 'smart_file_search'
@@ -47,7 +47,7 @@ class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
     def __init__(
         self,
         *,
-        model: JudgeModel | None,
+        model: JudgeModel,
         threshold: float,
         concurrency: int,
         cache_index: bool = False,
@@ -104,9 +104,10 @@ class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
             glob: Optional ripgrep glob to restrict files, e.g. "*.py".
             limit: Max matches to return (1-100).
             candidates: Snippets to judge after the lexical shortlist (1-256).
-                Defaults to 128. Higher = better recall, slower and costlier.
+                Defaults to 128. Higher = better recall, slower and costlier. Each
+                judged snippet counts as one request against the run's request limit.
         """
-        model = resolve_judge_model(self._model, ctx.model)
+        model = self._model
         attributes: dict[str, str] = {
             'smart_file_search.judge_model': model if isinstance(model, str) else f'{model.system}:{model.model_name}'
         }
@@ -120,7 +121,7 @@ class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
         ) as span:
             try:
                 result = await search_code(
-                    ctx.workspace,
+                    ctx,
                     model,
                     query,
                     directory,

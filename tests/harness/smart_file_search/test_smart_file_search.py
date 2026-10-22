@@ -8,7 +8,6 @@ takes), and a plain `FunctionModel` filling the same fields as structured output
 from __future__ import annotations
 
 import json
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,7 +20,7 @@ from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import ModelHTTPError, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.decision import NoulQuestion
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -30,6 +29,7 @@ from pydantic_ai.models.system_one import SystemOneModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers import system_one as system_one_provider
 from pydantic_ai.providers.system_one import SystemOneProvider
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
 from pydantic_ai_harness import SmartFileSearch
 from pydantic_ai_harness.smart_file_search import SmartFileSearchResult, SmartFileSearchToolset
@@ -44,6 +44,7 @@ from .conftest import (
     search,
     search_agent,
     search_error,
+    tool_returns,
     write_repo,
 )
 
@@ -120,52 +121,40 @@ class TestSmartFileSearch:
         )
         assert len(judgments) < 5  # the first failure cancels the judgments still waiting
 
-    @pytest.mark.parametrize('typesafe', ['no key', 'key without SDK'])
-    async def test_judges_with_the_run_model_when_typesafe_is_unavailable(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, typesafe: str
-    ) -> None:
-        if typesafe == 'no key':
-            monkeypatch.delenv('TYPESAFE_API_KEY', raising=False)
-        else:
-            monkeypatch.setenv('TYPESAFE_API_KEY', 'test-key')
-            monkeypatch.setitem(sys.modules, 'typesafe_sdk', None)  # as if not installed: blocks the import
-        (tmp_path / 'a.py').write_text('x = 1\n')
-        judged_states: list[str] = []
+    # ------------------------------------------------------------ usage
 
-        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if info.output_tools:  # the judge run
-                judged_states.append(str(messages[-1]))
-                return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'entity': 1, 'operation': 1})])
-            if len(messages) == 1:
-                return ModelResponse(parts=[ToolCallPart('smart_file_search', {'query': 'assign x'})])
-            return ModelResponse(parts=[TextPart('done')])
+    async def test_each_judgment_counts_as_a_run_request(self, tmp_path: Path) -> None:
+        for name in ('a', 'b', 'c'):
+            (tmp_path / f'{name}.py').write_text('expired = True\n')
+        judge_model = FakeJev('expired')
+        agent = search_agent(tmp_path, judge_model)
+        result = await agent.run(
+            'find it', model=calls_smart_file_search(), usage_limits=UsageLimits(request_limit=None)
+        )
+        assert len(judge_model.requests) == 3
+        assert result.usage.requests == 2 + 3  # the model's two turns, then one per judged snippet
 
-        agent = Agent(FunctionModel(respond), capabilities=[LocalWorkspace(tmp_path), SmartFileSearch()])
-        await agent.run('find it')
-        assert len(judged_states) == 1 and 'a.py:1-1' in judged_states[0]
+    async def test_request_limit_bounds_the_judgments(self, tmp_path: Path) -> None:
+        for i in range(10):
+            (tmp_path / f'm{i}.py').write_text('expired = True\n')
+        judge_model = FakeJev('expired')
+        agent = search_agent(tmp_path, judge_model)
+        result = await agent.run('find it', model=calls_smart_file_search(), usage_limits=UsageLimits(request_limit=6))
+        [part] = tool_returns(result.all_messages())
+        assert isinstance(part.content, SmartFileSearchResult)
+        # The model's first turn took one request; four judgments leave the sixth for its next turn.
+        assert part.content.coverage.evaluated == len(judge_model.requests) == 4
+        assert any('`request_limit` left room for no more' in w for w in part.content.warnings)
+        assert result.output == 'done'
 
-    async def test_judges_with_typesafe_jev_by_default_when_available(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        pytest.importorskip('typesafe_sdk')
-        from pydantic_ai.providers import typesafe as typesafe_provider
-
-        write_repo(tmp_path)
-        server = DecisionServer('raise PermissionError')
-        monkeypatch.setenv('TYPESAFE_API_KEY', 'test-key')
-        monkeypatch.delenv('TYPESAFE_BASE_URL', raising=False)
-        monkeypatch.setattr(typesafe_provider, 'create_async_httpx2_client', server.client)
-
-        [match] = (await search(search_agent(tmp_path, None))).matches
-        assert (match.file_path, match.symbol, match.score) == ('auth.py', 'reject_expired', 0.81)
-        assert server.hosts == {'api.typesafe.ai'}
-        assert {body['model'] for body in server.bodies} == {'jev-latest'}
-
-        # A configured judge is never replaced.
-        server.bodies.clear()
-        model = FakeJev('expired')
-        await search(search_agent(tmp_path, model))
-        assert model.requests and not server.bodies
+    async def test_no_request_room_fails_the_search(self, tmp_path: Path) -> None:
+        (tmp_path / 'a.py').write_text('expired = True\n')
+        judge_model = FakeJev('expired')
+        agent = search_agent(tmp_path, judge_model)
+        result = await agent.run('find it', model=calls_smart_file_search(), usage_limits=UsageLimits(request_limit=2))
+        [part] = tool_returns(result.all_messages())
+        assert 'no requests left to judge with' in str(part.content)
+        assert not judge_model.requests
 
     # ------------------------------------------------------------ search
 
@@ -252,10 +241,10 @@ class TestSmartFileSearch:
 
     def test_capability_validates_its_settings(self) -> None:
         with pytest.raises(ValueError, match='threshold'):
-            SmartFileSearch[None](threshold=1.5)
+            SmartFileSearch[None](FakeJev('x'), threshold=1.5)
         for concurrency in (0, float('nan')):
             with pytest.raises(ValueError, match='concurrency'):
-                SmartFileSearch[None](concurrency=concurrency)  # pyright: ignore[reportArgumentType]
+                SmartFileSearch[None](FakeJev('x'), concurrency=concurrency)  # pyright: ignore[reportArgumentType]
 
     @pytest.mark.parametrize(
         ('guidance', 'expected'),
@@ -363,10 +352,10 @@ def reject_expired(session):
             await agent.run('hi')
 
     def test_toolset_advertises_the_upstream_schema(self) -> None:
-        toolset = SmartFileSearch[None]().get_toolset()
+        toolset = SmartFileSearch[None](FakeJev('x')).get_toolset()
         assert isinstance(toolset, SmartFileSearchToolset)
         assert toolset.id == 'smart_file_search'  # durable execution needs a toolset `id`
-        assert SmartFileSearch[None](id='code').get_toolset().id == 'code'
+        assert SmartFileSearch[None](FakeJev('x'), id='code').get_toolset().id == 'code'
         schema = toolset.tools['smart_file_search'].function_schema.json_schema
         assert set(schema['properties']) == {'query', 'directory', 'glob', 'limit', 'candidates'}
         assert schema['properties']['candidates']['default'] == 128
