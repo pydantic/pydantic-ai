@@ -172,7 +172,8 @@ def scenario_agents(
             # A grid model: its coordinates are scaled to pixels with `display_size`, read from workflow code.
             TestModel(call_tools=['computer'], profile=ModelProfile(computer_use_coordinate_grid=1000)),
             name=f'{prefix}computer',
-            capabilities=[ComputerUse(settle_seconds=0), workspaces(), durability()],
+            # A settle pause, so the tool's sleep runs in workflow code too.
+            capabilities=[ComputerUse(settle_seconds=0.01), workspaces(), durability()],
         ),
     )
 
@@ -417,11 +418,14 @@ async def check_binary(run: Runner, agents: ScenarioAgents) -> None:
 
 
 async def check_computer(run: Runner, agents: ScenarioAgents) -> None:
-    """The `computer` tool acts and looks from inside a durable unit; a grid model's scaling reads the display size."""
+    """The `computer` tool runs in workflow code, and each action and screenshot reaches the display in its own unit.
+
+    The fake provider refuses any call made outside a durable unit, so the run only succeeds if every display call was
+    routed through one; a grid model's scaling reads the display size the same way.
+    """
     output = await run('computer', None)
-    assert 'Screenshot attached (1280x800).' in output, output[:300]
+    assert 'Screenshot attached.' in output, output[:300]
     assert agents.provider.actions, 'the tool performed no action on the display'
-    # Scaling grid coordinates needs the run's model, so it runs in workflow code and reads the size through a unit.
     assert agents.provider.display_size_calls == 1
 
 

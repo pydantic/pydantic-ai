@@ -120,7 +120,9 @@ def _check_reinject(merged: ReinjectSystemPrompt) -> None:
 
 
 def _check_computer_use(merged: ComputerUse[Any]) -> None:
-    assert merged.id == 'computer'
+    # One display: the later configuration replaces the earlier whole, and the tool runs with it.
+    assert (merged.require_approval, merged.settle_seconds, merged.keep_screenshots) == (False, 0, None)
+    assert merged.get_toolset().tools['computer'].function == merged._computer  # pyright: ignore[reportPrivateUsage]
 
 
 def _check_content_filter(merged: RaiseContentFilterError) -> None:
@@ -216,8 +218,8 @@ COMBINE_POLICY: dict[str, Policy] = {
         _check_content_filter,
     ),
     'ComputerUse': Combines(
-        'carries no configuration, and an agent has one display to control',
-        lambda: (ComputerUse(), ComputerUse()),
+        'an agent has one display to control, so the later configuration replaces the earlier one whole',
+        lambda: (ComputerUse(require_approval=True, keep_screenshots=2), ComputerUse(settle_seconds=0)),
         _check_computer_use,
     ),
     'LocalWorkspace': Combines(
