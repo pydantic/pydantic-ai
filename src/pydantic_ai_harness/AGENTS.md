@@ -91,6 +91,17 @@ The house pattern (spans on `ctx.tracer`, attribute naming, content behind
 `trace_include_content`) is in `src/pydantic_ai_harness/agent_docs/capability-authoring.md`
 "Telemetry".
 
+## Framing tags
+
+A capability that writes a tag into prompt text, such as `<memory>`, `<judge_feedback>` or
+`<task_output>`, registers it once at module level with `pydantic_ai.framing.register_tag()` and
+renders it with `pydantic_ai.framing.wrap()`. Registering is what makes core's own data frames, such as a
+`<tool_result>`, neutralize the tag, so a tool result can't close the capability's frame. Use
+`neutralize_tags()` for untrusted text placed inside a frame some other way. Do not hand-roll an escaper:
+escaping only a frame's own closing tag leaves its opener and the `<system>` voice tag free to forge
+structure. Tag names are lowercase snake_case. See
+<https://pydantic.dev/docs/ai/capabilities/custom/#framing-data-in-prompt-text>.
+
 ## Coding standards
 
 - Python 3.11+ (Pyright and Ruff targets)
@@ -108,7 +119,8 @@ The house pattern (spans on `ctx.tracer`, attribute naming, content behind
   matching who wrote it, framework records are found by type or metadata, never by their text, and
   any tag a capability wraps around content follows that guide's tag rules (`snake_case` names,
   escaping every opening and closing spelling of every registered framing tag, through
-  `_framing.wrap()`/`neutralize_tags()`, never a hand-rolled escaper, attributes, no preambles)
+  `pydantic_ai.framing.wrap()`/`neutralize_tags()` with the tag registered (see "Framing tags"), never
+  a hand-rolled escaper, attributes, no preambles)
 
 ## Writing style
 

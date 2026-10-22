@@ -94,8 +94,11 @@ Beyond free-form review, run these checks proactively; the first applies to ever
   renders to the same bytes. For tags: lowercase `snake_case` names, an
   existing tag before a new one, an escape that neutralizes every opening and
   closing spelling of every registered framing tag inside a data frame (only
-  `system` inside a `<system>` body) through `_framing.wrap()`, never a
-  hand-rolled escaper,
+  `system` inside a `<system>` body) through `_framing.wrap()` in core or the
+  public `pydantic_ai.framing.wrap()` elsewhere, Pydantic AI Harness included,
+  with a tag defined outside core registered once at module level with
+  `pydantic_ai.framing.register_tag()` so core's own data frames neutralize it
+  too, never a hand-rolled escaper,
   with tests for the variants and a cross-tag case, attributes limited to identity and
   outcome, no unframed framework preamble before a frame on a user turn, no
   "the tag that follows" references, and a live probe for new framing. Code that
