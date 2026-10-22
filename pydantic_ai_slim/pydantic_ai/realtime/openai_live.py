@@ -2209,7 +2209,7 @@ class OpenAILiveModel(RealtimeModel):
         if settings.get('input_transcription_model', 'auto') not in ('auto', None):
             raise UserError(
                 'OpenAI GPT-Live does not support choosing a transcription model, so `input_transcription_model` '
-                "can only be `'auto'`."
+                "can only be `'auto'` or `None` (Live always transcribes)."
             )
 
     def _live_url(self) -> str:
