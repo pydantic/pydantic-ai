@@ -135,6 +135,71 @@ working directory but inside `root_dir` use `..` components. Containment,
 access patterns, and event paths retain their `root_dir` basis, as does
 `search_files`'s `include_glob` filter.
 
+### Tool kinds
+
+Each tool declares a [tool kind](../tools-advanced.md#typed-tool-parts) in the `file_system`
+namespace, named after the tool: `read_file` has the kind
+`file_system.read_file`, exported as `READ_FILE_KIND`, and likewise
+`WRITE_FILE_KIND`, `EDIT_FILE_KIND`, `LIST_DIRECTORY_KIND`, `SEARCH_FILES_KIND`,
+`FIND_FILES_KIND`, `CREATE_DIRECTORY_KIND`, `FILE_INFO_KIND`, `LIST_FILES_KIND`,
+and `GREP_KIND`. The kind is part of the tool's definition rather than its name,
+so another capability or a history processor can recognize these tools by kind
+instead of comparing tool names. Each kind declares the shape of its tool's
+arguments (`ReadFileArgs`, `WriteFileArgs`, and so on), and a call whose
+arguments fit it is promoted to a typed part (`ReadFileCallPart`,
+`WriteFileCallPart`, and so on) in a run's messages and in a loaded history,
+with the validated arguments as `typed_args`:
+
+```python
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai_harness.filesystem import ReadFileCallPart
+
+
+def paths_read(messages: list[ModelMessage]) -> list[str]:
+    return [
+        args['path']
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ReadFileCallPart) and (args := part.typed_args) is not None
+    ]
+```
+
+`read_file` also has a typed return part, `ReadFileReturnPart`, for a return
+whose outcome is `'success'`, which includes a `Path not found: <path>` result.
+Its `content` is the text with its header, or `[header, BinaryContent]` for an
+image or PDF. The kind declares no content shape, since `ToolKind` takes a class
+and not a union, so `typed_content` is untyped. The other tools return text
+written for the model rather than a format to parse, so their returns stay plain
+`ToolReturnPart`s that carry the kind as `tool_kind`; the [events](#events)
+carry their outcomes as structured data.
+
+### Capabilities that step aside for `read_file`
+
+Some capabilities have a reader of their own for files they keep in the workspace. When those files
+are in the run's workspace, the reader is marked with
+[`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] set to `READ_FILE_KIND`,
+so it is left out of every run step that has `read_file`. The instructions name no reader, so
+they stay the same either way; the spill marker and `Memory`'s per-call notices name `read_file` as it
+is called in the run:
+
+- `ToolOutputLimits`' `read_tool_result`, with the default `WorkspaceStore()`. Reads of its spill
+  files through `read_file` are not reduced again.
+- `Memory`'s `read_memory`, with a `FileStore` that has no `workspace=` of its own and a relative
+  `directory` inside the working directory.
+- `RepoContext`'s inventory tool, when its asset roots are inside the working directory.
+
+A `FileSystem` tool can't be called under a new name yet, such as under `PrefixTools`, because
+Pydantic AI refuses its capability events ([#10927](https://github.com/pydantic/pydantic-ai/issues/10927)).
+The dedicated reader steps aside for a renamed `FileSystem` all the same, so keep `FileSystem` under
+its own names for now.
+
+The capability decides from its own configuration, not from `FileSystem`'s access rules. With
+`denied_patterns` that cover those files (`.pydantic-ai-harness/` for spills, the memory directory,
+the asset roots), or `allowed_patterns` that leave them out, the dedicated reader is still left out
+and `read_file` refuses the files. To keep the dedicated reader, give `ToolOutputLimits` or `Memory` a store with a workspace of its
+own, and for `RepoContext` keep the asset roots readable or use an asset root outside the working
+directory.
+
 ## Events
 
 `FileSystem` emits typed capability events in the `file_system` namespace so a

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -15,19 +16,27 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, T
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest
-from pydantic_ai_harness.memory._store import FileStore, InMemoryStore, MemoryFile, MemoryStore, validate_store_path
+from pydantic_ai_harness.memory._file import FileStore
+from pydantic_ai_harness.memory._in_memory import InMemoryStore
+from pydantic_ai_harness.memory._render import injection_listing_limit, list_subfiles, render_memory_prompt
+from pydantic_ai_harness.memory._sqlite import SqliteMemoryStore
+from pydantic_ai_harness.memory._store import MemoryFile, MemoryStore, encode_metadata, validate_store_path
 from pydantic_ai_harness.memory._toolset import (
     MAIN_FILENAME,
+    MEMORY_DATA_PREFIX,
+    MEMORY_DATA_SUFFIX,
     MemoryDeleteResult,
     MemorySearchResponse,
     MemoryToolOperations,
     MemoryToolset,
     MemoryWriteResult,
-    injection_listing_limit,
-    list_subfiles,
-    render_memory_prompt,
+    file_reader,
+    read_call,
+    require_metadata_store,
     run_as_operation,
+    snapshot_content_budget,
 )
 
 _DEFAULT_GUIDANCE = (
@@ -37,15 +46,19 @@ _DEFAULT_GUIDANCE = (
     'bullet lines, and put longer or evolving topics in separate files referenced from '
     'MEMORY.md. When you learn something a future session will need, store it proactively with '
     '`write_memory` (append by default; pass `old_text` to correct or remove). Read a listed '
-    'file with `read_memory` when it looks relevant, or use `search_memory` to find relevant '
+    'file when it looks relevant, or use `search_memory` to find relevant '
     'files. Keep memory curated -- update instead of duplicating, delete what turns out wrong. '
     'Never claim something was remembered or saved unless you actually called `write_memory` '
     'in this turn.'
 )
 
-_MEMORY_DATA_PREFIX = '<memory>\n'
-_MEMORY_DATA_SUFFIX = '\n</memory>'
+# The slash is inside the optional group so the two `\s*` never compete for one run of spaces.
+_MEMORY_TAG_RE = re.compile(r'<(?=(?:\s*/)?\s*memory\b)', re.IGNORECASE)
+"""The `<` of a `<memory>` or `</memory>` tag in stored content, which could otherwise close the block early."""
 _MEMORY_PART_METADATA = 'pydantic-ai-harness.memory.v1'
+
+WriteMetadataFunc: TypeAlias = Callable[[RunContext[AgentDepsT]], Mapping[str, str] | None]
+"""Resolves the metadata recorded with one `write_memory` write, or `None` to record none."""
 
 
 @dataclass
@@ -53,9 +66,11 @@ class Memory(AbstractCapability[AgentDepsT]):
     """Persistent agent memory across sessions.
 
     `MEMORY.md` is injected as user-role context and longer topic files are
-    available through `read_memory` and `search_memory`. Automatic snapshot
-    loading is journaled by durability engines that support capability
-    operations.
+    available through `read_memory` and `search_memory`. When a `FileStore`
+    keeps the files in the run's workspace, `read_memory` steps aside for
+    `FileSystem`'s `read_file`, and the injected snapshot gives the directory.
+    Automatic snapshot loading is journaled by durability engines that support
+    capability operations.
     """
 
     store: MemoryStore = field(default_factory=InMemoryStore)
@@ -111,6 +126,14 @@ class Memory(AbstractCapability[AgentDepsT]):
     _: KW_ONLY
     id: str | None = 'memory'
 
+    write_metadata: Mapping[str, str] | WriteMetadataFunc[AgentDepsT] | None = None
+    """Metadata to record with each `write_memory` write, such as `{'updated_by': 'agent'}`, or a
+    callable that resolves it from the run for each write.
+
+    The application supplies it; it is never a tool argument. It needs a `MetadataMemoryStore`, and
+    raises `UserError` when the store, or the one `store_resolver` returns, is not one. When unset,
+    the model's writes to such a store record no metadata."""
+
     _resolved_scope: tuple[MemoryStore, str] | None = field(default=None, init=False, repr=False, compare=False)
 
     _toolset: MemoryToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
@@ -125,6 +148,10 @@ class Memory(AbstractCapability[AgentDepsT]):
         _validate_positive('max_search_files', self.max_search_files)
         if self.injection_errors not in ('ignore', 'raise'):
             raise ValueError("injection_errors must be 'ignore' or 'raise'")
+        if self.write_metadata is not None and not callable(self.write_metadata):
+            encode_metadata(self.write_metadata)
+        if self.write_metadata is not None and self.store_resolver is None:
+            require_metadata_store(self.store)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Memory[AgentDepsT]:
         """Return a clone with scope resolution isolated to this run."""
@@ -154,10 +181,20 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     def _resolve_scope(self, ctx: RunContext[AgentDepsT]) -> tuple[MemoryStore, str]:
         store = self.store_resolver(ctx) if self.store_resolver is not None else self.store
+        if self.write_metadata is not None:
+            require_metadata_store(store)
         namespace = self.namespace(ctx) if callable(self.namespace) else self.namespace
         scope = f'{namespace}/{self.agent_name}' if namespace else self.agent_name
         validate_store_path(scope)
         return store, scope
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one notebook stated twice; two that disagree raise rather than merge.
+
+        A field-by-field merge of two notebooks would keep one and drop the other.
+        """
+        return one_per_id(capabilities)
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Provide the stable `memory` toolset, shared with every per-run copy."""
@@ -201,7 +238,9 @@ class Memory(AbstractCapability[AgentDepsT]):
 
         Stored memory is added separately as user-role context by
         `before_model_request` so model-written content is not placed in the
-        instruction channel.
+        instruction channel. The guidance is the same in every run, so it stays
+        static and inside the cached prefix; when `read_file` reads the files in
+        place of `read_memory`, the injected snapshot says where they are.
         """
         return self._render_guidance()
 
@@ -262,13 +301,13 @@ class Memory(AbstractCapability[AgentDepsT]):
                     span.set_attributes({'memory.outcome': 'error', 'memory.exception_type': error_type})
                 return request_context
 
-            main_content = '' if main is None else main.content
+            main_content = '' if main is None else _MEMORY_TAG_RE.sub('&lt;', main.content)
             rendered = ''
             guidance = self._render_guidance()
-            content_budget = (
-                self.max_tokens * 4 - len(guidance or '') - len(_MEMORY_DATA_PREFIX) - len(_MEMORY_DATA_SUFFIX)
-            )
-            if content_budget > 0 and (main_content or subfiles or files_truncated):
+            content_budget = snapshot_content_budget(self.max_tokens, guidance)
+            has_memory = bool(main_content or subfiles or files_truncated)
+            if content_budget > 0 and has_memory:
+                reader = file_reader(ctx, store, scope)
                 rendered = render_memory_prompt(
                     main_content,
                     subfiles,
@@ -278,8 +317,10 @@ class Memory(AbstractCapability[AgentDepsT]):
                     max_tokens=max(1, content_budget // 4),
                     main_truncated=main is not None and main.truncated,
                     files_truncated=files_truncated,
+                    read_main=read_call(reader, MAIN_FILENAME),
+                    location=None if reader is None else reader[1],
                 )[:content_budget]
-                rendered = f'{_MEMORY_DATA_PREFIX}{rendered}{_MEMORY_DATA_SUFFIX}'
+                rendered = f'{MEMORY_DATA_PREFIX}{rendered}{MEMORY_DATA_SUFFIX}'
                 part = UserPromptPart([TextContent(rendered, metadata=marker)])
                 index = _snapshot_index(ctx.messages, request_context.messages)
                 target = request_context.messages[index]
@@ -289,8 +330,9 @@ class Memory(AbstractCapability[AgentDepsT]):
             if span.is_recording():
                 span.set_attributes(
                     {
-                        'memory.outcome': 'ok',
-                        'memory.main_chars': len(main_content),
+                        # The guidance can fill the whole budget, leaving no room to inject what is stored.
+                        'memory.outcome': 'ok' if rendered or not has_memory else 'budget_exhausted',
+                        'memory.main_chars': 0 if main is None else len(main.content),
                         'memory.files': len(subfiles),
                         'memory.files_truncated': files_truncated,
                         'memory.main_truncated': main is not None and main.truncated,
@@ -317,7 +359,8 @@ class Memory(AbstractCapability[AgentDepsT]):
             # Best-effort injection must not inherit an engine's retry policy and stall a
             # workflow. Return content-safe failure metadata as the durable result instead.
             return None, [], False, type(exc).__name__
-        return main, subfiles, files_truncated, None
+        # Injection uses only the content, so write metadata, which can name a user, stays out of the journal.
+        return None if main is None else replace(main, metadata=None), subfiles, files_truncated, None
 
     def _remove_previous_injection(self, messages: list[ModelMessage], marker: str) -> None:
         for index, message in enumerate(messages):
@@ -376,12 +419,8 @@ class Memory(AbstractCapability[AgentDepsT]):
         if backend == 'memory':
             store: MemoryStore = InMemoryStore()
         elif backend == 'file':
-            from pydantic_ai_harness.memory._store import FileStore
-
             store = FileStore(directory)
         elif backend == 'sqlite':
-            from pydantic_ai_harness.memory._store import SqliteMemoryStore
-
             store = SqliteMemoryStore(database=database)
         else:
             raise ValueError(f'unknown backend {backend!r}; expected `memory`, `file`, or `sqlite`')
