@@ -4588,7 +4588,10 @@ async def test_tool_error_does_not_preempt_send_for_an_active_iterator() -> None
 
 
 async def test_tool_error_delivered_to_send_is_skipped_by_the_iterator() -> None:
-    """Once the receive side has ended, a send raises the parked failure; the iterator then ends cleanly."""
+    """Once the receive side has ended, a send raises the parked failure; the iterator then skips it and ends cleanly.
+
+    It still streams the end of the turn the failure ended, which was queued behind the failure.
+    """
 
     async def runner(*args: Any) -> str:
         raise ValueError('tool exploded')
@@ -4606,6 +4609,7 @@ async def test_tool_error_delivered_to_send_is_skipped_by_the_iterator() -> None
 
         with pytest.raises(ValueError, match='tool exploded'):
             await session.send('x')
+        assert isinstance(await anext(events), RealtimeTurnCompleteEvent)
         with pytest.raises(StopAsyncIteration):
             await anext(events)
 
