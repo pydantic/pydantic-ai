@@ -14,11 +14,9 @@ from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
-    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryFeedbackPart,
     TextContent,
     ToolReturnPart,
     UserPromptPart,
@@ -286,11 +284,11 @@ class Memory(AbstractCapability[AgentDepsT]):
     ) -> ModelRequestContext:
         """Record a memory snapshot in history at the start of a run, when memory changed since the last one.
 
-        The snapshot is added to the conversation once and sent unchanged with every later request, so
-        history only ever grows. It is added only when a run's first request is prepared, with the user's prompt: later
-        requests in a run carry tool results, where a block of user-channel text reads as a new message
-        from the user. If compaction later in the run drops the snapshot the run started with, the same
-        snapshot is put back where compaction rewrote the history, without reading the store again.
+        The snapshot is enqueued, so it is added to the conversation once and sent unchanged with every later
+        request: history only ever grows. It is only added before the model has responded in this run, which
+        keeps it with the user's prompt: later requests carry tool results, where a block of user-channel
+        text reads as a new message from the user. If compaction later in the run drops the snapshot the run
+        started with, the same snapshot is enqueued again, without reading the store again.
         """
         if not self.inject_memory:
             return request_context
@@ -301,15 +299,16 @@ class Memory(AbstractCapability[AgentDepsT]):
         latest = _latest_snapshot(post_compaction_window(ctx.messages), metadata)
         if self._run_started:
             if self._run_snapshot is not None and latest != self._run_snapshot:
-                _restore_snapshot(
-                    ctx, request_context, UserPromptPart([TextContent(self._run_snapshot, metadata=metadata)])
-                )
+                # Compaction dropped it: what the provider is sent after the boundary is the request being sent,
+                # so it goes there, after any tool results, rather than anywhere the provider would trim.
+                ctx.enqueue(UserPromptPart([TextContent(self._run_snapshot, metadata=metadata)]))
             return request_context
         self._run_started = True
         self._run_snapshot = latest
-        # A run that continues from tool results without a prompt of its own (resuming after a deferred tool
-        # approval) waits for the next prompt: a snapshot after tool results reads as a new user message.
-        if _is_tool_continuation(ctx):
+        # Memory waits for the next prompt when the model has already responded in this run (a deferred
+        # `Memory` loaded mid-run) or the run continues from tool results without a prompt of its own (resuming
+        # after a deferred tool approval): there, a snapshot follows what the model already saw or tool results.
+        if _responded_in_run(ctx) or _is_tool_continuation(ctx):
             return request_context
         with ctx.tracer.start_as_current_span(
             'memory.inject', record_exception=False, set_status_on_exception=False
@@ -348,13 +347,9 @@ class Memory(AbstractCapability[AgentDepsT]):
                 rendered = None
             appended = rendered if rendered is not None and rendered != latest else None
             if appended is not None:
-                part = UserPromptPart([TextContent(appended, metadata=metadata)])
-                if ctx.run_step > 1:
-                    # An earlier hook retried before this one ran, so the prompt is followed by its retry feedback:
-                    # the snapshot goes with the prompt, which no request has sent yet.
-                    _restore_snapshot(ctx, request_context, part)
-                else:
-                    ctx.enqueue(part)
+                # When an earlier hook retried the first request, this lands after its retry feedback: still
+                # ahead of any response, so nothing the model has seen changes.
+                ctx.enqueue(UserPromptPart([TextContent(appended, metadata=metadata)]))
                 self._run_snapshot = appended
             if span.is_recording():
                 span.set_attributes(
@@ -517,56 +512,25 @@ def _snapshot_metadata(scope_hash: str, memory_id: str | None) -> dict[str, str]
     return {'origin': _MEMORY_ORIGIN, 'scope': scope_hash, 'id': memory_id or ''}
 
 
-def _has_user_prompt(message: ModelMessage) -> bool:
-    return isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts)
+def _responded_in_run(ctx: RunContext[AgentDepsT]) -> bool:
+    """Whether the model has already responded in this run."""
+    return any(isinstance(message, ModelResponse) and message.run_id == ctx.run_id for message in ctx.messages)
 
 
 def _is_tool_continuation(ctx: RunContext[AgentDepsT]) -> bool:
     """Whether the run continues from tool results without a prompt of its own.
 
-    Decided by the run's own `prompt`, not by the request's parts: a tool can add user-channel content next to
-    its result (`ToolReturn(content=...)`), which is not the user speaking.
+    Decided by the run's own `prompt` and the tool results it resumes with, not by whether the request holds a
+    user prompt part: a tool can add user-channel content next to its result (`ToolReturn(content=...)`), which
+    is not the user speaking. Retry feedback alone is not a continuation: a promptless run that a hook retried
+    still starts fresh.
     """
     message = ctx.messages[-1]
     return (
         ctx.prompt is None
         and isinstance(message, ModelRequest)
-        and any(isinstance(part, ToolReturnPart | RetryFeedbackPart) for part in message.parts)
+        and any(isinstance(part, ToolReturnPart) for part in message.parts)
     )
-
-
-def _restore_snapshot(ctx: RunContext[AgentDepsT], request_context: ModelRequestContext, part: UserPromptPart) -> None:
-    """Put a snapshot compaction dropped back where the model will see it, without splitting a tool call from its result.
-
-    It goes right after the latest prompt that follows the compaction boundary, as a request of its own that
-    the request ahead of it absorbs when sent. With no such prompt (native compaction mid tool loop leaves only
-    the compacted response and the tool results), it joins the request being sent, after its tool results:
-    anything before the boundary is dropped by the provider. This only happens on the request where compaction
-    rewrote the history, so the prefix that moves is the one compaction already moved. It also places a run's
-    first snapshot when an earlier hook retried the first request, whose prompt no request has sent yet.
-    """
-    history = ctx.messages
-    boundary = next(
-        (
-            i
-            for i in range(len(history) - 1, -1, -1)
-            if isinstance(message := history[i], ModelResponse)
-            and any(isinstance(item, CompactionPart) for item in message.parts)
-        ),
-        -1,
-    )
-    anchor = next((i for i in range(len(history) - 2, boundary, -1) if _has_user_prompt(history[i])), None)
-    sent = (
-        None
-        if anchor is None
-        else next((i for i, message in enumerate(request_context.messages) if message is history[anchor]), None)
-    )
-    if anchor is None or sent is None:
-        ctx.enqueue(part)
-        return
-    restored = ModelRequest(parts=[part])
-    history.insert(anchor + 1, restored)
-    request_context.messages.insert(sent + 1, restored)
 
 
 def _validate_positive(name: str, value: int) -> None:

@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import inspect
 import os
-from collections.abc import Mapping
+from collections.abc import AsyncIterable, AsyncIterator, Mapping
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
@@ -28,7 +28,9 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
 from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     CompactionPart,
+    EnqueuedMessagesEvent,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -1870,10 +1872,14 @@ class TestInjection:
         assert all('- version B' in context for context in latest_sent)
         assert '- version B' in _memory_contexts(second.all_messages())[-1]
 
-    async def test_snapshot_is_recorded_when_an_earlier_hook_retries_the_first_request(self) -> None:
+    @pytest.mark.parametrize('prompt', ['what do I like?', None])
+    async def test_snapshot_is_recorded_when_an_earlier_hook_retries_the_first_request(
+        self, prompt: str | None
+    ) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- likes tea')
         sent: list[list[ModelMessage]] = []
+        enqueued: list[EnqueuedMessagesEvent] = []
 
         @dataclass
         class RetryFirstRequest(AbstractCapability[None]):
@@ -1884,22 +1890,54 @@ class TestInjection:
                     raise ModelRetry('Try that again.')
                 return request_context
 
-        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        async def model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
             sent.append(messages)
-            return ModelResponse(parts=[TextPart('done')])
+            yield 'done'
+
+        async def collect(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in events:
+                if isinstance(event, EnqueuedMessagesEvent):
+                    enqueued.append(event)
 
         agent = Agent(
-            FunctionModel(model), deps_type=type(None), capabilities=[RetryFirstRequest(), Memory(store=store)]
+            FunctionModel(stream_function=model),
+            deps_type=type(None),
+            capabilities=[RetryFirstRequest(), Memory(store=store)],
         )
-        result = await agent.run('what do I like?')
+        result = await agent.run(prompt, event_stream_handler=collect)
 
         assert len(sent) == 1
         [snapshot] = _memory_contexts(sent[0])
         assert '- likes tea' in snapshot
-        # The snapshot stays with the prompt, ahead of the retry feedback.
+        # It's enqueued after the retry feedback, still ahead of any response, and streamed like any enqueued message.
         history = result.all_messages()
-        assert _memory_request_indexes(history) == [1]
-        assert _user_text(history[:1]) == 'what do I like?'
+        assert isinstance(history[-1], ModelResponse)
+        assert _memory_request_indexes(history) == [len(history) - 2]
+        assert [_memory_contexts(list(event.messages)) for event in enqueued] == [[snapshot]]
+
+    async def test_memory_loaded_mid_run_waits_for_the_next_prompt(self) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- likes tea')
+        sent: list[list[ModelMessage]] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(messages)
+            if len(sent) == 1:
+                return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'memory'}, tool_call_id='load')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(model),
+            capabilities=[Memory(store=store, description='Long-term memory.', defer_loading=True)],
+        )
+        first = await agent.run('first')
+
+        # Loaded after the model's first response: a snapshot now would sit ahead of what it already saw.
+        assert len(sent) == 2
+        assert not _memory_contexts(first.all_messages())
+        second = await agent.run('second', message_history=first.all_messages())
+        assert '- likes tea' in _memory_contexts(sent[2])[0]
+        assert _memory_request_indexes(second.all_messages()) == [len(second.all_messages()) - 2]
 
     async def test_snapshot_without_user_prompt_goes_to_last_request(self) -> None:
         store = InMemoryStore()

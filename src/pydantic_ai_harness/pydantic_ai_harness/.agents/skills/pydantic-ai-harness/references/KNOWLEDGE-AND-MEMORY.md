@@ -26,8 +26,9 @@ user's prompt on a run's first request, and only when memory changed since the l
 history (after the latest compaction boundary). History stays append-only: earlier snapshots are kept,
 a later one for the same memory supersedes them, and a
 change made during a run (including `write_memory`) reaches the model with the next user prompt,
-not after tool results (the exception: restoring the run's own snapshot after native compaction
-mid tool loop, when no prompt is left to place it after). Snapshots carry `TextContent.metadata`
+not after tool results (the exception: re-enqueuing the run's own snapshot when compaction drops
+it mid tool loop). It is only added before the model's first response in a run, so a deferred `Memory`
+loaded mid-run waits for the next prompt. Snapshots carry `TextContent.metadata`
 `{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ..., 'id': ...}`; list compaction before `Memory`.
 
 ```python
