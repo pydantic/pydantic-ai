@@ -270,6 +270,7 @@ async def test_old_screenshots_are_dropped_in_batches_and_history_keeps_them_all
     assert requests[28] == ['image'] + ['note'] * 25 + ['image'] * 2
     assert requests[29] == ['image'] + ['note'] * 25 + ['image'] * 3
     computer_returns = [part for part in _returns(result.all_messages()) if part.tool_name == 'computer']
+    assert len(computer_returns) == 28
     assert all(part.content_items()[1] == SCREENSHOT for part in computer_returns)
 
 
