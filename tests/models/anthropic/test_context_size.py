@@ -18,7 +18,6 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.usage import RunUsage, UsageLimits
 
-from ..._inline_snapshot import snapshot
 from ...conftest import RequestCapture, try_import
 from ..conftest import AnthropicModelFactory
 from ..test_anthropic import MockAnthropic, completion_message
@@ -66,11 +65,11 @@ def _context_window_used(model: AnthropicModel, messages: list[ModelMessage]) ->
     return RunContext(deps=None, model=model, usage=RunUsage(), messages=messages).context_window_used
 
 
-# The recorded `usage`: the summed input of every pass, and the last `message` iteration's input (none of these
-# requests read or wrote the cache).
-SERVER_TOOL_LOOP_USAGE: dict[bool, tuple[int, int]] = {
-    False: (50_807, 22_262),
-    True: (50_356, 21_897),
+# The recorded `usage`: the summed input and output of every pass, and the last `message` iteration's input (none of
+# these requests read or wrote the cache).
+SERVER_TOOL_LOOP_USAGE: dict[bool, tuple[int, int, int]] = {
+    False: (50_807, 337, 22_262),
+    True: (50_356, 315, 21_897),
 }
 
 
@@ -99,11 +98,12 @@ async def test_server_tool_loop_reads_context_from_last_pass(
     response = messages[-1]
     assert isinstance(response, ModelResponse)
     assert sum(isinstance(part, NativeToolCallPart) for part in response.parts) == 3
-    summed_input_tokens, last_pass_input_tokens = SERVER_TOOL_LOOP_USAGE[stream]
+    summed_input_tokens, output_tokens, last_pass_input_tokens = SERVER_TOOL_LOOP_USAGE[stream]
     # Usage keeps the sum Anthropic bills.
     assert response.usage.input_tokens == summed_input_tokens > 40_000 > last_pass_input_tokens
+    assert response.usage.output_tokens == output_tokens
     assert response.metadata == {'__pydantic_ai__': {'context_input_tokens': last_pass_input_tokens}}
-    assert _context_window_used(model, messages) == (last_pass_input_tokens + response.usage.output_tokens) / 200_000
+    assert _context_window_used(model, messages) == (last_pass_input_tokens + output_tokens) / 200_000
 
 
 async def test_server_tool_loop_without_iterations_reads_summed_usage(
@@ -116,8 +116,9 @@ async def test_server_tool_loop_without_iterations_reads_summed_usage(
     response = messages[-1]
     assert isinstance(response, ModelResponse)
     assert sum(isinstance(part, NativeToolCallPart) for part in response.parts) == 3
+    assert (response.usage.input_tokens, response.usage.output_tokens) == (51_294, 316)
     assert response.metadata is None
-    assert _context_window_used(model, messages) == response.usage.total_tokens / 200_000
+    assert _context_window_used(model, messages) == (51_294 + 316) / 200_000
 
 
 FIFTEEN_SEARCHES = (
@@ -188,19 +189,32 @@ def _segment_stream(message: BetaMessage) -> list[BetaRawMessageStreamEvent]:
 
 
 @pytest.mark.parametrize('stream', [False, True])
-async def test_pause_turn_segment_without_iterations_reads_its_own_input(allow_model_requests: None, stream: bool):
-    """A segment without `usage.iterations` doesn't inherit the last pass an earlier segment reported.
+@pytest.mark.parametrize(
+    ('done_last_pass_input_tokens', 'context_input_tokens'),
+    [pytest.param(None, 500, id='done-without-iterations'), pytest.param(450, 450, id='done-with-iterations')],
+)
+async def test_pause_turn_segment_reads_its_own_context(
+    allow_model_requests: None, stream: bool, done_last_pass_input_tokens: int | None, context_input_tokens: int
+):
+    """The segment that finishes a `pause_turn` chain doesn't inherit the last pass an earlier segment reported.
 
     The continuation merges the segments' metadata shallowly, so without a reading of its own the merged response would
-    keep the first segment's last pass under both segments' summed usage. Not a VCR test: a `pause_turn` continuation
-    resends the same betas, and the recorded chain reports `iterations` on every segment.
+    keep the first segment's last pass under both segments' summed usage: a segment that reports `usage.iterations`
+    reads its own last pass, one that doesn't reads its own input. Not a VCR test: a `pause_turn` continuation resends
+    the same betas, so the recorded chain reports `iterations` on every segment, and it isn't streamed.
     """
     paused = completion_message(
         [BetaTextBlock(text='paused', type='text')],
         BetaUsage(input_tokens=100 + 400, output_tokens=20, iterations=[_iteration(100, 10), _iteration(400, 10)]),
     )
     paused.stop_reason = 'pause_turn'
-    done = completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=500, output_tokens=5))
+    done_iterations: BetaIterationsUsage | None = (
+        None if done_last_pass_input_tokens is None else [_iteration(done_last_pass_input_tokens, 5)]
+    )
+    done = completion_message(
+        [BetaTextBlock(text='done', type='text')],
+        BetaUsage(input_tokens=500, output_tokens=5, iterations=done_iterations),
+    )
     done.id = '456'
     if stream:
         client = MockAnthropic.create_stream_mock([_segment_stream(paused), _segment_stream(done)])
@@ -218,8 +232,9 @@ async def test_pause_turn_segment_without_iterations_reads_its_own_input(allow_m
 
     response = messages[-1]
     assert isinstance(response, ModelResponse)
-    assert (response.usage.input_tokens, response.metadata) == snapshot(
-        (1000, {'__pydantic_ai__': {'context_input_tokens': 500}})
+    assert (response.usage.input_tokens, response.metadata) == (
+        1000,
+        {'__pydantic_ai__': {'context_input_tokens': context_input_tokens}},
     )
 
 
