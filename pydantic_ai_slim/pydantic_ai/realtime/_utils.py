@@ -60,6 +60,17 @@ def resolve_advertised_tools(
     return tools, resolved
 
 
+def reject_forced_tool_choice(tool_choice: ResolvedToolChoice | None, message: str) -> None:
+    """Raise `UserError(message)` for a resolved `tool_choice` that forces a tool call.
+
+    No realtime session can honor one: a provider that takes a tool choice applies it to every response,
+    including the one after a tool result, so the model could never answer, and one that takes none
+    can't express it. `message` gives the provider's reason and what to use instead.
+    """
+    if (tool_choice[0] if isinstance(tool_choice, tuple) else tool_choice) == 'required':
+        raise UserError(message)
+
+
 DEFAULT_MAX_RECONNECTS = 50
 """The `ReconnectPolicy.max_reconnects` default."""
 

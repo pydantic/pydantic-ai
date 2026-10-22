@@ -124,6 +124,7 @@ from ._utils import (
     DEFAULT_MAX_RECONNECTS,
     inject_trace_context,
     reconnect_with_backoff,
+    reject_forced_tool_choice,
     require_pcm_audio,
     resolve_advertised_tools,
     seed_pcm_audio,
@@ -1277,12 +1278,12 @@ class GoogleRealtimeModel(RealtimeModel):
         # functions are advertised. A choice that forces a tool call can't be expressed at all, so it
         # fails as it does on the providers that could send it, rather than being dropped.
         advertised_tools, tool_choice = resolve_advertised_tools(tools, settings.get('tool_choice'))
-        if (tool_choice[0] if isinstance(tool_choice, tuple) else tool_choice) == 'required':
-            raise UserError(
-                "Gemini Live can't force a tool call: its session config has no tool choice, so "
-                "`tool_choice='required'` or a list of tool names would be ignored. To restrict which tools the "
-                'model can use, pass `ToolOrOutput(function_tools=[...])` instead.'
-            )
+        reject_forced_tool_choice(
+            tool_choice,
+            "Gemini Live can't force a tool call: its session config has no tool choice, so "
+            "`tool_choice='required'` or a list of tool names would be ignored. To restrict which tools the "
+            'model can use, pass `ToolOrOutput(function_tools=[...])` instead.',
+        )
         if advertised_tools:
             async_tool_calls = self._async_tool_calls(settings)
             genai_tools.append(

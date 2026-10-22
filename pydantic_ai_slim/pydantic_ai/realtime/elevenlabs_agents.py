@@ -97,7 +97,7 @@ from ._lifecycle import (
     ResponseEnded,
     StaleEvent,
 )
-from ._utils import inject_trace_context, require_pcm_audio, resolve_advertised_tools
+from ._utils import inject_trace_context, reject_forced_tool_choice, require_pcm_audio, resolve_advertised_tools
 from .codec import (
     AudioDelta,
     InputTranscript,
@@ -1420,13 +1420,13 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
         instructions = get_instructions(messages, model_request_parameters) or ''
         tools = model_request_parameters.function_tools or []
         advertised_tools, tool_choice = resolve_advertised_tools(tools, settings.get('tool_choice'))
-        if (tool_choice[0] if isinstance(tool_choice, tuple) else tool_choice) == 'required':
-            raise UserError(
-                "A realtime session can't force a tool call: ElevenLabs Agents have no per-response tool "
-                "choice, so `tool_choice='required'` or a list of tool names would never let the agent "
-                'answer. To restrict which tools the agent can use, pass `ToolOrOutput(function_tools=[...])` '
-                'instead.'
-            )
+        reject_forced_tool_choice(
+            tool_choice,
+            "A realtime session can't force a tool call: ElevenLabs Agents have no per-response tool "
+            "choice, so `tool_choice='required'` or a list of tool names would never let the agent "
+            'answer. To restrict which tools the agent can use, pass `ToolOrOutput(function_tools=[...])` '
+            'instead.',
+        )
 
         # One REST round-trip yields the override-permission allowlist, the client tools, and the
         # agent's auth mode, so every fail-loudly check happens before the socket is dialed.

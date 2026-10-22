@@ -121,6 +121,7 @@ from ._utils import (
     DEFAULT_MAX_RECONNECTS,
     inject_trace_context,
     reconnect_with_backoff,
+    reject_forced_tool_choice,
     resolve_advertised_tools,
     seed_retry_feedback_text,
 )
@@ -2098,15 +2099,15 @@ class OpenAILiveModel(RealtimeModel):
         if backend_instructions:
             responses['instructions'] = backend_instructions
         advertised_tools, tool_choice = resolve_advertised_tools(tools, settings.get('tool_choice'))
-        if tool_choice == 'required' or (isinstance(tool_choice, tuple) and tool_choice[0] == 'required'):
-            # The backend applies the choice to every response of a delegation, including the one meant
-            # to answer after the tools have run, so a forced call never lets a delegation finish: it
-            # looped on tool calls (seven in ten seconds, live) until a limit ended the session.
-            raise UserError(
-                f'OpenAI GPT-Live cannot force a tool call, so `tool_choice={settings.get("tool_choice")!r}` cannot '
-                'be set: the backend would apply it to every response, including the one after the tool '
-                "results, and never answer. Use `'auto'`, `'none'`, or `ToolOrOutput` to limit the tools instead."
-            )
+        # The backend applies the choice to every response of a delegation, including the one meant
+        # to answer after the tools have run, so a forced call never lets a delegation finish: it
+        # looped on tool calls (seven in ten seconds, live) until a limit ended the session.
+        reject_forced_tool_choice(
+            tool_choice,
+            f'OpenAI GPT-Live cannot force a tool call, so `tool_choice={settings.get("tool_choice")!r}` cannot '
+            'be set: the backend would apply it to every response, including the one after the tool '
+            "results, and never answer. Use `'auto'`, `'none'`, or `ToolOrOutput` to limit the tools instead.",
+        )
         # The backend runs native tools too, so they go to it rather than to the Live model. Web search
         # takes the same options as on a direct Responses call, and Live passes them through unchecked.
         backend_tools = [tool_def_to_live(tool) for tool in advertised_tools]

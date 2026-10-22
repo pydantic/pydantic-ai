@@ -117,6 +117,13 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 shared [`thinking`](../capabilities/thinking.md) setting when a token budget or other
 Gemini-specific control is needed.
 
+Gemini Live has no tool-choice configuration, so it can't force a tool call: a
+[`tool_choice`](tools.md#restricting-the-available-tools) of `'required'` or a list of tool names
+raises a `UserError` before connecting. To limit the model to some tools, pass
+[`ToolOrOutput(function_tools=[...])`][pydantic_ai.settings.ToolOrOutput] instead. It also can't stop
+the model from calling several tools at once, so `parallel_tool_calls=False` warns with an
+[`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning].
+
 !!! note "`google_proactive_audio` needs a `v1alpha` client"
     Gemini serves `proactivity` on the Developer API's `v1alpha` only; on any other version the
     session is closed with `1007 Invalid JSON payload received. Unknown name "proactivity" at
