@@ -212,6 +212,9 @@ class TaskRouter:
             await view.deliver(update)
 
 
+_CLOSED_BEFORE_START = 'This session closed before the task could start.'
+
+
 class Tasks:
     """One session's view of the process's tasks, and the `TaskCatalog` plugins reach as `host.tasks`.
 
@@ -486,10 +489,13 @@ class Tasks:
             await self.owner.allow_resume(record.id)
             if self._closes != closes:
                 # `stop_prompts` ran meanwhile and could not see a run that had not started yet.
-                await self._restore_stop(record, stopped)
-                raise RuntimeError('This session closed before the task could start.')
+                raise RuntimeError(_CLOSED_BEFORE_START)
         except BaseException:
-            del self._starting[record.id]
+            # Another run of the session may have started the task meanwhile, which `deliver` saw.
+            if self._starting.get(record.id) is starting:
+                del self._starting[record.id]
+            if not starting.is_set():
+                await self._restore_stop(record, stopped)
             raise
         # From here the run settles the prompt, also once this caller is cancelled, as a dropped request is.
         run = self._prompts[record.id] = asyncio.create_task(
@@ -502,8 +508,11 @@ class Tasks:
         finally:
             started.cancel()
             await asyncio.gather(started, return_exceptions=True)
-        if not starting.is_set() and (error := run.result()) is not None:
-            raise error
+        if not starting.is_set():
+            if run.cancelled():
+                raise RuntimeError(_CLOSED_BEFORE_START)
+            if (error := run.result()) is not None:
+                raise error
 
     async def _run_prompt(
         self,
@@ -521,6 +530,11 @@ class Tasks:
         """
         try:
             await prompt_task(record, text)
+        except asyncio.CancelledError:
+            # `stop_prompts` closing the session; a task that never ran keeps the user's stop.
+            if not starting.is_set():
+                await self._restore_stop(record, stopped)
+            raise
         except Exception as error:
             if not starting.is_set():
                 await self._restore_stop(record, stopped)
@@ -536,8 +550,9 @@ class Tasks:
 
     async def _restore_stop(self, record: DelegationTask, stopped: bool) -> None:
         """Put back the stop `allow_resume` lifted for a task that never ran, keeping one the user sent since."""
-        record.user_stopped = record.user_stopped or stopped
-        await self.owner.save(record)
+        if stopped and not record.user_stopped:
+            record.user_stopped = True
+            await self.owner.save(record)
 
     async def stop_prompts(self) -> None:
         """Stop the runs `prompt` started, which stops their tasks, before this session closes."""

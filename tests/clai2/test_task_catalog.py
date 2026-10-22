@@ -462,6 +462,54 @@ async def test_a_prompt_still_starting_when_the_session_closes_never_runs(monkey
     assert prompted == ['again'], 'only the prompt sent after the close ran'
 
 
+async def test_a_prompt_its_session_stops_before_the_task_starts_keeps_the_stop() -> None:
+    blocked = asyncio.Event()
+
+    async def prompt_task(record: DelegationTask, text: str) -> object:
+        blocked.set()
+        return await asyncio.Event().wait()
+
+    ui = Tasks(
+        console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None, prompt_task=prompt_task
+    )
+    record = finished(ui)
+    record.user_stopped = True
+    caller = asyncio.create_task(ui.prompt(record.id, 'hello'))
+    await blocked.wait()
+    await ui.stop_prompts()
+    with pytest.raises(RuntimeError, match='closed before the task could start'):
+        await caller
+    assert record.user_stopped, "the user's stop holds when the task never ran"
+
+
+async def test_a_prompt_whose_task_another_run_started_still_reports_the_close(monkeypatch: pytest.MonkeyPatch) -> None:
+    saving, release = asyncio.Event(), asyncio.Event()
+    ui = Tasks(
+        console=Console(file=io.StringIO()),
+        conversation_id=lambda: 'root',
+        directory=None,
+        prompt_task=lambda record, text: asyncio.sleep(0),
+    )
+    record = finished(ui)
+    save = ui.owner.save
+
+    async def held(record: DelegationTask) -> None:
+        saving.set()
+        await release.wait()
+        await save(record)
+
+    monkeypatch.setattr(ui.owner, 'save', held)
+    caller = asyncio.create_task(ui.prompt(record.id, 'hello'))
+    await saving.wait()
+    # Another run of the session resumes the task while the prompt still waits on `allow_resume`.
+    record.status = 'running'
+    await ui.deliver(DelegationTaskEvent(task=record))
+    await ui.stop_prompts()
+    release.set()
+    with pytest.raises(RuntimeError, match='closed before the task could start'):
+        await caller
+
+
 async def test_a_task_starting_from_a_prompt_takes_no_second_one() -> None:
     """It reads `finished` until its run starts it, as an agent run does after a model request."""
     gate = asyncio.Event()
