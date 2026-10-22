@@ -356,6 +356,47 @@ async def test_anthropic_leaves_out_citations_it_cannot_check(
     assert replayed.get('citations') == ([_ANTHROPIC_REPLAY_CITATION] if kept else None)
 
 
+async def test_anthropic_replay_doesnt_count_tool_arguments_shaped_like_a_document():
+    """Unit test: a tool argument with `type: 'document'` isn't a document, so it doesn't move the citation's index."""
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='mock-api-key'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Save a note.')]),
+        ModelResponse(
+            parts=[ToolCallPart('save', {'note': {'type': 'document', 'name': 'x'}}, tool_call_id='call_1')],
+            provider_name='anthropic',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('save', 'Saved.', tool_call_id='call_1'),
+                UserPromptPart(
+                    [
+                        'What is the return window?',
+                        BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain'),
+                    ]
+                ),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'Thirty days.',
+                    provider_name='anthropic',
+                    provider_details={'citations': [_ANTHROPIC_REPLAY_CITATION]},
+                )
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), AnthropicModelSettings(citations=True)
+    )
+
+    [replayed] = cast(list[dict[str, Any]], messages[3]['content'])
+    assert replayed['citations'] == [_ANTHROPIC_REPLAY_CITATION]
+
+
 @pytest.mark.parametrize('source', ['result-123', 'https://example.com/result'])
 def test_anthropic_client_search_result_citation_is_not_normalized(source: str):
     """Unit test: no recording sends client-provided search results."""

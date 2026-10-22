@@ -289,8 +289,10 @@ def _add_replayed_citations(
                     else None
                 )
             else:
-                for item in value.values():
-                    visit(item)
+                # A tool call's `input` holds arguments the model wrote, which can look like a document but isn't one.
+                for key, item in value.items():
+                    if key != 'input':
+                        visit(item)
 
     for message in messages:
         visit(message['content'])
