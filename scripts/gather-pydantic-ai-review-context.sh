@@ -235,6 +235,19 @@ jq -r --arg last_review "$LAST_REVIEW_TS" '
 ' "$THREADS_JSON" >> "$CTX/review-comments.txt"
 [ -s "$CTX/review-comments.txt" ] || echo "(No review comments)" > "$CTX/review-comments.txt"
 
+# Review verdicts are in neither file above: `review-comments.txt` holds only
+# inline threads, `pr-comments.txt` only issue comments. Every gh-aw reviewer here
+# posts as `github-actions[bot]`, so each one tells its own reviews apart by the
+# first line of the body. Non-fatal: the diffs below matter more than this file.
+echo "  - Bot reviews"
+gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
+  | jq -rs '
+      [add[] | select(.user.login == "github-actions[bot]")] | sort_by(.submitted_at) | .[]
+      | "\(.submitted_at) \(.state) at \(.commit_id): \((.body // "") | split("\n") | (.[0] // "") | rtrimstr("\r") | if . == "" then "(no body)" else . end)"
+    ' > "$CTX/bot-reviews.txt" \
+  || echo "(Could not list reviews)" > "$CTX/bot-reviews.txt"
+[ -s "$CTX/bot-reviews.txt" ] || echo "(No reviews from github-actions[bot])" > "$CTX/bot-reviews.txt"
+
 # Related issues: extract issue numbers from PR body
 echo "  - Related issues"
 PR_BODY=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq '.body')
