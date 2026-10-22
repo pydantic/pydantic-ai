@@ -38,7 +38,6 @@ from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -172,7 +171,7 @@ def _gather_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo)
     last = messages[-1]
     assert isinstance(last, ModelRequest)
     for part in last.parts:
-        if isinstance(part, ToolReturnPart | RetryPromptPart):
+        if isinstance(part, ToolReturnPart):
             return ModelResponse(parts=[TextPart(content=f'done: {part.content}')])
     code = "import asyncio\nawait asyncio.gather(fetch(label='a'), fetch(label='b'), fetch(label='c'))"
     return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id='gather')])
