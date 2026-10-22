@@ -51,9 +51,11 @@ tool lifecycle events and review [concurrent tool execution](tools.md#concurrent
 ## A reconnect lost context
 
 Inspect `RealtimeSessionReconnectEvent.state_restored`. If false, the drop cut off a turn in flight:
-the session recorded it as interrupted and kept the earlier turns, so ask again or resend it rather
-than starting over. If true but a current utterance vanished, that in-flight media was outside the restored completed-turn
-history. See [state restoration](lifecycle.md#state-restoration).
+the session closed any cut reply as interrupted and kept the earlier turns, so ask again or resend it
+rather than starting over. On Gemini, a drop before the first resumption handle starts a fresh
+session instead, and the earlier turns are lost. If true but a current utterance vanished, that
+in-flight media was outside the restored completed-turn history. See
+[state restoration](lifecycle.md#state-restoration).
 
 ## Gemini reaches its session limit
 
