@@ -394,13 +394,19 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         if not owned:
             return None
         calls: dict[str, ToolReturn[str] | ModelRetry] = {}
+        # Runs a failed wait left to the model to follow up from its retry prompt, which a cancelled run never sends.
+        retried: list[str] = []
         for index, (tool_call_id, run_id) in enumerate(owned):
             try:
                 result = await self._resolve_run(run_id)
             except anyio.get_cancelled_exc_class():
-                await self._cancel_runs(ctx, [run_id for _, run_id in owned[index:]])
+                await self._cancel_runs(ctx, [*retried, *(run_id for _, run_id in owned[index:])])
                 raise
-            calls[tool_call_id] = ModelRetry(result.message) if isinstance(result, RetryRequest) else result
+            if isinstance(result, RetryRequest):
+                retried.append(run_id)
+                calls[tool_call_id] = ModelRetry(result.message)
+            else:
+                calls[tool_call_id] = result
         return DeferredToolResults(calls=calls)
 
     async def _cancel_runs(self, ctx: RunContext[AgentDepsT], run_ids: list[str]) -> None:

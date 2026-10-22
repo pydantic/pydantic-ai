@@ -132,10 +132,17 @@ class _FakeRuns:
 class _CancellableRuns(_FakeRuns):
     """A runs double whose polling never finishes and which records cancellations, as exa-py's runs can."""
 
-    def __init__(self, *, cancel_error: Exception | None = None, finishing: frozenset[str] = frozenset()) -> None:
+    def __init__(
+        self,
+        *,
+        cancel_error: Exception | None = None,
+        finishing: frozenset[str] = frozenset(),
+        timing_out: frozenset[str] = frozenset(),
+    ) -> None:
         super().__init__()
         self.cancel_error = cancel_error
         self.finishing = finishing
+        self.timing_out = timing_out
         self.polling = anyio.Event()
         self.cancelled: list[str] = []
 
@@ -156,6 +163,8 @@ class _CancellableRuns(_FakeRuns):
     ) -> AgentRun:
         if run_id in self.finishing:
             return _run(text='Done.', run_id=run_id)
+        if run_id in self.timing_out:
+            raise TimeoutError(f'Polling {run_id} timed out.')
         self.polling.set()
         await anyio.sleep_forever()
         raise AssertionError('unreachable')  # pragma: no cover
@@ -378,16 +387,21 @@ class TestExaAgent:
         assert runs.cancelled == ['run_1']
 
     @pytest.mark.parametrize(
-        ('finishing', 'cancelled'),
-        [(frozenset[str](), ['run_1', 'run_2', 'run_3']), (frozenset({'run_1'}), ['run_2', 'run_3'])],
+        ('finishing', 'timing_out', 'cancelled'),
+        [
+            (frozenset[str](), frozenset[str](), ['run_1', 'run_2', 'run_3']),
+            (frozenset({'run_1'}), frozenset[str](), ['run_2', 'run_3']),
+            # A run whose wait timed out may still be running, and its retry prompt is never sent.
+            (frozenset[str](), frozenset({'run_1'}), ['run_1', 'run_2', 'run_3']),
+        ],
     )
     async def test_cancelled_inline_polling_cancels_every_run_not_finished(
-        self, finishing: frozenset[str], cancelled: list[str]
+        self, finishing: frozenset[str], timing_out: frozenset[str], cancelled: list[str]
     ) -> None:
         def start_three_runs(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[ToolCallPart(tool_name='exa_agent', args={'query': query}) for query in 'abc'])
 
-        runs = _CancellableRuns(finishing=finishing)
+        runs = _CancellableRuns(finishing=finishing, timing_out=timing_out)
         agent = Agent(FunctionModel(start_three_runs), capabilities=[ExaAgent(runs=runs)])
         with anyio.fail_after(5):
             async with anyio.create_task_group() as group:
