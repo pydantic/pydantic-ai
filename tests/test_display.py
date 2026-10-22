@@ -363,8 +363,8 @@ HEADING
 agent: support_agent • model: openai:gpt-5.6-sol • tools: 2
   capabilities: 0
 
-observability: off — see every model and tool call live,
-  with cost
+observability: off — see every model and tool call live, with
+  cost
   set it up free with Logfire and a GitHub login:
     uvx logfire-cli wizard --task pydantic-ai
   or use any OpenTelemetry backend:
