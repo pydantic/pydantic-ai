@@ -168,27 +168,35 @@ pytestmark = [
 ]
 
 
-@pytest.mark.parametrize('annotation_type', ['container_file_citation', 'some_future_citation'])
-def test_openai_unsupported_annotation_is_ignored(annotation_type: str):
-    """Annotations other than URL and file citations make no citations, including types the SDK doesn't know.
+_CONTAINER_FILE_ANNOTATION = {
+    'type': 'container_file_citation',
+    'container_id': 'container-1',
+    'file_id': 'file-1',
+    'filename': 'chart.png',
+    'start_index': 0,
+    'end_index': 0,
+}
+
+
+@pytest.mark.parametrize(
+    'value',
+    [
+        pytest.param(_CONTAINER_FILE_ANNOTATION, id='container-file-citation'),
+        pytest.param({**_CONTAINER_FILE_ANNOTATION, 'type': 'some_future_citation'}, id='unknown-type'),
+        # What an OpenAI-compatible API may send.
+        pytest.param(
+            {'type': 'url_citation', 'url': 'https://example.com', 'title': 'Example', 'start_index': None},
+            id='url-citation-without-range',
+        ),
+    ],
+)
+def test_openai_unsupported_annotation_is_ignored(value: dict[str, Any]):
+    """Annotations other than valid URL and file citations make no citations, including ones the SDK can't validate.
 
     Unit test: no recorded answer has one in a text part without a citation.
     """
-    # Built the way the SDK builds a response: an unknown type becomes one of its classes, without validation.
-    annotation = cast(
-        Annotation,
-        construct_type(
-            type_=Annotation,
-            value={
-                'type': annotation_type,
-                'container_id': 'container-1',
-                'file_id': 'file-1',
-                'filename': 'chart.png',
-                'start_index': 0,
-                'end_index': 0,
-            },
-        ),
-    )
+    # Built the way the SDK builds a response: without validation, so any value becomes one of its classes.
+    annotation = cast(Annotation, construct_type(type_=Annotation, value=value))
     response = response_message(
         [
             ResponseOutputMessage(

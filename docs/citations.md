@@ -46,6 +46,9 @@ A [`Citation`][pydantic_ai.messages.Citation] has one or more `sources` and an o
   link, that the model wrote into its answer.
 - A citation without an anchor belongs to the text part, but its position in the text is unknown.
 
+Citations are only on text parts, so a run whose output comes from a [tool call](output.md#output-modes) has none for
+its output.
+
 ```python {title="render_citations.py"}
 from pydantic_ai import (
     Agent,
@@ -77,7 +80,7 @@ for part in result.response.parts:
                 else:
                     label = source.title or source.document_id or 'document'
                 print(location, label)
-                #> marker '[1]' Mount Columbia - Wikipedia
+                #> marker '([example.com](https://example.com))' Mount Columbia
 ```
 
 The same answer looks like this from each kind of provider:
