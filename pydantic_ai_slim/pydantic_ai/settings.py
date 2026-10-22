@@ -598,8 +598,7 @@ class ModelSettings(TypedDict, total=False):
 
     * Anthropic (documents, including those returned by tools, and Web Fetch)
 
-    Providers that always return citations ignore this setting. A
-    [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] whose `enable_citations` is set uses that value instead.
+    Providers that always return citations ignore this setting.
     """
 
     cache: CacheSetting
