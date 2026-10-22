@@ -23,6 +23,18 @@
       "fingerprint": "c4aa7c8b9e94bd5ada5a90325d99ca764fed5f8bd156d31ef511842e4d854f3a",
       "reason": "False positive: `BackgroundTools` still inherits `prepare_tools` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; the tool preparation moved into the wrapper toolset.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10613"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "0965c41fe89ce3951f0e18c3bc9d6fda9d8260b859178440ae99e4d449bff350",
+      "reason": "Harness 0.x: `GitHub.description`'s default text changes so it no longer says the tools can make changes when `read_only=True`; code that reads or passes `description` keeps working.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10815"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "481effa0702c0a046ac7a6eebbd1a1689f975c12ab516e981a6a000c3f6e6f1f",
+      "reason": "Harness 0.x: the same `GitHub.description` default text change, reported on `GitHub.__init__`; calls that pass or omit `description` keep working.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10815"
     }
   ]
 }
