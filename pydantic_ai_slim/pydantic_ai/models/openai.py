@@ -2472,22 +2472,26 @@ def _marker_citation_anchor(start: int, end: int, text: str) -> MarkerCitationAn
 def _responses_citation_annotations(
     annotations: Sequence[responses.response_output_text.Annotation],
 ) -> list[responses.response_output_text.AnnotationURLCitation | responses.response_output_text.AnnotationFileCitation]:
-    """Return the URL and file citations, checked by `type` as well as by class.
+    """Return the valid URL and file citations.
 
-    The SDK doesn't validate responses, so it builds an annotation of a type it doesn't know into one of its classes.
+    The SDK doesn't validate responses, so it builds an annotation of a type it doesn't know, or with a missing field,
+    into one of its classes.
     """
-    return [
-        annotation
-        for annotation in annotations
-        if (
-            isinstance(annotation, responses.response_output_text.AnnotationURLCitation)
-            and annotation.type == 'url_citation'
-        )
-        or (
-            isinstance(annotation, responses.response_output_text.AnnotationFileCitation)
-            and annotation.type == 'file_citation'
-        )
-    ]
+    citations: list[
+        responses.response_output_text.AnnotationURLCitation | responses.response_output_text.AnnotationFileCitation
+    ] = []
+    for annotation in annotations:
+        try:
+            annotation = responses_output_text_annotation_ta.validate_python(annotation.model_dump(warnings=False))
+        except ValidationError:
+            continue
+        if isinstance(
+            annotation,
+            responses.response_output_text.AnnotationURLCitation
+            | responses.response_output_text.AnnotationFileCitation,
+        ):
+            citations.append(annotation)
+    return citations
 
 
 def _map_responses_citations(

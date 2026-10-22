@@ -1246,16 +1246,11 @@ async def model_logic(  # noqa: C901
             return ModelResponse(
                 parts=[
                     TextPart(
-                        'Mount Columbia is the tallest mountain in Alberta. [1]',
+                        'Mount Columbia is the tallest mountain in Alberta. ([example.com](https://example.com))',
                         citations=[
                             Citation(
-                                sources=[
-                                    WebCitationSource(
-                                        'https://en.wikipedia.org/wiki/Mount_Columbia_(Canada)',
-                                        title='Mount Columbia - Wikipedia',
-                                    )
-                                ],
-                                anchor=MarkerCitationAnchor(start=51, end=54),
+                                sources=[WebCitationSource('https://example.com', title='Mount Columbia')],
+                                anchor=MarkerCitationAnchor(start=51, end=87),
                             )
                         ],
                     )

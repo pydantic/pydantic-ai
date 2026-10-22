@@ -940,13 +940,17 @@ def test_citation_message_history_round_trip() -> None:
     )
 
 
-def test_text_part_delta_appends_citations() -> None:
+def test_text_part_delta_replaces_citations() -> None:
+    """A citations delta replaces the part's citations, as it replaces their raw entries in `provider_details`."""
     first = Citation(sources=[WebCitationSource(url='https://example.com/paris')])
     second = Citation(sources=[DocumentCitationSource(document_id='file-123', title='report.pdf')])
+    part = TextPart('Answer', citations=[first], provider_details={'citations': ['first']})
 
-    part = TextPartDelta(content_delta='', citations_delta=[second]).apply(TextPart('Answer', citations=[first]))
+    delta = TextPartDelta(content_delta='', citations_delta=[second], provider_details={'citations': ['second']})
 
-    assert part == TextPart('Answer', citations=[first, second])
+    part = delta.apply(part)
+
+    assert part == TextPart('Answer', citations=[second], provider_details={'citations': ['second']})
 
 
 @pytest.mark.parametrize(

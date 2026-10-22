@@ -5650,10 +5650,11 @@ class TextPartDelta:
     """
 
     citations_delta: list[Citation] | None = None
-    """Citations to append to the existing text part.
+    """All of the text part's citations, replacing any it has.
 
-    Models send all of a text part's citations in one delta, without text, once the part's text is complete. That delta
-    also sets the part's whole `provider_details['citations']`.
+    Models send them in one delta, without text, once the part's text is complete. That delta also sets the part's whole
+    `provider_details['citations']`. Providers that return citations at the end of the response, such as Google, send it
+    then, which can be after the part's [`PartEndEvent`][pydantic_ai.messages.PartEndEvent].
     """
 
     part_delta_kind: Literal['text'] = 'text'
@@ -5673,9 +5674,7 @@ class TextPartDelta:
         """
         if not isinstance(part, TextPart):
             raise ValueError('Cannot apply TextPartDeltas to non-TextParts')  # pragma: no cover
-        citations = part.citations
-        if self.citations_delta:
-            citations = [*(citations or []), *self.citations_delta]
+        citations = part.citations if self.citations_delta is None else self.citations_delta
         return replace(
             part,
             content=part.content + self.content_delta,
