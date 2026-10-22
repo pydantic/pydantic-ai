@@ -2,7 +2,7 @@
 
 # pydantic_ai_slim/pydantic_ai/ Guidelines
 
-For non-trivial changes to this package, also read [Pydantic AI Slim Architecture](../../agent_docs/pydantic-ai-slim.md).
+For non-trivial changes to this package, also read [Pydantic AI Slim Architecture](../../agent_docs/pydantic-ai-slim.md). For anything that adds to, edits, or renders message history, instructions or tools, also read [Message History & Prompt Caching](../../agent_docs/message-history-and-caching.md).
 
 ## API Design
 
