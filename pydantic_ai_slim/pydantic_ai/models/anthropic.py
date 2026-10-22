@@ -226,6 +226,17 @@ def _citations_provider_details(citations: Sequence[BetaTextCitation]) -> dict[s
     return {'citations': [citation.model_dump(mode='json') for citation in citations]}
 
 
+def _citations_fit_text(part: TextPart) -> bool:
+    """Whether a text part is still the block Anthropic cited, so its citations can be sent back.
+
+    Anthropic cites whole blocks, so each citation covers the whole text. One that doesn't, because the text was
+    edited or joined with other text, such as by a UI adapter, would vouch for text it never cited.
+    """
+    return bool(part.citations) and all(
+        citation.anchor == ContentCitationAnchor(start=0, end=len(part.content)) for citation in part.citations or []
+    )
+
+
 def _map_citation_for_replay(citation: dict[str, Any]) -> BetaCitationWebSearchResultLocationParam | None:
     """Rebuild a web search citation Anthropic returned from its raw data on the text part, or return `None`.
 
@@ -2781,6 +2792,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             if (
                                 response_part.provider_name == self.system
                                 and isinstance(raw_citations, list)
+                                and _citations_fit_text(response_part)
                                 and (
                                     citations := [
                                         param

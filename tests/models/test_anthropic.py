@@ -303,16 +303,37 @@ _ANTHROPIC_WEB_SEARCH_CITATION: dict[str, Any] = {
         pytest.param(_ANTHROPIC_WEB_SEARCH_CITATION, 'bedrock', False, id='other-provider'),
     ],
 )
-async def test_anthropic_replays_only_web_search_citations(citation: Any, provider_name: str, kept: bool):
-    """Web search citations go back to Anthropic, and document citations go back as plain text.
+@pytest.mark.parametrize(
+    ('content', 'anchor', 'fits'),
+    [
+        pytest.param('An answer.', ContentCitationAnchor(start=0, end=10), True, id='unchanged'),
+        pytest.param('An edited answer.', ContentCitationAnchor(start=0, end=10), False, id='edited'),
+        # A UI adapter joined this block with the text before it.
+        pytest.param('Before. An answer.', ContentCitationAnchor(start=8, end=18), False, id='joined'),
+        pytest.param('An answer.', None, False, id='citations-removed'),
+    ],
+)
+async def test_anthropic_replays_only_web_search_citations(
+    citation: Any, provider_name: str, kept: bool, content: str, anchor: ContentCitationAnchor | None, fits: bool
+):
+    """Web search citations go back to Anthropic while they still cover the whole text, which Anthropic cited.
 
-    Unit test: recordings in `test_citations.py` only hold valid web search citations.
+    Document citations go back as plain text. Unit test: recordings in `test_citations.py` only hold valid web search
+    citations of unchanged text.
     """
+    citations = [Citation(sources=[WebCitationSource(url='https://example.com')], anchor=anchor)] if anchor else None
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='mock-api-key'))
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('Search the web.')]),
         ModelResponse(
-            parts=[TextPart('An answer.', provider_name=provider_name, provider_details={'citations': [citation]})],
+            parts=[
+                TextPart(
+                    content,
+                    provider_name=provider_name,
+                    provider_details={'citations': [citation]},
+                    citations=citations,
+                )
+            ],
             provider_name=provider_name,
         ),
         ModelRequest(parts=[UserPromptPart('Continue.')]),
@@ -323,7 +344,7 @@ async def test_anthropic_replays_only_web_search_citations(citation: Any, provid
     )
 
     [replayed] = cast(list[dict[str, Any]], messages[1]['content'])
-    assert replayed.get('citations') == ([_ANTHROPIC_WEB_SEARCH_CITATION] if kept else None)
+    assert replayed.get('citations') == ([_ANTHROPIC_WEB_SEARCH_CITATION] if kept and fits else None)
 
 
 @pytest.mark.parametrize('source', ['result-123', 'https://example.com/result'])
