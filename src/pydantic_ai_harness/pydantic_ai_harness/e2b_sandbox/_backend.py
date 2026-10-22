@@ -205,6 +205,7 @@ async def _file_entry(sandbox: e2b.AsyncSandbox, entry: e2b.EntryInfo, user: str
 
 
 def _not_found(path: str | None) -> FileNotFoundError:
+    """The protocol's missing-path error; `path` is `None` when the failing operation names no path, like `run`."""
     return FileNotFoundError(f'No such file or directory in the E2B sandbox: {path!r}')
 
 
@@ -453,10 +454,11 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         # envd reports FIFOs as files, and its read of one without a writer waits out the SDK's
         # 60-second request timeout. Probe via the shell before asking envd to open the path (also
         # follows links).
-        probe = await self._probe(['test', '-p', path], f'Could not read {path!r}')
+        context = f'Could not read {path!r}'
+        probe = await self._probe(['test', '-p', path], context)
         if probe.exit_code == 0:
-            raise OSError(f'Could not read {path!r}: FIFO reads are not supported')
-        async with self._sdk_errors(sandbox.sandbox_id, f'Could not read {path!r}', path):
+            raise OSError(f'{context}: FIFO reads are not supported')
+        async with self._sdk_errors(sandbox.sandbox_id, context, path):
             return bytes(await sandbox.files.read(path, 'bytes', user=self._user))
 
     async def write_bytes(self, path: str, data: bytes) -> None:
