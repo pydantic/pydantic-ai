@@ -649,7 +649,7 @@ def test_openai_codex_gpt_5_6():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_phase': True,
             'openai_supports_minimal_reasoning_effort': False,
-            'openai_responses_supports_max_reasoning_effort': True,
+            'openai_responses_supports_max_reasoning_effort': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
