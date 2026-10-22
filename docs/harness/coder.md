@@ -134,7 +134,15 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
 
 Then the plumbing, which the agent never calls directly:
 
-6. [`ClearToolResults`](compaction.md)`(max_fraction=0.7)`.
+6. [`FallbackCompaction`](compaction.md) over `SummarizingCompaction` then `SlidingWindowCompaction`: above 85% of the
+   model's context window, the run's model summarizes older messages, keeping the first user message (the task)
+   and at least the most recent 50,000 tokens or 40% of the window, whichever is less (`keep_tokens=50_000,
+   keep_fraction=0.4` on both strategies). A first message larger than about 40% of the window keeps the history
+   above the threshold. When summarizing fails with a model API error (including an exhausted `FallbackModel`),
+   a usage limit, or `CannotSummarizeError` because the model is realtime or cannot write text, those messages are
+   dropped instead. The summary request uses only the model's own settings, not the agent's or the run's
+   `model_settings` (such as `openai_store=False` or `extra_headers`).
+   Pass `compaction=False` to leave it out when the agent binds its own compaction.
 7. A private [`ToolOutputLimits`](tool-output-limits.md) specialization that truncates any tool result over 64,000 characters
    without adding a spill-retrieval tool. Its stable ID, `coder_tool_output_limits`, lets durability
    capabilities bind its inherited operations without colliding with a separately configured `ToolOutputLimits`.
@@ -261,7 +269,20 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 
 ## Upgrading
 
+### Automatic compaction
+
+`Coder` now compacts the history itself, as described in [Composition](#composition), instead of binding
+[`ClearToolResults`](compaction.md)`(max_fraction=0.7)`. A summary is a request to the run's model, so it counts
+toward the run's usage and cost. It uses only the model's own settings, not the agent's or the run's
+`model_settings`; to give it settings such as `openai_store=False`, pass `Coder(compaction=False)` and bind your own
+`FallbackCompaction` whose `SummarizingCompaction(model_settings=...)` sets them. To keep the previous behavior, pass
+`Coder(compaction=False)` and add `ClearToolResults(max_fraction=0.7)` yourself.
+
+### Prompt caching
+
 `Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
+
+### The workspace
 
 This release makes the workspace the single place that decides where an agent works. Removed arguments are still accepted, emit a `HarnessDeprecationWarning` naming the fix, and are ignored.
 

@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from .code_mode import CodeMode
     from .coder import Coder
     from .compaction import (
+        CannotSummarizeError,
         ClampOversizedMessages,
         ClearToolResults,
         DeduplicateFileReads,
@@ -89,6 +90,7 @@ __all__ = [
     'BrowserUse',
     'BubblewrapSandbox',
     'BubblewrapWorkspace',
+    'CannotSummarizeError',
     'CapabilityCreation',
     'ClampOversizedMessages',
     'ClearToolResults',
@@ -175,6 +177,7 @@ _CAPABILITY_EXPORTS = {
     'BoxLiteSandbox': 'boxlite_sandbox',
     'BrowserUse': 'browser_use',
     'BubblewrapSandbox': 'bubblewrap_sandbox',
+    'CannotSummarizeError': 'compaction',
     'CapabilityCreation': 'capability_creation',
     'ClampOversizedMessages': 'compaction',
     'ClearToolResults': 'compaction',

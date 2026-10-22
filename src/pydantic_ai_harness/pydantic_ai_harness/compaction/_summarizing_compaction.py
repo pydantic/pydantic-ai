@@ -49,8 +49,10 @@ from pydantic_ai_harness.compaction._shared import (
     find_token_cutoff,
     is_realtime_model,
     record_compaction_reclaim,
+    resolve_keep_tokens,
     resolve_token_trigger,
     tool_return_text,
+    validate_keep_fraction,
     validate_token_trigger,
 )
 
@@ -491,6 +493,14 @@ async def drain_summary_events(
         pass
 
 
+class CannotSummarizeError(UserError):
+    """`SummarizingCompaction`'s model cannot write a summary: a realtime model, or one without text output.
+
+    Without `model=`, the summarizer is the run's own model. Set `model=` to a language model, or
+    add this error to `FallbackCompaction(fallback_on=...)` to fall back to another strategy instead.
+    """
+
+
 @dataclass
 class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     """LLM-powered conversation compaction.
@@ -575,12 +585,12 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     Unlike `fallback_context_window`, this applies whether or not resolution succeeds. Reach
     for it when the registry is confidently wrong: a beta- or tier-gated window it records as
     the maximum, or a self-hosted endpoint whose model id describes someone else's
-    deployment. Only consulted alongside `max_fraction`."""
+    deployment. Only consulted alongside `max_fraction` or `keep_fraction`."""
 
     fallback_context_window: int = field(default=DEFAULT_CONTEXT_WINDOW, kw_only=True)
     """Window assumed when the request's model is not in the pricing registry.
 
-    Only consulted alongside `max_fraction`. Supply the real number for a deployment the
+    Only consulted alongside `max_fraction` or `keep_fraction`. Supply the real number for a deployment the
     registry cannot resolve."""
 
     keep_messages: int = 20
@@ -591,6 +601,14 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
     Whole messages and tool dependencies can exceed this floor. Attached instructions do
     not count. When `None`, falls back to `keep_messages`; zero keeps legacy edge behavior.
+    """
+
+    keep_fraction: float | None = field(default=None, kw_only=True)
+    """Retain at least this fraction of the request model's context window, as a `keep_tokens` floor.
+
+    With `keep_tokens`, the smaller floor applies, so a fixed tail still leaves something to
+    reclaim on a small window. Alone, it replaces `keep_messages` as `keep_tokens` does. The
+    window resolves as for `max_fraction`, including `context_window` and `fallback_context_window`.
     """
 
     summary_prompt: str = _DEFAULT_SUMMARY_PROMPT
@@ -674,6 +692,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             raise ValueError('keep_messages must be non-negative.')
         if self.keep_tokens is not None and self.keep_tokens < 0:
             raise ValueError('keep_tokens must be non-negative.')
+        validate_keep_fraction(self.keep_fraction)
         if self.keep_user_messages_max_chars < 1:
             raise ValueError('keep_user_messages_max_chars must be positive.')
         if self.tool_return_max_chars is not None and self.tool_return_max_chars < 1:
@@ -695,8 +714,11 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
     ) -> list[ModelMessage]:
         """Summarize older messages, replacing them with a single summary message."""
-        if self.keep_tokens is not None:
-            cutoff = find_token_cutoff(messages, self.keep_tokens, self.tokenizer)
+        keep_tokens = resolve_keep_tokens(
+            self.keep_tokens, self.keep_fraction, ctx.model, self.fallback_context_window, self.context_window
+        )
+        if keep_tokens is not None:
+            cutoff = find_token_cutoff(messages, keep_tokens, self.tokenizer)
         else:
             cutoff = find_safe_cutoff(messages, self.keep_messages)
 
@@ -711,7 +733,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         if self.keep_user_messages:
             extra = self._kept_user_messages(to_summarize)
             extra = extra[-self.keep_messages :] if self.keep_messages else []
-            if self.keep_tokens == 0:
+            if keep_tokens == 0:
                 # Preserve the legacy zero-budget edge case, including zero-token copies.
                 retained: list[ModelMessage] = []
                 for message in reversed(extra):
@@ -723,7 +745,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                 # Retained user turns spent the whole zero budget; reserve one slot so the
                 # request being answered still survives compaction.
                 preserved = preserved[find_safe_cutoff(preserved, 1) :]
-            elif self.keep_tokens is None:
+            elif keep_tokens is None:
                 retained_tail_slots = max(1, self.keep_messages - len(extra))
                 if len(preserved) > retained_tail_slots:
                     preserved = preserved[find_safe_cutoff(preserved, retained_tail_slots) :]
@@ -734,11 +756,13 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                 if idx < cutoff and first_user_msg not in preserved:
                     extra = [_kept_first_user_message(first_user_msg, system_parts)]
 
-        if self.keep_tokens and all(_adds_nothing_to_summarize(message, extra) for message in to_summarize):
+        if keep_tokens and all(_adds_nothing_to_summarize(message, extra) for message in to_summarize):
             # A large message can keep the retained token floor and the summary above the trigger;
             # re-summarizing only the earlier summary would then cost a model call on every request.
             return messages
 
+        # Checked here, not in the durable `_summarize`, so the error is raised where the run is.
+        self._require_summarizer(ctx)
         previous_summary = _extract_previous_summary(messages) if self.incremental else None
         summary = await self._summarize(to_summarize, ctx, previous_summary=previous_summary)
         summary = self._maybe_bridge_prefix(summary, messages, ctx)
@@ -747,10 +771,10 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         summary_message = ModelRequest(parts=[*system_parts, summary_part])
 
         result: list[ModelMessage] = [summary_message, *extra, *preserved]
-        result = reinject_pinned(messages, result, protected_tail=len(preserved) if self.keep_tokens else 0)
+        result = reinject_pinned(messages, result, protected_tail=len(preserved) if keep_tokens else 0)
         if self.receipts:
             result = self._insert_receipt(
-                summary_message, to_summarize, result, ctx, protected_tail=len(preserved) if self.keep_tokens else 0
+                summary_message, to_summarize, result, ctx, protected_tail=len(preserved) if keep_tokens else 0
             )
         return result
 
@@ -905,6 +929,28 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         )
         return replace(request_context, messages=compacted)
 
+    def _require_summarizer(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Raise `CannotSummarizeError` unless the summarizer model can write a summary."""
+        model = self.model if self.model is not None else ctx.model
+        # `ctx.model` is an `AbstractModel`; summarization needs a request-response model. A
+        # realtime run reaches here only when no summarizer `model=` was configured, so ask for
+        # one explicitly rather than handing `Agent` a model it cannot run with.
+        if is_realtime_model(model):
+            raise CannotSummarizeError(
+                'SummarizingCompaction needs a request-response model to write the summary, but '
+                f'the run uses {type(model).__name__}, which is not one. Set `model=` on '
+                'SummarizingCompaction to the model to summarize with when the run uses a realtime model.'
+            )
+        # Without `model=`, the summarizer is the run's model, which may be one that cannot write
+        # text at all, such as a decision model. Say so here rather than letting the summary run
+        # fail on core's generic "text output is not supported".
+        if self.model is None and not _writes_text(ctx.model):
+            raise CannotSummarizeError(
+                f'SummarizingCompaction writes its summary with a language model, but the run uses '
+                f'{ctx.model.model_name!r}, which cannot produce text. Set `model=` on SummarizingCompaction '
+                'to a language model to summarize with.'
+            )
+
     @durable_operation('summarize')
     async def _summarize(
         self,
@@ -932,24 +978,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             )
 
         model = self.model if self.model is not None else ctx.model
-        # `ctx.model` is an `AbstractModel`; summarization needs a request-response model. A
-        # realtime run reaches here only when no summarizer `model=` was configured, so ask for
-        # one explicitly rather than handing `Agent` a model it cannot run with.
-        if is_realtime_model(model):
-            raise UserError(
-                'SummarizingCompaction needs a request-response model to write the summary, but '
-                f'the run uses {type(model).__name__}, which is not one. Set `model=` on '
-                'SummarizingCompaction to the model to summarize with when the run uses a realtime model.'
-            )
-        # Without `model=`, the summarizer is the run's model, which may be one that cannot write
-        # text at all, such as a decision model. Say so here rather than letting the summary run
-        # fail on core's generic "text output is not supported".
-        if self.model is None and not _writes_text(ctx.model):
-            raise UserError(
-                f'SummarizingCompaction writes its summary with a language model, but the run uses '
-                f'{ctx.model.model_name!r}, which cannot produce text. Set `model=` on SummarizingCompaction '
-                'to a language model to summarize with.'
-            )
+        assert not is_realtime_model(model)  # `compact` checks `_require_summarizer` first
         # `isinstance` narrows the generic `Model` to `Model[Unknown]`; `cast` recovers
         # `Model[Any]`, mirroring core's own `reinject_system_prompt` idiom.
         agent: Agent[None, str] = Agent(
