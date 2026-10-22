@@ -247,7 +247,9 @@ class ResponsesWebSocket:
                 lane is None or event.error.code == 'websocket_connection_limit_reached'
             ):
                 # An error no active lane owns leaves the connection's state unknown, and the lifetime limit ends it.
-                await self._fail(f'Responses WebSocket connection failed: {event.error.code}: {event.error.message}')
+                error = event.error
+                message = f'{error.code}: {error.message}' if error.code else error.message
+                await self._fail(f'Responses WebSocket connection failed: {message}')
             elif lane is not None and lane.abandoned:
                 if _is_terminal(event):
                     lane.abandoned = False

@@ -814,7 +814,7 @@ async def test_connection_scoped_error_fails_the_socket(allow_model_requests: No
     """An error no active lane owns, or the connection's lifetime limit, fails every later request over."""
     socket = sockets.pending[0]
     socket.responses = deque([text_events(response_id='resp_first')])
-    code = 'connection_error' if error == 'unattributed' else 'websocket_connection_limit_reached'
+    code = None if error == 'unattributed' else 'websocket_connection_limit_reached'
     failure: Frame = {'type': 'error', 'error': {'type': 'invalid_request_error', 'code': code, 'message': 'ended'}}
     if error == 'connection_limit':
         failure['status'] = 400
@@ -826,7 +826,8 @@ async def test_connection_scoped_error_fails_the_socket(allow_model_requests: No
         if error == 'unattributed':
             # Without a `stream_id`, these belong to the idle default lane rather than the named lane waiting.
             socket.push(text_events()[2], failure)
-        with pytest.raises(ModelAPIError, match=f'Responses WebSocket connection failed: {code}: ended'):
+        expected = 'ended' if code is None else f'{code}: ended'
+        with pytest.raises(ModelAPIError, match=f'Responses WebSocket connection failed: {expected}$'):
             await Agent(connected).run('second')
         assert socket.close_count == 1
         with pytest.raises(ModelAPIError, match='Responses WebSocket connection failed'):
@@ -853,11 +854,16 @@ async def test_cancelled_send_keeps_the_socket_for_other_lanes(allow_model_reque
                 await socket.sending.wait()
             tasks.cancel_scope.cancel()
         socket.send_gate = None
+        # The scripted socket drops the gated frame, but a real send would have written it: its response arrives.
+        socket.push(*text_events('late', response_id='resp_late'))
         socket.responses.append(text_events(response_id='resp_next'))
         assert (await Agent(connected).run('next')).output == 'ready'
+        socket.responses.append(text_events('again', response_id='resp_again'))
+        assert (await Agent(connected).run('again')).output == 'again'
         assert socket.close_count == 0
 
-    assert [frame.get('stream_id') for frame in socket.sent] == ['lane-1']
+    # Once the late response was discarded, the default lane was free again.
+    assert [frame.get('stream_id') for frame in socket.sent] == ['lane-1', None]
 
 
 async def test_parallel_nested_runs_share_the_parent_connection(allow_model_requests: None, sockets: SocketHarness):
