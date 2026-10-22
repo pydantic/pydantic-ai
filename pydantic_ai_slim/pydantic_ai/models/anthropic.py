@@ -333,9 +333,14 @@ _FAST_MODE_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
-# Anthropic documents the computer toolset on the Claude API and Google Cloud; Bedrock and Foundry are unverified,
-# so they get the `computer` tool as a function.
-_COMPUTER_TOOLSET_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicFoundry)
+# Verified on the Claude API only; Anthropic's own reference agent says Vertex and Bedrock don't serve the toolset yet,
+# so the other clients get the `computer` tool as a function.
+_COMPUTER_TOOLSET_UNSUPPORTED_CLIENTS = (
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+    AsyncAnthropicVertex,
+)
 # `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
 # `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag. Anthropic documents
 # the binding beta for Amazon Bedrock and Google Cloud, and the SDK carries it through the legacy
