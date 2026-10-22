@@ -82,9 +82,9 @@ class SqliteConversationStore(ConversationStore):
     database, as the step stores do.
 
     A save writes its new entries and the record together, in a transaction on a connection the
-    store opened and in a savepoint on a caller-owned one. Deleting a conversation, or saving it
-    with a rewritten or truncated history, also deletes the entries and messages no other
-    conversation's history uses; externalized media stays.
+    store opened and in a savepoint on a caller-owned one. Deleting a conversation also deletes
+    the entries and messages its history alone used; externalized media stays, and so do the
+    entries a rewritten history replaced.
 
     Tables:
 
@@ -202,7 +202,7 @@ class SqliteConversationStore(ConversationStore):
         with self._connected() as conn:
             with _atomically(conn, store_owned=self._connection is None, begin='BEGIN IMMEDIATE'):
                 row = conn.execute(
-                    'SELECT revision, head_id FROM conversation_records WHERE conversation_id = ?',
+                    'SELECT revision FROM conversation_records WHERE conversation_id = ?',
                     (record.conversation_id,),
                 ).fetchone()
                 if (row[0] if row is not None else None) != expected_revision:
@@ -239,9 +239,6 @@ class SqliteConversationStore(ConversationStore):
                         RECORD_ADAPTER.dump_json(record).decode(),
                     ),
                 )
-                # A rewritten or truncated history leaves its old tail behind.
-                if row is not None and row[1] != record.head_id:
-                    _release(conn, row[1])
 
     async def delete_record(self, conversation_id: str) -> None:
         await anyio.to_thread.run_sync(self._sync_delete_record, conversation_id)

@@ -866,8 +866,8 @@ store:
 
 - `SqliteConversationStore(database= or connection=)` -- tables `conversation_records`, `conversation_entries`,
   and `conversation_messages`. A save writes its new entries and the record in one transaction. Deleting a
-  conversation, or saving it with a rewritten or truncated history, also deletes the entries and messages no other
-  conversation uses.
+  conversation also deletes the entries and messages its history alone used. A rewritten history, from
+  compaction or a history processor that trims it, is stored as a branch, and the entries it replaced stay stored.
 - `PostgresConversationStore(pool, table='step_persistence')` -- tables `{table}_conv_records`,
   `{table}_conv_entries`, and `{table}_conv_messages`, which don't clash with `PostgresStepStore`'s, so the two
   can share a prefix. Saves and deletes work as for SQLite. Foreign keys keep a concurrent save from

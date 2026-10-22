@@ -44,9 +44,9 @@ class PostgresConversationStore(ConversationStore):
     `media_store`, by default a `PostgresMediaStore` on the same pool with the table `{table}_media`,
     which the step store shares too: media is keyed by content.
 
-    A save writes its new entries and the record in one transaction. Deleting a conversation, or
-    saving it with a rewritten or truncated history, also deletes the entries and messages no other
-    conversation's history uses; externalized media stays. Foreign keys keep a concurrent save from pointing at an entry or message a delete is
+    A save writes its new entries and the record in one transaction. Deleting a conversation also
+    deletes the entries and messages its history alone used; externalized media stays, and so do
+    the entries a rewritten history replaced. Foreign keys keep a concurrent save from pointing at an entry or message a delete is
     removing: one of the two fails instead.
     """
 
@@ -179,15 +179,7 @@ class PostgresConversationStore(ConversationStore):
                     record.updated_at,
                     text,
                 )
-                previous_head = None
             else:
-                # Read before the update: a revision is never reused, so if the update below matches it, this was
-                # the head it replaces.
-                previous_head = await connection.fetchval(
-                    f'SELECT head_id FROM {self._records} WHERE conversation_id = $1 AND revision = $2',
-                    record.conversation_id,
-                    expected_revision,
-                )
                 written = await connection.fetchval(
                     f'UPDATE {self._records} SET revision = $2, head_id = $3, scope = $4, updated_at = $5, record = $6 '
                     'WHERE conversation_id = $1 AND revision = $7 RETURNING conversation_id',
@@ -202,9 +194,6 @@ class PostgresConversationStore(ConversationStore):
             if written is None:
                 # Raising rolls back the transaction, so the entries above go with it.
                 raise ConversationConflict(record.conversation_id)
-            # A rewritten or truncated history leaves its old tail behind.
-            if previous_head is not None and previous_head != record.head_id:
-                await self._release(connection, str(previous_head))
 
     async def _insert_messages(self, connection: PostgresConnection, messages: dict[str, str]) -> None:
         """Insert the messages `{table}_messages` lacks, in key order so concurrent saves can't deadlock."""

@@ -82,8 +82,8 @@ class ConversationStoreContract:
         await backend.store.save(compacted)
 
         assert await backend.store.load(conversation.conversation_id) == compacted
-        # The replaced tail is released where the backend collects garbage.
-        assert await backend.count_entries() == (2 if backend.collects_garbage else 4)
+        # The replaced tail stays stored: a rewrite may only trim what the model sees.
+        assert await backend.count_entries() == 4
 
     async def test_a_save_from_a_stale_copy_conflicts(self, backend: Backend) -> None:
         store = backend.store
@@ -187,24 +187,16 @@ class ConversationStoreContract:
         else:
             assert (await backend.count_entries(), await backend.count_messages()) == (2, 2)
 
-    async def test_a_truncated_history_releases_the_tail_it_dropped(self, backend: Backend) -> None:
+    async def test_a_truncated_history_keeps_the_branch_it_replaced(self, backend: Backend) -> None:
         store = backend.store
         conversation = Conversation(messages=[_prompt('one'), ModelResponse(parts=[TextPart('two')])])
         await store.save(conversation)
-        fork = await store.fork(conversation.conversation_id, at=1)
-
-        conversation.messages = [*conversation.messages[:1], ModelResponse(parts=[TextPart('rewritten')])]
-        await store.save(conversation)
         conversation.messages = conversation.messages[:1]
+
         await store.save(conversation)
 
         assert await store.load(conversation.conversation_id) == conversation
-        if backend.collects_garbage:
-            assert (await backend.count_entries(), await backend.count_messages()) == (1, 1)
-        await store.delete(conversation.conversation_id)
-        await store.delete(fork.conversation_id)
-        if backend.collects_garbage:
-            assert (await backend.count_entries(), await backend.count_messages()) == (0, 0)
+        assert (await backend.count_entries(), await backend.count_messages()) == (2, 2)
 
     async def test_deleting_keeps_a_message_another_entry_holds(self, backend: Backend) -> None:
         shared = _prompt('the same')
