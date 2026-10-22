@@ -1,4 +1,4 @@
-"""Mounting storage, such as a bucket, at a folder in a workspace."""
+"""Mounting a filesystem, such as a bucket, at a folder in a workspace."""
 
 from __future__ import annotations
 
@@ -8,28 +8,33 @@ from dataclasses import KW_ONLY, dataclass
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
-from .protocol import SupportsFilesystem, WorkspaceBackend, WorkspaceError
+from .protocol import SupportsCommands, SupportsFilesystem, WorkspaceBackend, WorkspaceError
 
 __all__ = ('Mount', 'MountError', 'SupportsMounts')
 
 
 class MountError(WorkspaceError):
-    """A mount that shell commands were promised could not be made visible to them."""
+    """A mount could not be shown to shell commands: the sandbox can't mount it, or mounting it failed."""
 
 
 @dataclass(frozen=True)
 class Mount:
-    """Storage that appears as a folder in a workspace.
+    """A filesystem shown as a folder in a workspace.
 
-    File tools reach it on every workspace. Shell commands see it too when the workspace's backend can mount it (see
-    [`SupportsMounts`][pydantic_ai.workspaces.SupportsMounts]); otherwise the folder is reachable through file tools only.
+    ```python {test="skip"}
+    from pydantic_ai.workspaces import Mount
+
+    Mount('data', s3)  # file tools see `data/`
+    Mount('data', s3, shell=True)  # the sandbox mounts it, so shell commands see `data/` too
+    ```
     """
 
     path: str
     """Where the folder appears: relative to the working directory, or absolute."""
 
-    storage: SupportsFilesystem
-    """What the folder holds. Its paths start at `/`: `<path>/a/b` is `/a/b` in the storage."""
+    filesystem: WorkspaceBackend
+    """What the folder shows: the backend's working directory, read on the first file operation. It must store files
+    and run no commands, such as a bucket; a sandbox or a host directory can't be mounted."""
 
     _: KW_ONLY
 
@@ -39,11 +44,11 @@ class Mount:
     description: str | None = None
     """What the folder is for, shown to the model."""
 
-    shell: bool | None = None
-    """Whether shell commands must see the folder.
+    shell: bool = False
+    """Whether shell commands see the folder too.
 
-    `None` lets them see it when the backend can mount it; `True` makes the workspace refuse a backend that can't;
-    `False` keeps it to file tools.
+    With `True`, the workspace's backend mounts the filesystem in the environment, and the workspace refuses a backend
+    that has no shell or can't mount it. With `False`, only file tools reach the folder, and the model is told so.
     """
 
     def __post_init__(self) -> None:
@@ -52,27 +57,36 @@ class Mount:
         if path in ('.', '/') or path == '..' or path.startswith('../'):
             raise ValueError(f'mount path must name a folder inside the workspace, got {self.path!r}')
         object.__setattr__(self, 'path', path)
-        # A backend's paths are its whole environment (a local backend's `/` is the host's), not a folder's contents.
-        if isinstance(self.storage, WorkspaceBackend) or not isinstance(self.storage, SupportsFilesystem):
+        filesystem = self.filesystem
+        # A backend that runs commands is an environment (a host's `/`, a sandbox), not a folder's contents. That
+        # includes every `Workspace`, which brings mounts and policy of its own.
+        if (
+            not isinstance(filesystem, WorkspaceBackend)
+            or not isinstance(filesystem, SupportsFilesystem)
+            or isinstance(filesystem, SupportsCommands)
+        ):
             raise TypeError(
-                f'mount storage must implement `SupportsFilesystem` and not be a workspace backend, '
-                f'got {type(self.storage).__name__}'
+                'a mount takes a workspace backend that stores files and runs no commands, such as a bucket, '
+                f'got {type(filesystem).__name__}'
             )
 
 
 @runtime_checkable
 class SupportsMounts(Protocol):
-    """Optional on a backend: make mounts visible to its shell commands.
+    """Optional on a backend: mount filesystems in its environment, so shell commands see them.
 
-    Without it, every mount is reachable through file tools only.
+    Only mounts with `shell=True` are passed here; file tools reach every mount without it.
     """
 
-    def can_mount(self, mount: Mount) -> bool:
-        """Whether this backend can show `mount` to commands. No I/O: it decides what the model is told."""
+    def check_mount(self, mount: Mount) -> None:
+        """Raise [`MountError`][pydantic_ai.workspaces.MountError] saying why `mount` can't be mounted. No I/O.
+
+        Called when the workspace is built, so a mount that can't work is refused before the run.
+        """
         ...
 
     async def ensure_mounts(self, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
-        """Make `mounts` (the backend's whole set) visible to commands, repairing lost ones and removing others.
+        """Mount `mounts` (the backend's whole set), repairing lost ones and removing others.
 
         Relative mount paths are under `working_dir`. Return when to call again, such as before the keys a mount
         uses expire, or `None`. Raise [`MountError`][pydantic_ai.workspaces.MountError] when a mount can't be

@@ -1,4 +1,4 @@
-"""Mounting buckets into sandboxes with rclone, shared by every sandbox backend.
+"""Mounting cloud storage into sandboxes with rclone, shared by every sandbox backend.
 
 A backend implements `SupportsMounts` with these two functions and one primitive of its own: running a command as
 root with one line on stdin, kept out of logs. The line carries the keys; the command is `_helper.py`'s source.
@@ -23,9 +23,9 @@ import anyio.to_thread
 from pydantic_ai.workspaces import CommandResult, Mount, MountError
 
 if TYPE_CHECKING:
-    from pydantic_ai_harness.bucket import Bucket
+    from pydantic_ai_harness.cloud_storage import AzureFilesystem, S3Filesystem
 
-__all__ = ('RunAsRoot', 'can_mount', 'ensure_mounts')
+__all__ = ('RunAsRoot', 'check_mount', 'ensure_mounts')
 
 RunAsRoot = Callable[[Sequence[str], bytes], Awaitable[CommandResult]]
 """Run an argv as root in the sandbox with `stdin` (one line) as its input, which must not reach any log."""
@@ -43,24 +43,27 @@ _ERROR_TAIL = 500
 """How much of the helper's output a `MountError` quotes when the helper didn't answer."""
 
 
-def can_mount(mount: Mount) -> bool:
-    """Whether rclone can mount `mount`'s storage without putting long-lived keys in the sandbox. No I/O."""
-    storage = _bucket(mount)
-    if storage is None:
-        return False
-    # S3 and Azure, whose mounts are tested; Google Cloud Storage buckets are reachable through file tools.
-    url = urlsplit(storage.url)
-    if url.scheme not in ('s3', 'az') and not (url.scheme == 'https' and url.netloc.endswith('.blob.core.windows.net')):
-        return False
-    credentials = storage.credentials
+def check_mount(mount: Mount) -> None:
+    """Refuse a mount whose filesystem rclone can't mount without putting long-lived keys in the sandbox. No I/O."""
+    filesystem = _filesystem(mount)
+    name = type(mount.filesystem).__name__
+    if filesystem is None:
+        # Google Cloud Storage is reachable through file tools; no emulator speaks the API its mounts need to be tested.
+        raise MountError(
+            f'{name} cannot be mounted for shell commands: only an `S3Filesystem` or `AzureFilesystem` can. '
+            'Leave `shell` out to reach it with file tools.'
+        )
+    credentials = filesystem.credentials
     if credentials is None:
-        # Keys found in this process's environment can't be read back out to hand on.
-        return False
+        raise MountError(
+            f'{name} finds its keys in the environment, so they cannot be handed to the sandbox to mount it. '
+            'Pass `credentials=`: keys that expire, or a function returning them.'
+        )
     if callable(credentials):
-        return True
-    kind = 'access_key_id' if url.scheme == 's3' else 'access_key'
-    expiring = credentials.get('expires_at') is not None
-    return kind in credentials and (expiring or storage.share_long_lived_credentials)
+        return
+    if _key_name(filesystem) not in credentials:
+        raise MountError(f'Mounting {filesystem.url} needs an access key: S3 keys or an Azure account key.')
+    _check_expiry(filesystem, credentials)
 
 
 async def ensure_mounts(run_as_root: RunAsRoot, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
@@ -72,19 +75,19 @@ async def ensure_mounts(run_as_root: RunAsRoot, mounts: Sequence[Mount], working
     keys: dict[str, dict[str, str]] = {}
     expiries: list[datetime] = []
     for mount in mounts:
-        # `can_mount` admitted only buckets.
-        bucket = cast('Bucket', mount.storage)
+        # `check_mount` admitted only these.
+        filesystem = cast('S3Filesystem | AzureFilesystem', mount.filesystem)
         path = posixpath.join(working_dir, mount.path)
-        remote, root = _remote(bucket)
+        remote, root = _remote(filesystem)
         identity = json.dumps([remote, root, mount.read_only, path], sort_keys=True)
         fingerprint = hashlib.sha256(identity.encode()).hexdigest()[:16]
         requests.append(
             {'path': path, 'fingerprint': fingerprint, 'remote': remote, 'root': root, 'read_only': mount.read_only}
         )
-        credentials = await _credentials(bucket)
-        keys[fingerprint] = _keys(bucket, credentials)
+        credentials = await _credentials(filesystem)
+        keys[fingerprint] = _keys(filesystem, credentials)
         # Only a function can give fresher keys; given keys are used until they expire.
-        if callable(bucket.credentials) and credentials.get('expires_at') is not None:
+        if callable(filesystem.credentials) and credentials.get('expires_at') is not None:
             expiries.append(credentials['expires_at'])
     request = json.dumps({'mounts': requests, 'keys': keys, 'working_dir': working_dir})
     argv = ['python3', '-c', _HELPER] if mounts else ['sh', '-c', _ONLY_IF_MOUNTED, 'sh', _HELPER]
@@ -112,53 +115,65 @@ async def _run_to_the_end(run_as_root: RunAsRoot, argv: Sequence[str], stdin: by
         return await run_as_root(argv, stdin)
 
 
-def _bucket(mount: Mount) -> Bucket | None:
-    # Not imported here: it needs the `bucket` extra, which a sandbox without bucket mounts doesn't. Until something
-    # imports it, no storage can be a `Bucket`.
-    module = sys.modules.get('pydantic_ai_harness.bucket._bucket')
-    storage = mount.storage
-    return cast('Bucket', storage) if module is not None and isinstance(storage, module.Bucket) else None
+def _filesystem(mount: Mount) -> S3Filesystem | AzureFilesystem | None:
+    # Not imported here: it needs the `cloud-storage` extra, which a sandbox without such mounts doesn't. Until
+    # something imports it, no filesystem can be one of these.
+    module = sys.modules.get('pydantic_ai_harness.cloud_storage._filesystem')
+    filesystem = mount.filesystem
+    if module is None or not isinstance(filesystem, (module.S3Filesystem, module.AzureFilesystem)):
+        return None
+    return cast('S3Filesystem | AzureFilesystem', filesystem)
 
 
-async def _credentials(bucket: Bucket) -> Mapping[str, Any]:
-    credentials = bucket.credentials
-    # A credentials function may call out (to STS, say), so it runs off the event loop.
-    keys: Mapping[str, Any] = await anyio.to_thread.run_sync(credentials) if callable(credentials) else credentials  # type: ignore[arg-type]
+def _key_name(filesystem: S3Filesystem | AzureFilesystem) -> str:
+    return 'access_key_id' if urlsplit(filesystem.url).scheme == 's3' else 'access_key'
+
+
+def _check_expiry(filesystem: S3Filesystem | AzureFilesystem, keys: Mapping[str, Any]) -> None:
     expires_at = keys.get('expires_at')
     if expires_at is not None and expires_at <= datetime.now(UTC):
-        raise MountError(f'The keys for {bucket.url} have expired.')
-    if expires_at is None and not bucket.share_long_lived_credentials:
+        raise MountError(f'The keys for {filesystem.url} have expired.')
+    if expires_at is None and not filesystem.share_long_lived_credentials:
         raise MountError(
-            f'The keys for {bucket.url} do not expire, so they are not handed to the sandbox. Use keys that expire, '
-            'or set `share_long_lived_credentials=True` on the bucket.'
+            f'The keys for {filesystem.url} do not expire, so they are not handed to the sandbox, where commands '
+            'could read them. Use keys that expire, or set `share_long_lived_credentials=True`.'
         )
+
+
+async def _credentials(filesystem: S3Filesystem | AzureFilesystem) -> Mapping[str, Any]:
+    credentials = filesystem.credentials
+    # A credentials function may call out (to STS, say), so it runs off the event loop.
+    keys: Mapping[str, Any] = await anyio.to_thread.run_sync(credentials) if callable(credentials) else credentials  # type: ignore[arg-type]
+    _check_expiry(filesystem, keys)
     return keys
 
 
-def _remote(bucket: Bucket) -> tuple[dict[str, str], str]:
-    """The bucket's rclone settings, without keys, and the path of its folder in rclone's terms."""
-    url = urlsplit(bucket.url)
+def _remote(filesystem: S3Filesystem | AzureFilesystem) -> tuple[dict[str, str], str]:
+    """The filesystem's rclone settings, without keys, and the path of its folder in rclone's terms."""
+    url = urlsplit(filesystem.url)
     folder = url.path.strip('/')
     if url.scheme == 's3':
-        remote = {'type': 's3', 'provider': 'Other' if bucket.endpoint else 'AWS', 'env_auth': 'false'}
-        if bucket.endpoint:
-            remote['endpoint'] = bucket.endpoint
-        if bucket.region:
-            remote['region'] = bucket.region
+        s3 = cast('S3Filesystem', filesystem)
+        remote = {'type': 's3', 'provider': 'Other' if s3.endpoint else 'AWS', 'env_auth': 'false'}
+        if s3.endpoint:
+            remote['endpoint'] = s3.endpoint
+        if s3.region:
+            remote['region'] = s3.region
         return remote, posixpath.join(url.netloc, folder)
-    # Azure: `az://<container>/<folder>` with `account_name` in options, or `https://<account>.blob.../<container>/...`.
+    # Azure: `az://<container>/<folder>` with `account`, or `https://<account>.blob.core.windows.net/<container>/...`.
+    azure = cast('AzureFilesystem', filesystem)
     if url.scheme == 'az':
-        account, container = bucket.options['account_name'], url.netloc
+        account, container = cast(str, azure.account), url.netloc
     else:
         account = url.netloc.split('.', 1)[0]
         container, _, folder = folder.partition('/')
     remote = {'type': 'azureblob', 'account': account}
-    if bucket.endpoint:
-        remote['endpoint'] = bucket.endpoint
+    if azure.endpoint:
+        remote['endpoint'] = azure.endpoint
     return remote, posixpath.join(container, folder)
 
 
-def _keys(bucket: Bucket, keys: Mapping[str, Any]) -> dict[str, str]:
+def _keys(filesystem: S3Filesystem | AzureFilesystem, keys: Mapping[str, Any]) -> dict[str, str]:
     """The keys in rclone's terms."""
     if 'access_key_id' in keys:
         return {
@@ -168,4 +183,4 @@ def _keys(bucket: Bucket, keys: Mapping[str, Any]) -> dict[str, str]:
         }
     if 'access_key' in keys:
         return {'key': keys['access_key']}
-    raise MountError(f'Mounting {bucket.url} needs an access key: shell mounts take S3 keys or an Azure account key.')
+    raise MountError(f'Mounting {filesystem.url} needs an access key: S3 keys or an Azure account key.')

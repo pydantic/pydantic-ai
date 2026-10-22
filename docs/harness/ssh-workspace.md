@@ -34,7 +34,7 @@ result = agent.run_sync('Run the test suite and fix the first failure.')
 
 `Coder`'s shell and file tools now run on `build-box`, as the user you log in as, with that user's full authority on the host. To confine the commands, wrap the capability in [`BubblewrapSandbox`](bubblewrap-sandbox.md).
 
-`working_dir` defaults to the login directory, and a relative one starts there. The directory must already exist. Commands get the remote login environment plus `env=`. `mounts=` shows storage, such as a [`Bucket`](bucket.md), as folders that file tools reach. For a single run, pass `workspace=SSHWorkspaceBackend('dev@build-box')` to `agent.run` instead.
+`working_dir` defaults to the login directory, and a relative one starts there. The directory must already exist. Commands get the remote login environment plus `env=`. `mounts=` shows filesystems, such as an [`S3Filesystem`](cloud-storage.md), as folders that file tools reach. For a single run, pass `workspace=SSHWorkspaceBackend('dev@build-box')` to `agent.run` instead.
 
 ## Logging in
 

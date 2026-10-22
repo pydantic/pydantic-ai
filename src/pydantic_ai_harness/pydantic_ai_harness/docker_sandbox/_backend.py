@@ -37,6 +37,7 @@ from pydantic_ai.workspaces import (
     CommandResult,
     LocalWorkspaceBackend,
     Mount,
+    MountError,
     SupportsCommands,
     SupportsMounts,
     WorkspaceBackend,
@@ -235,7 +236,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsMounts):
             default of 2048.
         executable: The container CLI to run, such as `'podman'`.
 
-    Shell commands see [mounted](https://pydantic.dev/docs/ai/harness/bucket/) buckets when `docker_args` give the
+    Shell commands see a [mount](https://pydantic.dev/docs/ai/harness/cloud-storage/) with `shell=True` when `docker_args` give the
     container FUSE: `['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', 'apparmor:unconfined']`.
     """
 
@@ -434,10 +435,14 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsMounts):
             exit_code=int(done[2]), stdout=result.stdout, stderr=stderr[: done.start()] + stderr[done.end() :]
         )
 
-    def can_mount(self, mount: Mount) -> bool:
+    def check_mount(self, mount: Mount) -> None:
         # Only `docker_args` can give the container the FUSE device that mounting needs.
-        fuse = any('/dev/fuse' in arg or arg == '--privileged' for arg in self._docker_args)
-        return fuse and _mounts.can_mount(mount)
+        if not any('/dev/fuse' in arg or arg == '--privileged' for arg in self._docker_args):
+            raise MountError(
+                'DockerSandbox can mount a filesystem for shell commands only when `docker_args` give the container '
+                "FUSE: `['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', 'apparmor:unconfined']`."
+            )
+        _mounts.check_mount(mount)
 
     async def ensure_mounts(self, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
         await self._acquire()

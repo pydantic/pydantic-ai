@@ -452,14 +452,23 @@ class ProviderWorkspaces(AbstractCapability[Any]):
         return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend
 
 
-class MemoryStorage(SupportsFilesystem):
-    """In-memory storage for a mount: paths start at `/`, and it has no working directory or commands."""
+class MemoryFilesystem(WorkspaceBackend, SupportsFilesystem):
+    """An in-memory filesystem with no commands, like a bucket: its working directory is `home`."""
 
-    def __init__(self, files: dict[str, bytes] | None = None) -> None:
+    def __init__(self, files: dict[str, bytes] | None = None, *, home: str = '/') -> None:
         self.files = files if files is not None else {}
-        self.directories = {'/'}
+        self.home = home
+        self.directories = {'/', home}
+        _add_parent_directories(self.directories, home)
         for path in self.files:
             _add_parent_directories(self.directories, path)
+
+    @property
+    def ref(self) -> WorkspaceRef:
+        return WorkspaceRef(provider='memory', id=str(id(self)))
+
+    async def working_dir(self) -> str:
+        return self.home
 
     async def read_bytes(self, path: str) -> bytes:
         if path in self.directories:

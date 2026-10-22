@@ -33,7 +33,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
 )
 
-from ..workspace_fakes import InMemoryProvider, MemoryStorage
+from ..workspace_fakes import InMemoryProvider, MemoryFilesystem
 
 
 class ScenarioFailed(Exception):
@@ -94,7 +94,7 @@ async def read_seed(ctx: RunContext[Any]) -> str:
     return await ctx.workspace.read_text('seed.txt')
 
 
-MOUNTED = MemoryStorage({'/seed.txt': b'from storage'})
+MOUNTED = MemoryFilesystem({'/seed.txt': b'from storage'})
 """What the `mounted` agent's `data` folder holds; tools reach it from durable units."""
 
 

@@ -1,6 +1,6 @@
-"""`Bucket` against real object storage servers (see `conftest.py`).
+"""Cloud storage filesystems against real object storage servers (see `conftest.py`).
 
-The unit suite in `tests/harness/bucket` runs the workspace conformance rules on obstore's in-memory store, which has
+The unit suite in `tests/harness/cloud_storage` runs the workspace conformance rules on obstore's in-memory store, which has
 the same listing model but not the servers' behaviour. What only a server answers:
 
 - that each cloud's listing, delete and missing-object replies map onto the filesystem rules;
@@ -8,7 +8,7 @@ the same listing model but not the servers' behaviour. What only a server answer
 - that a credentials function is called for keys, as a source of expiring keys needs;
 - that a folder an S3 console made (an empty `<name>/` object) lists as a folder.
 
-Run with `make integration-bucket`.
+Run with `make integration-cloud-storage`.
 """
 
 from __future__ import annotations
@@ -24,9 +24,16 @@ import pytest
 
 from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
-from pydantic_ai_harness.bucket import Bucket, BucketWorkspaceBackend
 
-from .conftest import BUCKET, S3_ENDPOINT, azure_bucket, create_azure_container, create_s3_bucket, s3_bucket
+from .conftest import (
+    BUCKET,
+    S3_ENDPOINT,
+    Filesystem,
+    azure_bucket,
+    create_azure_container,
+    create_s3_bucket,
+    s3_bucket,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -35,11 +42,11 @@ class TestConformance(WorkspaceBackendSuite):
     """The workspace backend rules, with the bucket as the whole workspace."""
 
     @pytest.fixture
-    def backend(self, new_bucket: Callable[..., Bucket]) -> BucketWorkspaceBackend:
-        return BucketWorkspaceBackend(new_bucket())
+    def backend(self, new_bucket: Callable[..., Filesystem]) -> Filesystem:
+        return new_bucket()
 
 
-async def test_a_missing_bucket_is_unavailable(new_bucket: Callable[..., Bucket]) -> None:
+async def test_a_missing_bucket_is_unavailable(new_bucket: Callable[..., Filesystem]) -> None:
     """Retrying can't help, so it is not a transient error."""
     bucket = new_bucket()
     missing = replace(bucket, url=bucket.url.replace(BUCKET, f'pai-missing-{uuid.uuid4().hex[:8]}'))
@@ -58,7 +65,7 @@ async def test_rejected_keys_are_a_permission_error() -> None:
         await bucket.read_bytes('/a.txt')
 
 
-async def test_a_credentials_function_supplies_the_keys(new_bucket: Callable[..., Bucket]) -> None:
+async def test_a_credentials_function_supplies_the_keys(new_bucket: Callable[..., Filesystem]) -> None:
     """A function is how expiring keys reach the bucket."""
     keys = new_bucket().credentials
     calls: list[None] = []

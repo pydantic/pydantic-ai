@@ -43,7 +43,7 @@ class SSHWorkspace(AbstractCapability[AgentDepsT]):
     """Environment variables for every command, on top of the remote login environment."""
 
     mounts: Mounts = ()
-    """Storage to show as folders in the workspace, such as a [`Bucket`][pydantic_ai_harness.bucket.Bucket]; a function of the run can pick them per run."""
+    """Filesystems to show as folders in the workspace, such as an [`S3Filesystem`][pydantic_ai_harness.cloud_storage.S3Filesystem]; a function of the run can pick them per run."""
 
     ssh_args: Sequence[str] = ()
     """Extra `ssh` arguments, such as `['-i', key_path]`; prefer your SSH configuration where you can."""
