@@ -224,7 +224,7 @@ agent = Agent(
 result = agent.run_sync('Where is order 1234?')
 ```
 
-The breakpoint is placed after the last static instruction, so dynamic [instructions](../agent.md#instructions) (from `@agent.instructions` functions or [toolsets](../toolsets.md)) stay outside the cached prefix and don't invalidate it when they change. With no static instructions, it goes on the last [system prompt](../agent.md#system-prompts) instead, which is just as stable. Leave `openai_prompt_cache_options` on its default `mode='implicit'` so OpenAI also keeps caching the growing conversation.
+The breakpoint is placed after the last static instruction, so dynamic [instructions](../agent.md#instructions) (from `@agent.instructions` functions or [toolsets](../toolsets.md)) stay outside the cached prefix and don't invalidate it when they change. They do invalidate the cached conversation after them, so for instructions that change mid-conversation use [`on_change='append'`](../agent.md#appending-instruction-changes), and [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text). With no static instructions, it goes on the last [system prompt](../agent.md#system-prompts) instead, which is just as stable. Leave `openai_prompt_cache_options` on its default `mode='implicit'` so OpenAI also keeps caching the growing conversation.
 
 On the Responses API the top-level `instructions` field cannot carry a breakpoint, so the instructions are sent as leading input messages instead. Because a stored response keeps its input and replays it to the request that continues it, this has some limits:
 
@@ -581,14 +581,14 @@ print(result.output)
 #> True
 ```
 
-It reads the same `OPENAI_API_KEY`. Its provider, [`OpenAIDecisionsProvider`][pydantic_ai.providers.openai_decisions.OpenAIDecisionsProvider], takes the same arguments as [`OpenAIProvider`](#configure-the-provider), including a [custom client](#custom-openai-client):
+It reads the same `OPENAI_API_KEY`, and takes the same [`OpenAIProvider`](#configure-the-provider) as the other OpenAI models, including a [custom client](#custom-openai-client):
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel
-from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider
+from pydantic_ai.providers.openai import OpenAIProvider
 
-model = OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIDecisionsProvider(api_key='your-api-key'))
+model = OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIProvider(api_key='your-api-key'))
 agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
 ...
 ```

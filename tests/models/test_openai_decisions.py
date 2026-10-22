@@ -28,14 +28,21 @@ from pydantic_ai import (
     BinaryContent,
     BoolCriteria,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelMessage,
+    ModelQuotaExceededError,
+    ModelRateLimitError,
     ModelRequest,
     ModelResponse,
+    ModelServerError,
+    ModelTimeoutError,
+    ModelUnavailableError,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     AudioUrl,
@@ -46,7 +53,7 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters, get_user_agent, infer_model
+from pydantic_ai.models import ModelRequestParameters, get_user_agent, infer_model, infer_model_profile
 from pydantic_ai.models.decision import (
     ChoiceQuestion,
     DecisionQuestion,
@@ -61,7 +68,7 @@ from pydantic_ai.models.decision import (
 )
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.profiles.decision import DecisionModelProfile
+from pydantic_ai.profiles.decision import DecisionModelProfile, decision_model_profile
 from pydantic_ai.tools import ObjectJsonSchema, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -73,9 +80,11 @@ with try_import() as imports_successful:
     from openai import APIConnectionError, APIError, APIStatusError, AsyncOpenAI
     from openai.types.decision_create_params import DecisionCreateParams
 
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel, OpenAIDecisionsModelSettings
+    from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.openai import OpenAIProvider
-    from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider
+    from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider  # pyright: ignore[reportDeprecated]
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
@@ -84,14 +93,14 @@ READINESS_WAIT_TIMEOUT = 10
 
 @pytest.fixture
 def capture_model(openai_api_key: str, request_capture: RequestCapture) -> OpenAIDecisionsModel:
-    provider = OpenAIDecisionsProvider(api_key=openai_api_key, http_client=request_capture.client)
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
     return OpenAIDecisionsModel('gpt-6-luna', provider=provider)
 
 
 def mock_model(handler: Handler) -> OpenAIDecisionsModel:
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     client = AsyncOpenAI(api_key='test', max_retries=0, http_client=http_client)
-    return OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIDecisionsProvider(openai_client=client))
+    return OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIProvider(openai_client=client))
 
 
 def decisions(*answers: Mapping[str, object]) -> httpx2.Response:
@@ -155,24 +164,121 @@ def test_init(env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     model = OpenAIDecisionsModel('gpt-6-luna')
     assert model.model_name == 'gpt-6-luna'
+    assert isinstance(model.provider, OpenAIProvider)
     assert model.system == 'openai-decisions'
     assert model.base_url == 'https://api.openai.com/v1/'
     assert isinstance(model.client, AsyncOpenAI)
     # The ID round-trips, where `openai:gpt-6-luna` would be a Responses API model.
     assert model.model_id == 'openai-decisions:gpt-6-luna'
-    assert isinstance(infer_model(model.model_id), OpenAIDecisionsModel)
+    inferred = infer_model(model.model_id)
+    assert isinstance(inferred, OpenAIDecisionsModel)
+    assert type(inferred.provider) is OpenAIProvider
 
 
-def test_missing_api_key_names_this_provider(env: TestEnv):
+DECISION_PROFILE = {
+    'supports_json_schema_output': False,
+    'supports_json_object_output': False,
+    'supports_thinking': False,
+    'supports_cache': False,
+    'supports_image_output': False,
+    'json_schema_transformer': None,
+    'tool_deferral_mode': None,
+    'default_structured_output_mode': 'tool',
+}
+
+
+def test_profile_is_the_decision_endpoints_not_the_providers():
+    """`OpenAIProvider` profiles `gpt-6-luna` as a Responses API model; the Decisions API has none of its features."""
+    model = OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIProvider(api_key='test'))
+    assert {key: model.profile.get(key) for key in DECISION_PROFILE} == DECISION_PROFILE
+    assert (OpenAIProvider.model_profile('gpt-6-luna') or {}).get('supports_json_schema_output') is True
+
+    # Without a model to ask, as for a durable run's unregistered model string, the ID resolves the same profile.
+    profile = dict(infer_model_profile('openai-decisions:gpt-6-luna'))
+    profile.pop('context_window', None)
+    assert profile == decision_model_profile('gpt-6-luna')
+
+    # The user's `profile=` still wins over it.
+    custom = OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIProvider(api_key='test'), profile={'context_window': 1})
+    assert custom.profile.get('context_window') == 1
+
+
+def test_missing_api_key_names_the_openai_provider(env: TestEnv):
     env.remove('OPENAI_API_KEY')
     env.remove('OPENAI_BASE_URL')
-    with pytest.raises(UserError, match=r'`OpenAIDecisionsProvider\(api_key=\.\.\.\)`'):
-        OpenAIDecisionsProvider()
+    with pytest.raises(UserError, match=r'`OpenAIProvider\(api_key=\.\.\.\)`'):
+        OpenAIDecisionsModel('gpt-6-luna')
 
 
 def test_infer_model_refuses_another_provider():
-    with pytest.raises(UserError, match='require an `OpenAIDecisionsProvider`'):
-        infer_model('openai-decisions:gpt-6-luna', provider_factory=lambda _: OpenAIProvider(api_key='test'))
+    with pytest.raises(UserError, match='require an `OpenAIProvider`'):
+        infer_model('openai-decisions:gpt-6-luna', provider_factory=lambda _: DeepSeekProvider(api_key='test'))
+
+
+def test_openai_decisions_provider_deprecated():
+    """`OpenAIDecisionsModel` takes `OpenAIProvider` itself, so its dedicated provider is deprecated."""
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`OpenAIDecisionsProvider` is deprecated.*Use `OpenAIProvider` with `OpenAIDecisionsModel`',
+    ):
+        provider = OpenAIDecisionsProvider(api_key='test')  # pyright: ignore[reportDeprecated]
+
+    # It keeps working, as before.
+    model = OpenAIDecisionsModel('gpt-6-luna', provider=provider)
+    assert model.system == 'openai-decisions'
+    assert {key: model.profile.get(key) for key in DECISION_PROFILE} == DECISION_PROFILE
+
+
+async def test_decision_response_does_not_end_a_responses_chain(allow_model_requests: None):
+    """A decision response in the history is not the Responses API's, so it doesn't stand in for the latest one.
+
+    Both models share `OpenAIProvider`, so it is `OpenAIDecisionsModel.system` that keeps the decision response
+    apart. Named `'openai'`, it would be the latest response `openai_previous_response_id='auto'` continues from,
+    and having no Responses ID, would send the whole history again and lose the prompt cache comparison.
+    """
+    bodies: list[dict[str, JsonValue]] = []
+
+    def responses(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(400, json={'error': {'message': 'probe', 'type': 'probe'}})
+
+    decision_response = await Agent(mock_model(boolean_answers), output_type=bool, instructions='Harmful?').run(
+        'Is that harmful?',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart('Find the latest release.')]),
+            ModelResponse(parts=[TextPart('v2.59.0')], provider_name='openai', provider_response_id='resp_1'),
+        ],
+    )
+    client = AsyncOpenAI(
+        api_key='test', max_retries=0, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(responses))
+    )
+    responses_model = OpenAIResponsesModel('gpt-6-luna', provider=OpenAIProvider(openai_client=client))
+    with pytest.raises(ModelHTTPError):
+        await Agent(responses_model).run(
+            'Now summarise it.',
+            message_history=decision_response.all_messages(),
+            model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+        )
+
+    assert bodies[0]['previous_response_id'] == 'resp_1'
+    assert bodies[0]['prompt_cache_options'] == {'comparison_response_id': 'resp_1'}
+    assert bodies[0]['input'] == snapshot(
+        [
+            {'role': 'user', 'content': 'Is that harmful?'},
+            {
+                'name': 'final_result',
+                'arguments': '{"response":true}',
+                'call_id': IsStr(),
+                'type': 'function_call',
+            },
+            {
+                'type': 'function_call_output',
+                'call_id': IsStr(),
+                'output': 'Final result processed.',
+            },
+            {'role': 'user', 'content': 'Now summarise it.'},
+        ]
+    )
 
 
 @pytest.mark.vcr
@@ -551,7 +657,7 @@ async def test_api_limits(
 async def test_http_error(allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture):
     """A model the API does not serve is an error response, raised for a `FallbackModel` to take over."""
     model = OpenAIDecisionsModel(
-        'gpt-5', provider=OpenAIDecisionsProvider(api_key=openai_api_key, http_client=request_capture.client)
+        'gpt-5', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
     )
 
     with pytest.raises(ModelHTTPError) as exc_info:
@@ -617,11 +723,51 @@ async def test_sdk_errors_map_to_model_api_error_with_cause(allow_model_requests
     assert exc_info.value.message == 'OpenAI Decisions request failed'
     if error_kind == 'connection':
         [transport_error] = transport_errors
+        assert isinstance(exc_info.value, ModelConnectionError)
+        assert exc_info.value.phase == 'connect'
         assert isinstance(exc_info.value.__cause__, APIConnectionError)
         assert exc_info.value.__cause__.__cause__ is transport_error
     else:
         [sdk_error] = sdk_errors
         assert exc_info.value.__cause__ is sdk_error
+
+
+@pytest.mark.parametrize(
+    ('status', 'body', 'category'),
+    [
+        (429, {'message': 'Rate limit reached.', 'code': 'rate_limit_exceeded'}, ModelRateLimitError),
+        (429, {'message': 'You exceeded your quota.', 'code': 'insufficient_quota'}, ModelQuotaExceededError),
+        (503, {'message': 'Service unavailable.', 'type': 'service_unavailable'}, ModelUnavailableError),
+        (500, {'message': 'The server had an error.', 'type': 'server_error'}, ModelServerError),
+    ],
+)
+async def test_http_error_category(
+    allow_model_requests: None,
+    status: int,
+    body: dict[str, str],
+    category: type[ModelRateLimitError | ModelQuotaExceededError | ModelUnavailableError | ModelServerError],
+):
+    """A rate limit, exhausted quota or outage is raised in its error category, with the provider's code and type."""
+    model = mock_model(lambda _: httpx2.Response(status, json={'error': body}))
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await model.decide(DecisionRequest(state='Review this.', questions={'q': NoulQuestion()}), {})
+    error = exc_info.value
+    # Exactly the category's HTTP error, so one classified too broadly (an overloaded 503 for a plain one) fails.
+    assert type(error) is type(ModelHTTPError.for_category(category, status_code=status, model_name='gpt-6-luna'))
+    assert (error.status_code, error.provider_error_code, error.provider_error_type) == (
+        status,
+        body.get('code'),
+        body.get('type'),
+    )
+
+
+async def test_timeout_error(allow_model_requests: None):
+    def time_out(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ReadTimeout('slow')
+
+    with pytest.raises(ModelTimeoutError) as exc_info:
+        await mock_model(time_out).decide(DecisionRequest(state='Review this.', questions={'q': NoulQuestion()}), {})
+    assert exc_info.value.message == 'OpenAI Decisions request failed'
 
 
 async def test_sdk_status_error_below_400_maps_to_model_api_error(allow_model_requests: None):
@@ -1531,30 +1677,25 @@ async def test_image_is_prepared_once_for_route_then_fill(allow_model_requests: 
     ('source', 'unsupported'),
     [
         pytest.param('prompt', BinaryContent(b'audio', media_type='audio/mpeg'), id='audio-prompt'),
+        pytest.param('prompt', AudioUrl('https://example.com/audio.mp3'), id='audio-url-prompt'),
         pytest.param('assistant-file', BinaryContent(b'%PDF', media_type='application/pdf'), id='document-assistant'),
-        pytest.param('tool-return', BinaryContent(b'video', media_type='video/mp4'), id='video-tool-return'),
     ],
 )
 async def test_unsupported_files_fail_before_a_decisions_request(
-    source: Literal['prompt', 'assistant-file', 'tool-return'],
-    unsupported: BinaryContent,
+    source: Literal['prompt', 'assistant-file'],
+    unsupported: BinaryContent | AudioUrl,
     allow_model_requests: None,
 ):
-    """Audio, documents, and video remain unsupported across user, assistant, and tool history."""
+    """Audio, documents, and video the user sent, or the model produced, fail before a request is sent."""
     history: list[ModelMessage] = []
-    prompt: str | list[BinaryContent] = 'Classify this content.'
+    prompt: str | list[BinaryContent | AudioUrl] = 'Classify this content.'
     if source == 'prompt':
         prompt = [unsupported]
-    elif source == 'assistant-file':
+    else:
+        assert isinstance(unsupported, BinaryContent)
         history = [
             ModelRequest.user_text_prompt('Earlier prompt.'),
             ModelResponse(parts=[FilePart(content=unsupported)]),
-        ]
-    else:
-        history = [
-            ModelRequest.user_text_prompt('Look up the attachment.'),
-            ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
-            ModelRequest(parts=[ToolReturnPart('lookup', unsupported, tool_call_id='tool-1')]),
         ]
     captured = Captured(boolean_answers)
 
@@ -1565,28 +1706,37 @@ async def test_unsupported_files_fail_before_a_decisions_request(
     assert captured.requests == []
 
 
-@pytest.mark.parametrize('source', ['prompt', 'tool-return'])
-async def test_unsupported_audio_urls_fail_before_a_decisions_request(
-    source: Literal['prompt', 'tool-return'], allow_model_requests: None
+@pytest.mark.parametrize(
+    ('unsupported', 'note'),
+    [
+        pytest.param(
+            BinaryContent(b'video', media_type='video/mp4', identifier='clip'),
+            'File clip (video/mp4, 5 bytes) was not sent: this model cannot read video.',
+            id='video',
+        ),
+        pytest.param(
+            AudioUrl('https://example.com/audio.mp3', identifier='clip'),
+            'File clip (audio/mpeg) was not sent: this model cannot read audio files.',
+            id='audio-url',
+        ),
+    ],
+)
+async def test_unsupported_tool_return_files_are_named_in_a_note(
+    unsupported: BinaryContent | AudioUrl, note: str, allow_model_requests: None
 ):
-    """Audio URLs are rejected in user prompts and tool returns before a Decisions request is sent."""
-    audio_url = AudioUrl('https://example.com/audio.mp3')
-    history: list[ModelMessage] = []
-    prompt: str | list[AudioUrl] = 'Classify this content.'
-    if source == 'prompt':
-        prompt = [audio_url]
-    else:
-        history = [
-            ModelRequest.user_text_prompt('Look up the attachment.'),
-            ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
-            ModelRequest(parts=[ToolReturnPart('lookup', audio_url, tool_call_id='tool-1')]),
-        ]
+    """Audio or video a tool returned reaches the Decisions request as a note naming it, rather than failing the run."""
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Look up the attachment.'),
+        ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
+        ModelRequest(parts=[ToolReturnPart('lookup', unsupported, tool_call_id='tool-1')]),
+    ]
     captured = Captured(boolean_answers)
     agent = Agent(mock_model(captured), output_type=bool, instructions='Does this contain an image?')
 
-    with pytest.raises(UserError, match='unsupported file: this model accepts text and images only'):
-        await agent.run(prompt, message_history=history)
-    assert captured.requests == []
+    result = await agent.run('Classify this content.', message_history=history)
+
+    assert result.output is True
+    assert note in captured.requests[0].content.decode()
 
 
 async def test_image_download_error_prevents_a_decisions_request(allow_model_requests: None):
@@ -1699,7 +1849,7 @@ class FreeTextOutput(BaseModel):
                 run=lambda captured: Agent(
                     OpenAIDecisionsModel(
                         'gpt-6-luna',
-                        provider=OpenAIDecisionsProvider(
+                        provider=OpenAIProvider(
                             openai_client=AsyncOpenAI(
                                 api_key='test',
                                 max_retries=0,

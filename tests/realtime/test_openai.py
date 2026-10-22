@@ -48,7 +48,8 @@ from pydantic_ai.messages import (
     PartEndEvent,
     PartStartEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
@@ -114,7 +115,7 @@ from pydantic_ai.settings import ThinkingLevel, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import IsDatetime, try_import
+from ..conftest import IsDatetime, legacy_retry_prompt_part, try_import
 from ..realtime_connections import lifecycle_events
 from .test_session import FakeRealtimeModel, make_tool_manager
 from .ws_helpers import collect_codec_events, collect_session_events
@@ -1698,8 +1699,13 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='weather', content='sunny', tool_call_id='call-1'),
-                RetryPromptPart(tool_name='lookup', content='invalid id', tool_call_id='call-2'),
-                RetryPromptPart(content='answer in prose'),
+                legacy_retry_prompt_part(tool_name='lookup', content='invalid id', tool_call_id='call-2'),
+                legacy_retry_prompt_part(content='answer in prose'),
+                RetryFeedbackPart(content='answer in prose', retry=RetryInfo(cause='model_retry')),
+                RetryFeedbackPart(
+                    content=[{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an integer', 'input': 'lots'}],
+                    retry=RetryInfo(cause='validation_error'),
+                ),
                 UserPromptPart(
                     content=[
                         ImageUrl(url='https://example.com/a.png'),
@@ -1772,7 +1778,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                 'item': {
                     'type': 'function_call_output',
                     'call_id': 'call-2',
-                    'output': 'invalid id\n\nFix the errors and try again.',
+                    'output': '{"error":"invalid id"}',
                 },
             },
             {
@@ -1783,7 +1789,48 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     'content': [
                         {
                             'type': 'input_text',
-                            'text': 'Validation feedback:\nanswer in prose\n\nFix the errors and try again.',
+                            'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+answer in prose
+</retry_feedback>\
+""",
+                        }
+                    ],
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+answer in prose
+</retry_feedback>\
+""",
+                        }
+                    ],
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<validation_errors>
+[{"type":"int_parsing","loc":["count"],"msg":"not an integer","input":"lots"}]
+</validation_errors>\
+""",
                         }
                     ],
                 },
@@ -2450,7 +2497,7 @@ async def test_connection_send_commit_and_clear_audio() -> None:
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     await conn.send(CommitAudio())
     await conn.send(ClearAudio())
-    assert json.loads(ws.sent[0]) == {'type': 'input_audio_buffer.commit'}
+    assert json.loads(ws.sent[0]) == {'type': 'input_audio_buffer.commit', 'event_id': 'pydantic_ai.commit.0'}
     assert json.loads(ws.sent[1]) == {'type': 'input_audio_buffer.clear'}
 
 
@@ -5587,6 +5634,58 @@ async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_th
     assert part.audio.data[44:] == sent
     [streamed_part] = streamed
     assert streamed_part.audio is not None and streamed_part.audio.data[44:] == sent
+
+
+def _push_to_talk_session(ws: _QueuedWebSocket) -> RealtimeSession:
+    connection = OpenAIRealtimeConnection(ws, manual_turns=True)  # type: ignore[arg-type]
+    return RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='input_audio',
+    )
+
+
+@pytest.mark.anyio
+async def test_push_to_talk_turn_closed_before_its_commit_is_acknowledged_keeps_its_audio() -> None:
+    """A turn `commit_audio()` committed is recorded with its retained audio though the session closes before
+    reading the provider's `input_audio_buffer.committed`: the provider has it, and no transcript is coming."""
+    ws = _QueuedWebSocket()
+    session = _push_to_talk_session(ws)
+    pcm = b'\x01\x00' * 2_400
+    async with session:
+        await session.send_audio(pcm)
+        await session.commit_audio()
+
+    [request] = session.all_messages()
+    [part] = request.parts
+    assert isinstance(part, SpeechPart) and part.speaker == 'user' and part.transcript is None
+    assert part.audio is not None and part.audio.data[44:] == pcm
+
+
+@pytest.mark.anyio
+async def test_push_to_talk_commits_the_provider_refuses_or_of_nothing_make_no_turn_at_close() -> None:
+    """A commit with no audio sent since the last one, or one the provider refused as too short, is no turn when
+    the session closes before anything acknowledges it."""
+    ws = _QueuedWebSocket()
+    session = _push_to_talk_session(ws)
+    async with session:
+        await session.send_audio(b'\x01\x00' * 100)
+        await session.commit_audio()
+        ws.push(
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'code': 'input_audio_buffer_commit_empty',
+                    'message': 'Error committing input audio buffer: buffer too small.',
+                },
+            }
+        )
+        assert isinstance(await anext(aiter(session)), RealtimeSessionErrorEvent)
+        await session.commit_audio()
+
+    assert session.all_messages() == []
 
 
 @pytest.mark.anyio

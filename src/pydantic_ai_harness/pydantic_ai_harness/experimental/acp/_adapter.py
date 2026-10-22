@@ -36,7 +36,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
-    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -152,7 +151,7 @@ def _committable_history(messages: list[ModelMessage], ran_calls: set[str]) -> l
                 committed.pop()
                 continue
             break
-        if any(isinstance(part, ToolReturnPart | RetryPromptPart) and part.tool_name for part in last.parts):
+        if any(isinstance(part, ToolReturnPart) for part in last.parts):
             break
         previous = committed[-2] if len(committed) > 1 else None
         if (
@@ -857,8 +856,11 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             )
         elif isinstance(event, FunctionToolResultEvent):
             part = event.part
-            if isinstance(part, RetryPromptPart):
-                status, raw_output = 'failed', part.model_response()
+            if part.outcome == 'retried':
+                # The call has to be made again, which is a failure from the client's point of
+                # view. `model_response_str` reports the feedback the model itself was handed,
+                # unwrapped because the `{"error": ...}` envelope is a wire detail.
+                status, raw_output = 'failed', part.model_response_str(wrap_if_error=False)
             elif part.tool_call_id in turn.denied:
                 status, raw_output = 'failed', part.content
             else:

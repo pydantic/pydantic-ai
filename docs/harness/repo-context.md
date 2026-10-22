@@ -50,6 +50,8 @@ Set `expose_inventory_tool=True` to expose `inventory_agent_context()`, which re
 Rename the tool with `inventory_tool_name`, or scope which roots it scans with `asset_roots`.
 Skill discovery goes at most eight directories deep.
 
+With `FileSystem` on the agent, the inventory tool steps aside for `FileSystem`'s `read_file`, as long as every asset root is inside the working directory (the default roots are). The tool is marked with [`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind (keep `FileSystem` under its own names for now: a renamed `FileSystem` tool can't be called yet, [#10927](https://github.com/pydantic/pydantic-ai/issues/10927)). The instructions name the asset roots and say to inspect them with file tools, or with the inventory tool when it's offered. They name no reader, so they're the same with or without `FileSystem` and stay static. The decision is made from `asset_roots`, not from `FileSystem`'s access rules: `denied_patterns` that cover the roots, or `allowed_patterns` that leave them out, still drop the inventory tool.
+
 ### 3. Nested-on-traversal (off by default)
 
 When the model lists or reads a directory, surface that directory's
@@ -109,7 +111,7 @@ Each file is wrapped in `<context-file path="...">` tags. A closing `</context-f
 
 Injecting file contents into the system prompt costs prompt-cache stability: a changed prefix re-bills the whole cached region. `RepoContext` keeps the two cache-relevant paths separate:
 
-- Strategy 1 reads its files once at run start and injects them as static system instructions, so the cached prefix stays byte-identical across turns.
+- Strategy 1 reads its files once at run start and injects them as system instructions, so the cached prefix stays byte-identical across the turns of a run. If a file changes between runs of the same conversation, the change is [appended](../agent.md#appending-instruction-changes), as a diff when that's shorter, instead of rewriting the prefix.
 - Strategy 3 is volatile (it depends on which directory was just touched), so its note is enqueued in the message tail, never in the system prompt, and cannot invalidate the cached prefix.
 
 ## Configuration

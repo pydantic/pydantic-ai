@@ -115,6 +115,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `LOGFIRE_TOKEN` | A Logfire write token for the `observability` plugin; see [Telemetry](#telemetry-and-references) |
 | `GITHUB_COPILOT_API_KEY`, `GITHUB_COPILOT_API_TOKEN`, `COPILOT_GITHUB_TOKEN` | A Copilot token when you have not run `/login github-copilot` |
 | `GITHUB_COPILOT_CLIENT_ID` | Your own OAuth app for Copilot sign-in |
+| `GITHUB_COPILOT_INTEGRATION_ID` | The `Copilot-Integration-Id` Copilot requests carry, `vscode-chat` by default; see [Integration id](../../../docs/models/github-copilot.md#integration-id) |
 | `CLAUDE_CONFIG_DIR`, `CODEX_HOME` | Where Claude Code and Codex sessions are read from for `/resume` |
 | `PYTHONWARNINGS` | `default` shows library warnings, which CLAI hides |
 
@@ -949,6 +950,12 @@ than zero, the line under the table names the model, and only the cost total
 excludes those responses. Their requests and tokens remain in the usage totals. Cost is shown to four decimal places; a nonzero amount below that
 reads `<$0.0001`. There is no spending cap here; use the agent's `UsageLimits`
 for that.
+
+When a provider response omits usage information, `/usage` and `/cost` mark the
+known token and cost totals as lower bounds. The response count is still
+included in the request total, and it is not listed as missing price data. The
+footer prefixes a known retained-history cost with `>=` while any retained
+response has omitted usage information.
 
 ## The prompt
 
@@ -2171,7 +2178,12 @@ The built-in `persistence` plugin records additional Harness checkpoints before
 model requests, after model responses, and at settled tool-cycle boundaries.
 `/plugins disable persistence` disables that extra step capture, not conversation
 saving. Without it, a hard kill recovers the accepted prompt and preceding saved
-history, not the in-flight turn's progress.
+history, not the in-flight turn's progress. Every CLAI on the machine shares
+`sessions.db`, and SQLite lets one of them write at a time. A step record waits
+for the lock, so it can delay a tool result or a cancel by up to 30 seconds; one
+still locked out then is skipped instead of failing the turn. Resume then uses an
+earlier checkpoint, and a tool whose completion was skipped is listed under
+unknown effects.
 
 An interrupted session is marked `!`. If a process died mid-run, resume loads its
 newest available step checkpoint and warns you to inspect external effects. A

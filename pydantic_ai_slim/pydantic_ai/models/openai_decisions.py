@@ -7,9 +7,11 @@ from typing import ClassVar, Literal, assert_never
 
 from pydantic import JsonValue
 
+from .. import _model_errors
 from .._http import to_httpx2_timeout
 from ..exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
-from ..profiles import ModelProfileSpec
+from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles.decision import decision_model_profile
 from ..providers import Provider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
@@ -34,7 +36,7 @@ from .decision import (
 )
 
 try:
-    from openai import NOT_GIVEN, APIError, APIStatusError, AsyncOpenAI
+    from openai import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, APITimeoutError, AsyncOpenAI
     from openai.types import Decision
     from openai.types.decision import (
         AnswerAnswerResourceChoice,
@@ -55,7 +57,7 @@ try:
     from openai.types.decision_input_part_union_param import DecisionInputPartUnionParam
     from openai.types.decision_input_text_param import DecisionInputTextParam
 
-    from ..providers.openai_decisions import OpenAIDecisionsProvider
+    from ..providers.openai import OpenAIProvider
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the OpenAI Decisions model, '
@@ -146,7 +148,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         self,
         model_name: OpenAIDecisionsModelName,
         *,
-        provider: Literal['openai-decisions'] | OpenAIDecisionsProvider = 'openai-decisions',
+        provider: Literal['openai', 'openai-decisions'] | OpenAIProvider = 'openai-decisions',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -154,13 +156,15 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
 
         Args:
             model_name: The name of the OpenAI model to use, such as `gpt-6-luna`.
-            provider: The provider to use for the API's URL and key.
-            profile: The model profile to use. Defaults to one selected by the provider.
+            provider: The provider to use for the API's URL and key: an
+                [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], as for the other OpenAI models, or
+                `'openai'` or `'openai-decisions'` (the default), which both create one.
+            profile: The model profile to use. Defaults to a decision model's profile for the model name.
             settings: Model-specific settings used as defaults for this model.
         """
         self._model_name = model_name
         if isinstance(provider, str):
-            provider = OpenAIDecisionsProvider()
+            provider = OpenAIProvider()
         self._provider = provider
         super().__init__(settings=settings, profile=profile)
 
@@ -179,8 +183,19 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
 
     @property
     def system(self) -> str:
-        """The system / model provider."""
-        return self._provider.name
+        """The system / model provider: `'openai-decisions'`, whatever the provider is called.
+
+        The Decisions API shares OpenAI's URL with the Responses API, so this name is what tells its responses apart:
+        genai-prices prices the endpoint as its own provider, and an
+        [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] continuing the conversation must not
+        take a decision response, which has no Responses ID to continue from, for one of its own.
+        """
+        return 'openai-decisions'
+
+    def _provider_model_profile(self) -> ModelProfile:
+        # The provider profiles a model name such as `gpt-6-luna` as a Responses API model, whose structured output,
+        # thinking and caching this endpoint has none of.
+        return decision_model_profile(self.model_name)
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to the `/v1/decisions` endpoint."""
@@ -217,17 +232,8 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
                 extra_body=model_settings.get('extra_body'),
                 timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
             )
-        except APIStatusError as e:
-            if e.status_code >= 400:
-                raise ModelHTTPError(
-                    status_code=e.status_code,
-                    model_name=self._model_name,
-                    body=e.body,
-                    headers=dict(e.response.headers),
-                ) from e
-            raise ModelAPIError(model_name=self._model_name, message='OpenAI Decisions request failed') from e
         except APIError as e:
-            raise ModelAPIError(model_name=self._model_name, message='OpenAI Decisions request failed') from e
+            raise _api_error(e, self._model_name) from e
 
         # The SDK builds its response models without validating them, so the body is validated here.
         try:
@@ -276,6 +282,25 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
 def _text(value: JsonValue) -> str:
     """A protocol value as the text the API takes: a string as it is, anything else as JSON."""
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+
+def _api_error(e: APIError, model_name: str) -> ModelAPIError:
+    """The model error for an `openai` SDK error, in the error category its status and code imply."""
+    if isinstance(e, APIStatusError) and e.status_code >= 400:
+        return ModelHTTPError.for_category(
+            _model_errors.openai_compatible_category(e.status_code, e.code, e.type, e.message),
+            status_code=e.status_code,
+            model_name=model_name,
+            body=e.body,
+            headers=dict(e.response.headers),
+            provider_error_code=e.code,
+            provider_error_type=e.type,
+        )
+    if isinstance(e, APIConnectionError):
+        return _model_errors.connection_error(
+            model_name, 'OpenAI Decisions request failed', e, timeout=isinstance(e, APITimeoutError)
+        )
+    return ModelAPIError(model_name=model_name, message='OpenAI Decisions request failed')
 
 
 def _question(name: str, question: DecisionQuestion) -> Question:

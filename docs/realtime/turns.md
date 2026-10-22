@@ -109,7 +109,8 @@ doing nothing when the previous reply was heard in full, since the speech-start 
 on ordinary user turns. A reply that has not reached its first audio chunk is still stopped, so
 speaking over the model's thinking time works like speaking over its voice. Provider differences
 are absorbed: on a model without output truncation
-(xAI) the response is cancelled without a truncation point, and when the provider interrupts
+(xAI) the response is cancelled without sending the provider a truncation point (history still
+records where playback stopped), and when the provider interrupts
 itself without reporting speech onset (Gemini, ElevenLabs Agents) only the local flush is performed. The events still
 reach your iterator, already handled — react to them for UI state or to flush your audio layer's
 own in-flight block, the one buffer the session cannot reach. The truncation point is the last
@@ -209,13 +210,15 @@ Models generate audio several times faster than it plays, so the reply the user 
 usually finished generating already. With `played_bytes` (or `handle_barge_in=True`), on a model whose
 profile sets `supports_output_truncation`, the session still truncates the provider's copy of that reply
 where playback stopped. Any reply generated after it, which the user never heard, is truncated at 0. The
-model then doesn't take either as heard.
+model then doesn't take either as heard. On a model without output truncation (xAI), the provider keeps
+its whole copy, so the model may take a reply as heard in full, but history still records the cut.
 
 History records each of those replies the same way as one cut off while it was being generated: as
 interrupted, with `interrupted_at_ms` on the speech part that was cut. A message you already have is never
 edited: a later snapshot holds an interrupted copy at the same position (see
 [History](history.md#transcription-and-history-edge-cases)). The transcript stays what the model
-generated, as providers don't report which words were heard. The
+generated, as most providers don't report which words were heard. ElevenLabs does, and with it the
+transcript becomes what was heard (see [ElevenLabs](elevenlabs.md#provider-specific-quirks)). The
 [readable interruption note](history.md#handing-off-to-a-text-agent) is what tells a later model where the
 listener stopped.
 
