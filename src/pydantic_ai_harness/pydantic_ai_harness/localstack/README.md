@@ -142,7 +142,9 @@ them at an externally managed instance (`manage_container=False`).
 Managed containers bind to `127.0.0.1` by default, reached through
 `localhost.localstack.cloud`. Set `host_address` to publish on a different
 address; any value other than `127.0.0.1` or `0.0.0.0` is then also the host of
-the tool endpoint and of the endpoint the instructions name. The default image is
+the tool endpoint and of the endpoint the instructions name, except that the
+IPv6 bind-all `::` is reached at `::1`. Scoped IPv6 addresses such as
+`fe80::1%eth0` are rejected. The default image is
 `localstack/localstack`, which since LocalStack 2026.03.0 is a single image that
 requires an auth token to start (a free Hobby/OSS token covers community usage).
 When `LOCALSTACK_AUTH_TOKEN` is set in the current process it is forwarded to the

@@ -10,7 +10,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest, retry_as_result
-from pydantic_ai_harness.localstack._container import endpoint_port, managed_endpoint_url
+from pydantic_ai_harness.localstack._container import endpoint_port, managed_endpoint_url, validate_host_address
 from pydantic_ai_harness.localstack._toolset import LocalStackOperations, LocalStackToolset, validate_settings
 
 _INSTRUCTIONS = (
@@ -126,6 +126,7 @@ class LocalStack(AbstractCapability[AgentDepsT]):
         )
         if self.manage_container:
             endpoint_port(self.endpoint_url)
+            validate_host_address(self.host_address)
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:

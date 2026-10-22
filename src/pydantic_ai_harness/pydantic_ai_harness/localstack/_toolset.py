@@ -23,7 +23,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai_harness._durable import RetryRequest, raise_retry
 from pydantic_ai_harness._output import truncate_tail
-from pydantic_ai_harness.localstack._container import LocalStackContainer, endpoint_port
+from pydantic_ai_harness.localstack._container import LocalStackContainer, endpoint_port, validate_host_address
 
 _HEALTH_PATH = '/_localstack/health'
 _UTF8_MAX_BYTES_PER_CHAR = 4
@@ -145,6 +145,8 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
             allowed_services=allowed_services, denied_services=denied_services, max_output_chars=max_output_chars
         )
         self._host_port = endpoint_port(endpoint_url) if manage_container else None
+        if manage_container:
+            validate_host_address(host_address)
 
         self._endpoint_url = endpoint_url
         self._region = region
