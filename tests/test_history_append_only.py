@@ -30,6 +30,7 @@ from pydantic_ai.capabilities import (
     AbstractCapability,
     Capability,
     CombinedCapability,
+    ComputerUse,
     DynamicCapability,
     HandleDeferredToolCalls,
     LocalWorkspace,
@@ -85,6 +86,7 @@ from .append_only import (
     run_conversation,
 )
 from .conftest import try_import
+from .workspace_fakes import InMemoryProvider
 
 with try_import() as mcp_imports_successful:
     from fastmcp.server import FastMCP
@@ -120,6 +122,7 @@ def _keep_model(ctx: ModelSelectionContext[Any]) -> Model:
 
 FIXTURES: dict[str, Fixture] = {
     'CombinedCapability': lambda _: CombinedCapability([Thinking()]),
+    'ComputerUse': lambda _: [InMemoryProvider().capability(), ComputerUse()],
     'DynamicCapability': lambda _: DynamicCapability(lambda ctx: Thinking()),
     'HandleDeferredToolCalls': lambda _: HandleDeferredToolCalls(lambda ctx, requests: requests.build_results()),
     'LocalWorkspace': lambda tmp_path: LocalWorkspace(tmp_path),
