@@ -840,9 +840,11 @@ async def test_deferred_capability_group_loads_all_members_together(wrap: bool) 
         for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
         if part.tool_name == 'edit_document'
     ] == ['edited d1']
-    assert [part.content for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)] == [
-        "Capability 'editing_tools' is not loaded on its own."
-    ]
+    assert [
+        part.content
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried'
+    ] == ["Capability 'editing_tools' is not loaded on its own."]
 
 
 async def test_a_deferred_group_member_keeps_its_global_hook_position() -> None:
