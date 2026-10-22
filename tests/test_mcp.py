@@ -1785,6 +1785,18 @@ def _asgi_http_client(app: ASGIApp) -> httpx.AsyncClient | httpx2.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
 
 
+def _authorization_header(transport: StreamableHttpTransport) -> str | None:
+    """The `Authorization` header the transport's `auth` sets on a request."""
+    assert transport.auth is not None
+    request: Any = (
+        httpx2.Request('POST', 'http://localhost:8000/mcp')
+        if MCP_SDK_V2
+        else httpx.Request('POST', 'http://localhost:8000/mcp')
+    )
+    authorized = next(transport.auth.auth_flow(request))
+    return authorized.headers.get('Authorization')
+
+
 class TestRunContextAuth:
     """`auth`/`headers` given as a function of the run context: each run connects as its own user."""
 
@@ -1863,13 +1875,13 @@ class TestRunContextAuth:
         run_toolset = await toolset.for_run(ctx)
         assert isinstance(run_toolset.client.transport, StreamableHttpTransport)
         assert run_toolset.client.transport.headers == {'X-Tenant': 'acme'}
-        assert run_toolset.client.transport.auth is not None
+        assert _authorization_header(run_toolset.client.transport) == 'Bearer token-alice'
 
         toolset = MCPToolset[str]('http://localhost:8000/mcp', auth='token', headers=lambda ctx: {'X-User': ctx.deps})
         run_toolset = await toolset.for_run(ctx)
         assert isinstance(run_toolset.client.transport, StreamableHttpTransport)
         assert run_toolset.client.transport.headers == {'X-User': 'alice'}
-        assert run_toolset.client.transport.auth is not None
+        assert _authorization_header(run_toolset.client.transport) == 'Bearer token'
 
     async def test_toolset_resolving_auth_per_run_only_connects_within_a_run(self, run_context: RunContext):
         toolset = MCPToolset('http://localhost:8000/mcp', auth=lambda ctx: 'token')

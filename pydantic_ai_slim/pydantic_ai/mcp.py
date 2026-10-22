@@ -1312,15 +1312,15 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         return run_toolset
 
     @asynccontextmanager
-    async def _connected(self) -> AsyncGenerator[FastMCPClient[Any]]:
-        """Enter the toolset around a direct request to the server, yielding the connected client."""
+    async def _connected(self) -> AsyncGenerator[None]:
+        """Enter the toolset around a direct request to the server, refusing one that only resolves per run."""
         if self._resolves_per_run:
             raise exceptions.UserError(
                 f'{self.label} gets its `auth` or `headers` from the run context, so it can only connect to '
                 'the server as part of an agent run, or through the copy `await toolset.for_run(ctx)` returns.'
             )
         async with self:
-            yield self.client
+            yield
 
     @property
     def _initialized(self) -> bool:
