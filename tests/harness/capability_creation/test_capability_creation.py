@@ -6,6 +6,7 @@ import os
 import sys
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import anyio.to_thread
@@ -30,6 +31,7 @@ from pydantic_ai_harness.capability_creation import (
     CapabilityCreationToolset,
     CapabilityStore,
     CapabilityValidationError,
+    _validate,
     load_capability_instance,
     validate_capability_file,
 )
@@ -146,6 +148,52 @@ class BadModelSettings(AbstractCapability):
 """
 
 
+BAD_ITEM_CODE = """
+from pydantic_ai.capabilities import AbstractCapability
+
+class BadItem(AbstractCapability):
+    def {getter}(self):
+        return [42]
+"""
+
+CONCURRENT_LOAD_CODE = """from __future__ import annotations
+
+import _capability_load_sync as sync
+from pydantic import BaseModel
+
+from pydantic_ai.capabilities import AbstractCapability
+
+class Thing(BaseModel):
+    y: int = 1
+
+sync.in_body()
+
+class Item(BaseModel):
+    x: Thing
+
+ITEM = Item(x=Thing())
+
+class Loaded(AbstractCapability):
+    pass
+"""
+
+
+class _ContentionLock:
+    """A lock that sets `contended` when a second caller has to wait for it."""
+
+    def __init__(self, contended: threading.Event) -> None:
+        self._lock = threading.Lock()
+        self._contended = contended
+
+    def __enter__(self) -> None:
+        if not self._lock.acquire(blocking=False):
+            self._contended.set()
+            self._lock.acquire()
+
+    def __exit__(self, *args: object) -> None:
+        self._lock.release()
+
+
 def _write(directory: Path, name: str, code: str) -> Path:
     path = directory / f'{name}.py'
     path.write_text(code, encoding='utf-8')
@@ -176,6 +224,18 @@ class TestValidate:
         # A non-instructions return is caught at author time, not at the next agent.run.
         with pytest.raises(CapabilityValidationError):
             validate_capability_file(_write(tmp_path, 'm', BAD_INSTRUCTIONS_RETURN_CODE))
+
+    @pytest.mark.parametrize(
+        ('getter', 'expected'),
+        [
+            ('get_instructions', 'expected a str, an InstructionPart, or a callable'),
+            ('get_native_tools', 'expected an AbstractNativeTool or a callable'),
+        ],
+    )
+    def test_bad_getter_item_rejected(self, tmp_path: Path, getter: str, expected: str) -> None:
+        # The agent would otherwise call the item as a dynamic instruction or native tool on the next run.
+        with pytest.raises(CapabilityValidationError, match=f'{getter}\\(\\) returned a int item, {expected}'):
+            validate_capability_file(_write(tmp_path, 'm', BAD_ITEM_CODE.format(getter=getter)))
 
     def test_bad_model_settings_return_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(CapabilityValidationError, match='ModelSettings mapping'):
@@ -226,6 +286,61 @@ class UsesModels(AbstractCapability):
         validate_capability_file(path)
         added = [name for name in set(sys.modules) - before if name.startswith('_authored_capability_m_')]
         assert len(added) == 1
+
+    def test_failed_load_restores_module_registration(self, tmp_path: Path) -> None:
+        path = _write(tmp_path, 'm', VALID_CODE)
+        validate_capability_file(path)
+        [name] = [
+            name for name, module in sys.modules.items() if getattr(module, '__file__', None) == str(path.resolve())
+        ]
+        loaded = sys.modules[name]
+        path.write_text('raise RuntimeError("boom")\n', encoding='utf-8')
+        with pytest.raises(CapabilityValidationError, match='boom'):
+            validate_capability_file(path)
+        assert sys.modules[name] is loaded
+
+        broken = _write(tmp_path, 'never_loaded', 'raise RuntimeError("boom")\n')
+        with pytest.raises(CapabilityValidationError, match='boom'):
+            validate_capability_file(broken)
+        assert str(broken.resolve()) not in {getattr(module, '__file__', None) for module in sys.modules.values()}
+
+    def test_concurrent_loads_of_one_file_run_one_at_a_time(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Two overlapping loads would share one `sys.modules` key, so the first module's `Item` would
+        # resolve `Thing` against the second module's namespace and reject its own `Thing`.
+        first_in_body, progress, proceed = threading.Event(), threading.Event(), threading.Event()
+        bodies: list[None] = []
+
+        def in_body() -> None:
+            bodies.append(None)
+            if len(bodies) == 1:
+                first_in_body.set()
+                assert proceed.wait(timeout=10)
+            else:
+                progress.set()
+
+        monkeypatch.setitem(sys.modules, '_capability_load_sync', SimpleNamespace(in_body=in_body))
+        monkeypatch.setattr(_validate, '_LOAD_LOCK', _ContentionLock(progress), raising=False)
+        path = _write(tmp_path, 'm', CONCURRENT_LOAD_CODE)
+        results: list[str | CapabilityValidationError] = []
+
+        def load() -> None:
+            try:
+                results.append(validate_capability_file(path))
+            except CapabilityValidationError as exc:
+                results.append(exc)
+
+        first, second = threading.Thread(target=load), threading.Thread(target=load)
+        first.start()
+        assert first_in_body.wait(timeout=10)
+        second.start()
+        assert progress.wait(timeout=10)
+        assert len(bodies) == 1
+        proceed.set()
+        first.join()
+        second.join()
+        assert results == ['Loaded', 'Loaded']
 
     def test_load_leaves_bytecode_settings_and_cache_alone(self, tmp_path: Path) -> None:
         before = sys.dont_write_bytecode
@@ -606,6 +721,16 @@ class TestEndToEnd:
             if isinstance(part, ToolReturnPart)
         ]
         assert 'marker-result' in returns
+
+    async def test_author_tool_fails_the_run_on_an_unreadable_manifest(self, tmp_path: Path) -> None:
+        # The operator has to repair the manifest, so the run ends rather than handing the model a retry.
+        (tmp_path / 'manifest.json').write_text('{"capabilities": [', encoding='utf-8')
+        agent = Agent(
+            TestModel(call_tools=['author_capability']), capabilities=[CapabilityCreation(directory=tmp_path)]
+        )
+        with pytest.raises(UserError, match='cannot be read'):
+            await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert (tmp_path / 'manifest.json').read_text(encoding='utf-8') == '{"capabilities": ['
 
     async def test_capability_creation_tools_wired(self, tmp_path: Path) -> None:
         agent = Agent(TestModel(), capabilities=[CapabilityCreation(directory=tmp_path)])
