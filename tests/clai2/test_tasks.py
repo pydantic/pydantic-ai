@@ -1,12 +1,18 @@
 """Task rendering, live inspection, and stock-agent integration."""
 
+import asyncio
 import io
+import re
 import time
 from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import nullcontext
 from pathlib import Path
 
+import anyio
 import pytest
+from prompt_toolkit.application import create_app_session
+from prompt_toolkit.input import create_pipe_input
+from prompt_toolkit.output import DummyOutput
 from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
@@ -22,9 +28,11 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    SystemPromptPart,
     TextPart,
     TextPartDelta,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -39,11 +47,16 @@ from pydantic_ai_harness.subagents import (
     TaskQuestionEvent,
 )
 from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins import TurnStart
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.tasks import TaskPresentation, Tasks, task_row, task_tree
 from pydantic_clai2.ui.menus.field_menu import Runners
 from pydantic_clai2.ui.menus.task_menu import TaskDetail, TaskMenu, open_tasks, run_tasks
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
 from tests.clai2.test_forks import Model as ForkModel, shell_for
 
 
@@ -793,21 +806,7 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, timing: str
 ) -> None:
     """The question shows once, whether it comes during a turn or wakes the idle parent, as a report does."""
-    import asyncio
-    import re
-
-    import anyio
-    from prompt_toolkit.application import create_app_session
-    from prompt_toolkit.input import create_pipe_input
-    from prompt_toolkit.output import DummyOutput
-
-    from pydantic_ai.messages import SystemPromptPart, ToolReturnPart
-    from pydantic_clai2.config.project_settings import ProjectSettings
-    from pydantic_clai2.config.settings_store import SettingsStore
-    from pydantic_clai2.runtime.session_runtime import create_shell
-    from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
-
-    release, idle, continued = (asyncio.Event() for _ in range(3))
+    release, idle, continued, asked = (asyncio.Event() for _ in range(4))
     output = io.StringIO()
     reads = 0
     original_read = LivePrompt.read
@@ -866,9 +865,7 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
             if timing == 'active' and len(messages) == 3:
                 # The question comes while this turn runs, and is queued on it.
                 release.set()
-                (record,) = shell.tasks.owner.records.values()
-                while shell.tasks.owner.pending_question(record.id) is None:
-                    await asyncio.sleep(0.05)
+                await asked.wait()
             yield 'Waiting.'
 
     shell = create_shell(
@@ -883,6 +880,16 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
         project=ProjectSettings(),
         headless=True,
     )
+    original_observer = shell.tasks.owner.observer
+
+    async def observe(update: DelegationTaskEvent) -> None:
+        assert original_observer is not None
+        await original_observer(update)
+        # The owner tells its observer once the question is pending.
+        if isinstance(update.event, TaskQuestionEvent):
+            asked.set()
+
+    shell.tasks.owner.observer = observe
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
         async with anyio.create_task_group() as group:
             group.start_soon(shell.run)
@@ -904,3 +911,53 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
         if isinstance(part, UserPromptPart)
     ]
     assert prompts == ['launch']
+
+
+async def test_a_custom_agent_with_task_control_shows_its_tasks_questions(tmp_path: Path) -> None:
+    """Without the tasks' feed, the run's own stream shows the question."""
+
+    async def child(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='ask_parent', json_args='{"question":"Which flavour?"}')}
+        else:
+            yield 'Chose it.'
+
+    async def parent(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        returns = [
+            part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        if not returns:
+            yield {0: DeltaToolCall(name='delegate_task', json_args='{"agent_name":"helper","task":"Pick."}')}
+        elif len(returns) == 1:
+            match = re.search(r'([0-9a-f]{32})', str(returns[0]))
+            assert match is not None
+            yield {0: DeltaToolCall(name='answer_task', json_args=f'{{"task_id":"{match[1]}","answer":"cheddar"}}')}
+        else:
+            yield 'Done.'
+
+    helper = Agent(FunctionModel(stream_function=child), name='helper')
+    agent = Agent(
+        FunctionModel(stream_function=parent),
+        capabilities=[SubAgents(agents=[SubAgent(helper, description='Helps.')], task_control=True)],
+    )
+    output = io.StringIO()
+    shell = create_shell(
+        agent,
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=output, width=200),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    with anyio.fail_after(10):
+        ended = await shell.run_turn(TurnStart(text='Go.'))
+    assert ended.outcome == 'completed', ended.error
+    assert output.getvalue().count('asks: Which flavour?') == 1

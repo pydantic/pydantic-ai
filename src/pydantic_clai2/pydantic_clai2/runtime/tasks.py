@@ -25,6 +25,7 @@ from pydantic_ai import (
 from pydantic_ai._context_size import context_tokens
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import FunctionToolCallEvent, ModelMessage, ModelResponse, ToolReturnPart
+from pydantic_ai.tools import AgentDepsT, ToolDefinition
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.step_persistence import StepStore
@@ -94,18 +95,25 @@ def task_row(event: AgentStreamEvent) -> Text | None:
         row.append(f' [{(event.task_id or "")[:8]}] {prompt}', style=theme.color(theme.MUTED))
         return row
     if isinstance(event, TaskQuestionEvent):
-        name = _display_name(event.agent_name)
-        question = ' '.join(terminal_text(event.question).split())
-        row = Text('? ', style=theme.color(theme.WARNING), no_wrap=True, overflow='ellipsis')
-        row.append(name, style=theme.color(theme.ACCENT))
-        row.append(f' [{event.task_id[:8]}] asks: {question}', style=theme.color(theme.MUTED))
-        return row
+        return question_row(event)
     if isinstance(event, DelegationEndEvent) and event.outcome != 'ok':
         return Text(
             f'  └ {event.outcome} · {event.duration_seconds:.1f}s · /tasks to inspect',
             style=theme.color(theme.WARNING),
         )
     return None
+
+
+def question_row(event: AgentStreamEvent) -> Text | None:
+    """A task's question to its parent, which a run shows even without the task panel."""
+    if not isinstance(event, TaskQuestionEvent):
+        return None
+    name = _display_name(event.agent_name)
+    question = ' '.join(terminal_text(event.question).split())
+    row = Text('? ', style=theme.color(theme.WARNING), no_wrap=True, overflow='ellipsis')
+    row.append(name, style=theme.color(theme.ACCENT))
+    row.append(f' [{event.task_id[:8]}] asks: {question}', style=theme.color(theme.MUTED))
+    return row
 
 
 def resume_prompt(record: DelegationTask) -> str:
@@ -478,6 +486,15 @@ def _display_name(agent_name: str) -> str:
     return 'general-purpose' if agent_name == 'self' else agent_name
 
 
+def delegates(ctx: RunContext[AgentDepsT], definition: ToolDefinition) -> bool:
+    """Whether `definition` is the delegate tool of a `SubAgents`, rather than one of its task-control tools.
+
+    The delegate tool shows as its task's rows; the task-control tools show as tools.
+    """
+    owner = ctx.capabilities.get(definition.capability_id or '')
+    return isinstance(owner, SubAgents) and owner.tool_name == definition.name
+
+
 class TaskPresentation(AbstractCapability[object]):
     """Classify calls by their capability owner, not their configurable tool name."""
 
@@ -489,12 +506,13 @@ class TaskPresentation(AbstractCapability[object]):
     ) -> AsyncIterable[AgentStreamEvent]:
         try:
             async for event in stream:
-                if isinstance(event, FunctionToolCallEvent) and event.args_valid is not False:
-                    definition = ctx.tools.get(event.part.tool_name)
-                    owner = ctx.capabilities.get(definition.capability_id or '') if definition is not None else None
-                    # The delegate tool shows as the task's rows; the task-control tools show as tools.
-                    if isinstance(owner, SubAgents) and owner.tool_name == event.part.tool_name:
-                        event = DelegationToolCallEvent(event.part, args_valid=event.args_valid)
+                if (
+                    isinstance(event, FunctionToolCallEvent)
+                    and event.args_valid is not False
+                    and (definition := ctx.tools.get(event.part.tool_name)) is not None
+                    and delegates(ctx, definition)
+                ):
+                    event = DelegationToolCallEvent(event.part, args_valid=event.args_valid)
                 yield event
         finally:
             await _utils.aclose_if_supported(stream)

@@ -76,7 +76,7 @@ from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
-from pydantic_clai2.runtime.tasks import Tasks, resume_prompt, task_row
+from pydantic_clai2.runtime.tasks import Tasks, question_row, resume_prompt, task_row
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.key_menu import keys_command, keys_menu
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions, models_menu
@@ -1487,8 +1487,9 @@ async def _run_prompt(
     tasks: Tasks | None = None,
     steering: tuple[MemoryObjectSendStream[str], MemoryObjectReceiveStream[str]] | None = None,
 ) -> TurnEnd:
+    # Without the tasks' feed, a task-control run of a custom agent still shows its tasks' questions.
     renderer = _stream_renderer(
-        console, settings=settings, renderers=[*renderers, task_row] if tasks is not None else renderers
+        console, settings=settings, renderers=[*renderers, task_row if tasks is not None else question_row]
     )
     status.streamed_chars = 0
     status.output_tokens = None
