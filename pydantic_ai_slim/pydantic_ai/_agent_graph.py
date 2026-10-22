@@ -421,7 +421,7 @@ class _AttemptBaseline:
     layered_settings: ModelSettings | None
     """The step's settings from the agent, capabilities and run, without the step model's own `settings`."""
     copy_tool_definitions: bool = False
-    """Whether each attempt gets its own copies of the tool definitions, schemas included.
+    """Whether each attempt gets its own copies of the tool definitions, schemas included, native tools and output object.
 
     Only when a `prepare_model_request` hook could edit them for one attempt, to keep the common path cheap.
     """
@@ -483,7 +483,8 @@ class _AttemptBaseline:
         # Fresh containers, down to the lists, dicts and sets inside the settings and parameters at any depth, so
         # a hook that edits them in place for one attempt doesn't change what the next attempt starts from. The
         # messages and other items they hold are shared, as `before_model_request` shares them; so are the tool
-        # definitions, unless a `prepare_model_request` hook could edit them in place.
+        # definitions, the native tools and the output object, unless a `prepare_model_request` hook could edit them
+        # in place.
         request_context.messages = list(self.messages)
         settings = self.settings_for(request_context.model)
         request_context.model_settings = (
@@ -493,10 +494,17 @@ class _AttemptBaseline:
         )
         parameters = self.model_request_parameters
         copy_tools = _copy_tool_definition if self.copy_tool_definitions else _same_tool_definition
+        output_object = parameters.output_object
+        native_tools = parameters.native_tools
+        if self.copy_tool_definitions:
+            if output_object is not None:
+                output_object = replace(output_object, json_schema=_copy_container(output_object.json_schema))
+            native_tools = [deepcopy(tool) for tool in native_tools]
         request_context.model_request_parameters = replace(
             parameters,
             function_tools=[copy_tools(tool) for tool in parameters.function_tools],
-            native_tools=list(parameters.native_tools),
+            native_tools=list(native_tools),
+            output_object=output_object,
             tool_visibility=_copy_container(parameters.tool_visibility),
             revealed_tool_names=set(parameters.revealed_tool_names),
             deferred_capability_ids=set(parameters.deferred_capability_ids),

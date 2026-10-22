@@ -14,12 +14,14 @@ from typing import Any, cast
 
 import anyio
 import pytest
+from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeOutput,
     PendingModelResponse,
     RunContext,
     TextPart,
@@ -32,6 +34,7 @@ from pydantic_ai.capabilities import (
     CapabilityOrdering,
     Instrumentation,
     ModelFallback,
+    NativeTool,
     SelectModel,
     WrapModelRequestHandler,
     WrapperCapability,
@@ -52,6 +55,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
@@ -518,6 +522,56 @@ async def test_a_failed_pinned_continuation_cancels_its_job():
     )
     assert (await agent.run(message_history=_suspended_history(pinned.model_id))).output == 'hello'
     assert cancelled == ['job-1']
+
+
+async def test_output_schema_and_native_tool_edits_stay_with_their_attempt():
+    """A `prepare_model_request` hook's in-place edit of the output schema or a native tool is undone for the next
+    attempt, and doesn't reach the agent's own definitions, which the next run starts from."""
+
+    class Answer(BaseModel):
+        value: str
+
+    seen: list[tuple[int, str | None, list[str]]] = []
+
+    class EditInPlace(AbstractCapability[None]):
+        async def prepare_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            parameters = request_context.model_request_parameters
+            assert parameters.output_object is not None
+            value_schema = parameters.output_object.json_schema['properties']['value']
+            web_search = parameters.native_tools[0]
+            assert isinstance(web_search, WebSearchTool)
+            seen.append(
+                (request_context.attempt, value_schema.get('description'), list(web_search.allowed_domains or []))
+            )
+            if request_context.attempt == 1:
+                value_schema['description'] = 'first attempt only'
+                web_search.allowed_domains = web_search.allowed_domains or []
+                web_search.allowed_domains.append('first.example')
+            return request_context
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('{"value": "ok"}')])
+
+    agent = Agent(
+        FunctionModel(failure, model_name='primary'),
+        deps_type=type(None),
+        output_type=NativeOutput(Answer),
+        capabilities=[
+            NativeTool(WebSearchTool(allowed_domains=['example.com'])),
+            EditInPlace(),
+            ModelFallback(FunctionModel(answer, model_name='backup')),
+        ],
+    )
+    await agent.run('x')
+    await agent.run('x')
+    assert seen == [
+        (1, None, ['example.com']),
+        (2, None, ['example.com']),
+        (1, None, ['example.com']),
+        (2, None, ['example.com']),
+    ]
 
 
 async def test_every_candidate_prepares_its_own_messages():
