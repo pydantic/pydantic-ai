@@ -552,7 +552,9 @@ def _map_citations_for_replay(
             continue
         index, start, end = char_location.get('documentIndex'), char_location.get('start'), char_location.get('end')
         source_content = [
-            content.get('text') for content in citation.get('sourceContent') or [] if _utils.is_str_dict(content)
+            content.get('text')
+            for content in citation.get('sourceContent') or list[object]()
+            if _utils.is_str_dict(content)
         ]
         cited_text = source_content[0] if len(source_content) == 1 else None
         if (
