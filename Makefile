@@ -6,7 +6,9 @@
 
 .PHONY: install
 install: .uv ## Install the package, dependencies, and pre-commit for local development
-	uv sync --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
+	@# `griffe` 1.x installs over `griffelib`'s `griffe/` files, so syncing it away deletes them, and uv does not
+	@# notice they are missing. Reinstalling `griffelib` restores them.
+	uv sync --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --reinstall-package griffelib
 	@if command -v pre-commit >/dev/null 2>&1; then \
 		pre-commit install --install-hooks; \
 	else \
