@@ -97,8 +97,13 @@ through `provider='xai'` or an `XaiProvider`.
 
 ## Session length
 
-A conversation that runs past xAI's maximum duration ends with a `max_duration` error, and the
-session raises a [`RealtimeError`][pydantic_ai.realtime.RealtimeError] instead of reconnecting.
+A conversation that runs past xAI's maximum duration ends with a `max_duration` error. With a
+[reconnect policy](lifecycle.md#reconnecting), the error is reported as a recoverable
+[`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] and the session reconnects
+right away, without waiting for xAI to close the connection: the new conversation gets the
+[replayed local history](lifecycle.md#state-restoration), so the call carries on past the limit.
+Without one, or once the policy's reconnects are used up, the session raises a
+[`RealtimeError`][pydantic_ai.realtime.RealtimeError] with xAI's message.
 
 ## Provider-specific quirks
 
@@ -110,5 +115,13 @@ session raises a [`RealtimeError`][pydantic_ai.realtime.RealtimeError] instead o
   `supports_output_truncation=False`. `interrupt(played_bytes=...)` still discards the unheard audio
   and cancels the response, while a plain `interrupt()` only cancels. Either way xAI keeps everything
   generated up to the cancel, which can be more than the user heard.
+- With turn detection on, xAI commits a spoken turn a few hundred milliseconds after it hears the user
+  stop, and starts its reply in between. If the user carries on before the commit, xAI continues the same
+  turn and drops that reply without ending it. So
+  [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] and
+  [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent] can come more than once
+  per turn. The session ends the dropped reply as cancelled, as it would a reply the user
+  [barged in on](turns.md#barge-in) before it spoke: history records it as an empty, interrupted
+  [`ModelResponse`][pydantic_ai.messages.ModelResponse], followed by the reply to the whole turn.
 - The protocol resembles OpenAI Realtime, but feature support comes from the xAI model profile;
   avoid assuming every OpenAI behavior is available.

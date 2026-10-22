@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 import httpx2
 import pytest
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter
 
 from pydantic_ai import (
     Agent,
@@ -29,8 +29,10 @@ from pydantic_ai import (
     FinalResultEvent,
     ImageUrl,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelMessage,
+    ModelOverloadedError,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -39,7 +41,8 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     SystemPromptPart,
     TextContent,
@@ -98,6 +101,7 @@ from ..conftest import (
     RequestCapture,
     TestEnv,
     iter_message_parts,
+    legacy_retry_prompt_part,
     message,
     raise_if_exception,
     try_import,
@@ -498,6 +502,7 @@ async def test_async_request_thinking_tokens(allow_model_requests: None):
             requests=1,
             input_tokens=3,
             output_tokens=100,
+            output_reasoning_tokens=40,
             details={'input_tokens': 3, 'output_tokens': 100, 'thinking_tokens': 40},
             cost=Decimal('0.0004024'),
         )
@@ -583,6 +588,105 @@ async def test_cache_point_as_first_content_raises_error(allow_model_requests: N
         ),
     ):
         await agent.run([CachePoint(), 'This should fail'])
+
+
+def _replayed_mcp_tool_result_history(padding: str) -> list[ModelMessage]:
+    """A conversation whose assistant turn ends in a replayed DeepWiki MCP tool result.
+
+    The opening prompt is padded past the model's minimum cacheable prefix, so a breakpoint on the
+    MCP result writes a cache entry the next request can read back. Each test pads with its own
+    sentence so one test's recording can't read the cache entry another one wrote.
+    """
+    return [
+        ModelRequest(
+            parts=[UserPromptPart(content=f'{padding} ' * 150 + '\nWhat is the pydantic/pydantic-ai repository?')]
+        ),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name='mcp_server:deepwiki',
+                    args={
+                        'action': 'call_tool',
+                        'tool_name': 'ask_question',
+                        'tool_args': {'repoName': 'pydantic/pydantic-ai', 'question': 'What is it?'},
+                    },
+                    tool_call_id='mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
+                    provider_name='anthropic',
+                ),
+                NativeToolReturnPart(
+                    tool_name='mcp_server:deepwiki',
+                    content={
+                        'content': [{'citations': None, 'text': 'Pydantic AI is an agent framework.', 'type': 'text'}],
+                        'is_error': False,
+                    },
+                    tool_call_id='mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
+                    provider_name='anthropic',
+                ),
+            ],
+            provider_name='anthropic',
+        ),
+    ]
+
+
+@pytest.mark.vcr()
+async def test_cache_point_after_replayed_mcp_tool_result(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """A `CachePoint` opening a user message puts its boundary on a replayed MCP tool result ending the previous turn.
+
+    Run twice: the second request reads back the prefix the first one wrote, which pins that the API
+    accepts and honors `cache_control` on an `mcp_tool_result` block.
+    """
+    agent = Agent(
+        anthropic_model('claude-sonnet-4-5', capture=True),
+        capabilities=[NativeTool(MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'))],
+    )
+
+    usages: list[RunUsage] = []
+    for _ in range(2):
+        result = await agent.run(
+            [CachePoint(), 'Summarize that in five words.'],
+            message_history=_replayed_mcp_tool_result_history(
+                'A leading cache point lands on the replayed MCP result.'
+            ),
+        )
+        usages.append(result.usage)
+
+    assert cache_breakpoints(request_capture.body('/v1/messages')) == snapshot((None, ['messages[1].content[1]']))
+    assert content_blocks(request_capture.body('/v1/messages'), 'mcp_tool_result') == snapshot(
+        [
+            {
+                'content': [{'citations': None, 'text': 'Pydantic AI is an agent framework.', 'type': 'text'}],
+                'is_error': False,
+                'tool_use_id': 'mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
+                'type': 'mcp_tool_result',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            }
+        ]
+    )
+    assert [(usage.cache_write_tokens, usage.cache_read_tokens) for usage in usages] == snapshot([(2907, 0), (0, 2907)])
+
+
+@pytest.mark.vcr()
+async def test_cache_messages_with_trailing_replayed_mcp_tool_result(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """Automatic caching handles a history ending in an assistant turn whose last block is a replayed MCP tool result.
+
+    The breakpoint lands on the MCP result and the API writes the prefix it ends to the cache.
+    `max_tokens` stops the continuation before the model can call the MCP server again, which would
+    fold that call's own cache traffic into the usage.
+    """
+    model = anthropic_model('claude-sonnet-4-5', capture=True)
+
+    response = await model.request(
+        _replayed_mcp_tool_result_history('Automatic message caching ends on the replayed MCP result.'),
+        AnthropicModelSettings(anthropic_cache_messages=True, max_tokens=5),
+        ModelRequestParameters(native_tools=[MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp')]),
+    )
+
+    assert cache_breakpoints(request_capture.body('/v1/messages')) == snapshot((None, ['messages[1].content[1]']))
+    assert (response.usage.cache_write_tokens, response.usage.cache_read_tokens) == snapshot((3057, 0))
 
 
 async def test_cache_point_with_image_content(allow_model_requests: None):
@@ -719,6 +823,117 @@ def test_anthropic_model_resolves_profile_for_bedrock_model_ids(model_name: str,
     assert ToolSearchTool in m.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
 
+@pytest.mark.parametrize(
+    ('client', 'model_name', 'supports_json_schema_output'),
+    [
+        pytest.param('bedrock', 'us.anthropic.claude-fable-5', False, id='bedrock-withheld-geo'),
+        pytest.param('bedrock', 'us.anthropic.claude-haiku-5-5', True, id='bedrock-served-geo'),
+        pytest.param('bedrock-mantle', 'anthropic.claude-sonnet-5', True, id='bedrock-mantle'),
+        pytest.param('claude-api', 'claude-sonnet-5', True, id='direct'),
+    ],
+)
+def test_anthropic_structured_output_follows_legacy_bedrock_support(
+    client: Literal['bedrock', 'bedrock-mantle', 'claude-api'], model_name: str, supports_json_schema_output: bool
+):
+    """Only the legacy Bedrock client narrows structured output, and only for the models Bedrock withholds it from.
+
+    The Mantle client and the direct API keep the direct API's profile. These are profile checks that need no
+    request, so there is nothing to record.
+    """
+    client_cls, base_url = {
+        'bedrock': (AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com'),
+        'bedrock-mantle': (AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws'),
+        'claude-api': (AsyncAnthropic, 'https://api.anthropic.com'),
+    }[client]
+    m = AnthropicModel(
+        model_name, provider=AnthropicProvider(anthropic_client=mock_anthropic_client(client_cls, base_url))
+    )
+    assert m.profile.get('supports_json_schema_output', False) is supports_json_schema_output
+
+
+@pytest.mark.parametrize(
+    'model_name,expected',
+    [
+        pytest.param(
+            'global.anthropic.claude-fable-5',
+            snapshot(
+                {
+                    'output_config': None,
+                    'tool_choice': {'type': 'auto'},
+                    'tools': [{'name': 'add'}, {'name': 'final_result'}],
+                }
+            ),
+            id='withheld',
+        ),
+        pytest.param(
+            'global.anthropic.claude-haiku-5-5',
+            snapshot(
+                {
+                    'output_config': {
+                        'format': {
+                            'type': 'json_schema',
+                            'schema': {
+                                'type': 'object',
+                                'properties': {'response': {'type': 'integer'}},
+                                'additionalProperties': False,
+                                'required': ['response'],
+                            },
+                        }
+                    },
+                    'tool_choice': {'type': 'auto'},
+                    'tools': [{'name': 'add', 'strict': True}],
+                }
+            ),
+            id='served',
+        ),
+    ],
+)
+async def test_anthropic_legacy_bedrock_structured_output_request(
+    allow_model_requests: None, model_name: str, expected: dict[str, JsonValue]
+):
+    """On `AsyncAnthropicBedrock`, a model Bedrock withholds structured output from gets Tool Output and no `strict`.
+
+    Bedrock answers `output_config.format` on the models it withholds structured output from with a 400:
+    https://github.com/pydantic/pydantic-ai/issues/9878. Claude Haiku 5.5, which Bedrock serves structured output
+    for, keeps Native Output and `strict`: https://github.com/pydantic/pydantic-ai/issues/10697. A mock transport
+    stands in for a cassette because the recording account has no access to Claude Fable 5.
+    """
+    bodies: list[dict[str, JsonValue]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(TypeAdapter(dict[str, JsonValue]).validate_json(request.content))
+        return httpx2.Response(400, json={'message': 'captured'})
+
+    from anthropic import AsyncAnthropicBedrock
+
+    # A bearer token skips SigV4 signing, which would need `botocore` from the `bedrock` extra.
+    async with AsyncAnthropicBedrock(
+        api_key='x',
+        aws_region='us-east-1',
+        base_url='http://localhost',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        agent = Agent(AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client)), output_type=int)
+
+        @agent.tool_plain(strict=True)
+        def add(a: int, b: int) -> int:
+            raise NotImplementedError
+
+        # Both models think by default; the setting keeps the output mode choice independent of that.
+        with pytest.raises(ModelHTTPError):
+            await agent.run('1+1', model_settings={'thinking': True})
+
+    [body] = bodies
+    assert {
+        'output_config': body.get('output_config'),
+        'tool_choice': body.get('tool_choice'),
+        'tools': [
+            {key: tool[key] for key in ('name', 'strict') if key in tool} for tool in json_objects(body['tools'])
+        ],
+    } == expected
+
+
 def _tool_search_param(client_cls: Any, base_url: str, tool: ToolSearchTool) -> dict[str, Any]:
     m = AnthropicModel(
         'claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_anthropic_client(client_cls, base_url))
@@ -730,7 +945,11 @@ def _tool_search_param(client_cls: Any, base_url: str, tool: ToolSearchTool) -> 
 
 
 def test_anthropic_tool_search_defaults_to_regex_on_legacy_bedrock():
-    """The legacy Bedrock InvokeModel API doesn't support `bm25`, so the default strategy is `regex` there."""
+    """An unset strategy resolves to `regex` on the legacy Bedrock InvokeModel API.
+
+    Pins the outgoing tool parameter directly, which a cassette's default matchers wouldn't catch. An explicit
+    `bm25` is covered by `test_anthropic_tool_search_bm25_on_legacy_bedrock`.
+    """
     base_url = 'https://bedrock-runtime.us-east-1.amazonaws.com'
     param = _tool_search_param(AsyncAnthropicBedrock, base_url, ToolSearchTool())
     assert param == {'type': 'tool_search_tool_regex_20251119', 'name': 'tool_search_tool_regex'}
@@ -739,80 +958,13 @@ def test_anthropic_tool_search_defaults_to_regex_on_legacy_bedrock():
     assert param == {'type': 'tool_search_tool_regex_20251119', 'name': 'tool_search_tool_regex'}
 
 
-def test_anthropic_tool_search_bm25_rejected_on_legacy_bedrock():
-    """An explicit `bm25` strategy on the legacy Bedrock InvokeModel API is a `UserError`, not an opaque 400."""
-    m = AnthropicModel(
-        'claude-haiku-4-5',
-        provider=AnthropicProvider(
-            anthropic_client=mock_anthropic_client(
-                AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com'
-            )
-        ),
-    )
-    with pytest.raises(
-        UserError, match="ToolSearch\\(strategy='bm25'\\) is not supported by the `AsyncAnthropicBedrock` client"
-    ):
-        m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
-            [], ModelRequestParameters(native_tools=[ToolSearchTool(strategy='bm25')]), AnthropicModelSettings()
-        )
-
-
 def test_anthropic_tool_search_defaults_to_bm25_on_non_legacy_bedrock_clients():
-    """`bm25` stays the default on clients not in `_BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS` —
+    """`bm25` stays the default on clients not in `_REGEX_DEFAULT_TOOL_SEARCH_CLIENTS` —
     e.g. the (Messages-API-based) Bedrock Mantle client, like the direct Anthropic API."""
     param = _tool_search_param(
         AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws', ToolSearchTool()
     )
     assert param == {'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'}
-
-
-@pytest.mark.parametrize(
-    'cache_value,expected_ttl',
-    [
-        pytest.param(True, '5m', id='default-5m'),
-        pytest.param('1h', '1h', id='custom-1h'),
-    ],
-)
-@pytest.mark.parametrize(
-    'client_cls,base_url',
-    [
-        pytest.param(AsyncAnthropicBedrock, 'https://bedrock.amazonaws.com', id='bedrock'),
-        pytest.param(AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com', id='vertex'),
-    ],
-)
-async def test_anthropic_cache_fallback_on_unsupported_clients(
-    allow_model_requests: None,
-    cache_value: bool | Literal['1h'],
-    expected_ttl: str,
-    client_cls: type[Any],
-    base_url: str,
-):
-    """Test that anthropic_cache falls back to per-block caching on Bedrock and Vertex.
-
-    On these platforms the top-level cache_control parameter is not supported,
-    so per-block cache_control is applied to the last user message instead.
-    """
-    from unittest.mock import AsyncMock, MagicMock
-
-    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
-
-    mock_client = MagicMock()
-    mock_client.timeout = DEFAULT_TIMEOUT
-    mock_client.__class__ = client_cls
-    mock_client.base_url = base_url
-    mock_client.beta.messages.create = AsyncMock(return_value=c)
-
-    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(model, model_settings=AnthropicModelSettings(anthropic_cache=cache_value))
-
-    result = await agent.run('Hello')
-    assert result.output == 'Response'
-
-    call_kwargs = mock_client.beta.messages.create.call_args.kwargs
-    assert call_kwargs['cache_control'] is OMIT
-    last_user_msg = call_kwargs['messages'][-1]
-    content = last_user_msg['content']
-    assert content[-1]['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
 
 
 @pytest.mark.parametrize(
@@ -2246,9 +2398,9 @@ async def test_earlier_cache_breakpoints_raised_in_count_tokens(allow_model_requ
 @pytest.mark.parametrize(
     ('client_cls', 'expected_ttls'),
     [
-        # Bedrock and Vertex don't take the top-level `cache_control`, so it goes on the last block instead.
+        # The legacy Bedrock client doesn't take the top-level `cache_control`, so it goes on the last block instead.
         pytest.param(AsyncAnthropicBedrock, ['1h', '1h'], id='bedrock'),
-        pytest.param(AsyncAnthropicVertex, ['1h', '1h'], id='vertex'),
+        pytest.param(AsyncAnthropicVertex, ['1h', '1h (automatic)'], id='vertex'),
         pytest.param(AsyncAnthropicFoundry, ['1h', '1h (automatic)'], id='foundry'),
     ],
 )
@@ -2543,11 +2695,13 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 instructions='this is the system prompt',
@@ -3303,9 +3457,12 @@ def test_model_error_reported_in_stream(
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     with pytest.raises(expected) as exc_info:
         Agent(m).run_sync('hello')
-    assert type(exc_info.value) is expected
+    assert isinstance(exc_info.value, expected)
     if isinstance(exc_info.value, ModelHTTPError):
         assert exc_info.value.status_code == 529
+        assert isinstance(exc_info.value, ModelOverloadedError)
+    else:
+        assert type(exc_info.value) is ModelAPIError
 
 
 @pytest.mark.parametrize(
@@ -3320,18 +3477,32 @@ def test_model_error_reported_in_stream(
             id='404-in-stream',
         ),
         pytest.param(404, 'not_found_error', 'model: claude-unknown', False, id='404-other'),
+        pytest.param(
+            404,
+            None,
+            'Container not found. The provided container has expired or does not exist.',
+            True,
+            id='404-bedrock-shape',
+        ),
+        pytest.param(404, None, 'model: claude-unknown', False, id='404-bedrock-shape-other'),
     ],
 )
-def test_expired_container_error(status_code: int, error_type: str, message: str, expected: bool) -> None:
+def test_expired_container_error(status_code: int, error_type: str | None, message: str, expected: bool) -> None:
     """Anthropic answered an expired container with a 500 and now with a 404 `not_found_error`.
 
     `test_anthropic_code_execution_files_rejected_container_is_dropped_and_retried` records the current 404;
-    the 500 can't be recorded anymore, so the check is pinned here.
+    the 500 can't be recorded anymore, so the check is pinned here. `error_type` of `None` is Bedrock's
+    envelope, which reports the message at the top level of the body with no `error` wrapper (#9479).
     """
+    body: dict[str, object] = (
+        {'message': message}
+        if error_type is None
+        else {'type': 'error', 'error': {'type': error_type, 'message': message}}
+    )
     error = APIStatusError(
         'test error',
         response=httpx2.Response(status_code=status_code, request=httpx2.Request('POST', 'https://example.com/v1')),
-        body={'type': 'error', 'error': {'type': error_type, 'message': message}},
+        body=body,
     )
     assert _is_expired_container_error(error) is expected
 
@@ -3390,7 +3561,8 @@ async def test_stream_transport_error_mid_stream(allow_model_requests: None) -> 
             async with agent.run_stream('hello') as result:
                 await result.get_output()
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == 'read'
     assert exc_info.value.message == 'connection reset'
     assert isinstance(exc_info.value.__cause__, httpx2.ReadError)
 
@@ -3895,6 +4067,7 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                         'output_tokens': 277,
                         'thinking_tokens': 32,
                     },
+                    output_reasoning_tokens=32,
                     cost=Decimal('0.004284'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -3954,6 +4127,7 @@ I should provide practical advice for crossing a river safely.\
                         'output_tokens': 440,
                         'thinking_tokens': 98,
                     },
+                    output_reasoning_tokens=98,
                     cost=Decimal('0.007521'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -3973,7 +4147,9 @@ I should provide practical advice for crossing a river safely.\
 async def test_anthropic_model_empty_thinking_signature_sent_as_text(allow_model_requests: None):
     """A thinking part with an empty signature (e.g. left behind by an interrupted stream)
     must not be replayed as a `thinking` block: the API rejects empty signatures with a 400.
-    It falls back to tagged text instead, like thinking parts from other providers.
+    It goes back as tagged text instead, carried in a user message ahead of the turn it was
+    produced in like any other reasoning that can't ride the native channel — see
+    `ModelProfile.mimics_assistant_message_formatting`.
     """
     c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
@@ -3995,13 +4171,13 @@ async def test_anthropic_model_empty_thinking_signature_sent_as_text(allow_model
         [
             {'role': 'user', 'content': [{'text': 'Think about crossing the street.', 'type': 'text'}]},
             {
-                'role': 'assistant',
+                'role': 'user',
                 'content': [
                     {
                         'text': """\
-<thinking>
+<assistant_thinking>
 I was interrupted mid-thought
-</thinking>\
+</assistant_thinking>\
 """,
                         'type': 'text',
                     }
@@ -4161,6 +4337,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         'output_tokens': 91,
                         'thinking_tokens': 42,
                     },
+                    output_reasoning_tokens=42,
                     cost=Decimal('0.001644'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -4603,6 +4780,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         'output_tokens': 274,
                         'thinking_tokens': 160,
                     },
+                    output_reasoning_tokens=160,
                     cost=Decimal('0.004548'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -6050,6 +6228,7 @@ def test_streaming_usage_thinking_tokens():
             input_tokens=1,
             output_tokens=5,
             details={'input_tokens': 1, 'output_tokens': 5, 'thinking_tokens': 3},
+            output_reasoning_tokens=3,
         )
     )
 
@@ -9508,6 +9687,7 @@ async def test_anthropic_code_execution_tool(
                         'output_tokens': 113,
                         'thinking_tokens': 18,
                     },
+                    output_reasoning_tokens=18,
                     cost=Decimal('0.015801'),
                 ),
                 model_name='claude-sonnet-4-6',
@@ -9577,6 +9757,7 @@ async def test_anthropic_code_execution_tool(
                         'output_tokens': 103,
                         'thinking_tokens': 18,
                     },
+                    output_reasoning_tokens=18,
                     cost=Decimal('0.015615'),
                 ),
                 model_name='claude-sonnet-4-6',
@@ -13470,7 +13651,7 @@ def test_anthropic_synthesized_reveal_does_not_cross_unrelated_parts() -> None:
                 parts=[
                     ToolReturnPart(tool_name='reveal', content='ready', tool_call_id='reveal'),
                     ToolAvailabilityDeltaPart(tools_added=['delete_map']),
-                    RetryPromptPart(content='Retry the final output.'),
+                    RetryFeedbackPart(content='Retry the final output.', retry=RetryInfo(cause='model_retry')),
                     ToolAvailabilityDeltaPart(tools_added=['archive_map']),
                     UserPromptPart(content='Continue.'),
                 ]
@@ -13482,7 +13663,9 @@ def test_anthropic_synthesized_reveal_does_not_cross_unrelated_parts() -> None:
     assert [[type(part) for part in message.parts] for message in messages] == [
         [ToolReturnPart],
         [ToolSearchCallPart],
-        [ToolSearchReturnPart, RetryPromptPart],
+        # The feedback projects to the `<system>`-tagged `UserPromptPart` this profile gives a
+        # mid-conversation system prompt; what this test pins is where it lands, not its voice.
+        [ToolSearchReturnPart, UserPromptPart],
         [ToolSearchCallPart],
         [ToolSearchReturnPart, UserPromptPart],
     ]
@@ -13499,7 +13682,7 @@ def test_anthropic_synthesized_reveals_follow_parallel_results() -> None:
                 parts=[
                     ToolReturnPart(tool_name='reveal', content='x', tool_call_id='reveal'),
                     ToolAvailabilityDeltaPart(tools_added=['delete_map']),
-                    RetryPromptPart(tool_name='list_maps', content='retry', tool_call_id='list_maps'),
+                    ToolReturnPart(tool_name='list_maps', content='retry', tool_call_id='list_maps', outcome='retried'),
                     ToolAvailabilityDeltaPart(tools_added=['archive_map']),
                     ToolReturnPart(tool_name='status', content='ready', tool_call_id='status'),
                     UserPromptPart(content='continue'),
@@ -13510,7 +13693,7 @@ def test_anthropic_synthesized_reveals_follow_parallel_results() -> None:
     )
 
     assert [[type(part) for part in message.parts] for message in messages] == [
-        [ToolReturnPart, RetryPromptPart, ToolReturnPart],
+        [ToolReturnPart, ToolReturnPart, ToolReturnPart],
         [ToolSearchCallPart],
         [ToolSearchReturnPart],
         [ToolSearchCallPart],
@@ -13610,8 +13793,11 @@ async def test_anthropic_explicit_tool_search_keeps_search_surface(
             {
                 'type': 'text',
                 'text': """\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:
-- refunds: Refund policy tools.\
+- refunds: Refund policy tools.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             }
         ]
@@ -13691,8 +13877,11 @@ async def test_anthropic_deferred_capability_tool_callable_without_tool_search(
             {
                 'type': 'text',
                 'text': """\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- refunds: Refund policy tools. Load this capability before looking up refund policy.\
+- refunds: Refund policy tools. Load this capability before looking up refund policy.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             }
         ]
@@ -13765,17 +13954,18 @@ async def test_anthropic_deferred_capability_without_tool_search_across_models(
             ('lookup_refund_policy', True, ''),
         ]
     )
-    assert request_capture.body()['system'] == snapshot(
-        [
-            {
-                'type': 'text',
-                'text': """\
+    assert request_capture.body()['system'] == [
+        {
+            'type': 'text',
+            'text': """\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- refunds: Refund policy tools. Load this capability before looking up refund policy.\
+- refunds: Refund policy tools. Load this capability before looking up refund policy.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
-            }
-        ]
-    )
+        }
+    ]
 
     request_bodies = [json.loads(request.body) for request in vcr.requests]
     assert len(request_bodies) >= 2
@@ -14239,6 +14429,9 @@ async def test_anthropic_cache_write_ttl_pricing(
 
     response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.usage == expected_usage
+    # The one-hour writes are a typed subset of all cache writes, and the run total carries them too.
+    assert 0 < response.usage.cache_write_1h_tokens < response.usage.cache_write_tokens
+    assert result.usage.cache_write_1h_tokens == response.usage.cache_write_1h_tokens
 
 
 @pytest.mark.vcr()
@@ -14772,7 +14965,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
         ),
         ModelRequest(
             parts=[
-                RetryPromptPart(
+                legacy_retry_prompt_part(
                     tool_name='search_knowledge',
                     tool_call_id='toolu_123',
                     content='Invalid JSON: expected `,` or `}` at line 1 column 99',
@@ -14805,7 +14998,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    legacy_retry_prompt_part(
                         content='Invalid JSON: expected `,` or `}` at line 1 column 99',
                         tool_name='search_knowledge',
                         tool_call_id='toolu_123',
@@ -14866,11 +15059,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
                     {
                         'tool_use_id': 'toolu_123',
                         'type': 'tool_result',
-                        'content': """\
-Invalid JSON: expected `,` or `}` at line 1 column 99
-
-Fix the errors and try again.\
-""",
+                        'content': [{'text': 'Invalid JSON: expected `,` or `}` at line 1 column 99', 'type': 'text'}],
                         'is_error': True,
                     },
                     {'text': 'Please fix the tool call and try again.', 'type': 'text'},
@@ -16007,9 +16196,9 @@ I'm here to help! How can I assist you today?\
         [
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],

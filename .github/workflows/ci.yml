@@ -9,6 +9,14 @@ on:
       # Moved by `clai2-bleeding.yml` for every CLAI change on `main`; not a release to build or publish.
       - "!clai2-bleeding"
   pull_request: {}
+  # The merge queue: a pull request reaches `main` only through a merge group that passed this
+  # workflow's full test matrix. A `pull_request` run skips the matrix legs that only repeat
+  # another leg's checks (see `pull_request` in the test jobs' matrices); every leg that
+  # collects coverage or carries a check no other leg runs stays on it, so coverage and the
+  # coverage gate come out identical under both events. `.github/scripts/test_ci_matrix.py`
+  # checks that.
+  merge_group:
+    types: [checks_requested]
 
 env:
   COLUMNS: 150
@@ -31,8 +39,9 @@ permissions:
 
 concurrency:
   # PRs: one group per ref so newer pushes cancel superseded in-flight runs.
-  # push/tag: one group per run_id so main and tag runs never share a group
-  # (avoids GitHub's pending-run cancellation between distinct main commits).
+  # push/tag/merge group: one group per run_id so main, tag and merge-queue runs never share a
+  # group (avoids GitHub's pending-run cancellation between distinct main commits, and never
+  # cancels a merge group the queue is waiting on).
   group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -250,6 +259,7 @@ jobs:
         run: >-
           uv run pytest
           .github/scripts/test_pydantic_ai_runner.py
+          .github/scripts/test_pre_agent_steps_tag_fetch.py
           .github/scripts/test_agent_provider_health.py
           .github/scripts/test_check_api_compatibility.py
           .github/scripts/test_issue_pr_attention_monitor.py
@@ -261,8 +271,13 @@ jobs:
           .github/scripts/test_agent_spend_report.py
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
+          .github/scripts/test_douwebot_config_approval.py
+          .github/scripts/test_size_label.py
           .github/scripts/test_ci_content_classifier.py
+          .github/scripts/test_gh_aw_engine_pin_bump.py
           .github/scripts/test_shard_durations.py
+          .github/scripts/test_ci_matrix.py
+          scripts/test_gather_pydantic_ai_review_context.py
 
       # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
       # answer here silently stops type errors reaching a developer's terminal.
@@ -376,8 +391,10 @@ jobs:
           # probably lifted the baseline to about 105 to 111 s, and a 110.6 s passing run failed main;
           # 150 leaves room for that variance while still failing a regression like #8077's 328 to
           # 490 s. Type-checking `pydantic-ai-harness` and `pydantic-clai2` took a passing run to
-          # 156 s, so 200 keeps the same headroom.
-          PYRIGHT_TIME_BUDGET: "200"
+          # 156 s, so 200 kept the same headroom. By 2026-10-16 the step ran 117 to 206 s over 98 `main`
+          # runs (median 184 s, p90 197 s) and failed four of them; 260 is about 1.25x that maximum and
+          # still fails a regression like #8077's.
+          PYRIGHT_TIME_BUDGET: "260"
           UV_NO_SYNC: "1"
         run: make typecheck-changed
 
@@ -544,6 +561,13 @@ jobs:
         # report truncates. That constant's comment enumerates all four.
         # `all-extras` is the slowest install shape -- it runs sharded in `test-all-extras` instead.
         python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
+        # A single-value dimension, so the `exclude` below can drop the legs a pull request skips:
+        # 3.14 collects coverage and 3.13 detects blocking calls, so both run every install; 3.11 and
+        # 3.15, the oldest and newest, run only `standard`; 3.12 goes. A `pydantic-clai2`-only change
+        # keeps its 3.11 leg too, which collects coverage there (see `COLLECT_COVERAGE`). The merge
+        # queue and `main` run every leg (see `merge_group` in `on:`). The value is the string
+        # `'true'`, not the boolean `==` yields: `exclude` doesn't match `"true"` to `true`.
+        pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
         install:
           - name: pydantic-ai-slim
             command: "--package pydantic-ai-slim"
@@ -554,7 +578,7 @@ jobs:
             command: "--no-sync"
             sync_command: >-
               --inexact --package pydantic-ai-harness --package pydantic-clai2
-              --extra code-mode --extra coder --extra logfire
+              --extra code-mode --extra coder --extra logfire --extra render
             # Its own suite: the rest of `tests/` is covered by the other cells.
             paths: tests/harness
           - name: pydantic-clai2
@@ -582,6 +606,33 @@ jobs:
             install: { name: pydantic-evals }
           - harness_only: "true"
             install: { name: standard }
+          - pull_request: "true"
+            python-version: "3.12"
+          - pull_request: "true"
+            python-version: "3.11"
+            install: { name: pydantic-ai-slim }
+          - pull_request: "true"
+            python-version: "3.11"
+            install: { name: pydantic-evals }
+          - pull_request: "true"
+            python-version: "3.11"
+            install: { name: pydantic-ai-harness }
+          - pull_request: "true"
+            python-version: "3.11"
+            clai2_only: "false"
+            install: { name: pydantic-clai2 }
+          - pull_request: "true"
+            python-version: "3.15"
+            install: { name: pydantic-ai-slim }
+          - pull_request: "true"
+            python-version: "3.15"
+            install: { name: pydantic-evals }
+          - pull_request: "true"
+            python-version: "3.15"
+            install: { name: pydantic-ai-harness }
+          - pull_request: "true"
+            python-version: "3.15"
+            install: { name: pydantic-clai2 }
     env:
       CI: true
       # Coverage adds roughly 50% to test execution before Python 3.14. Collect every install shape
@@ -680,7 +731,10 @@ jobs:
   # shards uploaded on the latest `main` run (see `.github/scripts/shard_durations.py`). Fetching
   # that baseline once here means every shard of this run splits from the same file, so each module
   # runs exactly once even if the API fails (the files are then empty and the split falls back to
-  # module size). Keep the shard counts in step with `SPLITS` in the jobs below. It runs alongside
+  # module size). The REST fetch costs about 20 calls from the repository's `GITHUB_TOKEN` budget,
+  # so only the first `main` push run of each UTC hour makes it, and caches the result; every other
+  # run restores the newest cached baseline, which costs no REST calls, and fetches only when there
+  # is none. Keep the shard counts in step with `SPLITS` in the jobs below. It runs alongside
   # `classify`, not after it, to stay off the critical path, so it also runs (and its result goes
   # unused) on content-only and clai2-only changes, where the sharded jobs are skipped. That costs a
   # few API calls; don't add `needs: classify` to save them.
@@ -697,23 +751,66 @@ jobs:
           persist-credentials: false
           sparse-checkout: .github/scripts
 
+      # `/rate_limit` costs no calls. With the headers `shard_durations.py fetch` prints, it shows
+      # which budget this token draws from.
+      - name: show the REST rate limit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api rate_limit --jq .resources.core || true
+
+      # The script's hash keeps a change to `fetch` from restoring what the old code fetched, so
+      # the pull request that makes it runs it.
+      - name: pick this hour's baseline cache key
+        id: key
+        env:
+          PREFIX: test-durations-baseline-${{ hashFiles('.github/scripts/shard_durations.py') }}-
+        run: |
+          echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
+          echo "key=$PREFIX$(date -u +%Y%m%d%H)" >> "$GITHUB_OUTPUT"
+
+      # A cache that fails to restore is a miss, so the step below fetches instead.
+      - name: restore the cached test durations
+        id: restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: test-durations
+          key: ${{ steps.key.outputs.key }}
+          # A `main` push run takes only this hour's baseline, so it refreshes a stale one.
+          restore-keys: >-
+            ${{ (github.event_name != 'push' || github.ref != 'refs/heads/main') && steps.key.outputs.prefix || '' }}
+
       - name: fetch the latest main run's test durations
+        id: fetch
+        if: steps.restore.outputs.cache-matched-key == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir test-durations
+          mkdir -p test-durations
+          baselines=()
           for python in 3.11 3.12 3.13 3.14 3.15; do
             all_extras_shards=2
             if [[ "$python" == 3.11 ]]; then all_extras_shards=3; fi
-            python3 .github/scripts/shard_durations.py fetch --prefix "test-durations-$python-all-extras-" \
-              --shards "$all_extras_shards" --output "test-durations/$python-all-extras.json"
+            baselines+=(--prefix "test-durations-$python-all-extras-"
+              --shards "$all_extras_shards" --output "test-durations/$python-all-extras.json")
             # No 3.15 lowest-versions shards exist to fetch: like `test-durable-exec`'s `lowest` leg, they
             # would compile our declared minimums from source on 3.15.
             if [[ "$python" != 3.15 ]]; then
-              python3 .github/scripts/shard_durations.py fetch --prefix "test-durations-$python-lowest-versions-" \
-                --shards 2 --output "test-durations/$python-lowest-versions.json"
+              baselines+=(--prefix "test-durations-$python-lowest-versions-"
+                --shards 2 --output "test-durations/$python-lowest-versions.json")
             fi
           done
+          python3 .github/scripts/shard_durations.py fetch "${baselines[@]}"
+
+      # Only a baseline no API failure emptied, so a failure never outlives the run that hit it. A
+      # re-run keeps its original `created_at`, so it would select, and cache, an older baseline.
+      - name: cache the test durations for later runs
+        if: >-
+          github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1'
+          && steps.fetch.outputs.errors == '0'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: test-durations
+          key: ${{ steps.key.outputs.key }}
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -734,15 +831,21 @@ jobs:
       }})
     needs: [classify, test-durations-baseline]
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
         shard: ${{ fromJSON(needs.classify.outputs.harness_only == 'true' && '[1]' || '[1, 2]') }}
+        # 3.11 and 3.14 collect coverage, 3.13 enforces the per-test budget and 3.15 is the newest,
+        # so a pull request skips only 3.12 (see the `test` job's matrix).
+        pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
         include: >-
           ${{ fromJSON(needs.classify.outputs.harness_only == 'true' && '[]' || '[{"python-version": "3.11", "shard": 3}]') }}
+        exclude:
+          - pull_request: "true"
+            python-version: "3.12"
     env:
       CI: true
       # Collect 3.14 for fast coverage and 3.11 for branches and extras unavailable on 3.14.
@@ -762,7 +865,7 @@ jobs:
       # Per-test time budget enforced by `tests/cost_guards.py` (see "Test cost" in `tests/AGENTS.md`). The 3.13
       # cells run nearly every test without coverage or blocking-call detection, so their timings carry the least
       # instrumentation noise. 8s sits above the fresh-interpreter tests (4-6s on these runners) with headroom for runner
-      # jitter; the per-test report on the 3.12 cells surfaces anything new over 1s. List the tests over a budget from a
+      # jitter; the per-test report on the same cells surfaces anything new over 1s. List the tests over a budget from a
       # run's `--durations` with `scripts/list_over_budget_tests.py`.
       PYTEST_TEST_BUDGET_SECONDS: ${{ matrix.python-version == '3.13' && '8' || '' }}
       # Per-module collection budget, also enforced by `tests/cost_guards.py`. The first module in a shard to import a
@@ -773,23 +876,50 @@ jobs:
       # `tests/harness/absurd` runs on Absurd's schema; an unreachable server fails rather than skips.
       ABSURD_REQUIRE_LIVE: "1"
       ABSURD_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
-    services:
-      postgres:
-        # AWS's mirror of the official image: Docker Hub rate-limits anonymous pulls from shared runner IPs.
-        image: public.ecr.aws/docker/library/postgres:16
-        ports:
-          - 5432:5432
-        env:
-          POSTGRES_PASSWORD: postgres
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+      # `tests/harness/pgtask` runs on pgtask's schema in the same server.
+      PGTASK_REQUIRE_LIVE: "1"
+      PGTASK_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+
+      # Ubuntu 24.04 includes PostgreSQL 16. Create a separate cluster with the Docker
+      # database's locale; the runner's pre-created cluster defaults to C.UTF-8.
+      - name: start PostgreSQL 16
+        id: postgres
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: "5432"
+          PGUSER: postgres
+          PGDATABASE: postgres
+          PGPASSWORD: postgres
+          PGCONNECT_TIMEOUT: "5"
+        run: |
+          sudo pg_createcluster --port=5432 --locale=en_US.utf8 --start-conf=manual --pgoption=timezone=Etc/UTC 16 ci \
+            -- --auth-local=peer --auth-host=scram-sha-256
+          sudo -u postgres pg_ctlcluster 16 ci start -- -w -t 60
+          sudo -u postgres psql -X -h /var/run/postgresql -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -c "ALTER ROLE postgres PASSWORD 'postgres'"
+          psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          SELECT version(), datcollate, datctype, current_setting('server_encoding')
+          FROM pg_database WHERE datname = current_database();
+          DO $verify$
+          BEGIN
+            ASSERT current_setting('server_version_num')::int / 10000 = 16;
+            ASSERT current_setting('server_encoding') = 'UTF8';
+            ASSERT current_setting('TimeZone') = 'Etc/UTC';
+            ASSERT (SELECT datcollate = 'en_US.utf8' AND datctype = 'en_US.utf8'
+                    FROM pg_database WHERE datname = current_database());
+            ASSERT (SELECT array_agg(v ORDER BY v) FROM
+                    (VALUES ('a'), ('A'), ('z'), ('Z'), ('é'), ('😀')) AS sample(v))
+                    = ARRAY['😀', 'a', 'A', 'é', 'z', 'Z'];
+          END
+          $verify$;
+          SQL
+          if PGPASSWORD=deliberately-wrong psql -X -c 'SELECT 1'; then
+            echo '::error::PostgreSQL accepted an incorrect password'
+            exit 1
+          fi
 
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
@@ -890,6 +1020,14 @@ jobs:
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
 
+      - name: stop PostgreSQL 16
+        if: ${{ always() && steps.postgres.outcome != 'skipped' }}
+        run: |
+          sudo -u postgres pg_ctlcluster --mode fast 16 ci stop -- -w -t 30
+          status=0
+          pg_isready -h 127.0.0.1 -p 5432 -t 5 || status=$?
+          test "$status" -eq 2
+
       # Only `main` push runs are ever read back as the baseline (`shard_durations.py fetch`).
       - name: store test durations
         if: ${{ !cancelled() && github.event_name == 'push' }}
@@ -901,21 +1039,23 @@ jobs:
           retention-days: 30
 
       # Show authors what their change costs: new tests over a second and tests that got at least
-      # twice as slow as on `main`, in the job summary. One coverage-free version is enough.
+      # twice as slow as on `main`, in the job summary. One coverage-free version is enough, and it must be one a pull
+      # request runs.
       - name: report new and slower tests
-        if: ${{ !cancelled() && matrix.python-version == '3.12' }}
+        if: ${{ !cancelled() && matrix.python-version == '3.13' }}
         run: >-
           uv run --no-project python .github/scripts/shard_durations.py report
           --baseline "$RUNNER_TEMP/$DURATIONS_BASELINE" --current "$RUNNER_TEMP/test-durations.json"
           --title "all-extras on ${{ matrix.python-version }}, shard $SHARD"
 
-      - name: cover Absurd without a database URL
+      - name: cover Absurd and pgtask without a database URL
         if: matrix.python-version == '3.14' && matrix.shard == 1
         run: >-
-          env -u ABSURD_TEST_DATABASE_URL
+          env -u ABSURD_TEST_DATABASE_URL -u PGTASK_TEST_DATABASE_URL
           uv run --all-packages --all-extras --no-extra mcp-tasks
           coverage run -m pytest
           tests/harness/absurd/test_absurd.py::TestDurability::test_replay_serves_cached_model_response
+          tests/harness/pgtask/test_pgtask.py::TestReplay::test_model_response_served_from_checkpoint
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
 
@@ -957,6 +1097,21 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         resolution: [locked, lowest]
+        # A pull request runs only the legs that collect coverage (see `COLLECT_COVERAGE`), which
+        # include one `lowest` leg (see the `test` job's matrix), the 3.13 `locked` leg that runs the
+        # Render local runtime tests (see `RENDER_LOCAL_RUNTIME`), and the 3.15 `locked` leg below,
+        # the newest Python.
+        pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
+        exclude:
+          - pull_request: "true"
+            python-version: "3.11"
+            resolution: lowest
+          - pull_request: "true"
+            python-version: "3.13"
+            resolution: lowest
+          - pull_request: "true"
+            python-version: "3.14"
+            resolution: lowest
         # 3.15 runs the `locked` leg only: `lowest` installs our declared minimums, and 13 of them
         # have no 3.15 wheel (pydantic-core 2.41, numpy 2.3, tiktoken 0.12, ...), so the leg would
         # compile them from source past this job's timeout.
@@ -973,6 +1128,8 @@ jobs:
         }}
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs.
       BLOCKBUSTER_ENABLED: false
+      # The one leg that runs the Render local runtime tests (see that step).
+      RENDER_LOCAL_RUNTIME: ${{ matrix.python-version == '3.13' && matrix.resolution == 'locked' }}
       # Puts every Temporal worker in debug mode, which disables the workflow deadlock detector
       # (temporalio sets the per-activation budget to `None` instead of 2s). That budget is
       # wall-clock, so it measures runner contention as readily as a blocking call, and a
@@ -1040,6 +1197,27 @@ jobs:
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
 
+      # The Render Workflows integration runs nested agents in separate worker processes on the
+      # keyless local runtime from the Render CLI. It adds about a minute, so one leg runs it; the
+      # live files are omitted from coverage.
+      - name: run Render local runtime tests
+        if: env.RENDER_LOCAL_RUNTIME == 'true'
+        shell: bash
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/render-cli.zip" \
+            "https://github.com/render-oss/cli/releases/download/v${RENDER_CLI_VERSION}/cli_${RENDER_CLI_VERSION}_linux_amd64.zip"
+          echo "${RENDER_CLI_SHA256}  $RUNNER_TEMP/render-cli.zip" | sha256sum --check --quiet
+          unzip -q "$RUNNER_TEMP/render-cli.zip" "cli_v${RENDER_CLI_VERSION}" -d "$RUNNER_TEMP/render-cli"
+          mv "$RUNNER_TEMP/render-cli/cli_v${RENDER_CLI_VERSION}" "$RUNNER_TEMP/render-cli/render"
+          chmod +x "$RUNNER_TEMP/render-cli/render"
+          export PATH="$RUNNER_TEMP/render-cli:$PATH"
+          uv run --all-packages --all-extras --no-extra mcp-tasks \
+            pytest --durations=5 tests/harness/render/test_local_runtime_live.py
+        env:
+          RENDER_CLI_VERSION: 2.28.0
+          RENDER_CLI_SHA256: 00d1ca6f3c31b1f4bc7316837b8ee24acbeb11cf372b7593c7d2c3106a1987b4
+          PYDANTIC_AI_HARNESS_RENDER_LOCAL_RUNTIME: '1'
+
       # See the matching step in the `test` job.
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
@@ -1074,6 +1252,16 @@ jobs:
         # No 3.15: our declared minimums (pydantic-core 2.41, numpy 2.3, tiktoken 0.12, ...) have no 3.15 wheels.
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         shard: ${{ fromJSON(needs.classify.outputs.harness_only == 'true' && '[1]' || '[1, 2]') }}
+        # A pull request runs only 3.14, the version that collects coverage (see the `test` job's
+        # matrix).
+        pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
+        exclude:
+          - pull_request: "true"
+            python-version: "3.11"
+          - pull_request: "true"
+            python-version: "3.12"
+          - pull_request: "true"
+            python-version: "3.13"
     env:
       CI: true
       # Python 3.14's sys.monitoring coverage core is substantially cheaper than the legacy tracer.
@@ -1241,6 +1429,14 @@ jobs:
       matrix:
         # No 3.15: the examples need duckdb and datasets, which are skipped there (see `examples/pyproject.toml`).
         python-version: ["3.11", "3.12", "3.13", "3.14"]
+        # A pull request imports the examples on the oldest and newest versions only (see the
+        # `test` job's matrix).
+        pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
+        exclude:
+          - pull_request: "true"
+            python-version: "3.12"
+          - pull_request: "true"
+            python-version: "3.13"
     env:
       CI: true
     steps:
@@ -1403,6 +1599,7 @@ jobs:
           --exclude-newer-package "mcp-types=2026-08-08T00:00:00Z"
           coverage run -m pytest
           tests/test_mcp.py
+          tests/test_mcp_apps.py
           tests/models/test_mcp_sampling.py
           tests/test_conftest.py
         env:
@@ -1427,11 +1624,12 @@ jobs:
   # always on tags.
   harness-integration-changes:
     name: classify harness integration changes
-    if: github.event_name == 'pull_request' || github.ref_type == 'branch'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.ref_type == 'branch'
     runs-on: ubuntu-latest
     outputs:
       localstack: ${{ steps.detect.outputs.localstack }}
       mongodb: ${{ steps.detect.outputs.mongodb }}
+      postgres: ${{ steps.detect.outputs.postgres }}
       redis: ${{ steps.detect.outputs.redis }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -1441,7 +1639,11 @@ jobs:
 
       - id: detect
         env:
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          # A merge group has no `before`: diff it against the `main` commit it was built on.
+          BASE_SHA: >-
+            ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha
+                || github.event_name == 'merge_group' && github.event.merge_group.base_sha
+                || github.event.before }}
           HEAD_SHA: ${{ github.sha }}
         run: |
           H=src/pydantic_ai_harness
@@ -1460,6 +1662,9 @@ jobs:
           detect localstack "$H/pydantic_ai_harness/localstack" tests/harness/localstack "$H/integration_tests/localstack"
           detect mongodb "$H/pydantic_ai_harness/step_persistence" "$H/pydantic_ai_harness/media" \
             tests/harness/step_persistence tests/harness/media "$H/integration_tests/mongodb"
+          detect postgres "$H/pydantic_ai_harness/step_persistence" "$H/pydantic_ai_harness/media" \
+            tests/harness/step_persistence tests/harness/media tests/harness/_postgres_sqlite.py \
+            "$H/integration_tests/postgres"
           detect redis "$H/pydantic_ai_harness/spend" tests/harness/spend "$H/integration_tests/redis"
 
   harness-localstack-integration:
@@ -1513,8 +1718,10 @@ jobs:
     timeout-minutes: 15
     services:
       mongodb:
-        # AWS's mirror of the official image: Docker Hub rate-limits anonymous pulls from shared runner IPs.
-        image: public.ecr.aws/docker/library/mongo:8
+        # MongoDB's published image on Quay avoids Docker Hub and public ECR pull limits.
+        # 9.0.4+, not 8.3: older 8.x builds refuse to start on the runner's Ubuntu `7.0.0-*-azure`
+        # kernel (https://jira.mongodb.org/browse/SERVER-131779).
+        image: quay.io/mongodb/mongodb-community-server:9.0-ubuntu2204
         ports:
           - 27017:27017
         options: >-
@@ -1539,6 +1746,45 @@ jobs:
 
       - run: make integration-mongodb
 
+  harness-postgres-integration:
+    name: harness Postgres integration tests
+    needs: [harness-integration-changes]
+    # No fork clause: the service below reads no secret.
+    if: >-
+      ${{ always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.postgres == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        # Public Docker Hub pulls from GitHub-hosted runners are exempt from its pull rate limit.
+        image: postgres:17
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # An unreachable server is a skip locally and must be a failure here.
+      POSTGRES_REQUIRE_LIVE: "1"
+      POSTGRES_TEST_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-postgres
+
+      - run: make integration-postgres
+
   harness-redis-integration:
     name: harness Redis integration tests
     needs: [harness-integration-changes]
@@ -1549,8 +1795,8 @@ jobs:
     timeout-minutes: 15
     services:
       redis:
-        # AWS's mirror of the official image: Docker Hub rate-limits anonymous pulls from shared runner IPs.
-        image: public.ecr.aws/docker/library/redis:8
+        # Public Docker Hub pulls from GitHub-hosted runners are exempt from its pull rate limit.
+        image: redis:8
         ports:
           - 6379:6379
         options: >-
@@ -1652,6 +1898,7 @@ jobs:
       - harness-integration-changes
       - harness-localstack-integration
       - harness-mongodb-integration
+      - harness-postgres-integration
       - harness-redis-integration
       - latest-versions-canary
       - coverage
@@ -1675,20 +1922,20 @@ jobs:
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
               || needs.classify.outputs.harness_only == 'true'
-              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 
@@ -1813,8 +2060,6 @@ jobs:
       GIT_CONFIG_COUNT: '0'
       GIT_CONFIG_KEY_0: ''
       GIT_CONFIG_VALUE_0: ''
-    outputs:
-      version: ${{ steps.engine.outputs.version }}
     steps:
       # Consumers compile the definition from the default branch, which may have moved past the tag.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -1829,66 +2074,157 @@ jobs:
       - id: engine
         run: |
           version=$(uv run --script src/pydantic_ai_harness/scripts/gh_aw_engine_version.py)
-          echo "version=$version" >> "$GITHUB_OUTPUT"
 
   # `src/pydantic_ai_harness/gh-aw/pydantic.md` pins the `pydantic-ai-harness` release a generated
   # gh-aw workflow installs, and consumers compile the definition straight from the default branch.
   # Shipping a bump is therefore an ordinary pull request against that file, and this job publishes
-  # nothing: it only notices that the harness release just cut is not the release the definition
-  # names, and asks for that pull request.
+  # nothing: when the harness release just cut is not the release the definition names, it opens
+  # that pull request for a maintainer to merge when the released version is newer than the pin.
   #
-  # An issue rather than a pull request, because a pull request opened with GITHUB_TOKEN triggers no
-  # workflow runs: it would arrive with none of this repository's required checks.
-  gh-aw-engine-pin-reminder:
-    name: gh-aw engine / pin reminder
+  # The writes use a `pydantic-docs` App installation token, not GITHUB_TOKEN: GitHub starts no
+  # workflow runs for a pull request opened with GITHUB_TOKEN, so the pull request would arrive
+  # without this repository's required checks, including the `--published` lint that confirms
+  # PyPI serves the new pin.
+  gh-aw-engine-pin-bump:
+    name: gh-aw engine / pin bump
     needs: [release-build, gh-aw-engine-pin]
     if: ${{ !cancelled() && needs.gh-aw-engine-pin.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      issues: write
+    permissions: {}
+    env:
+      # The harness releases as `0.<minor>.<patch>` with every tag, so the tag name is not
+      # the version the engine installs.
+      RELEASED: ${{ needs.release-build.outputs.harness-version }}
     steps:
-      - name: Ask for a pin bump when the release moved past the definition
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          PINNED: ${{ needs.gh-aw-engine-pin.outputs.version }}
-          # The harness releases as `0.<minor>.<patch>` with every tag, so the tag name is not
-          # the version the engine installs.
-          RELEASED: ${{ needs.release-build.outputs.harness-version }}
+      - name: Check whether the release moved past the definition
+        id: guard
         run: |
-          pinned="$PINNED"
-          released="$RELEASED"
           # The harness version carries no pre-release stage, so the tag is what tells a final
           # release apart, and a pre-release is not a pin consumers should move to.
           if ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "${GITHUB_REF_NAME} is not a final release."
             exit 0
           fi
-          if [ "$pinned" = "$released" ]; then
-            echo "The gh-aw engine definition already pins ${released}."
+          echo "bump=true" >> "$GITHUB_OUTPUT"
+
+      - name: Generate app token
+        if: steps.guard.outputs.bump == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ vars.DOCS_CLIENT_ID }}
+          private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }}
+          owner: pydantic
+          repositories: pydantic-ai
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Open the pin bump pull request
+        if: steps.guard.outputs.bump == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          definition=src/pydantic_ai_harness/gh-aw/pydantic.md
+          branch="gh-aw-engine-pin-${RELEASED}"
+          title="Bump the gh-aw engine pin to \`${RELEASED}\`"
+
+          # `--search` matches words rather than the phrase, so it narrows the
+          # listing and the exact title is compared here.
+          existing_titles=$(gh pr list --state open --search "gh-aw engine pin ${RELEASED} in:title" \
+            --json title --jq '.[].title')
+          if grep -qxF "${title}" <<< "$existing_titles"; then
+            echo "An open pull request already bumps the pin: ${title}"
+            exit 0
+          fi
+          base_sha=$(gh api "repos/${GH_REPO}/git/ref/heads/${DEFAULT_BRANCH}" --jq .object.sha)
+          current="${RUNNER_TEMP}/pydantic.md"
+          bumped="${RUNNER_TEMP}/pydantic.bumped.md"
+          gh api "repos/${GH_REPO}/contents/${definition}?ref=${base_sha}" \
+            -H 'Accept: application/vnd.github.raw' > "$current"
+
+          # Only the frontmatter's `engine.version`: `runtimes.python.version` is another
+          # `version:` key, and the body's usage example opens a second `engine:` block.
+          if ! PINNED=$(awk '
+            NR == 1 { frontmatter = ($0 == "---") }
+            NR > 1 && frontmatter && $0 == "---" { frontmatter = 0 }
+            frontmatter && /^[^ #]/ { engine = ($0 == "engine:") }
+            frontmatter && engine && /^  version:/ {
+              value = $0
+              sub(/^  version:[[:space:]]*/, "", value)
+              if (value ~ /^['\''"]/) {
+                quote = substr(value, 1, 1)
+                if (substr(value, length(value), 1) != quote) exit 1
+                value = substr(value, 2, length(value) - 2)
+              }
+              print value
+              found = 1
+              exit
+            }
+            END { if (!found) exit 1 }
+          ' "$current"); then
+            echo "::error::${definition} on ${DEFAULT_BRANCH} has no readable engine.version line in its frontmatter."
+            exit 1
+          fi
+          if ! [[ "$PINNED" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$RELEASED" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Cannot compare gh-aw engine versions: expected numeric major.minor.patch values, got '${PINNED}' and '${RELEASED}'."
+            exit 1
+          fi
+          if ! awk -v pinned="$PINNED" -v released="$RELEASED" 'BEGIN {
+            split(pinned, p, "[.]")
+            split(released, r, "[.]")
+            for (i = 1; i <= 3; i++) {
+              if (r[i] + 0 > p[i] + 0) exit 0
+              if (r[i] + 0 < p[i] + 0) exit 1
+            }
+            exit 1
+          }'; then
+            echo "${definition} on ${DEFAULT_BRANCH} already pins ${PINNED} or a newer version."
+            exit 0
+          fi
+          if ! awk -v released="$RELEASED" '
+            NR == 1 { frontmatter = ($0 == "---") }
+            NR > 1 && frontmatter && $0 == "---" { frontmatter = 0 }
+            frontmatter && /^[^ #]/ { engine = ($0 == "engine:") }
+            frontmatter && engine && /^  version:/ { $0 = "  version: \"" released "\""; found = 1 }
+            { print }
+            END { exit !found }
+          ' "$current" > "$bumped"; then
+            echo "::error::${definition} on ${DEFAULT_BRANCH} has no engine.version line in its frontmatter."
+            exit 1
+          fi
+          if cmp -s "$current" "$bumped"; then
+            echo "${definition} on ${DEFAULT_BRANCH} already pins ${RELEASED}."
             exit 0
           fi
 
-          title="Bump the gh-aw engine pin to ${released}"
-          # `--search` matches words rather than the phrase, so it narrows the
-          # listing and the exact title is compared here.
-          existing_titles=$(gh issue list --state open --search "${title} in:title" \
-            --json title --jq '.[].title')
-          if grep -qxF "${title}" <<< "$existing_titles"; then
-            echo "An open issue already asks for this: ${title}"
-            exit 0
+          # A rerun after a failure further down finds the branch an earlier attempt created,
+          # and finishes the pull request from it instead of stopping.
+          if ! gh api "repos/${GH_REPO}/git/ref/heads/${branch}" --silent 2>/dev/null; then
+            gh api "repos/${GH_REPO}/git/refs" -f ref="refs/heads/${branch}" -f sha="${base_sha}" --silent
+          fi
+          on_branch="${RUNNER_TEMP}/pydantic.branch.md"
+          gh api "repos/${GH_REPO}/contents/${definition}?ref=${branch}" \
+            -H 'Accept: application/vnd.github.raw' > "$on_branch"
+          if ! cmp -s "$on_branch" "$bumped"; then
+            file_sha=$(gh api "repos/${GH_REPO}/contents/${definition}?ref=${branch}" --jq .sha)
+            gh api -X PUT "repos/${GH_REPO}/contents/${definition}" \
+              -f branch="${branch}" \
+              -f sha="${file_sha}" \
+              -f message="chore: bump the gh-aw engine pin to ${RELEASED}" \
+              -f content="$(base64 -w0 "$bumped")" \
+              --silent
           fi
 
           # A heredoc rather than an inline `--body`: the body is Markdown with
-          # blank lines and backticks, and only `$pinned` and `$released` are
-          # meant to expand.
-          cat > "${RUNNER_TEMP}/pin-reminder.md" <<EOF
-          \`src/pydantic_ai_harness/gh-aw/pydantic.md\` on the default branch still pins \`engine.version: ${pinned}\`, and pydantic-ai-harness ${released} is now released.
+          # blank lines and backticks, and only the variables are meant to expand.
+          cat > "${RUNNER_TEMP}/pin-bump.md" <<EOF
+          \`engine.version\` in \`${definition}\` is the \`pydantic-ai-harness\` release that generated gh-aw workflows install. This bumps it from \`${PINNED}\` to \`${RELEASED}\`, which the [\`${GITHUB_REF_NAME}\` release run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) that opened this pull request just published.
 
-          gh-aw compiles that file from the default branch, so a pull request bumping \`engine.version\` to ${released} is what ships the new pin: consumers pick it up on their next recompile.
-
-          Lint refuses a pin PyPI does not serve, so that pull request goes green once ${released} is on PyPI.
+          Consumers compile the definition from the default branch, so merging this ships the new pin on their next recompile. CI's \`gh_aw_engine_version.py --published\` check confirms PyPI serves \`${RELEASED}\`.
           EOF
 
-          gh issue create --title "${title}" --body-file "${RUNNER_TEMP}/pin-reminder.md"
+          gh pr create --head "${branch}" --base "${DEFAULT_BRANCH}" --title "${title}" \
+            --label chore --label pkg:harness --body-file "${RUNNER_TEMP}/pin-bump.md"

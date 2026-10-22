@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import hmac
 import json
 import re
 import warnings
@@ -15,7 +17,7 @@ from typing import Any, Literal, cast
 import httpx2
 import pytest
 from cassetter import Cassette, RecordMode
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -36,41 +38,52 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RequestUsage,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    Tool,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolKind,
+    ToolReturn,
     ToolReturnPart,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
+    UsageLimitUnavailableWarning,
     UserError,
     UserPromptPart,
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelRateLimitError,
     ModelRetry,
+    ModelServerError,
     SuspendedResponseExpired,
 )
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
+    ModelMessagesTypeAdapter,
+    ModelResponsePart,
     ModelResponseStreamEvent,
     ToolSearchCallPart,
     ToolSearchReturnPart,
     sanitize_messages,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models._continuation import merge_responses
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
@@ -92,6 +105,7 @@ from ..conftest import (
     IsStr,
     RequestCapture,
     TestEnv,
+    legacy_retry_prompt_part,
     message,
     try_import,
 )
@@ -1173,11 +1187,13 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, I only know about "London".',
                         tool_name='get_location',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     ToolReturnPart(
                         tool_name='get_location',
@@ -4421,7 +4437,9 @@ async def test_openai_previous_response_id(allow_model_requests: None, openai_ap
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
     result = await agent.run('The secret key is sesame')
-    settings = OpenAIResponsesModelSettings(openai_previous_response_id=result.all_messages()[-1].provider_response_id)  # pyright: ignore[reportArgumentType, reportAttributeAccessIssue, reportUnknownMemberType]
+    response_id = result.response.provider_response_id
+    assert response_id is not None
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id=response_id)
     result = await agent.run('What is the secret code?', model_settings=settings)
     assert result.output == snapshot('sesame')
 
@@ -4496,7 +4514,7 @@ async def test_openai_previous_response_id_mixed_model_history(allow_model_reque
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._get_previous_response_id_and_new_messages(history)  # pyright: ignore[reportPrivateUsage]
+    previous_response_id, messages, _ = model._get_previous_response_id_and_new_messages(history)  # pyright: ignore[reportPrivateUsage]
     assert not previous_response_id
     assert messages == snapshot(
         [
@@ -4557,7 +4575,7 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._get_previous_response_id_and_new_messages(history)  # pyright: ignore[reportPrivateUsage]
+    previous_response_id, messages, _ = model._get_previous_response_id_and_new_messages(history)  # pyright: ignore[reportPrivateUsage]
     assert previous_response_id == 'resp_68b9bda81f5c8197a5a51a20a9f4150a000497db2a4c777b'
     assert messages == snapshot(
         [
@@ -4740,6 +4758,313 @@ async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_
     assert messages is history
 
 
+def _text_reply(response_id: str, text: str) -> resp.Response:
+    message = ResponseOutputMessage(
+        id=f'msg_{response_id}',
+        content=[ResponseOutputText(text=text, type='output_text', annotations=[])],
+        role='assistant',
+        status='completed',
+        type='message',
+    )
+    return response_message([message]).model_copy(update={'id': response_id})
+
+
+def _digested(request: ModelMessage, response: ModelResponse) -> bytes:
+    """What a response's digest covers: the history it was created from, then each of its parts."""
+    part_adapter: TypeAdapter[ModelResponsePart] = TypeAdapter(ModelResponsePart)
+    parts = (b'\n' + part_adapter.dump_json(part, exclude_none=True) for part in response.parts)
+    return ModelMessagesTypeAdapter.dump_json([request], exclude_none=True) + b''.join(parts)
+
+
+def _redact_secret(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return [
+        replace(
+            message,
+            parts=[
+                replace(part, content='[redacted]')
+                if isinstance(part, UserPromptPart) and part.content == 'secret'
+                else part
+                for part in message.parts
+            ],
+        )
+        if isinstance(message, ModelRequest)
+        else message
+        for message in messages
+    ]
+
+
+async def test_openai_previous_response_id_auto_resends_a_history_changed_before_the_response(
+    allow_model_requests: None,
+):
+    """Continuing would let the server keep the original messages, so a changed history is resent whole."""
+    mock_client = MockOpenAIResponses.create_mock([_text_reply('resp_1', 'one'), _text_reply('resp_2', 'two')])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    first = await Agent(model, model_settings=settings).run('secret')
+
+    redacting = Agent(model, model_settings=settings, capabilities=[ProcessHistory(_redact_secret)])
+    await redacting.run('What did I say?', message_history=first.all_messages())
+
+    second_request = get_mock_responses_kwargs(mock_client)[1]
+    assert 'previous_response_id' not in second_request
+    assert [item.get('content') for item in second_request['input']] == snapshot(
+        ['[redacted]', [{'text': 'one', 'type': 'output_text', 'annotations': []}], 'What did I say?']
+    )
+
+
+async def test_openai_previous_response_id_auto_resends_after_the_response_itself_changed(
+    allow_model_requests: None,
+):
+    """The server holds the response as it was created, so a response edited since is resent rather than continued."""
+    mock_client = MockOpenAIResponses.create_mock([_text_reply('resp_1', 'secret'), _text_reply('resp_2', 'two')])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    first = await Agent(model, model_settings=settings).run('Hello')
+
+    def redact_replies(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            replace(message, parts=[TextPart('[redacted]')]) if isinstance(message, ModelResponse) else message
+            for message in messages
+        ]
+
+    redacting = Agent(model, model_settings=settings, capabilities=[ProcessHistory(redact_replies)])
+    await redacting.run('What did you say?', message_history=first.all_messages())
+
+    second_request = get_mock_responses_kwargs(mock_client)[1]
+    assert 'previous_response_id' not in second_request
+    assert 'secret' not in json.dumps(second_request['input'])
+
+
+async def test_openai_previous_response_id_auto_resends_after_a_request_scoped_prompt(allow_model_requests: None):
+    """A request-scoped prompt is sent with its request only, so the response it was answered with can't be continued.
+
+    OpenAI would keep the prompt in the stored response's context, showing it on every later request.
+    """
+    mock_client = MockOpenAIResponses.create_mock([_text_reply('resp_1', 'one'), _text_reply('resp_2', 'two')])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model, model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'))
+    first = await agent.run(
+        message_history=[
+            ModelRequest(parts=[SystemPromptPart('Only for this request.', scope='request'), UserPromptPart('Hello')])
+        ]
+    )
+
+    await agent.run('Again', message_history=first.all_messages())
+
+    first_request, second_request = get_mock_responses_kwargs(mock_client)
+    assert 'Only for this request.' in json.dumps(first_request['input'])
+    assert 'previous_response_id' not in second_request
+    assert 'Only for this request.' not in json.dumps(second_request['input'])
+
+
+async def test_openai_previous_response_id_auto_continues_an_unchanged_history_after_a_round_trip(
+    allow_model_requests: None,
+):
+    mock_client = MockOpenAIResponses.create_mock([_text_reply('resp_1', 'one'), _text_reply('resp_2', 'two')])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model, model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'))
+    first = await agent.run('Hello')
+    stored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(first.all_messages()))
+
+    await agent.run('Again', message_history=stored)
+
+    second_request = get_mock_responses_kwargs(mock_client)[1]
+    assert second_request['previous_response_id'] == 'resp_1'
+    assert [item.get('content') for item in second_request['input']] == ['Again']
+
+
+_LOOKUP_KIND = ToolKind('test_openai_responses', 'lookup')
+
+
+def _lookup() -> str:
+    return 'found'
+
+
+async def test_openai_previous_response_id_auto_continues_after_a_call_promoted_to_its_tool_kind(
+    allow_model_requests: None,
+):
+    """A call to a tool with a `tool_kind` is promoted after the response is digested, which changes nothing sent.
+
+    The promotion only stamps the kind onto the part, so the next request still continues from the response.
+    """
+    call = response_message([_function_call_item('fc_1', '{}')]).model_copy(update={'id': 'resp_1'})
+    mock_client = MockOpenAIResponses.create_mock([call, _text_reply('resp_2', 'done')])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        tools=[Tool(_lookup, name='lookup', tool_kind=_LOOKUP_KIND)],
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+    )
+
+    result = await agent.run('Look it up')
+
+    call_part = result.all_messages()[1].parts[0]
+    assert isinstance(call_part, ToolCallPart)
+    assert call_part.tool_kind == _LOOKUP_KIND.id
+    second_request = get_mock_responses_kwargs(mock_client)[1]
+    assert second_request['previous_response_id'] == 'resp_1'
+
+
+async def test_openai_previous_response_id_auto_ignores_application_only_metadata(allow_model_requests: None):
+    """Metadata is never sent to the model, so it may hold anything, and changing it doesn't break the chain."""
+    mock_client = MockOpenAIResponses.create_mock(
+        [
+            response_message([_function_call_item('fc_1', '{}')]).model_copy(update={'id': 'resp_1'}),
+            _text_reply('resp_2', 'two'),
+            _text_reply('resp_3', 'three'),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model, model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'))
+
+    @agent.tool_plain
+    def lookup() -> ToolReturn:
+        return ToolReturn('42', metadata=object())
+
+    first = await agent.run([TextContent('Hello', metadata={'app': object()})])
+    history = [
+        replace(message, metadata={'app': object()}) if isinstance(message, ModelRequest) else message
+        for message in first.all_messages()
+    ]
+    await agent.run('Again', message_history=history)
+
+    assert [request.get('previous_response_id') for request in get_mock_responses_kwargs(mock_client)] == [
+        None,
+        'resp_1',
+        'resp_2',
+    ]
+
+
+async def test_openai_previous_response_id_auto_resends_a_redacted_tool_result_metadata_key(
+    allow_model_requests: None,
+):
+    """A `metadata` key in a tool's return value is sent to the model, so redacting it changes the history."""
+    mock_client = MockOpenAIResponses.create_mock(
+        [
+            response_message([_function_call_item('fc_1', '{}')]).model_copy(update={'id': 'resp_1'}),
+            _text_reply('resp_2', 'two'),
+            _text_reply('resp_3', 'three'),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    agent = Agent(model, model_settings=settings)
+
+    @agent.tool_plain
+    def lookup() -> dict[str, str]:
+        return {'metadata': 'secret'}
+
+    first = await agent.run('Hello')
+
+    def redact_tool_results(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            replace(
+                message,
+                parts=[
+                    replace(part, content={'metadata': '[redacted]'}) if isinstance(part, ToolReturnPart) else part
+                    for part in message.parts
+                ],
+            )
+            if isinstance(message, ModelRequest)
+            else message
+            for message in messages
+        ]
+
+    redacting = Agent(model, model_settings=settings, capabilities=[ProcessHistory(redact_tool_results)])
+    await redacting.run('What did the tool say?', message_history=first.all_messages())
+
+    third_request = get_mock_responses_kwargs(mock_client)[2]
+    assert 'previous_response_id' not in third_request
+    assert 'secret' not in json.dumps(third_request['input'])
+
+
+async def test_openai_previous_response_id_keys_the_history_digest_when_given_a_key(allow_model_requests: None):
+    """With a key the digest is an HMAC, and a model with another key resends rather than continuing."""
+    mock_client = MockOpenAIResponses.create_mock(
+        [_text_reply('resp_1', 'one'), _text_reply('resp_2', 'two'), _text_reply('resp_3', 'three')]
+    )
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    keyed = OpenAIResponsesModel(
+        'gpt-5', provider=OpenAIProvider(openai_client=mock_client), history_digest_key=b'secret'
+    )
+    first = await Agent(keyed, model_settings=settings).run('Hello')
+    request, response = first.all_messages()
+    assert isinstance(response, ModelResponse)
+    assert response.history_digest == hmac.new(b'secret', _digested(request, response), hashlib.sha256).hexdigest()
+
+    await Agent(keyed, model_settings=settings).run('Again', message_history=first.all_messages())
+    other = OpenAIResponsesModel(
+        'gpt-5', provider=OpenAIProvider(openai_client=mock_client), history_digest_key=b'other'
+    )
+    await Agent(other, model_settings=settings).run('Again', message_history=first.all_messages())
+
+    _, same_key, other_key = get_mock_responses_kwargs(mock_client)
+    assert same_key['previous_response_id'] == 'resp_1'
+    assert 'previous_response_id' not in other_key
+
+
+async def test_openai_previous_response_id_concrete_seed_is_not_used_past_a_changed_history(
+    allow_model_requests: None,
+):
+    """A stale chain in the history also rules out the seed, which only applies before the first response."""
+    mock_client = MockOpenAIResponses.create_mock([_text_reply('resp_2', 'two')])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Q')]),
+        ModelResponse(
+            parts=[TextPart(content='A1')],
+            provider_name='openai',
+            provider_response_id='resp_1',
+            history_digest='from a different history',
+        ),
+    ]
+
+    await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='resp_seed')).run(
+        'Follow-up', message_history=history
+    )
+
+    (request,) = get_mock_responses_kwargs(mock_client)
+    assert 'previous_response_id' not in request
+    assert [item.get('content') for item in request['input']] == snapshot(['Q', 'A1', 'Follow-up'])
+
+
+async def test_openai_previous_response_id_records_the_history_on_a_streamed_response(allow_model_requests: None):
+    base_response = _text_reply('resp_1', 'streamed').model_copy(update={'output': [], 'status': 'in_progress'})
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_resp_1', content=[], role='assistant', status='in_progress', type='message'
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta='streamed',
+            item_id='msg_resp_1',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=2,
+            logprobs=[],
+        ),
+        resp.ResponseCompletedEvent(
+            response=_text_reply('resp_1', 'streamed'), type='response.completed', sequence_number=3
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model, model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'))
+
+    async with agent.run_stream('Hello') as result:
+        await result.get_output()
+
+    request, response = result.all_messages()
+    assert isinstance(response, ModelResponse)
+    assert response.history_digest == hashlib.sha256(_digested(request, response)).hexdigest()
+
+
 async def test_openai_previous_response_id_unset_never_chains(openai_api_key: str):
     """No opt-in means no auto-chaining, even when the history contains a chainable response."""
     history = [
@@ -4849,7 +5174,12 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime(), 'service_tier': 'default'},
+                provider_details={
+                    'finish_reason': IsStr(),
+                    'timestamp': IsDatetime(),
+                    'service_tier': 'default',
+                },
+                history_digest=IsStr(),
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4857,11 +5187,13 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content=IsStr(),
                         tool_name='get_weather',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=3),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -4883,7 +5215,12 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime(), 'service_tier': 'default'},
+                provider_details={
+                    'finish_reason': IsStr(),
+                    'timestamp': IsDatetime(),
+                    'service_tier': 'default',
+                },
+                history_digest=IsStr(),
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4909,7 +5246,12 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime(), 'service_tier': 'default'},
+                provider_details={
+                    'finish_reason': IsStr(),
+                    'timestamp': IsDatetime(),
+                    'service_tier': 'default',
+                },
+                history_digest=IsStr(),
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -5207,6 +5549,7 @@ async def test_openai_responses_web_search_usage(allow_model_requests: None):
             details={'reasoning_tokens': 0, 'web_search_requests': 2},
             requests=2,
             cost=Decimal('0.02035'),
+            unmeasured_requests=1,
         )
     )
 
@@ -5240,10 +5583,44 @@ async def test_openai_responses_web_search_usage_without_token_usage(allow_model
     agent = Agent(model=model)
     result = await agent.run('What is pydantic?')
     # The mock response's model name (`gpt-4o-123`) is unknown to genai-prices, so `cost` stays `None`.
-    assert result.usage == snapshot(RunUsage(web_searches=1, details={'web_search_requests': 1}, requests=2))
+    assert result.usage == snapshot(
+        RunUsage(web_searches=1, unmeasured_requests=2, details={'web_search_requests': 1}, requests=2)
+    )
 
 
-async def test_openai_responses_web_search_usage_stream_in_progress_snapshot(allow_model_requests: None):
+async def test_openai_responses_web_search_without_token_usage_warns_with_token_limit(allow_model_requests: None):
+    """A counted web search doesn't make up for the missing token usage, so a token limit still can't count it."""
+    c = response_message(
+        [
+            ResponseFunctionWebSearch.model_construct(
+                id='web-search-1',
+                action={'type': 'search', 'query': 'pydantic'},
+                status='completed',
+                type='web_search_call',
+            ),
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(c)))
+
+    with pytest.warns(UsageLimitUnavailableWarning, match='Some responses omitted usage information'):
+        result = await Agent(model).run('What is pydantic?', usage_limits=UsageLimits(input_tokens_limit=100))
+
+    assert result.usage == snapshot(
+        RunUsage(web_searches=1, details={'web_search_requests': 1}, requests=1, unmeasured_requests=1)
+    )
+
+
+@pytest.mark.parametrize('cost_limit', [None, Decimal('0.005')], ids=['partial-cost', 'cost-limit'])
+async def test_openai_responses_web_search_usage_stream_in_progress_snapshot(
+    allow_model_requests: None, cost_limit: Decimal | None
+):
     """A search already listed in an `in_progress` snapshot is counted once, from the terminal response.
 
     Mocked because the recorded streams' `in_progress` snapshots carry no output items.
@@ -5303,11 +5680,25 @@ async def test_openai_responses_web_search_usage_stream_in_progress_snapshot(all
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model)
 
-    async with agent.run_stream('What is pydantic?') as result:
-        assert await result.get_output() == 'done'
-    assert result.usage == snapshot(
-        RunUsage(requests=1, web_searches=1, details={'web_search_requests': 1}, cost=Decimal('0.01'))
-    )
+    if cost_limit is None:
+        async with agent.run_stream('What is pydantic?') as result:
+            assert await result.get_output() == 'done'
+        assert result.usage == snapshot(
+            RunUsage(
+                requests=1,
+                web_searches=1,
+                unmeasured_requests=1,
+                details={'web_search_requests': 1},
+                cost=Decimal('0.01'),
+            )
+        )
+    else:
+        with pytest.warns(UsageLimitUnavailableWarning, match='Some responses omitted usage information'):
+            with pytest.raises(UsageLimitExceeded):
+                async with agent.run_stream(
+                    'What is pydantic?', usage_limits=UsageLimits(cost_limit=cost_limit)
+                ) as result:
+                    assert await result.get_output() == 'done'
 
 
 async def test_openai_responses_web_search_usage_reported_count(
@@ -5541,6 +5932,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                         'output_tokens': 269,
                         'thinking_tokens': 23,
                     },
+                    output_reasoning_tokens=23,
                     cost=Decimal('0.004164'),
                 ),
                 model_name='claude-sonnet-4-6',
@@ -5911,6 +6303,7 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
                     ThinkingPart(content='', id='rs_123', signature='123', provider_name='openai'),
                     TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -6071,6 +6464,7 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
                     ThinkingPart(content='4', id='rs_123', provider_name='openai'),
                     TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -7830,7 +8224,7 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
                             details={'reasoning_tokens': 448},
                             output_reasoning_tokens=448,
                             requests=1,
-                            cost=Decimal('0.00475625'),
+                            cost=Decimal('0.002378125'),
                         )
                     )
                     # The run counts the step once its response is committed, after the stream.
@@ -7842,7 +8236,7 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
                         details={'reasoning_tokens': 448},
                         output_reasoning_tokens=448,
                         requests=1,
-                        cost=Decimal('0.00475625'),
+                        cost=Decimal('0.002378125'),
                     )
                 )
     assert run.usage == snapshot(
@@ -7852,7 +8246,7 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
             details={'reasoning_tokens': 448},
             output_reasoning_tokens=448,
             requests=1,
-            cost=Decimal('0.00475625'),
+            cost=Decimal('0.002378125'),
         )
     )
 
@@ -10201,9 +10595,9 @@ async def test_openai_responses_image_generation_tool_without_image_output(
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -10365,9 +10759,9 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text or include your response in a tool call.',
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -12515,6 +12909,7 @@ async def test_openai_responses_raw_cot_only(allow_model_requests: None):
                     ),
                     TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -12584,6 +12979,7 @@ async def test_openai_responses_raw_cot_with_summary(allow_model_requests: None)
                     ),
                     TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -12657,6 +13053,7 @@ async def test_openai_responses_multiple_summaries(allow_model_requests: None):
                     ThinkingPart(content='Third summary', id='rs_123', provider_name='openai'),
                     TextPart(content='Done', id='msg_123', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -12855,6 +13252,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                     ),
                     TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -12892,6 +13290,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                     ),
                     TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -12924,6 +13323,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                     ThinkingPart(content='Second summary', id='rs_456', provider_name='openai'),
                     TextPart(content='9', id='msg_456', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -12961,6 +13361,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                     ),
                     TextPart(content='4', id='msg_123', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -12993,6 +13394,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                     ThinkingPart(content='Second summary', id='rs_456', provider_name='openai'),
                     TextPart(content='9', id='msg_456', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -13023,6 +13425,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                     ),
                     TextPart(content='42', id='msg_789', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -13668,6 +14071,7 @@ async def test_web_search_call_action_find_in_page(allow_model_requests: None):
                     provider_name='openai',
                 ),
             ],
+            usage=RequestUsage(unmeasured_requests=1),
             model_name='gpt-4o-123',
             timestamp=IsDatetime(),
             provider_name='openai',
@@ -14338,7 +14742,7 @@ _ERROR_EVENT: dict[str, Any] = {
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
 @pytest.mark.parametrize(
-    ('stream', 'content', 'message'),
+    ('stream', 'content', 'status_code', 'message'),
     [
         pytest.param(
             True,
@@ -14346,13 +14750,25 @@ _ERROR_EVENT: dict[str, Any] = {
                 _CREATED_EVENT,
                 {'type': 'error', 'code': 'server_error', 'message': 'The server had an error', 'sequence_number': 1},
             ),
-            'server_error: The server had an error',
+            500,
+            None,
             id='stream-error-event',
         ),
         pytest.param(
             True,
+            _sse(
+                _CREATED_EVENT,
+                {'type': 'error', 'code': 'invalid_prompt', 'message': 'Invalid prompt', 'sequence_number': 1},
+            ),
+            None,
+            'invalid_prompt: Invalid prompt',
+            id='stream-error-event-unmapped',
+        ),
+        pytest.param(
+            True,
             _sse(_ERROR_EVENT),
-            'insufficient_quota: You exceeded your current quota',
+            429,
+            None,
             id='stream-error-event-first',
         ),
         pytest.param(
@@ -14369,7 +14785,8 @@ _ERROR_EVENT: dict[str, Any] = {
                     },
                 }
             ),
-            'You exceeded your current quota',
+            429,
+            None,
             id='stream-error-event-nested',
         ),
         pytest.param(
@@ -14385,22 +14802,27 @@ _ERROR_EVENT: dict[str, Any] = {
                     'sequence_number': 1,
                 },
             ),
-            'rate_limit_exceeded: Rate limit reached',
+            429,
+            None,
             id='stream-response-failed-background',
         ),
         pytest.param(
             False,
             json.dumps(_failed_response_json({'code': 'server_error', 'message': 'The model failed'})).encode(),
+            None,
             'server_error: The model failed',
             id='response-failed',
         ),
     ],
 )
 async def test_response_error_raises_model_api_error(
-    allow_model_requests: None, stream: bool, content: bytes, message: str
+    allow_model_requests: None, stream: bool, content: bytes, status_code: int | None, message: str | None
 ):
-    """A failure the Responses API reports in a 200 body or stream raises `ModelAPIError` with no status code,
-    instead of ending the response with `finish_reason='error'` and sending the model an output retry.
+    """A failure the Responses API reports in a 200 body or stream raises instead of ending the response with
+    `finish_reason='error'` and sending the model an output retry.
+
+    In a stream, it gets the status the same error has before a stream opens, with `in_stream` set. A failed
+    response body has no status to report.
 
     A mock transport stands in for a cassette because no real provider returns such a response on demand.
     """
@@ -14426,10 +14848,48 @@ async def test_response_error_raises_model_api_error(
             else:
                 await agent.run('Hello')
 
-    assert type(exc_info.value) is ModelAPIError
-    assert exc_info.value.message == message
+    if status_code is not None:
+        assert isinstance(exc_info.value, ModelHTTPError)
+        assert exc_info.value.status_code == status_code
+        assert exc_info.value.in_stream is True
+    else:
+        # A failed response body has no status, but a `server_error` still has a category.
+        assert type(exc_info.value) is (
+            ModelServerError if message == 'server_error: The model failed' else ModelAPIError
+        )
+        assert exc_info.value.message == message
+        assert exc_info.value.in_stream is stream
     # No output retry, re-poll, or cancellation of a background job the provider already marked as failed.
     assert requests_made == 1
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize(
+    ('code', 'category'),
+    [
+        pytest.param('rate_limit_exceeded', ModelRateLimitError, id='rate-limit'),
+        pytest.param('context_length_exceeded', ModelContextWindowExceededError, id='context-window'),
+    ],
+)
+async def test_failed_response_body_gets_category(allow_model_requests: None, code: str, category: type[ModelAPIError]):
+    """A failed response body gets the same category as the same error in a stream, though no status code."""
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        body = _failed_response_json({'code': code, 'message': 'Failed'})
+        return httpx2.Response(200, content=json.dumps(body).encode(), headers={'content-type': 'application/json'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        agent = Agent(OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client)))
+        with pytest.raises(category) as exc_info:
+            await agent.run('Hello')
+
+    assert not isinstance(exc_info.value, ModelHTTPError)
+    assert exc_info.value.provider_error_code == code
+    assert exc_info.value.in_stream is False
 
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
@@ -14451,6 +14911,64 @@ async def test_response_error_event_first_falls_back(allow_model_requests: None)
             output = await result.get_output()
 
     assert output == 'from fallback'
+
+
+_OVERLOADED_FAILED_EVENT: dict[str, Any] = {
+    'type': 'response.failed',
+    'response': _failed_response_json(
+        {'code': 'server_is_overloaded', 'message': 'Our servers are currently overloaded.'}
+    ),
+    'sequence_number': 2,
+}
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize(
+    'events',
+    [
+        pytest.param([_CREATED_EVENT, _OVERLOADED_FAILED_EVENT], id='created-failed'),
+        pytest.param(
+            [
+                _CREATED_EVENT,
+                {
+                    'type': 'response.in_progress',
+                    'response': {**_failed_response_json(None), 'status': 'in_progress'},
+                    'sequence_number': 1,
+                },
+                _OVERLOADED_FAILED_EVENT,
+            ],
+            id='created-in-progress-failed',
+        ),
+    ],
+)
+async def test_response_failed_before_output_falls_back(allow_model_requests: None, events: list[dict[str, Any]]):
+    """A `response.failed` after lifecycle events that carry no output fires `FallbackModel`'s default `fallback_on`.
+
+    https://github.com/pydantic/pydantic-ai/issues/10123
+    """
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=_sse(*events), headers={'content-type': 'text/event-stream'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        primary = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        agent = Agent(FallbackModel(primary, TestModel(custom_output_text='from fallback')))
+
+        async with agent.run_stream('Hello') as result:
+            output = await result.get_output()
+        assert output == 'from fallback'
+
+        # Without `FallbackModel`, the stream still opens and the failure is raised while it's consumed.
+        async with primary.request_stream(
+            [ModelRequest.user_text_prompt('Hello')], None, ModelRequestParameters()
+        ) as streamed_response:
+            with pytest.raises(ModelAPIError, match='server_is_overloaded'):
+                async for _ in streamed_response:
+                    pass  # pragma: no cover
 
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
@@ -14617,7 +15135,7 @@ async def test_openai_responses_null_text(allow_model_requests: None):
                 parts=[
                     TextPart(content='Hello', id='msg_001', provider_name='openai'),
                 ],
-                usage=RequestUsage(),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -14737,7 +15255,7 @@ async def test_openai_responses_null_text_stream(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello!', id='msg_001', provider_name='openai')],
-                usage=RequestUsage(cost=Decimal('0.00')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -15190,7 +15708,7 @@ async def test_openai_responses_compaction_composes_with_auto_chain_boundary(all
         ModelRequest.user_text_prompt('keep tail'),
     ]
 
-    previous_response_id, chain_messages = model._get_previous_response_id_and_new_messages(  # pyright: ignore[reportPrivateUsage]
+    previous_response_id, chain_messages, _ = model._get_previous_response_id_and_new_messages(  # pyright: ignore[reportPrivateUsage]
         messages
     )
     _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
@@ -16708,6 +17226,7 @@ async def test_background_queued_then_completed(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='The answer is 42.', id='output-1', provider_name='openai')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -16720,6 +17239,47 @@ async def test_background_queued_then_completed(allow_model_requests: None):
             ),
         ]
     )
+
+
+async def test_background_response_keeps_its_history_across_the_resume(allow_model_requests: None):
+    """The run merges the resumed response into the suspended one, keeping the history it recorded for the next chain check."""
+    mock_client = MockOpenAIResponses(
+        response=_text_response('', status='queued', background=True),
+        retrieve_responses=[_text_response('The answer is 42.', background=True)],
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+    settings = OpenAIResponsesModelSettings(openai_background=True, openai_previous_response_id='auto')
+    _, sleep = _tracking_sleep()
+
+    with Agent.using_sleep(sleep):
+        result = await Agent(model=model).run('What is the meaning of life?', model_settings=settings)
+
+    request, response = result.all_messages()
+    assert isinstance(response, ModelResponse)
+    assert response.history_digest == hashlib.sha256(_digested(request, response)).hexdigest()
+
+
+async def test_background_response_resumed_after_its_history_changed_is_not_continued(allow_model_requests: None):
+    """The server answers a background response from the history it was created from, not one redacted while it ran."""
+    mock_client = MockOpenAIResponses(
+        response=_text_response('', status='queued', background=True),
+        retrieve_responses=[_text_response('You said secret.', background=True)],
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+    settings = OpenAIResponsesModelSettings(openai_background=True, openai_previous_response_id='auto')
+    parameters = ModelRequestParameters()
+    suspended = await model.request([ModelRequest.user_text_prompt('secret')], settings, parameters)
+    assert suspended.state == 'suspended'
+
+    redacted = ModelRequest.user_text_prompt('[redacted]')
+    resumed = await model.request([redacted, suspended], settings, parameters)
+    merged = merge_responses(suspended, resumed)
+
+    assert resumed.history_digest is None
+    history: list[ModelMessage] = [redacted, merged, ModelRequest.user_text_prompt('Again')]
+    previous_response_id, messages, _ = model._get_previous_response_id_and_new_messages(history)  # pyright: ignore[reportPrivateUsage]
+    assert previous_response_id is None
+    assert messages is history
 
 
 async def test_background_in_progress_then_completed(allow_model_requests: None):
@@ -16753,6 +17313,7 @@ async def test_background_in_progress_then_completed(allow_model_requests: None)
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!', id='output-1', provider_name='openai')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -16849,6 +17410,7 @@ async def test_background_retrieve_uses_response_id(allow_model_requests: None):
                 parts=[
                     TextPart(content='final', id='output-1', provider_name='openai'),
                 ],
+                usage=RequestUsage(unmeasured_requests=2),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -17478,10 +18040,11 @@ async def _replay_input(
         provider=OpenAIProvider(api_key='not-used'),
         profile=OpenAIModelProfile(openai_responses_supports_interleaved_function_calls=not group_function_calls),
     )
+    parameters = model_request_parameters or ModelRequestParameters()
     _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        history,
+        model.prepare_messages(history, parameters),
         model_settings or OpenAIResponsesModelSettings(),
-        model_request_parameters or ModelRequestParameters(),
+        parameters,
     )
     return [dict(item) for item in items]
 
@@ -17499,7 +18062,7 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
         ),
         ModelRequest(
             parts=[
-                RetryPromptPart('read failed', tool_name='read', tool_call_id='call-a'),
+                legacy_retry_prompt_part('read failed', tool_name='read', tool_call_id='call-a'),
                 ToolReturnPart('view', 'contents', tool_call_id='call-b'),
             ]
         ),
@@ -17517,7 +18080,7 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
             {
                 'type': 'function_call_output',
                 'call_id': 'call-a',
-                'output': 'read failed\n\nFix the errors and try again.',
+                'output': '{"error":"read failed"}',
             },
             {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'contents'},
         ]
@@ -17531,7 +18094,7 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
             {
                 'type': 'function_call_output',
                 'call_id': 'call-a',
-                'output': 'read failed\n\nFix the errors and try again.',
+                'output': '{"error":"read failed"}',
             },
             {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'contents'},
         ]
@@ -17637,7 +18200,7 @@ async def test_openai_responses_function_call_grouping_ignores_active_tool_searc
         ModelRequest(
             parts=[
                 ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='shared-id'),
-                RetryPromptPart('search again', tool_name='search_tools', tool_call_id='shared-id'),
+                legacy_retry_prompt_part('search again', tool_name='search_tools', tool_call_id='shared-id'),
             ]
         ),
     ]
@@ -18078,7 +18641,7 @@ async def test_openai_responses_malformed_tool_args_degraded_on_the_wire(allow_m
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    legacy_retry_prompt_part(
                         tool_name='search_knowledge',
                         tool_call_id='call_123',
                         content='Invalid JSON: expected `,` or `}` at line 1 column 99',
@@ -18618,4 +19181,92 @@ async def test_responses_provider_details_hook_builtin_wins_collisions(allow_mod
     assert model_response.provider_details == {
         'finish_reason': 'completed',
         'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+    }
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_azure_responses_provider_details_hook_content_filters(
+    allow_model_requests: None, azure_api_key: str, stream: bool
+):
+    """VCR test: one `_process_provider_details` override reads Azure's `content_filters`, streamed or not.
+
+    Azure reports `content_filters` on the complete response; in a stream, only the terminal
+    `response.completed` event carries them (`response.created` and `response.in_progress` report `null`).
+    """
+
+    class ContentFiltersModel(OpenAIResponsesModel):
+        def _process_provider_details(self, response: resp.Response) -> dict[str, Any] | None:
+            return {'content_filters': (response.model_extra or {}).get('content_filters')}
+
+    provider = AzureProvider(
+        azure_endpoint='https://pydantic-ai-realtime-dev.openai.azure.com/openai/v1/', api_key=azure_api_key
+    )
+    agent = Agent(model=ContentFiltersModel('gpt-5.4', provider=provider))
+
+    prompt = 'What is the capital of France? Answer in one word.'
+    if stream:
+        async with agent.run_stream(prompt) as result:
+            output = await result.get_output()
+        messages = result.all_messages()
+    else:
+        run_result = await agent.run(prompt)
+        output = run_result.output
+        messages = run_result.all_messages()
+
+    assert 'Paris' in output
+    model_response = messages[-1]
+    assert isinstance(model_response, ModelResponse)
+    assert model_response.provider_details is not None
+    content_filters = model_response.provider_details['content_filters']
+    assert [content_filter['source_type'] for content_filter in content_filters] == snapshot(['prompt', 'completion'])
+    assert content_filters[0]['content_filter_results']['jailbreak'] == snapshot({'detected': False, 'filtered': False})
+
+
+@pytest.mark.parametrize('resumed', [False, True])
+async def test_responses_stream_provider_details_hook_builtin_wins_collisions(
+    allow_model_requests: None, resumed: bool
+):
+    """When streaming, built-in provider details win over colliding keys returned by the hook, as without streaming.
+
+    A stream resumed with `starting_after` has no `response.created`, so its built-in `timestamp` only comes from the
+    terminal response, which must still win over the hook's.
+
+    Mocked: no real response makes a hook collide with a built-in key.
+    """
+
+    class CollidingModel(OpenAIResponsesModel):
+        def _process_provider_details(self, response: resp.Response) -> dict[str, Any] | None:
+            return {'finish_reason': 'custom', 'timestamp': 'custom', 'custom': response.id}
+
+    response = response_message([])
+    first_event: resp.ResponseStreamEvent = (
+        resp.ResponseInProgressEvent(response=response, type='response.in_progress', sequence_number=0)
+        if resumed
+        else resp.ResponseCreatedEvent(response=response, type='response.created', sequence_number=0)
+    )
+    stream = [
+        first_event,
+        resp.ResponseCompletedEvent(
+            response=response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=1,
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = CollidingModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='hello')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as streamed:
+        async for _ in streamed:
+            pass
+
+    # A resumed stream is only ever a background job's, so it's also stamped as one.
+    assert streamed.get().provider_details == {
+        'finish_reason': 'completed',
+        'custom': '123',
+        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+        **({'background': True} if resumed else {}),
     }

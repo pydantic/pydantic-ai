@@ -1,6 +1,7 @@
 """Pinned editor and scrollback ownership, without a PromptSession renderer."""
 
 import asyncio
+import math
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
@@ -12,7 +13,7 @@ import anyio
 from PIL import Image
 from prompt_toolkit.application.current import get_app_session
 from prompt_toolkit.history import History
-from rich.console import Console
+from rich.console import Console, ConsoleDimensions
 from termflow.ansi.utils import visible_length
 from termflow.tui.completion import CompleteEvent, Completion, Document
 from termflow.tui.layout import truncate
@@ -21,7 +22,7 @@ from pydantic_clai2.cli.shell_passthrough import shell_command
 from pydantic_clai2.commands import Commands, expand_bare_command, is_command_input
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import holding_output
-from pydantic_clai2.ui.prompt.image_input import ImageInput, clipboard_images, pasted_paths, read_images
+from pydantic_clai2.ui.prompt.image_input import ATTACHED, ImageInput, clipboard_images, pasted_paths, read_images
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
@@ -32,6 +33,13 @@ from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
+
+IDLE_REPAINT = 1.0
+"""Seconds between timed repaints of an idle editor, and how long it keeps repainting fast after animating.
+
+Timed repaints pick up status that no key, output, or resize announces, such as a plugin's status
+segment. They run ten times a second while a turn runs or the panel shows forks or tasks.
+"""
 
 
 @dataclass(eq=False)
@@ -123,6 +131,10 @@ class LivePrompt:
         self._completion_worker = CompletionWorker()
         self._completion_error = ''
         self._opened = False
+        self._panel_shown = False
+        self._animated_at = -math.inf
+        self._painted_at = -math.inf
+        self._painted_size: ConsoleDimensions | None = None
 
     @property
     def queued_messages(self) -> tuple[str, ...]:
@@ -131,6 +143,13 @@ class LivePrompt:
 
     def _queued(self) -> list[_Queued]:
         return [item for item in self._submissions if isinstance(item, _Queued)]
+
+    def take_queued(self) -> list[str]:
+        """Remove the queued prompts and return their text, as when another session reads this editor next."""
+        queued = self._queued()
+        for entry in queued:
+            self._discard(entry)
+        return [entry.text for entry in queued]
 
     def submit(self, value: str | KeyboardInterrupt | EOFError | PromptRewind) -> None:
         """Publish a submission without ending or replacing the editor."""
@@ -152,7 +171,8 @@ class LivePrompt:
             self._submitted.clear()
 
     async def read(self) -> str:
-        """Consume queued submissions in order."""
+        """Consume queued submissions in order, first showing the status the shell set up for this read."""
+        self.paint()
         await self._submitted.wait()
         if not self._submissions:
             self._wake_pending = False
@@ -176,6 +196,7 @@ class LivePrompt:
                 self.buffer.insert(text, paste=True)
             else:
                 self.buffer.insert(self.images.attach(read_images(paths) if text is not None else clipboard_images()))
+                self.images.notice = ATTACHED
         except (OSError, ValueError, NotImplementedError, Image.DecompressionBombError) as exc:
             self.images.notice = f'Image paste failed: {exc}. Linux requires wl-paste (Wayland) or xclip (X11).'
 
@@ -507,11 +528,13 @@ class LivePrompt:
         width, height = max(1, width), max(2, height)
         muted, reset = theme.sgr(theme.MUTED), '\x1b[0m'
         if width < 6 or height < 6:
+            self._panel_shown = False
             return tuple(self.buffer.rows(width=width, limit=1))
         # `paint` keeps `height - 2` rows; the title, one draft row, the rule, and the footer need four.
         room = height - 6
         limit = max(1, height // 6)
         panel = [truncate(row, width) + reset for row in self.panel(self.spinner().frame(self.clock()))]
+        self._panel_shown = bool(panel)
         rows = _capped(panel, limit=limit, room=room, more=muted + '+{} more' + reset)
         queued = [
             muted
@@ -574,6 +597,30 @@ class LivePrompt:
         """Draw only when the editor owns the terminal."""
         if self._opened and not self._suspended:
             self.output.paint(self.frame())
+            self._painted_at = self.clock()
+            self._painted_size = self.console.size
+
+    def tick(self) -> float:
+        """Repaint for status changes when due, returning the seconds until the next tick.
+
+        Ten times a second while a turn runs, the panel shows forks or tasks, or for `IDLE_REPAINT`
+        after either; every `IDLE_REPAINT` seconds otherwise. A spinner faster than that gets a
+        repaint per frame, but only while it shows.
+        """
+        now = self.clock()
+        if self.interrupts.active or self._panel_shown:
+            self._animated_at = now
+        if not self._suspended and (
+            now - self._animated_at < IDLE_REPAINT
+            or now - self._painted_at >= IDLE_REPAINT
+            # Hosts without SIGWINCH find a resize only here.
+            or self.console.size != self._painted_size
+        ):
+            self.paint()
+        else:
+            # Output written too soon after the last frame waits for this, idle or not.
+            self.output.refresh()
+        return min(0.1, self.spinner().interval) if self.interrupts.active else 0.1
 
     @asynccontextmanager
     async def suspended(self) -> AsyncGenerator[None]:
@@ -604,12 +651,7 @@ class LivePrompt:
 
         async def refresh() -> None:
             while True:
-                if self._suspended:
-                    self.output.refresh()
-                else:
-                    self.paint()
-                # A spinner faster than the status poll gets a repaint per frame, but only while it shows.
-                await anyio.sleep(min(0.1, self.spinner().interval) if self.interrupts.active else 0.1)
+                await anyio.sleep(self.tick())
 
         loop = asyncio.get_running_loop()
 

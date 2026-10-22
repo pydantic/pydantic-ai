@@ -7,15 +7,18 @@ failed slash commands other than usage errors, and failing plugin handlers; with
 keep only the exception's type. With `ui_events` on, it also records
 CLAI's UI interactions (see `pydantic_clai2.ui.telemetry`).
 With `token` naming a `/keys` entry, everything goes to that key's Logfire project, such as one a team shares.
+With `variables_key` naming one holding a Logfire API key, the same instance can read the project's managed variables.
 
-`configure` opens the settings menu (turning the plugin on, `c` in `/plugins`, or `/plugins configure
-observability`). Each edit is saved at once, and the loader loads the plugin again when the menu closes, so the
-next run uses it. Its first row runs the project setup in `logfire_setup`.
+`settings_menu` declares the settings menu, shown in the terminal (turning the plugin on, `c` in `/plugins`, or
+`/plugins configure observability`) and in the web UI's plugins panel. Each edit is saved at once, and the loader
+loads the plugin again afterwards, so the next run uses it. Its first row runs the project setup in `logfire_setup`.
 """
 
 import os
 from collections.abc import Callable, Sequence
 from dataclasses import replace
+from functools import partial
+from pathlib import Path
 from typing import Annotated, ClassVar, Literal, Self
 
 import logfire
@@ -27,15 +30,25 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, Va
 from pydantic_ai.capabilities import AgentCapability, Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_clai2.builtin_plugins.logfire_destination import logfire_dir, parse_destination, remembered
+from pydantic_clai2.builtin_plugins.logfire_live import live_view_url, project_url
 from pydantic_clai2.builtin_plugins.logfire_session import SessionTracing, git_email
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, run_setup
 from pydantic_clai2.config.api_keys import KeyReference, load_keys
-from pydantic_clai2.plugins import Plugin, PluginHost, PluginLoadFailed, SessionEnd, SessionStart, TurnEnd
+from pydantic_clai2.plugins import (
+    PanelView,
+    Plugin,
+    PluginHost,
+    PluginLoadFailed,
+    SessionEnd,
+    SessionStart,
+    SidePanel,
+    TurnEnd,
+)
+from pydantic_clai2.plugins.menus import Dialogs, FieldRow, SettingsMenu
 from pydantic_clai2.runtime import agent_instrumentation
 from pydantic_clai2.ui import telemetry
-from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow_async
+from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 
 class LogfireAccount(BaseModel):
@@ -56,8 +69,9 @@ class LogfireSettings(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True, strict=True, hide_input_in_errors=True)
     service_name: str = Field(default='pydantic-clai2', min_length=1)
     send_to_logfire: Literal[False, 'if-token-present'] = 'if-token-present'
-    include_content: bool = True
-    include_binary_content: bool = True
+    # Off unless chosen here, so a `LOGFIRE_TOKEN` set for another project never receives prompts or files.
+    include_content: bool = False
+    include_binary_content: bool = False
     user_tag: Literal['logfire-account', 'git-email', False] = Field(
         default='logfire-account',
         description='Tag session roots with the email of the Logfire account that signed in during project setup, '
@@ -72,6 +86,12 @@ class LogfireSettings(BaseModel):
         default=None,
         description='A /keys entry holding the Logfire write token to send with, instead of LOGFIRE_TOKEN or the '
         'credentials file; its project receives the telemetry.',
+    )
+    variables_key: KeyReference | None = Field(
+        default=None,
+        description='A /keys entry holding a Logfire API key with the project:read_variables scope, instead of '
+        "LOGFIRE_API_KEY, so capabilities can read managed variables through this plugin's Logfire instance. "
+        'Write tokens cannot read them.',
     )
     base_url: Annotated[str, AfterValidator(_base_url)] | None = Field(
         default=None,
@@ -97,6 +117,8 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     at the same instance while it is loaded and restores when it unloads.
     """
 
+    scope = 'process'
+    """Global instrumentation, configured once for the process; `SessionTracing` keeps a root per session."""
     _active_httpx: ClassVar[list['LogfirePlugin']] = []
     """Live opt-in instances, ordered so HTTPX instrumentation can move to a remaining instance on unload."""
 
@@ -105,6 +127,10 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         self._unsubscribe: Callable[[], None] | None = None
         self._httpx_instrumentors: list[HTTPXClientInstrumentor | HTTPX2ClientInstrumentor] = []
         token, send_to_logfire = _destination(settings, host)
+        self._sending = send_to_logfire is not False
+        self._project: str | None = None
+        """The project's page in Logfire, once Logfire named it."""
+        api_key = _variables_key(settings, host)
         private_dir = logfire_dir()
         propagator = get_global_textmap()
         try:
@@ -112,6 +138,8 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 local=True,
                 send_to_logfire=send_to_logfire,
                 token=token,
+                # Unset, the SDK reads `LOGFIRE_API_KEY`. It only uses the key once something reads a variable.
+                api_key=api_key,
                 service_name=settings.service_name,
                 console=False,
                 # CLAI passes attributes, never f-strings. Inspecting the caller's source fails once that file
@@ -147,24 +175,44 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     @classmethod
     def from_host(cls, host: PluginHost[None]) -> Self:
         """Tag the identity settings so older builds sharing the database can ignore them."""
-        requires = {'user_tag': ['logfire-user-tag'], 'account': ['logfire-user-tag'], 'httpx': ['logfire-httpx']}
+        requires = {
+            'user_tag': ['logfire-user-tag'],
+            'account': ['logfire-user-tag'],
+            'httpx': ['logfire-httpx'],
+            'variables_key': ['logfire-variables-key'],
+        }
         return cls(host, host.settings(LogfireSettings, requires=requires))
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         return (self._session_tracing, self.instrumentation)
 
-    async def configure(self) -> str:
+    def get_side_panels(self) -> Sequence[SidePanel]:
+        return (SidePanel(id='live', title='Logfire live view', icon='traces', view=self._live_view),)
+
+    async def _live_view(self) -> PanelView:
+        """The live view of the conversation's trace, focused on its latest run, once traces go to a project."""
+        config = self.instance.config
+        tokens = [config.token] if isinstance(config.token, str) else config.token or []
+        if not self._sending or not tokens:
+            return PanelView(note=NOT_SENDING)
+        if self._project is None:
+            base_url = config.advanced.generate_base_url(tokens[0])
+            self._project = await project_url(SETUP, base_url=base_url, token=tokens[0])
+            if self._project is None:
+                return PanelView(note=f'{base_url} did not say which project the write token belongs to.')
+        turn = self._session_tracing.turn()
+        if turn is None:
+            return PanelView(url=self._project)
+        trace, run = turn
+        return PanelView(url=live_view_url(self._project, trace=trace, run=run))
+
+    def settings_menu(self) -> SettingsMenu:
         """The settings menu; its project row runs the setup that signs in and picks where traces go."""
-
-        async def set_up() -> list[str]:
-            return [await _configure(self.host, SETUP(self.host))]
-
-        messages = await run_flow_async(FieldMenu(LogfireSource(self.host)), RUNNERS, submenus={PROJECT: set_up})
-        return '\n'.join(messages) or 'Logfire settings unchanged.'
+        return SettingsMenu(source=LogfireSource(self.host), actions={PROJECT: partial(_set_up, host=self.host)})
 
     # The UI lifecycle goes only to this plugin's own instance: every enabled copy of the plugin hears these events.
     async def on_session_start(self, event: SessionStart) -> None:
-        self._session_tracing.start(await _user_email(self.settings))
+        self._session_tracing.start(await _user_email(self.settings, workspace=self.host.workspace))
         agent_instrumentation.claim(self.instrumentation.settings)
         if self.settings.httpx:
             if not self._active_httpx:
@@ -236,22 +284,28 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 )
 
 
-async def _user_email(settings: LogfireSettings) -> str | None:
-    """The email `user_tag` names; Git is queried only when chosen."""
+async def _user_email(settings: LogfireSettings, *, workspace: Path) -> str | None:
+    """The email `user_tag` names; Git is queried in `workspace` only when chosen."""
     if settings.user_tag == 'git-email':
-        return await git_email()
+        return await git_email(cwd=workspace)
     account = settings.account
     if settings.user_tag == 'logfire-account' and account is not None and account.token == settings.token:
         return account.email
     return None
 
 
+NOT_SENDING = (
+    'Traces stay on this machine: no Logfire project is set up. Pick one on the Logfire project row of '
+    "this plugin's settings, and its live view shows here."
+)
+"""The live view panel without a project to show."""
+
 CREDENTIALS_FILE = 'logfire_credentials.json'
 """The file the SDK writes on `logfire auth`/`projects use` and reads from `data_dir`."""
-RUNNERS: Runners = TERMINAL
-"""How the settings menu's widgets are shown; tests swap in scripted ones."""
 PROJECT = 'project'
 """The row that runs the project setup instead of editing a value."""
+VARIABLES_KEY = 'variables_key'
+"""The row naming the `/keys` entry managed variables are read with."""
 
 
 def credentials() -> str:
@@ -304,7 +358,7 @@ _ROWS = (
         key='include_content',
         label='Message content',
         description='Record prompts, responses, and tool arguments and results in spans.',
-        default='true',
+        default='false',
         choices=_BOOLEAN,
         choice_labels=_INCLUDED,
         allow_custom=False,
@@ -313,7 +367,7 @@ _ROWS = (
         key='include_binary_content',
         label='Binary content',
         description='Record images, audio, and other file data in spans. Needs message content included.',
-        default='true',
+        default='false',
         choices=_BOOLEAN,
         choice_labels=_INCLUDED,
         allow_custom=False,
@@ -345,6 +399,13 @@ _ROWS = (
         choice_labels={'true': 'recorded', 'false': 'off'},
         allow_custom=False,
     ),
+    FieldRow(
+        key=VARIABLES_KEY,
+        label='Variables API key',
+        description='The name of a /keys entry holding a Logfire API key with the project:read_variables scope, '
+        'for capabilities that read managed variables, such as Agent Control. Write tokens cannot read them.',
+        default='LOGFIRE_API_KEY, if set',
+    ),
 )
 
 
@@ -363,9 +424,14 @@ class LogfireSource:
         return self._host.settings(LogfireSettings)
 
     def rows(self) -> Sequence[FieldRow]:
-        """Every option; the project row notes where a token would come from without one chosen."""
-        note = '' if self.settings.token else credentials()
-        return [replace(_PROJECT_ROW, note=note), *_ROWS[1:]]
+        """Every option; notes say where a token would come from without one chosen, and when a key is gone."""
+        settings = self.settings
+        key = settings.variables_key
+        notes = {
+            PROJECT: '' if settings.token else credentials(),
+            VARIABLES_KEY: 'missing from /keys' if key is not None and key.name not in load_keys() else '',
+        }
+        return [replace(row, note=notes.get(row.key, '')) for row in _ROWS]
 
     def current(self, row: FieldRow) -> str:
         """The value as the user would type it; the project row names the `/keys` entry and the server."""
@@ -375,6 +441,8 @@ class LogfireSource:
                 return row.default
             where = f' at {parse_destination(settings.base_url).label}' if settings.base_url else ''
             return settings.token.name + where
+        if row.key == VARIABLES_KEY:
+            return settings.variables_key.name if settings.variables_key else row.default
         value: object = getattr(settings, row.key)
         return str(value).lower() if isinstance(value, bool) else str(value)
 
@@ -401,29 +469,23 @@ class LogfireSource:
 
     def _updated(self, row: FieldRow, raw: str) -> LogfireSettings:
         value: JsonValue = raw == 'true' if row.choices and raw in _BOOLEAN else raw
+        if row.key == VARIABLES_KEY:
+            value = {'name': raw}
         return LogfireSettings.model_validate({**self.settings.model_dump(mode='json'), row.key: value})
 
 
-def _announce(host: PluginHost[None]) -> Setup:
-    def announce(line: str) -> None:
-        # Links can come from a self-hosted server, so terminal controls in them are made inert.
-        host.console.print(terminal_text(line), markup=False, highlight=False)
-
-    return Setup(announce=announce)
+SETUP = Setup()
+"""How setup reaches the browser and Logfire; tests swap in scripted ones."""
 
 
-SETUP: Callable[[PluginHost[None]], Setup] = _announce
-"""How setup talks to the terminal, the browser, and Logfire; tests swap in scripted ones."""
-
-
-async def _configure(host: PluginHost[None], setup: Setup) -> str:
-    """The setup menu; saving new settings makes the loader load the plugin again, now sending to the project."""
+async def _set_up(dialogs: Dialogs, /, *, host: PluginHost[None]) -> list[str]:
+    """The project row; saving new settings makes the loader load the plugin again, now sending to the project."""
     config = host.settings(LogfireSettings)
-    # Highlight the Logfire this plugin sends to, else the one last set up here or in `logfire_mcp`.
+    # Start from the Logfire this plugin sends to, else the one last set up here or in `logfire_mcp`.
     current = parse_destination(config.base_url) if config.base_url else await to_thread.run_sync(remembered)
-    chosen = await run_setup(setup, current=current, owned=config.token)
+    chosen = await run_setup(dialogs, SETUP, current=current, owned=config.token)
     if chosen is None:
-        return 'Logfire setup cancelled; settings unchanged.'
+        return ['Logfire setup cancelled; settings unchanged.']
     # Setting up a project means sending to it, even if sending had been turned off.
     email = chosen.account_email
     update = {
@@ -432,16 +494,16 @@ async def _configure(host: PluginHost[None], setup: Setup) -> str:
         'account': LogfireAccount(email=email, token=chosen.token) if email else None,
         'send_to_logfire': 'if-token-present',
     }
-    host.save_settings(config.model_copy(update=update))
+    await to_thread.run_sync(host.save_settings, config.model_copy(update=update))
     kept = (
         'only that name and the email you signed in with'
         if email
         else 'only that name; Logfire did not share your email'
     )
-    return (
+    return [
         f'Logfire traces now go to {chosen.project.label}. Its write token is saved in /keys as '
         f'{chosen.token.name}; plugin settings keep {kept}.'
-    )
+    ]
 
 
 def _destination(
@@ -463,6 +525,23 @@ def _destination(
         )
         return None, False
     return keys[config.token.name].get_secret_value(), config.send_to_logfire
+
+
+def _variables_key(config: LogfireSettings, host: PluginHost[None]) -> str | None:
+    """The API key to read managed variables with: the chosen `/keys` entry, else none, so the SDK reads `LOGFIRE_API_KEY`."""
+    if config.variables_key is None:
+        return None
+    keys = load_keys()
+    name = config.variables_key.name
+    if name not in keys:
+        host.console.print(
+            f'Logfire cannot read managed variables with {name}: it is not in /keys. Save it there, then run '
+            '/plugins reload observability.',
+            style=theme.color(theme.WARNING),
+            markup=False,
+        )
+        return None
+    return keys[name].get_secret_value()
 
 
 def _shutdown(instance: logfire.Logfire) -> bool:

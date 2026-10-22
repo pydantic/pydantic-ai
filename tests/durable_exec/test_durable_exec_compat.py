@@ -184,6 +184,25 @@ DBOS_OPERATION_NAMES = {
     'compat__capability__compat.operation',
 }
 
+RENDER_TASK_NAMES = {
+    'compat__model.request',
+    'compat__model.request_stream',
+    'compat__model.cancel_suspended_response',
+    'compat__model.compact_messages',
+    'compat__event_stream_handler',
+    'compat__function_toolset__<agent>.call_tool',
+    'compat__function_toolset__<agent>.validate_args',
+    'compat__function_toolset__functions.call_tool',
+    'compat__function_toolset__functions.validate_args',
+    'compat__mcp_server__mcp.get_tools',
+    'compat__mcp_server__mcp.get_instructions',
+    'compat__mcp_server__mcp.call_tool',
+    'compat__dynamic_toolset__dynamic.get_tools',
+    'compat__dynamic_toolset__dynamic.call_tool',
+    'compat__dynamic_toolset__dynamic.validate_args',
+    'compat__capability__compat.operation',
+}
+
 
 def _operation_ids() -> list[DurableOperationId]:
     return [
@@ -413,6 +432,29 @@ def test_dbos_operation_name_matrix_and_assembly_completeness() -> None:
     assert workspace_names - DBOS_OPERATION_NAMES == JOURNAL_WORKSPACE_NAMES
 
 
+@pytest.mark.parametrize('workspace', [False, True])
+def test_render_task_name_matrix_and_assembly_completeness(workspace: bool) -> None:
+    pytest.importorskip('render')
+    pytest.importorskip('pydantic_ai_harness')
+    from pydantic_ai_harness import RenderWorkflows
+
+    from ..harness.render.conftest import RecordingWorkflows
+
+    app = RecordingWorkflows()
+    capabilities: list[AbstractCapability[Any]] = [
+        CompatCapability(),
+        RenderWorkflows(app, models={'registered': TestModel()}, event_stream_handler=_event_handler),
+    ]
+    if workspace:
+        capabilities.append(CompatWorkspaceSupplier())
+    Agent(TestModel(), name='compat', toolsets=list(_synthetic_toolsets()), capabilities=capabilities)
+
+    names = app.registered_task_names
+    expected = RENDER_TASK_NAMES | (JOURNAL_WORKSPACE_NAMES if workspace else set[str]())
+    assert set(names) == expected
+    assert len(names) == len(expected)
+
+
 def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], Any]:
     pytest.importorskip('mcp')
     from fastmcp.client.transports import StdioTransport
@@ -514,8 +556,10 @@ def test_call_tool_result_json_payload_goldens(value: CallToolResult, expected: 
                 'usage': {
                     'input_tokens': 0,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 0,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -535,6 +579,7 @@ def test_call_tool_result_json_payload_goldens(value: CallToolResult, expected: 
                 'conversation_id': None,
                 'metadata': None,
                 'workspace_ref': None,
+                'history_digest': None,
                 'failed_attempts': None,
                 'state': 'complete',
             },
@@ -557,6 +602,7 @@ def test_call_tool_result_json_payload_goldens(value: CallToolResult, expected: 
                     'unless_native': None,
                     'with_native': None,
                     'tool_kind': None,
+                    'unless_tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
                     'toolset_id': None,
@@ -587,8 +633,10 @@ def test_capability_operation_result_payload_golden() -> None:
         'usage_delta': {
             'input_tokens': 3,
             'cache_write_tokens': 0,
+            'cache_write_1h_tokens': 0,
             'cache_read_tokens': 0,
             'output_tokens': 0,
+            'output_reasoning_tokens': 0,
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,

@@ -23,7 +23,6 @@ import pytest
 from opentelemetry.trace import StatusCode
 from pytest_mock import MockerFixture
 
-import pydantic_ai.models
 from pydantic_ai._utils import BaseExceptionGroup
 from pydantic_ai.embeddings import (
     Embedder,
@@ -37,7 +36,8 @@ from pydantic_ai.embeddings import (
     WrapperEmbeddingModel,
     infer_embedding_model,
 )
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelConnectionError, ModelHTTPError, UserError
+from pydantic_ai.models import override_allow_model_requests
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -116,7 +116,7 @@ def sentence_transformers_imported() -> None:
 async def test_openai_embedding_model_blocks_requests_when_disabled():
     model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key='test-key'))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.embed('hello', input_type='query')
 
@@ -125,7 +125,7 @@ async def test_openai_embedding_model_blocks_requests_when_disabled():
 async def test_cohere_embedding_model_blocks_requests_when_disabled():
     model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key='test-key'))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.embed('hello', input_type='query')
 
@@ -134,7 +134,7 @@ async def test_cohere_embedding_model_blocks_requests_when_disabled():
 async def test_google_embedding_model_blocks_requests_when_disabled():
     model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key='test-key'))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.embed('hello', input_type='query')
 
@@ -143,7 +143,7 @@ async def test_google_embedding_model_blocks_requests_when_disabled():
 async def test_bedrock_embedding_model_blocks_requests_when_disabled():
     model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=BedrockProvider(bedrock_client=MagicMock()))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.embed('hello', input_type='query')
 
@@ -156,7 +156,7 @@ async def test_voyageai_embedding_model_blocks_requests_when_disabled():
 
     model = VoyageAIEmbeddingModel('voyage-4', provider=VoyageAIProvider(api_key='test-key'))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.embed('hello', input_type='query')
 
@@ -165,7 +165,7 @@ async def test_voyageai_embedding_model_blocks_requests_when_disabled():
 async def test_google_embedding_model_blocks_count_tokens_when_disabled():
     model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key='test-key'))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.count_tokens('hello')
 
@@ -174,7 +174,7 @@ async def test_google_embedding_model_blocks_count_tokens_when_disabled():
 async def test_cohere_embedding_model_blocks_count_tokens_when_disabled():
     model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key='test-key'))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.count_tokens('hello')
 
@@ -190,7 +190,7 @@ async def test_embedder_blocks_requests_when_disabled():
     """
     embedder = Embedder(OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key='test-key')))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await embedder.embed_query('hello')
 
@@ -204,7 +204,7 @@ async def test_test_embedding_model_is_exempt_from_request_guard():
     """
     embedder = Embedder(TestEmbeddingModel())
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         result = await embedder.embed_query('hello')
 
     assert result.embeddings == snapshot([[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]])
@@ -654,7 +654,8 @@ class TestCohere:
             with pytest.raises(ModelAPIError) as exc_info:
                 await embedder.embed_query('Hello, world!')
 
-        assert type(exc_info.value) is ModelAPIError
+        assert type(exc_info.value) is ModelConnectionError
+        assert exc_info.value.phase == 'connect'
         assert exc_info.value.message == 'connection refused'
         assert isinstance(exc_info.value.__cause__, httpx.ConnectError)
 
@@ -1586,7 +1587,7 @@ class TestBedrock:
                     'logfire.msg': 'embeddings amazon.titan-embed-text-v2:0',
                     'gen_ai.usage.input_tokens': 5,
                     'gen_ai.response.model': 'amazon.titan-embed-text-v2:0',
-                    'operation.cost': 5e-07,
+                    'operation.cost': 1e-07,
                     'gen_ai.embeddings.dimension.count': 256,
                 },
             }
@@ -1898,7 +1899,8 @@ class TestGoogle:
             with pytest.raises(ModelAPIError) as exc_info:
                 await embedder.embed_query('Hello, world!')
 
-        assert type(exc_info.value) is ModelAPIError
+        assert type(exc_info.value) is ModelConnectionError
+        assert exc_info.value.phase == 'connect'
         assert exc_info.value.message == 'connection refused'
         assert isinstance(exc_info.value.__cause__, httpx2.ConnectError)
 
@@ -2135,7 +2137,7 @@ class TestSentenceTransformers:
 
         Inference is local, so there's no provider call to block and no recording to make.
         """
-        with pydantic_ai.models.override_allow_model_requests(False):
+        with override_allow_model_requests(False):
             result = await embedder.embed_query('hello')
 
         assert result.embeddings

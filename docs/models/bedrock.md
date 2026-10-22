@@ -63,7 +63,7 @@ You can then use `BedrockConverseModel` by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0')
+agent = Agent('{{ bedrock:medium }}')
 ...
 ```
 
@@ -73,7 +73,7 @@ Or initialize the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 
-model = BedrockConverseModel('anthropic.claude-sonnet-4-5-20250929-v1:0')
+model = BedrockConverseModel('{{ bedrock:medium.name }}')
 agent = Agent(model)
 ...
 ```
@@ -108,6 +108,14 @@ agent = Agent(model=model, model_settings=bedrock_model_settings)
 
 When `trace` is set to `'enabled'` in the guardrail configuration (as in the example above), the guardrail assessment returned by Bedrock is stored verbatim under the `'trace'` key of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], e.g. `result.all_messages()[-1].provider_details['trace']`.
 
+### Output token limit
+
+When you don't set [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], Pydantic AI sends Claude's maximum output, like 64,000 on Claude Sonnet 4.5 or 128,000 on Claude Opus 5.5, as it does on [Anthropic](anthropic.md), so responses are only cut off at the model's own limit. Bedrock's own default can be much lower (4,096 on Claude Opus 5.5), and thinking counts toward it. An inference profile or foundation model ARN counts as the model it names. Models older than Claude Sonnet 4.5, models other than Claude, and models named by an application inference profile ARN get Bedrock's default, so set `max_tokens` yourself for those, or pass the application inference profile ARN as [`bedrock_inference_profile`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_inference_profile] with the base model name.
+
+Such a request is streamed behind the scenes, since a response that long can take longer than the client's read timeout (`aws_read_timeout` on [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider], 300 seconds by default), which then limits the wait between streamed chunks rather than the whole response. That wait includes the time the model spends thinking, which can arrive as a single chunk. Streaming needs the `bedrock:InvokeModelWithResponseStream` IAM permission, which streamed runs already needed, and tool call `args` in the response are the streamed JSON string rather than a dict, as on streamed runs; [`args_as_dict()`][pydantic_ai.messages.BaseToolCallPart.args_as_dict] gives the same value.
+
+Bedrock reserves `maxTokens` against your tokens-per-minute quota when a request starts, so an account with a small Claude quota can see more `ThrottlingException`s. Set `max_tokens` close to the output you expect to reserve less and send a non-streaming `Converse` request.
+
 ### Thinking and structured output
 
 Claude answers a forced tool choice without thinking, and manual extended thinking
@@ -123,6 +131,22 @@ later, Claude Sonnet 5, Claude Haiku 5.5, Claude Fable 5), Pydantic AI doesn't f
 To keep forced tool output, turn thinking off with `thinking=False` where the model allows it.
 See AWS's [adaptive thinking documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html)
 and [forced tool use restrictions](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages-tool-use.html#model-parameters-anthropic-claude-forced-tool-use).
+
+The output mode is chosen on the run's first request and kept for the rest of the run (except behind a
+[`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], where each model chooses on every request), so a thinking
+setting that changes from step to step doesn't add or remove the output tool between requests and
+[invalidate the prompt cache](../capabilities/caching.md#what-invalidates-a-cache). A Claude run that starts with tool
+output keeps it once thinking turns on, with the output tool offered under `toolChoice={'auto': {}}`. Models other than
+Claude don't accept output tools alongside thinking, so there a request that thinks switches to
+[`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
+
+### Array constraints in structured output
+
+For Claude, GLM, Qwen, and Gemma models that support structured output, Pydantic AI moves array `contains`
+constraints into field descriptions when using [`NativeOutput`][pydantic_ai.output.NativeOutput] or explicitly strict tools. Bedrock rejects this
+keyword for these models. The description preserves the constraint as a hint; Bedrock does not enforce it.
+For Claude, this also applies to nullable arrays expressed as `type: ['array', 'null']`.
+Non-strict tools keep the original constraint.
 
 ### Custom HTTP headers
 
@@ -188,7 +212,7 @@ from pydantic_ai.models.bedrock import BedrockModelSettings
 handbook = '...'  # a long document, above the model's minimum cacheable length
 
 agent = Agent(
-    'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    '{{ bedrock:medium }}',
     model_settings=BedrockModelSettings(
         bedrock_cache_messages=True,  # Automatically caches the last message
     ),
@@ -213,7 +237,7 @@ Combine multiple cache settings for maximum savings:
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
 
-model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
+model = BedrockConverseModel('{{ bedrock:medium.name }}')
 agent = Agent(
     model,
     instructions='Detailed instructions...',
@@ -243,7 +267,7 @@ Use manual `CachePoint` markers to control cache locations precisely:
 from pydantic_ai import Agent, CachePoint
 
 agent = Agent(
-    'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    '{{ bedrock:medium }}',
     instructions='Instructions...',
 )
 
@@ -263,7 +287,7 @@ Access cache usage statistics via [`RequestUsage`][pydantic_ai.usage.RequestUsag
 ```python {test="skip"}
 from pydantic_ai import Agent, CachePoint
 
-agent = Agent('bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0')
+agent = Agent('{{ bedrock:medium }}')
 
 
 async def main():
@@ -302,7 +326,7 @@ from pydantic_ai import Agent, CachePoint
 from pydantic_ai.models.bedrock import BedrockModelSettings
 
 agent = Agent(
-    'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    '{{ bedrock:medium }}',
     instructions='Instructions...',
     model_settings=BedrockModelSettings(
         bedrock_cache_instructions=True,      # 1 cache point
@@ -345,7 +369,7 @@ from pydantic_ai.providers.bedrock import BedrockProvider
 
 # Using AWS credentials directly
 model = BedrockConverseModel(
-    'anthropic.claude-sonnet-4-5-20250929-v1:0',
+    '{{ bedrock:medium.name }}',
     provider=BedrockProvider(
         region_name='us-east-1',
         aws_access_key_id='your-access-key',
@@ -368,7 +392,7 @@ from pydantic_ai.providers.bedrock import BedrockProvider
 # Using a pre-configured boto3 client
 bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
 model = BedrockConverseModel(
-    'anthropic.claude-sonnet-4-5-20250929-v1:0',
+    '{{ bedrock:medium.name }}',
     provider=BedrockProvider(bedrock_client=bedrock_client),
 )
 agent = Agent(model)
@@ -401,7 +425,7 @@ agent = Agent(model)
 
 These boto3 retries are Bedrock's provider SDK retry layer — boto3 counts from the other side, so `Config(retries={'max_attempts': N})` allows `1 + N` total attempts — and there is no `httpx2` transport layer beneath boto3, so this is the only retry layer between the agent's retry budgets and the network. See [Retry multiplication](../retries.md#retry-multiplication) for how the layers stack.
 
-Bedrock uses boto3's built-in retry mechanisms. You can configure retry behavior by passing a custom boto3 client with retry settings:
+Bedrock uses boto3's built-in retry mechanisms, which are configured per client, so [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) has no effect on Bedrock. You can configure retry behavior by passing a custom boto3 client with retry settings:
 
 ```python
 import boto3

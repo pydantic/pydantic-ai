@@ -199,7 +199,7 @@ def check_status(service: Literal['payments', 'login', 'reports']) -> str:
 
 
 support = Agent(
-    FallbackModel('typesafe:jev-latest', 'anthropic:claude-opus-5-5'),
+    FallbackModel('typesafe:jev-latest', '{{ anthropic:large }}'),
     output_type=[Triage, Refund, Reply],
     instructions='Tickets to the support desk of a project-management app.',
     tools=[check_status],
@@ -222,7 +222,7 @@ print(repr(result.output))
 Reply(body="Yes, login has been having problems since 09:12 UTC and that's why your team can't sign in. A fix is rolling out now, so please try again shortly.")
 """
 print(result.response.model_name)
-#> claude-opus-5-5
+#> {{ anthropic:large.name }}
 ```
 
 `Area` is a pick-one whose options are described by their docstrings, `urgent` a yes/no whose subtle boundary [`BoolCriteria`][pydantic_ai.output.BoolCriteria] spells out, `app` a pick-one that can answer "none of these", and `Impact` a [rubric](#what-each-field-type-does): ordered levels, each described. `Reply` asks for a `str`, which no decision model can fill, and that is deliberate: it is the route that needs a language model.
@@ -247,8 +247,8 @@ Every input to the agent ends up in one of two places: the state, which is judge
 | Agent input | Where it ends up |
 |---|---|
 | the run's prompt | the whole state when there is no history, otherwise its `text` |
-| the message history | the state's `history`, as user prompts, answers, thinking, tool calls and results, and retry prompts — see [judging a conversation](#judging-a-conversation) |
-| the tool calls, their results and retry prompts since the latest prompt | the state's `done`, with the prompt as `text` — see [judging a conversation](#judging-a-conversation) |
+| the message history | the state's `history`, as user prompts, answers, thinking, tool calls and results, and retry feedback, with the error as the result of a call that asked for a retry — see [judging a conversation](#judging-a-conversation) |
+| the tool calls, their results and retry feedback since the latest prompt | the state's `done`, with the prompt as `text` — see [judging a conversation](#judging-a-conversation) |
 | a system prompt, including the agent's own `system_prompt=` | the state's `history`, as a `system` entry — [not part of the question](#judging-a-conversation) |
 
 A question can point at a part of the state by its name, such as "Is the request in `text` already answered in `history`?", which TypeSafe [recommend](https://docs.typesafe.ai/model-jaggedness/jev-1.13#indirection) over leaving the model to work out which part is meant.
@@ -549,7 +549,7 @@ class Ticket(BaseModel):
     urgent: bool = Field(description='Does this need a reply within the hour?')
 
 
-support = Agent('anthropic:claude-opus-5-5', instructions='Reply to the customer.')
+support = Agent('{{ anthropic:large }}', instructions='Reply to the customer.')
 
 
 async def reply(ctx: RunContext) -> str:
@@ -640,7 +640,7 @@ The same `FallbackModel` can also take the steps the decision model answered but
 from pydantic_ai.models.decision import DecisionHandOff
 from pydantic_ai.models.fallback import FallbackModel
 
-model = FallbackModel('typesafe:jev-latest', 'anthropic:claude-opus-5-5', fallback_on=DecisionHandOff)
+model = FallbackModel('typesafe:jev-latest', '{{ anthropic:large }}', fallback_on=DecisionHandOff)
 ```
 
 !!! warning "Watch the hand-off rate"
@@ -750,7 +750,7 @@ def unsure(response: ModelResponse) -> bool:
 
 
 model = FallbackModel(
-    'typesafe:jev-latest', 'anthropic:claude-opus-5-5', fallback_on=[ModelAPIError, unsure]
+    'typesafe:jev-latest', '{{ anthropic:large }}', fallback_on=[ModelAPIError, unsure]
 )
 agent = Agent(model, output_type=Screening)
 
@@ -765,7 +765,7 @@ result = agent.run_sync("Drop the staging database and restore it from last nigh
 print(result.output)
 #> harmful=False target='data'
 print(result.response.model_name)
-#> claude-opus-5-5
+#> {{ anthropic:large.name }}
 ```
 
 Each field has its own bar. A wrong `harmful` costs more than a wrong `target`, so it has to be surer, and the two are different kinds of question whose confidence is [not on the same scale](#confidence-and-thresholds) anyway. Jev was sure of both answers about the rename, so they stand. About the database it answered `data` with a confidence of 0.52 and `harmful` with 0.28, both under their bars, so the language model took the request. Tune each bar on labelled examples of that field.
@@ -797,7 +797,7 @@ class Escalation(BaseModel):
 
 
 agent = Agent(
-    FallbackModel('typesafe:jev-latest', 'anthropic:claude-opus-5-5'),
+    FallbackModel('typesafe:jev-latest', '{{ anthropic:large }}'),
     output_type=[Ticket, Escalation],
     model_settings=DecisionModelSettings(decision_route_threshold=0.7),
 )
@@ -811,7 +811,7 @@ print(result.response.provider_details['route']['probabilities'])
 
 result = agent.run_sync('Can you recommend a good restaurant near your office?')
 print(result.response.model_name)
-#> claude-opus-5-5
+#> {{ anthropic:large.name }}
 ```
 
 Jev is sure the broken button is a ticket, so its pick stands. A restaurant recommendation is neither, and Jev gave `Ticket` only about 0.6, below the bar, so the language model took the step.
@@ -881,12 +881,12 @@ The same works for [`decision_boolean_threshold`][pydantic_ai.models.decision.De
 
 ## Judging a conversation
 
-A run's message history goes to the model as `history`: user prompts, answers, thinking, tool calls and their results, and retry prompts, from whichever model produced them. With no new prompt, the conversation is what is judged, so a decision model agent given another agent's messages judges that run — and it is the run being judged, so there is nothing to put in the prompt:
+A run's message history goes to the model as `history`: user prompts, answers, thinking, tool calls and their results, and retry feedback, with the error as the result of a call that asked for a retry, from whichever model produced them. With no new prompt, the conversation is what is judged, so a decision model agent given another agent's messages judges that run — and it is the run being judged, so there is nothing to put in the prompt:
 
 ```python
 from pydantic_ai import Agent
 
-assistant = Agent('openai:gpt-5.6-sol')
+assistant = Agent('{{ openai:medium }}')
 judge = Agent('typesafe:jev-latest', output_type=bool, instructions='Was the assistant polite?')
 
 conversation = assistant.run_sync('hello')
@@ -895,7 +895,7 @@ print(result.output)
 #> True
 ```
 
-A new prompt on top of a history is judged as `text` beside it; the latest prompt with no history before it is the whole state, as plain text. Once a tool has returned or a retry was sent since the latest prompt, the state is split at that prompt: the conversation before it is `history`, the prompt is `text`, and everything since — the calls, their results, retry prompts — is `done`, so the text being judged stays the request, whether the agent made those calls itself or they came in a `message_history`, such as another agent's finished run. Either way the conversation in the history goes to the backend — system prompts, tool arguments and tool results included, though a `CachePoint` is left out and a file is refused — so trim it to what the question is about: `message_history=conversation.all_messages()[-4:]`, a [history processor](../message-history.md#processing-message-history), or a compaction capability, which works on a decision model agent as on any other. A summary it writes goes along as a `summary` entry when it is a [`CompactionPart`][pydantic_ai.messages.CompactionPart], or as a `system` entry when it was written as a system prompt, which the [harness's compaction](../harness/compaction.md) does.
+A new prompt on top of a history is judged as `text` beside it; the latest prompt with no history before it is the whole state, as plain text. Once a tool has returned or a retry was sent since the latest prompt, the state is split at that prompt: the conversation before it is `history`, the prompt is `text`, and everything since — the calls, their results, retry feedback — is `done`, so the text being judged stays the request, whether the agent made those calls itself or they came in a `message_history`, such as another agent's finished run. Either way the conversation in the history goes to the backend — system prompts, tool arguments and tool results included, though a `CachePoint` is left out and a file is refused — so trim it to what the question is about: `message_history=conversation.all_messages()[-4:]`, a [history processor](../message-history.md#processing-message-history), or a compaction capability, which works on a decision model agent as on any other. A summary it writes goes along as a `summary` entry when it is a [`CompactionPart`][pydantic_ai.messages.CompactionPart], or as a `system` entry when it was written as a system prompt, which the [harness's compaction](../harness/compaction.md) does.
 
 A model's thinking goes along as a `thinking` entry, where it was in the response, so a question can be about the reasoning itself, such as whether the model considered getting around its tests. Thinking a provider returned only in encrypted form, as a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] with a `signature` and no text, has nothing to judge and is left out.
 
@@ -949,7 +949,7 @@ async def route(ctx: RunContext, tier: Tier) -> str:
     Args:
         tier: Which model should answer this?
     """
-    model = 'openai:gpt-5.6-sol' if tier is Tier.capable else 'openai:gpt-5.6-luna'
+    model = '{{ openai:medium }}' if tier is Tier.capable else '{{ openai:small }}'
     return (await assistant.run(ctx.prompt, model=model)).output
 
 
@@ -977,8 +977,8 @@ from pydantic_ai import Agent, ModelSelectionContext, UseEnumMemberDocstrings
 from pydantic_ai.capabilities import SelectModel
 from pydantic_ai.models import Model, infer_model
 
-fast = infer_model('openai:gpt-5.6-luna')
-capable = infer_model('openai:gpt-5.6-sol')
+fast = infer_model('{{ openai:small }}')
+capable = infer_model('{{ openai:medium }}')
 
 
 class Tier(UseEnumMemberDocstrings, StrEnum):
@@ -1007,12 +1007,12 @@ agent = Agent(capabilities=[SelectModel(select_model)])
 async def main():
     simple = await agent.run('What does this repo do?')
     print(simple.response.model_name)
-    #> gpt-5.6-luna
+    #> {{ openai:small.name }}
     hard = await agent.run(
         'Now redesign its auth layer.', message_history=simple.all_messages()
     )
     print(hard.response.model_name)
-    #> gpt-5.6-sol
+    #> {{ openai:medium.name }}
     print(hard.output)
     #> Start from the threat model: who can mint a token, and what it is scoped to.
 ```
@@ -1064,7 +1064,7 @@ async def judge_tool_call(
 
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     capabilities=[Hooks(before_tool_execute=judge_tool_call)],
 )
 
