@@ -60,6 +60,7 @@ from pydantic_ai_harness import (
     BackgroundTools,
     Coder,
     Planning,
+    RelevanceCompaction,
     Researcher,
     SpendLimits,
     SSHWorkspace,
@@ -178,6 +179,10 @@ def _check_summarizing(merged: Any) -> None:
     assert merged.keep_messages == 7
 
 
+def _check_relevance(merged: Any) -> None:
+    assert merged.keep_tokens == 7
+
+
 def _check_system_reminders(merged: Any) -> None:
     # Additive sequences union, so every reminder either side declared still fires.
     assert [r.content for r in merged.reminders] == ['first', 'second']
@@ -229,6 +234,14 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one run identity per agent',
         lambda: (StepPersistence[Any](agent_name='first'), StepPersistence[Any](agent_name='second')),
         _check_step_persistence,
+    ),
+    'RelevanceCompaction': Combines(
+        'two would each judge every step, the second judging what the first already compacted',
+        lambda: (
+            RelevanceCompaction[Any](TestModel(), max_tokens=50, keep_tokens=3),
+            RelevanceCompaction[Any](TestModel(), max_tokens=50, keep_tokens=7),
+        ),
+        _check_relevance,
     ),
     'SummarizingCompaction': Combines(
         'two would each make a model call, the second summarizing the first summary',
@@ -399,6 +412,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'CodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
     'BrowserUse': Collides('its toolset registers its browser tools under fixed names'),
+    'SmartFileSearch': Collides(
+        'its toolset registers `smart_file_search` under a fixed name, and its judge `model` decides which '
+        'provider receives the source, so merging two could send it somewhere neither chose'
+    ),
     'PlaywrightBrowser': Narrows(
         'one browser per id, and its egress settings are an access boundary',
         lambda cls: (cls(), cls(allowed_domains=['example.com'])),
