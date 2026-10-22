@@ -229,10 +229,10 @@ _DISPLAY = ':1'
 
 _START_DESKTOP = (
     'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
-    'setsid Xvfb :1 -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>/tmp/.xvfb.log & xvfb=$!; i=0; '
+    f'setsid Xvfb :1 -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>{_PID_DIR}/xvfb.log & xvfb=$!; i=0; '
     'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
     'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
-    "echo 'the X server did not start:' >&2; tail -n 5 /tmp/.xvfb.log >&2; exit 1; fi; "
+    f"echo 'the X server did not start:' >&2; tail -n 5 {_PID_DIR}/xvfb.log >&2; exit 1; fi; "
     'sleep 0.1; i=$((i+1)); done; '
     'setsid fluxbox >/dev/null 2>&1 & '
     'fi; xdotool getdisplaygeometry'

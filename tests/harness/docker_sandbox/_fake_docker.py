@@ -83,14 +83,16 @@ exec)
     shift
     [ -f "$state/$name" ] || { echo "Error response from daemon: No such container: $name" >&2; exit 1; }
     [ "$name" != silent ] || exit 1
-    # Each container gets a directory of its own for the backend's PID files; a `readonly` one's isn't writable.
+    # Each container gets a directory of its own for the backend's run files; a `readonly` one's isn't writable.
     if [ "$1" = sh ] && [ "$2" = -c ]; then
         tmp="$state/$name.tmp"
         [ "$name" != readonly ] || tmp=/nonexistent-pydantic-ai-dir
         mkdir -p "$state/$name.tmp"
-        script=$(printf '%s' "$3" | sed "s#/run/pydantic-ai/#$tmp/#g")
-        shift 3
-        set -- sh -c "$script" "$@"
+        for arg; do
+            shift
+            case $arg in */run/pydantic-ai/*) arg=$(printf '%s' "$arg" | sed "s#/run/pydantic-ai/#$tmp/#g") ;; esac
+            set -- "$@" "$arg"
+        done
     fi
     # The stop script is the only exec with exactly `sh -c SCRIPT sh TAG`.
     if [ -f "$state/$name.hang-stop" ] && [ $# -eq 5 ]; then sleep 30; fi
