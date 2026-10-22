@@ -150,6 +150,9 @@ class Memory(AbstractCapability[AgentDepsT]):
     _resolved_scope: tuple[MemoryStore, str] | None = field(default=None, init=False, repr=False, compare=False)
 
     _run_snapshot: str | None = field(default=None, init=False, repr=False, compare=False)
+
+    _run_started: bool = field(default=False, init=False, repr=False, compare=False)
+    """Whether this run's first `before_model_request` call ran, which an earlier hook's retry can postpone."""
     """The snapshot the model reads as current during this run, kept so compaction can't take it away."""
 
     _toolset: MemoryToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
@@ -174,6 +177,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         clone = copy(self)
         clone._resolved_scope = None
         clone._run_snapshot = None
+        clone._run_started = False
         store, scope = clone._resolve_scope(ctx)
         clone._resolved_scope = (store.bind(ctx.workspace) if isinstance(store, FileStore) else store, scope)
         return clone
@@ -282,7 +286,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         """Record a memory snapshot in history at the start of a run, when memory changed since the last one.
 
         The snapshot is added to the conversation once and sent unchanged with every later request, so
-        history only ever grows. It is added only on a run's first request, with the user's prompt: later
+        history only ever grows. It is added only when a run's first request is prepared, with the user's prompt: later
         requests in a run carry tool results, where a block of user-channel text reads as a new message
         from the user. If compaction later in the run drops the snapshot the run started with, the same
         snapshot is put back where compaction rewrote the history, without reading the store again.
@@ -294,12 +298,13 @@ class Memory(AbstractCapability[AgentDepsT]):
         metadata = _snapshot_metadata(scope_hash, self.id)
         # Compaction replaces what came before its boundary, so a snapshot there is no longer seen by the model.
         latest = _latest_snapshot(post_compaction_window(ctx.messages), metadata)
-        if ctx.run_step > 1:
+        if self._run_started:
             if self._run_snapshot is not None and latest != self._run_snapshot:
                 _restore_snapshot(
                     ctx, request_context, UserPromptPart([TextContent(self._run_snapshot, metadata=metadata)])
                 )
             return request_context
+        self._run_started = True
         self._run_snapshot = latest
         # A run that continues from tool results without a prompt of its own (resuming after a deferred tool
         # approval) waits for the next prompt: a snapshot after tool results reads as a new user message.
@@ -342,7 +347,13 @@ class Memory(AbstractCapability[AgentDepsT]):
                 rendered = None
             appended = rendered if rendered is not None and rendered != latest else None
             if appended is not None:
-                ctx.enqueue(UserPromptPart([TextContent(appended, metadata=metadata)]))
+                part = UserPromptPart([TextContent(appended, metadata=metadata)])
+                if ctx.run_step > 1:
+                    # An earlier hook retried before this one ran, so the prompt is followed by its retry feedback:
+                    # the snapshot goes with the prompt, which no request has sent yet.
+                    _restore_snapshot(ctx, request_context, part)
+                else:
+                    ctx.enqueue(part)
                 self._run_snapshot = appended
             if span.is_recording():
                 span.set_attributes(
@@ -520,7 +531,8 @@ def _restore_snapshot(ctx: RunContext[AgentDepsT], request_context: ModelRequest
     the request ahead of it absorbs when sent. With no such prompt (native compaction mid tool loop leaves only
     the compacted response and the tool results), it joins the request being sent, after its tool results:
     anything before the boundary is dropped by the provider. This only happens on the request where compaction
-    rewrote the history, so the prefix that moves is the one compaction already moved.
+    rewrote the history, so the prefix that moves is the one compaction already moved. It also places a run's
+    first snapshot when an earlier hook retried the first request, whose prompt no request has sent yet.
     """
     history = ctx.messages
     boundary = next(

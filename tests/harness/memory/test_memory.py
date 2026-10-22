@@ -1834,6 +1834,37 @@ class TestInjection:
         assert all('- version B' in context for context in latest_sent)
         assert '- version B' in _memory_contexts(second.all_messages())[-1]
 
+    async def test_snapshot_is_recorded_when_an_earlier_hook_retries_the_first_request(self) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- likes tea')
+        sent: list[list[ModelMessage]] = []
+
+        @dataclass
+        class RetryFirstRequest(AbstractCapability[None]):
+            async def before_model_request(
+                self, ctx: RunContext[None], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                if ctx.run_step == 1:
+                    raise ModelRetry('Try that again.')
+                return request_context
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(messages)
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(model), deps_type=type(None), capabilities=[RetryFirstRequest(), Memory(store=store)]
+        )
+        result = await agent.run('what do I like?')
+
+        assert len(sent) == 1
+        [snapshot] = _memory_contexts(sent[0])
+        assert '- likes tea' in snapshot
+        # The snapshot stays with the prompt, ahead of the retry feedback.
+        history = result.all_messages()
+        assert _memory_request_indexes(history) == [1]
+        assert _user_text(history[:1]) == 'what do I like?'
+
     async def test_snapshot_without_user_prompt_goes_to_last_request(self) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- likes tea')
