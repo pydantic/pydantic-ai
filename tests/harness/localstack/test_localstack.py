@@ -466,6 +466,13 @@ class TestLocalStackHealth:
         result = await _toolset(endpoint_url=f'http://localhost:{unused_tcp_port()}').localstack_health()
         assert 'could not reach LocalStack' in result
 
+    async def test_connection_error_is_capped_before_dispatch(self) -> None:
+        """The durable operation records the method's own result, so the error must fit the cap there too."""
+        endpoint_url = f'http://localhost:{unused_tcp_port()}/' + 'p' * 1_000
+        result = await _toolset(endpoint_url=endpoint_url, max_output_chars=100).localstack_health()
+        assert len(result) <= 100
+        assert 'output truncated' in result
+
 
 class TestLocalStackCapability:
     def test_default_construction(self) -> None:
@@ -715,6 +722,21 @@ class TestContainerManagement:
         tools = await fresh.get_tools(_run_context())
         assert set(tools) == {'aws_cli', 'localstack_health', 'extra'}
         assert await _call_localstack_tool(fresh, 'extra') == 'extra'
+
+    async def test_bound_tool_carried_into_a_run_targets_its_container(self, tmp_path: Path) -> None:
+        docker, _ = _docker_stub(tmp_path)
+        aws = _make_stub(tmp_path, 'echo "$AWS_ENDPOINT_URL"')
+        with http_server([HttpResponse(200)]) as health:
+            toolset = _toolset(
+                endpoint_url=health.endpoint_url, manage_container=True, docker_path=docker, aws_cli_path=aws
+            )
+            toolset.add_function(toolset.aws_cli, name='aws_alias')
+            fresh = await toolset.for_run(_run_context())
+            assert isinstance(fresh, LocalStackToolset)
+            async with fresh:
+                via_alias = await _call_localstack_tool(fresh, 'aws_alias', command='s3 ls')
+                direct = await _call_localstack_tool(fresh, 'aws_cli', command='s3 ls')
+        assert via_alias == direct == f'[stdout]\nhttp://localhost.localstack.cloud:{health.port}\n'
 
     async def test_managed_ipv6_host_address_is_bracketed(self, tmp_path: Path) -> None:
         # `run` fails at once, so the published ports are checked without waiting for readiness.
