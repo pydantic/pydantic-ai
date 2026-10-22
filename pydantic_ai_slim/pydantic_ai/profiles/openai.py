@@ -412,8 +412,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
     [`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect] each run on their own
     named `stream_id` lane of the connection. When `False`, requests send no `stream_id` and take turns on the
     connection, since an endpoint that doesn't route events by `stream_id` would hand one request another's events.
-    Set by `OpenAIProvider` whatever its `base_url`, so a service reached through it that has no lanes, such as xAI or
-    Azure's `/openai/v1` endpoint, needs its dedicated provider or a profile with this set to `False`.
+    Set by `OpenAIProvider` whatever its `base_url`, so a service reached through it that has no lanes, such as xAI
+    or Azure's `/openai/v1` endpoint, needs
+    `profile=OpenAIModelProfile(openai_responses_supports_websocket_stream_id=False)` on its `OpenAIResponsesModel`.
     """
 
     openai_responses_requires_streaming: bool
