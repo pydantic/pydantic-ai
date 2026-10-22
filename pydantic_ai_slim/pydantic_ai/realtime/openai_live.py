@@ -2088,7 +2088,13 @@ class OpenAILiveModel(RealtimeModel):
         messages: Sequence[ModelMessage],
         settings: OpenAILiveModelSettings,
         native_tools: Sequence[AbstractNativeTool],
+        audio_format: bool = True,
     ) -> dict[str, Any]:
+        """The configuration Live starts the session with.
+
+        `audio_format=False` leaves out the audio format, which WebRTC negotiates on the media transport
+        (Live rejects one set there), so the profile's sample rates aren't consulted at all.
+        """
         delegation_settings = settings.get('openai_live_delegation', OpenAILiveResponsesDelegation())
         backend_instructions = '\n\n'.join(
             text for text in (instructions, delegation_settings.get('instructions')) if text
@@ -2136,19 +2142,26 @@ class OpenAILiveModel(RealtimeModel):
         if (verbosity := delegation_settings.get('verbosity')) is not None:
             responses['text'] = {'verbosity': verbosity}
 
+        audio = self._audio_config(settings, audio_format=audio_format)
         config: dict[str, Any] = {
             'model': self.model,
             'instructions': settings.get('openai_live_instructions', DEFAULT_LIVE_INSTRUCTIONS),
-            'audio': {'format': {'type': 'audio/pcm', 'rate': self._audio_rate()}},
+            **({'audio': audio} if audio else {}),
             'delegation': {'type': 'responses', 'responses': responses},
         }
-        if voice := settings.get('openai_voice'):
-            config['audio']['output'] = {'voice': voice}
         if settings.get('openai_live_store'):
             config['store'] = True
         if seed := seed_input_items(messages, provider_name=self.system):
             config['input'] = seed
         return config
+
+    def _audio_config(self, settings: OpenAILiveModelSettings, *, audio_format: bool) -> dict[str, Any]:
+        audio: dict[str, Any] = {}
+        if audio_format:
+            audio['format'] = {'type': 'audio/pcm', 'rate': self._audio_rate()}
+        if voice := settings.get('openai_voice'):
+            audio['output'] = {'voice': voice}
+        return audio
 
     def _audio_rate(self) -> int:
         """The PCM16 sample rate to run the session at, from the profile's audio rates.
@@ -2237,11 +2250,8 @@ class OpenAILiveModel(RealtimeModel):
             native_tools=[],
             messages=message_history or [],
             settings=settings,
+            audio_format=False,
         )
-        # WebRTC negotiates the audio format on the media transport, and Live rejects one set here.
-        del session_config['audio']['format']
-        if not session_config['audio']:
-            del session_config['audio']
         session_config['client'] = {'data_channel': settings.get('openai_live_data_channel', _CLOSED_DATA_CHANNEL)}
         with map_openai_api_errors(self.model_name):
             created = await self.client.live.create(

@@ -3004,6 +3004,27 @@ async def test_a_rejected_offer_is_an_http_error() -> None:
     assert exc_info.value.model_name == 'gpt-live-1'
 
 
+async def test_an_offer_ignores_the_profiles_sample_rates() -> None:
+    """WebRTC negotiates the audio format, so a rate the WebSocket path would reject doesn't stop a call."""
+    sent: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        return _created()
+
+    provider = OpenAIProvider(
+        api_key='sk-test', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    )
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        profile={'audio_input_sample_rate': 48000, 'audio_output_sample_rate': 48000},
+    )
+    await model.answer_webrtc_offer('v=0')
+
+    assert 'audio' not in sent[0]['session']
+
+
 async def test_unsupported_settings_raise_before_answering_an_offer() -> None:
     def handler(request: httpx2.Request) -> httpx2.Response:
         raise AssertionError('no HTTP request expected')  # pragma: no cover
