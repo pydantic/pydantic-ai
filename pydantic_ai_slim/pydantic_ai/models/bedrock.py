@@ -1268,6 +1268,10 @@ class BedrockConverseModel(Model[BaseClient]):
         elif variant == 'openai' and 'reasoning_effort' not in existing:
             if thinking is not False:  # Bedrock doesn't accept reasoning_effort='none'
                 existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
+        elif variant == 'openai_responses' and 'reasoning' not in existing:
+            # GPT-5.6 and GPT-6 reject `effort='minimal'`, so it maps to the closest level they accept.
+            effort = 'low' if thinking == 'minimal' else OPENAI_REASONING_EFFORT_MAP[thinking]
+            existing['reasoning'] = {'effort': effort}
         elif variant == 'qwen' and 'reasoning_config' not in existing:
             if thinking is not False:
                 # Qwen only supports low/high; map others to closest
@@ -2291,6 +2295,9 @@ def _effective_thinking_type(
     Explicit `bedrock_additional_model_requests_fields` take precedence over unified thinking,
     matching `_build_additional_model_request_fields`.
     """
+    if profile.get('bedrock_thinking_variant') == 'openai_responses':
+        # GPT-5.6 and GPT-6 accept a forced `toolChoice` while they reason, so none of these guards apply.
+        return None
     if model_settings and profile.get('bedrock_thinking_variant') == 'anthropic':
         additional_fields = model_settings.get('bedrock_additional_model_requests_fields')
         if additional_fields is not None and 'thinking' in additional_fields:

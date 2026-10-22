@@ -81,12 +81,17 @@ from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers.gateway import gateway_provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
-from ..cassette_utils import request_json, single_request_body
+from ..cassette_utils import (
+    get_bedrock_tool_names_from_cassette,
+    get_first_post_body,
+    request_json,
+    single_request_body,
+)
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, legacy_retry_prompt_part, try_import
 from .conftest import stream_bedrock_converse_mock
 
@@ -4081,6 +4086,71 @@ async def test_bedrock_thinking_false_openai_variant_silent_drop(
 
     sent = single_request_body(vcr)
     assert 'reasoning_effort' not in sent.get('additionalModelRequestFields', {})
+
+
+@pytest.mark.parametrize(
+    ('thinking', 'reasoning'),
+    [
+        (False, {'effort': 'none'}),
+        ('minimal', {'effort': 'low'}),
+        ('xhigh', {'effort': 'xhigh'}),
+    ],
+)
+async def test_bedrock_thinking_openai_responses_variant(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    vcr: Cassette,
+    thinking: ThinkingLevel,
+    reasoning: dict[str, str],
+) -> None:
+    """GPT-5.6 on Converse takes unified `thinking` as the Responses API `reasoning` object.
+
+    `thinking=False` sends `effort='none'` and the model answers without reasoning; `'minimal'`, which
+    GPT-5.6 rejects, maps to `'low'`.
+    """
+    model = BedrockConverseModel('us.openai.gpt-5.6-luna', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking=thinking))
+    result = await agent.run(
+        'How many positive integers below 10000 have a digit sum of exactly 20? Reply with only the number.'
+    )
+
+    sent = single_request_body(vcr)
+    assert sent['additionalModelRequestFields'] == {'reasoning': reasoning}
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert any(isinstance(part, ThinkingPart) for part in response.parts) is (thinking is not False)
+
+
+async def test_bedrock_thinking_openai_responses_variant_keeps_tool_output(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """GPT-5.6 and GPT-6 accept a forced tool choice while they reason, so `thinking` leaves Tool Output in place.
+
+    The guards for the other non-Anthropic variants would raise a `UserError` here or switch to prompted output.
+    """
+
+    class DigitCount(BaseModel):
+        count: int
+
+    model = BedrockConverseModel('us.openai.gpt-5.6-luna', provider=bedrock_provider)
+    agent = Agent(model, output_type=ToolOutput(DigitCount), model_settings=ModelSettings(thinking='low'))
+    result = await agent.run('How many positive integers below 10000 have a digit sum of exactly 20?')
+
+    assert result.output == snapshot(DigitCount(count=633))
+    assert get_first_post_body(vcr)['additionalModelRequestFields'] == {'reasoning': {'effort': 'low'}}
+    assert get_bedrock_tool_names_from_cassette(vcr) == snapshot(['final_result'])
+
+
+async def test_bedrock_thinking_false_openai_responses_variant_always_on(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """GPT-6 Astra rejects `effort='none'`, so `thinking=False` is dropped rather than sent."""
+    model = BedrockConverseModel('global.openai.gpt-6-astra', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking=False))
+    await agent.run('Reply with the single word: ok')
+
+    sent = single_request_body(vcr)
+    assert 'additionalModelRequestFields' not in sent
 
 
 async def test_bedrock_thinking_high_qwen_variant(
