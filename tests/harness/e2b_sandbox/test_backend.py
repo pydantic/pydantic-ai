@@ -28,6 +28,7 @@ from e2b.exceptions import (
 )
 
 from pydantic_ai.workspaces import (
+    CommandResult,
     Workspace,
     WorkspaceError,
     WorkspaceOutputLimitError,
@@ -884,6 +885,36 @@ class TestFilesystem:
         await E2BSandboxBackend().remove(str(tmp_path.resolve() / 'dangling'))
         assert not (tmp_path / 'dangling').is_symlink()
 
+    async def test_a_stalled_remove_probe_names_the_remove(
+        self, fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A missing path is checked for a dangling link with `test -L`; its deadline is internal.
+        monkeypatch.setattr('pydantic_ai_harness.e2b_sandbox._backend._INTERNAL_EXEC_TIMEOUT', 0.05)
+        backend = await started()
+        fake_e2b.command_hangs = True
+        with anyio.fail_after(5):
+            with pytest.raises(WorkspaceTimeoutError, match="Could not remove '/tmp/missing': the E2B sandbox"):
+                await backend.remove('/tmp/missing')
+
+    async def test_a_failed_remove_names_the_path(
+        self, fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake_e2b.host_root = tmp_path.resolve()
+        target = tmp_path.resolve() / 'busy'
+        target.write_bytes(b'data')
+        backend = E2BSandboxBackend()
+        await backend.get_sandbox()
+        error = SandboxException(f'500: remove {target}: device or resource busy')
+
+        async def refuse(path: str, user: str | None = None, request_timeout: float | None = None) -> None:
+            raise error
+
+        monkeypatch.setattr(fake_e2b.sandboxes[0].files, 'remove', refuse)
+        with pytest.raises(WorkspaceError, match=f'Could not remove {re.escape(repr(str(target)))}') as exc:
+            await backend.remove(str(target))
+        assert exc.value.__cause__ is error
+        assert target.exists()
+
     @pytest.mark.parametrize('operation', ['read_bytes', 'stat', 'list_dir', 'remove'])
     async def test_a_missing_path_raises_the_builtin_error(self, fake_e2b: FakeE2B, operation: str) -> None:
         # The protocol's contract: backends translate their SDK's own missing-file exception
@@ -1135,6 +1166,20 @@ async def test_a_stalled_fifo_probe_names_the_read(fake_e2b: FakeE2B, monkeypatc
     with anyio.fail_after(5):
         with pytest.raises(WorkspaceTimeoutError, match="Could not read '/file': the E2B sandbox did not answer"):
             await backend.read_bytes('/file')
+
+
+async def test_a_probe_timeout_keeps_the_partial_output(fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch) -> None:
+    # `WorkspaceTimeoutError` carries partial output, and durable engines serialize it; renaming the
+    # operation must not drop it.
+    backend = await started()
+
+    async def stalled(*args: object, **kwargs: object) -> CommandResult:
+        raise WorkspaceTimeoutError('Command timed out after 10 seconds', stdout='partial out', stderr='partial err')
+
+    monkeypatch.setattr(backend, 'run', stalled)
+    with pytest.raises(WorkspaceTimeoutError, match='Could not determine the working directory') as exc:
+        await backend.working_dir()
+    assert (exc.value.stdout, exc.value.stderr) == ('partial out', 'partial err')
 
 
 def _path_without_ps(tmp_path: Path) -> str:
