@@ -16,6 +16,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
     CachePoint,
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -1063,6 +1064,29 @@ class TestLLMReminder:
                 # Append-only: every earlier record is sent again, note and quoted text together.
                 assert texts.count(f'<system>{_LLM_NOTE}</system>') == number
                 assert texts.count(_llm_data('refocus')) == number
+
+    @pytest.mark.parametrize('user_after_boundary', [False, True])
+    async def test_transcript_starts_at_the_compaction_boundary(self, user_after_boundary: bool) -> None:
+        # The agent model works from the latest compaction summary on, so the reminder model sees the same:
+        # the summary, then only what came after the boundary, which here falls inside a response.
+        store: dict[str, str] = {}
+        after: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('now ship it')])] if user_after_boundary else []
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('compacted goal')]),
+            ModelResponse(
+                parts=[TextPart('before boundary'), CompactionPart(content='earlier work'), TextPart('after boundary')]
+            ),
+            *after,
+        ]
+        await LLMReminder(model=_capture_model(store))(_ctx(messages=messages))
+        goal = 'Original goal:\n<goal>\nnow ship it\n</goal>\n\n' if user_after_boundary else ''
+        user = '\n<message role="user">\nnow ship it\n</message>' if user_after_boundary else ''
+        assert store['prompt'] == (
+            'Summary of earlier conversation:\n<summary>\nearlier work\n</summary>\n\n'
+            f'{goal}'
+            'Recent activity:\n<message role="assistant">\nafter boundary\n</message>'
+            f'{user}'
+        )
 
     async def test_truncates_recent(self) -> None:
         store: dict[str, str] = {}
