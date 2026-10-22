@@ -44,7 +44,6 @@ from pydantic_ai import (
     RunUsage,
     SystemPromptPart,
     TextPart,
-    TextPartDelta,
     Tool,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -2220,7 +2219,7 @@ async def test_durability_run_stream_in_workflow(client: Client) -> None:
 
     The model streams inside the request-stream activity — the capability's handler sees the model
     events with `activity.in_activity()` true — and the workflow-side `StreamedRunResult` is fed by
-    the events the activity captured off the live stream, so it stays deterministic across replays.
+    the activity's final response, one event per part, so it stays deterministic across replays.
     The single text delta is not a durability artifact: `run_stream()` consumes events up to the
     `FinalResultEvent` before yielding, so `stream_text(delta=True)` returns the same one chunk for
     this model outside a workflow.
@@ -2297,9 +2296,6 @@ async def test_durability_run_stream_events_in_workflow(client: Client) -> None:
             'ToolAvailabilityDeltaEvent',
             'PartStartEvent',
             'FinalResultEvent',
-            'PartDeltaEvent',
-            'PartDeltaEvent',
-            'PartDeltaEvent',
             'PartEndEvent',
             'AgentRunResultEvent',
         ]
@@ -2362,14 +2358,19 @@ _process_durable_agent = Agent(
 @workflow.defn
 class ProcessStreamDurableAgentWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> tuple[str, list[bool], list[str]]:
+    async def run(self, prompt: str) -> tuple[str, list[bool], list[str], list[str]]:
         result = await _process_durable_agent.run(prompt)
-        text_chunks = [
-            event.delta.content_delta
+        model_event_kinds = [
+            type(event).__name__
             for event in _process_events_collected
-            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta)
+            if isinstance(event, (PartStartEvent, PartDeltaEvent))
         ]
-        return result.output, _process_model_events_in_activity, text_chunks
+        text_parts = [
+            event.part.content
+            for event in _process_events_collected
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart)
+        ]
+        return result.output, _process_model_events_in_activity, text_parts, model_event_kinds
 
 
 def test_durability_tool_metadata_disables_activity():
@@ -2542,7 +2543,7 @@ async def test_durability_mcp_instructions_use_operation_activity_summary(monkey
 
 
 async def test_durability_process_event_stream_fires_workflow_side(client: Client):
-    """ProcessEventStream sees the real captured events replayed in the workflow."""
+    """ProcessEventStream sees the activity's final response replayed in the workflow, each part complete."""
     _process_events_collected.clear()
     _process_model_events_in_activity.clear()
     async with Worker(
@@ -2551,7 +2552,7 @@ async def test_durability_process_event_stream_fires_workflow_side(client: Clien
         workflows=[ProcessStreamDurableAgentWorkflow],
         plugins=[AgentPlugin(_process_durable_agent)],
     ):
-        output, model_events_in_activity, text_chunks = await client.execute_workflow(
+        output, model_events_in_activity, text_parts, model_event_kinds = await client.execute_workflow(
             ProcessStreamDurableAgentWorkflow.run,
             args=['Hello'],
             id=ProcessStreamDurableAgentWorkflow.__name__,
@@ -2561,7 +2562,8 @@ async def test_durability_process_event_stream_fires_workflow_side(client: Clien
         assert model_events_in_activity
         assert not any(model_events_in_activity)
 
-    assert text_chunks == ['ed ', 'response']
+    assert text_parts == ['Streamed response']
+    assert model_event_kinds == ['PartStartEvent']
 
 
 # --- Capability events emitted workflow-side reach the handler activity ---
@@ -5316,8 +5318,8 @@ def _text_part_indices(events: list[AgentStreamEvent]) -> list[tuple[str, int]]:
 async def test_durability_streaming_continuation_chain_in_workflow(client: Client):
     """A streamed suspended → complete chain is stitched across per-segment activities.
 
-    `ProcessEventStream` receives each captured segment in workflow code, and the
-    final response merges both segments' text with usage summed once.
+    `ProcessEventStream` receives each segment's final response in workflow code, one event per
+    part, and the final response merges both segments' text with usage summed once.
     """
     _continuation_stream_model.reset(
         segments=[
@@ -5354,9 +5356,7 @@ async def test_durability_streaming_continuation_chain_in_workflow(client: Clien
     assert usage.requests == 1
     assert usage.input_tokens == 8
     assert usage.output_tokens == 6
-    assert indices == snapshot(
-        [('PartStartEvent', 0), ('PartDeltaEvent', 0), ('PartStartEvent', 1), ('PartDeltaEvent', 1)]
-    )
+    assert indices == snapshot([('PartStartEvent', 0), ('PartStartEvent', 1)])
     assert _continuation_stream_model.request_stream_calls == 2
     assert _scheduled_activity_count(history) == 2
 
@@ -5399,12 +5399,7 @@ async def test_durability_streaming_continuation_resume_from_history(client: Cli
     assert isinstance(response, ModelResponse)
     assert response.state == 'complete'
     assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
-    assert indices == snapshot(
-        [
-            ('PartStartEvent', 1),
-            ('PartDeltaEvent', 1),
-        ]
-    )
+    assert indices == snapshot([('PartStartEvent', 1)])
     assert _continuation_stream_model.request_stream_calls == 1
 
 
