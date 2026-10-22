@@ -83,7 +83,6 @@ Add existing topic labels for every subject materially covered by the final titl
 Ignore incidental references, checklist text, and verification boilerplate when choosing topics.
 Remove topic labels only when the final scope no longer supports those labels.
 Preserve size, priority, review, and automation labels. Do not create or rename labels unless the user requests that change.
-Never add or remove an `approved:<scope>` label. A maintainer applies it by hand to vouch for that scope's changes, and the `PR Gates` check cannot tell an agent working under a maintainer's token from the maintainer.
 Apply label additions and removals in a batch with the title/body update. Verify the resulting metadata.
 
 Apply exactly one package label: `pkg:core`, `pkg:harness`, `pkg:clai2`, `pkg:evals`, `pkg:graph` or `pkg:clai`.
