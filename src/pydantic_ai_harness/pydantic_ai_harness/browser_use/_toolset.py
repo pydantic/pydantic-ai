@@ -277,18 +277,20 @@ def _secret_placeholders(sensitive_data: dict[str, str | dict[str, str]] | None)
     secrets: list[tuple[str, str]] = []
     for key, value in sensitive_data.items():
         secrets.extend(value.items() if isinstance(value, dict) else [(key, value)])
+    named = [(value, f'<secret>{key}</secret>') for key, value in secrets if value]
     placeholders: dict[str, str] = {}
-    for key, value in secrets:
-        if value:
-            placeholder = f'<secret>{key}</secret>'
-            # Mapped to itself so a placeholder already in the text is consumed whole,
-            # before a value it happens to contain can match inside it.
-            placeholders.setdefault(placeholder, placeholder)
-            placeholders.setdefault(value, placeholder)
-            placeholders.setdefault(json.dumps(value, ensure_ascii=False)[1:-1], placeholder)
-            # `surrogatepass` keeps a lone surrogate (as `os.environ` decodes invalid UTF-8) from raising.
-            placeholders.setdefault(quote_plus(value, errors='surrogatepass'), placeholder)
-            placeholders.setdefault(quote(value, errors='surrogatepass'), placeholder)
+    # Placeholders and raw values first, so a text that is one secret's value and another's
+    # encoded form keeps the placeholder of the secret whose value it is.
+    for value, placeholder in named:
+        # Mapped to itself so a placeholder already in the text is consumed whole,
+        # before a value it happens to contain can match inside it.
+        placeholders.setdefault(placeholder, placeholder)
+        placeholders.setdefault(value, placeholder)
+    for value, placeholder in named:
+        placeholders.setdefault(json.dumps(value, ensure_ascii=False)[1:-1], placeholder)
+        # `surrogatepass` keeps a lone surrogate (as `os.environ` decodes invalid UTF-8) from raising.
+        placeholders.setdefault(quote_plus(value, errors='surrogatepass'), placeholder)
+        placeholders.setdefault(quote(value, errors='surrogatepass'), placeholder)
     return placeholders
 
 

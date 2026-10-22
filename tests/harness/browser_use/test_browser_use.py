@@ -1443,6 +1443,20 @@ class TestSensitiveDataSafety:
             'Navigation to non-allowed URL: https://evil.example/<secret>x_password</secret>).'
         )
 
+    async def test_a_value_equal_to_another_secret_s_encoding_keeps_its_own_placeholder(
+        self, kill_calls: list[BrowserSession]
+    ) -> None:
+        """`p%40ss+word` is `b` itself and `a` URL-encoded; the secret whose value it is names it."""
+        history = _FakeHistory(step_errors=['typed p%40ss+word'])
+        capability = BrowserUse[None](
+            sensitive_data={'https://safe.example': {'a': 'p@ss word', 'b': 'p%40ss+word'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert result == 'The browser agent stopped without producing a result (typed <secret>b</secret>).'
+
     async def test_secret_with_a_lone_surrogate_is_redacted(self, kill_calls: list[BrowserSession]) -> None:
         """`os.environ` decodes invalid UTF-8 as lone surrogates, which strict URL encoding cannot encode."""
         history = _FakeHistory(step_errors=['typed hunter\udcff2'])
