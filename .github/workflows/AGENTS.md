@@ -44,7 +44,8 @@ without error and evaluates to the empty string, silently discarding the review.
 
 The `CI Review` agent job queues in the engine concurrency group its own
 `engine.concurrency` sets (`queue: max`), so one review runs at a time across all PRs.
-`eligibility` can therefore decide hours before the model starts. The pre-agent step
+`eligibility` and `provider_health` can therefore decide hours before the model starts.
+Provider health is checked again at agent start; see [Z.AI provider health](#zai-provider-health). The pre-agent step
 `Skip a PR that closed or moved on while queued` writes a `noop` to safe outputs when the
 PR has closed or moved to a new head. The engine's gh-aw harness must exit on a pre-written
 `noop` before it starts the model. gh-aw's `claude_harness.cjs` does this
@@ -222,11 +223,29 @@ If a workflow has a local engine config, forward the same workflow, event, and
 stable task-key values that `shared/engine-zai.md` forwards.
 
 The provider-health job checks out the default branch and runs outside the agent
-container. Keep `ZAI_API_KEY` scoped to that job. It writes a decision summary
-and the `provider-health` artifact on blocked decisions. A blocked gate must skip
+container. It writes a decision summary and the `provider-health` artifact on blocked
+decisions. A blocked gate must skip
 inference without emitting a passing review or other fabricated agent result. The
 non-model provider-health monitor owns incident issue creation and recovery; do not
 enable gh-aw's generic failure-as-issue reporting for these workflows.
+
+The agent job waits for its engine concurrency slot after `provider_health` decides,
+sometimes for hours. Incidents and quota exhaustion from that wait must still stop
+inference. `shared/provider-health.md` therefore reruns the same check as the agent job's
+first pre-agent step, before any workspace script runs:
+
+- It fetches the controller from the default branch through the contents API. Do not run a
+  workspace copy: the workspace can hold the PR head or its base branch.
+- It forwards the same environment as the `provider_health` job.
+- It replaces the `provider-health` artifact, so the monitor reconciles the decision the run
+  acted on. Against the earlier decision, the blocked run reads as a setup failure.
+- A blocked decision fails the agent job before the engine step. Do not write a `noop`
+  instead: `detection` runs on any agent output and would send one more request to the
+  blocked provider.
+
+A blocked recheck concludes the run as `failure`. For **CI Review**, `flag_failed_review`
+then labels the PR `ci-review-failed`. Keep `ZAI_API_KEY` in the `provider_health` job and
+these host steps. The agent container gets no Z.AI credential beyond the engine's own.
 
 Older compiled workflows that pass `MINIMAX_API_KEY` without a `ZAI_API_KEY`
 environment entry are intentionally blocked without an operational incident.
@@ -308,7 +327,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | Check | Rejects | Why it matters |
 |---|---|---|
 | `dangling-needs` | any `if:`, `outputs:`, `env:`, `with:` or `run:` referencing `needs.<job>` where `<job>` isn't a dependency of that job (outside `if:`, only inside `${{ }}` — elsewhere the text is literal) | The expression evaluates to empty rather than failing. In `if:` that skips the job or step — and **a job skipped by `if:` reports success**, so the required check stays green while the agent never runs. In `outputs:`/`env:`/`with:`/`run:` nothing skips at all: the step runs with an empty value, so a wrong action call or shell variable goes through looking healthy. This is the mechanical enforcement of ["A custom job named in `if:` must also appear in the prompt"](#a-custom-job-named-in-if-must-also-appear-in-the-prompt) — it reads the recompiled lock, so it catches the missing prompt reference whatever the cause. |
-| `provider-health-*` | a Z.AI source missing the shared gate, generic failure reporting left enabled, a compiled activation graph that cannot see `provider_health`, or a monitor that accepts unlisted workflows or itself | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. |
+| `provider-health-*` | a Z.AI source missing the shared gate, generic failure reporting left enabled, a compiled activation graph that cannot see `provider_health`, an agent job that does not rerun the default-branch check with the gate's environment and stop before its engine step, or a monitor that accepts unlisted workflows or itself | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. |
 | `provider-engine-config` | a shared threat-detection engine or workflow-local engine override whose endpoint or credential differs from the shared primary engine, or an empty shared primary endpoint or credential | Engine overrides drift when the provider endpoint or secret changes, which can send requests to the wrong provider or make them fail authentication. |
 | `assigned-alert-metadata-gate` | the `@claude` issue and comment entry points lack an exclusion for `pydanty:meta` issues | Operational incidents may mention `@claude`; assigning or commenting on the alert must not start an agent on controller metadata. |
 | `safe-output-job-max` | a `safe-outputs.jobs.*` entry with no `max:` | The default is 1; extra items land in an `errors` array nothing reads. Set it explicitly even when 1 is right. |
