@@ -649,8 +649,8 @@ class ModelUnavailableError(ModelAPIError):
     """Raised when the provider or model was temporarily unable to serve the request.
 
     For example an HTTP 503, Bedrock's `ServiceUnavailableException`, or a gRPC `UNAVAILABLE` sent by the provider,
-    whether it arrived as an HTTP status or inside a stream. When the provider says the cause is load, it's the more specific
-    [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError].
+    whether it arrived as an HTTP status or inside a stream. When the provider says the cause is load, it's the more
+    specific [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError].
     """
 
 
