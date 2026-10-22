@@ -30,8 +30,6 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestAttempt,
     ModelResponse,
-    RunCancelled,
-    RunTimedOut,
     TextPart,
     ToolCallPart,
     ToolDefinition,
@@ -41,7 +39,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._agent_graph import ModelRequestNode
-from pydantic_ai._run_context import RunContext, get_current_run_context
+from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import (
@@ -2126,46 +2124,6 @@ async def test_rejected_usage_counts_towards_token_limits() -> None:
 
     with pytest.raises(UsageLimitExceeded, match='Exceeded the input_tokens_limit of 100 \\(input_tokens=120\\)'):
         await Agent(model).run('test', usage_limits=UsageLimits(input_tokens_limit=100))
-
-
-@pytest.mark.parametrize('stop', ['timeout', 'cancel'])
-async def test_rejected_usage_survives_a_stopped_run(stop: str) -> None:
-    """A rejected response's usage counts towards the run as soon as it's rejected, not once another model answers.
-
-    So a run that times out or is cancelled while the next model is still running keeps it. The backup model
-    stops the run once it starts, as its timer or `cancel()` would, so the run stops at that exact point.
-    """
-
-    def rejected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(input_tokens=1000, output_tokens=500))
-
-    async def stop_run(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        ctx = get_current_run_context()
-        assert ctx is not None
-        if stop == 'timeout':
-            cancellation = ctx._cancellation  # pyright: ignore[reportPrivateUsage]
-            assert cancellation is not None
-            cancellation.expire()
-        else:
-            ctx.cancel()
-        await asyncio.Event().wait()
-        raise AssertionError('unreachable')  # pragma: no cover
-
-    def reject_primary(response: ModelResponse) -> bool:
-        return response.model_name == 'primary'
-
-    agent = Agent(
-        FallbackModel(
-            FunctionModel(rejected, model_name='primary'),
-            FunctionModel(stop_run, model_name='backup'),
-            fallback_on=reject_primary,
-        )
-    )
-
-    with pytest.raises(RunCancelled) as exc_info:
-        await agent.run('test', timeout=60)
-    assert isinstance(exc_info.value, RunTimedOut) == (stop == 'timeout')
-    assert exc_info.value.usage == snapshot(RunUsage(input_tokens=1000, output_tokens=500))
 
 
 async def test_rejected_usage_survives_an_error_fallback_on_does_not_cover() -> None:

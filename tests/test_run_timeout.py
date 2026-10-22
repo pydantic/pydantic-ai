@@ -159,6 +159,42 @@ async def test_stop_during_a_continuation_keeps_the_suspended_segment_usage(stop
     assert exc_info.value.usage == snapshot(RunUsage(input_tokens=10, output_tokens=2))
 
 
+@pytest.mark.parametrize('stop', ['timeout', 'cancel'])
+async def test_stop_during_a_fallback_keeps_the_rejected_response_usage(stop: str):
+    """A `FallbackModel`-rejected response's usage counts when the run stops while the next model is running."""
+    contexts: list[RunContext[object]] = []
+
+    def rejected(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(input_tokens=1000, output_tokens=500))
+
+    async def stop_then_block(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if stop == 'timeout':
+            _expire(contexts[-1])
+        else:
+            contexts[-1].cancel()
+        return await _never_returns(messages, info)
+
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'primary'
+
+    agent = Agent(
+        FallbackModel(
+            FunctionModel(rejected, model_name='primary'),
+            FunctionModel(stop_then_block, model_name='backup'),
+            fallback_on=reject_primary,
+        )
+    )
+
+    @agent.instructions
+    def capture_context(ctx: RunContext[object]) -> None:
+        contexts.append(ctx)
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await agent.run('go', timeout=LONG_TIMEOUT)
+    assert isinstance(exc_info.value, RunTimedOut) == (stop == 'timeout')
+    assert exc_info.value.usage == snapshot(RunUsage(input_tokens=1000, output_tokens=500))
+
+
 async def test_timeout_during_tool_call_keeps_resumable_state():
     agent = Agent(FunctionModel(_call_slow_tool))
 

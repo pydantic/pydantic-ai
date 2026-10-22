@@ -1231,17 +1231,19 @@ def _check_continuation_usage(
 ) -> None:
     """Enforce token limits mid-turn against a provisional total during continuations.
 
-    Continuation segments accumulate usage but aren't committed to the run usage until the
-    final merged response is appended exactly once by `ModelRequestNode._append_response`
-    (so a continuation isn't double-counted, nor counted as a separate request step). To
-    still fail fast when a segment blows the token budget, check the limit against a
-    throwaway copy of the run usage plus the accumulated continuation usage. Works both in
+    Continuation segments accumulate usage that's committed to the run usage once, when the
+    request ends: with the final merged response, or with the partial merged response when the
+    request raises (this check included), is cancelled or times out. So a continuation isn't
+    double-counted, nor counted as a separate request step. To still fail fast when a segment
+    blows the token budget, check the limit against a throwaway copy of the run usage plus the
+    accumulated continuation usage. Works both in
     the agent graph (where `run_context.usage` is the live run usage) and inside a durable
     boundary (where it's the serialized snapshot the activity/step/task received — the final
     workflow-side check still applies when the merged response is committed).
 
     `attempts` are the turn's failed attempts (e.g. responses a `FallbackModel` rejected before the one
-    that suspended), whose usage is committed alongside the merged response's.
+    that suspended) whose usage isn't on `run_context.usage` yet: the agent graph commits a rejected
+    response's usage as soon as it's rejected, so the caller leaves those out.
     """
     if run_context.usage_limits:
         provisional = deepcopy(run_context.usage)
@@ -1270,8 +1272,9 @@ async def model_request(
     OpenAI background mode), echoing each suspended response back and merging the segments
     into one response. Only the final merged response is returned, so `wrap_model_request`
     spans the whole chain and `after_model_request` sees just the final response.
-    Continuations are not separate request steps, so usage is committed exactly once when
-    the merged response is appended to history. When `request_context.messages` ends in a
+    Continuations are not separate request steps, so usage is committed exactly once, by the
+    caller: when the merged response is appended to history, or, with the partial merged response
+    `on_progress` last reported, when the request stops early. When `request_context.messages` ends in a
     suspended `ModelResponse` (a resumed run), that response seeds the loop.
 
     Under the bundled durable-execution capabilities (Temporal/DBOS/Prefect) this loop runs
@@ -1867,7 +1870,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         _handler_called = False
         _handler_usage_recorded = False
         accounted_responses: list[_messages.ModelResponse] = []
-        failed_attempts = _FailedAttemptCommits(ctx.state.usage)
+        committed = _FailedAttemptCommits(ctx.state.usage)
 
         async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
             nonlocal _handler_called, _handler_response, _handler_usage_recorded
@@ -1890,40 +1893,36 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
             capture_model_request_span_context(req_ctx)
             try:
-                with committing_failed_attempts(failed_attempts.commit):
+                with committing_failed_attempts(committed.commit):
                     response = await model_request(
                         req_ctx.model,
                         request_context=req_ctx,
                         run_context=run_context,
                         on_progress=on_progress,
-                        committed_attempts=failed_attempts.attempts,
+                        committed_attempts=committed.attempts,
                     )
                 _handler_response = response
                 _handler_usage_recorded = True
                 self._record_response_usage(
-                    ctx, response, request_context=req_ctx, committed_attempts=failed_attempts.attempts
+                    ctx, response, request_context=req_ctx, committed_attempts=committed.attempts
                 )
                 accounted_responses.append(response)
             except exceptions.ModelRetry:
                 raise
-            except Exception as e:
+            except BaseException as e:
+                # The segments of a continued response were billed, however the request stopped: by an
+                # error, a usage limit, or the run being cancelled or timing out.
                 if _handler_response is not None:
                     _handler_usage_recorded = True
                     self._record_response_usage(
-                        ctx, _handler_response, request_context=req_ctx, committed_attempts=failed_attempts.attempts
+                        ctx, _handler_response, request_context=req_ctx, committed_attempts=committed.attempts
                     )
                     accounted_responses.append(_handler_response)
+                if not isinstance(e, Exception):
+                    raise
                 response = await self._recover_model_request_error(
-                    ctx, run_context, req_ctx, e, committed_attempts=failed_attempts.attempts
+                    ctx, run_context, req_ctx, e, committed_attempts=committed.attempts
                 )
-            except BaseException:
-                # The run was cancelled or timed out, but the segments of a continued response were billed.
-                if _handler_response is not None:
-                    _handler_usage_recorded = True
-                    self._record_response_usage(
-                        ctx, _handler_response, request_context=req_ctx, committed_attempts=failed_attempts.attempts
-                    )
-                raise
             _handler_response = response
             capture_model_response_span_context(req_ctx, response)
             return await ctx.deps.root_capability.after_model_request(
@@ -1954,7 +1953,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     ctx,
                     _handler_response,
                     record_usage=not _handler_usage_recorded,
-                    committed_attempts=failed_attempts.attempts,
+                    committed_attempts=committed.attempts,
                 )
             return await self._build_retry_node(ctx, e)
 
@@ -1963,7 +1962,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx,
             model_response,
             record_usage=not _handler_usage_recorded,
-            committed_attempts=failed_attempts.attempts,
+            committed_attempts=committed.attempts,
         )
 
     async def _prepare_request(
