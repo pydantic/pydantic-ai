@@ -486,19 +486,30 @@ class UsesModels(AbstractCapability):
             validate_capability_file(_write(tmp_path, 'n', NO_SUBCLASS_CODE))
         assert set(sys.modules) - before == set()
 
-    def test_failed_load_restores_module_registration(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        'broken_code',
+        [
+            'raise RuntimeError("boom")\n',
+            'from pydantic_ai.capabilities import AbstractCapability\n\n'
+            'class Broken(AbstractCapability):\n'
+            '    def __init__(self):\n'
+            '        raise RuntimeError("boom")\n',
+        ],
+        ids=['module-body', 'constructor'],
+    )
+    def test_failed_load_restores_module_registration(self, tmp_path: Path, broken_code: str) -> None:
         path = _write(tmp_path, 'm', VALID_CODE)
         load_capability_instance(path)
         [name] = [
             name for name, module in sys.modules.items() if getattr(module, '__file__', None) == str(path.resolve())
         ]
         loaded = sys.modules[name]
-        path.write_text('raise RuntimeError("boom")\n', encoding='utf-8')
+        path.write_text(broken_code, encoding='utf-8')
         with pytest.raises(CapabilityValidationError, match='boom'):
             load_capability_instance(path)
         assert sys.modules[name] is loaded
 
-        broken = _write(tmp_path, 'never_loaded', 'raise RuntimeError("boom")\n')
+        broken = _write(tmp_path, 'never_loaded', broken_code)
         with pytest.raises(CapabilityValidationError, match='boom'):
             load_capability_instance(broken)
         assert str(broken.resolve()) not in {getattr(module, '__file__', None) for module in sys.modules.values()}
