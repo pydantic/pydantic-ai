@@ -823,7 +823,9 @@ class _OpenAIJsonSchemaTransformer(_OpenAIGuardedJsonSchemaTransformer):  # pyri
         if self._normalized_single_item_tuple and self._has_non_definition_ref:
             # This walk has no path context, so a non-definition ref might target a changed `items` or removed
             # `prefixItems` node. Wait until the full walk to catch refs before or after the array, then rerun the
-            # guarded transformer on the original schema to preserve its reference behavior.
+            # guarded transformer on the original schema to preserve its reference behavior. The base walk never
+            # visits `not`, `if`/`then`/`else`, `propertyNames` or `contains`, so a ref inside those subtrees misses
+            # this check and can dangle after normalization.
             transformer = _OpenAIGuardedJsonSchemaTransformer(self.schema, strict=self.strict)
             result = transformer.walk()
             self.is_strict_compatible = transformer.is_strict_compatible

@@ -7116,7 +7116,7 @@ _PREFIX_ITEMS_SCHEMAS = [
 
 
 @pytest.mark.parametrize('array_schema', _PREFIX_ITEMS_SCHEMAS)
-@pytest.mark.parametrize('strict', [None, True], ids=['inferred', 'explicit-true'])
+@pytest.mark.parametrize('strict', [None, True, False], ids=['inferred', 'explicit-true', 'explicit-false'])
 def test_transformer_preserves_prefix_items_for_shared_profiles(array_schema: dict[str, Any], strict: bool | None):
     """The shared transformer leaves tuple schemas unchanged for profiles that do not add tuple handling."""
     schema: dict[str, Any] = {
@@ -7129,21 +7129,6 @@ def test_transformer_preserves_prefix_items_for_shared_profiles(array_schema: di
 
     assert result['properties']['value'] == array_schema
     assert transformer.is_strict_compatible is True
-
-
-def test_transformer_prefix_items_untouched_when_not_strict():
-    """With `strict=False` there's nothing to repair, so tuple schemas are passed through as-is."""
-
-    class Model(BaseModel):
-        pair: tuple[int, str]
-        bbox: tuple[int, int]
-        value: tuple[int]
-
-    result = OpenAIJsonSchemaTransformer(Model.model_json_schema(), strict=False).walk()
-
-    assert result['properties']['pair']['prefixItems'] == [{'type': 'integer'}, {'type': 'string'}]
-    assert result['properties']['bbox']['prefixItems'] == [{'type': 'integer'}, {'type': 'integer'}]
-    assert result['properties']['value']['prefixItems'] == [{'type': 'integer'}]
 
 
 def chunk_with_usage(
