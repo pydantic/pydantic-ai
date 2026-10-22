@@ -26,8 +26,8 @@ from pydantic_ai.durable_exec._workspace import DurableWorkspace
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.workspaces import (
-    HoldKey,
-    KeyPress,
+    HoldKeys,
+    PressKeys,
     ReadOnlyWorkspace,
     Workspace,
     WorkspaceBackend,
@@ -172,7 +172,8 @@ def scenario_agents(
             # A grid model: its coordinates are scaled to pixels with `display_size`, read from workflow code.
             TestModel(call_tools=['computer'], profile=ModelProfile(computer_use_coordinate_grid=1000)),
             name=f'{prefix}computer',
-            capabilities=[ComputerUse(settle_seconds=0), workspaces(), durability()],
+            # A settle pause, so the tool's sleep runs in workflow code too.
+            capabilities=[ComputerUse(settle_seconds=0.01), workspaces(), durability()],
         ),
     )
 
@@ -282,7 +283,7 @@ async def binary(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dic
         decoded = error.object == _BINARY
     else:  # pragma: no cover
         decoded = False
-    await workspace.act(KeyPress(keys=('ctrl', 's')))
+    await workspace.act(PressKeys(keys=('ctrl', 's')))
     return {
         'display': [*await workspace.display_size(), (await workspace.screenshot()) == FAKE_SCREENSHOT],
         'round_trip': (await workspace.read_bytes('blob.bin')) == _BINARY,
@@ -293,7 +294,7 @@ async def binary(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dic
             await _error_of(workspace.stat('sub/gone.txt')),
             await _error_of(workspace.remove('missing.txt')),
             await _error_of(workspace.run('echo hi')),
-            await _error_of(workspace.act(HoldKey(keys=('shift',), seconds=1))),
+            await _error_of(workspace.act(HoldKeys(keys=('shift',), seconds=1))),
         ],
     }
 
@@ -413,15 +414,18 @@ async def check_binary(run: Runner, agents: ScenarioAgents) -> None:
         'errors': ['FileNotFoundError', 'FileNotFoundError', 'TypeError', 'UnsupportedComputerActionError'],
     }
     assert agents.provider.environments['env-1']['/remote/blob.bin'] == _BINARY
-    assert agents.provider.actions == [KeyPress(keys=('ctrl', 's'))]
+    assert agents.provider.actions == [PressKeys(keys=('ctrl', 's'))]
 
 
 async def check_computer(run: Runner, agents: ScenarioAgents) -> None:
-    """The `computer` tool acts and looks from inside a durable unit; a grid model's scaling reads the display size."""
+    """The `computer` tool runs in workflow code, and each action and screenshot reaches the display in its own unit.
+
+    The fake provider refuses any call made outside a durable unit, so the run only succeeds if every display call was
+    routed through one; a grid model's scaling reads the display size the same way.
+    """
     output = await run('computer', None)
-    assert 'Screenshot attached (1280x800).' in output, output[:300]
+    assert 'Screenshot attached.' in output, output[:300]
     assert agents.provider.actions, 'the tool performed no action on the display'
-    # Scaling grid coordinates needs the run's model, so it runs in workflow code and reads the size through a unit.
     assert agents.provider.display_size_calls == 1
 
 

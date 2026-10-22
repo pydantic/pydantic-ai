@@ -9,7 +9,7 @@ from pydantic.dataclasses import dataclass
 from typing_extensions import TypedDict
 
 from .messages import BinaryImage, ToolKind
-from .workspaces import Click, Drag, HoldKey, KeyPress, MouseDown, MouseUp, MoveMouse, Scroll, TypeText
+from .workspaces import Click, Drag, HoldKeys, MouseDown, MouseUp, MoveMouse, PressKeys, Scroll, TypeText
 from .workspaces.computer import _CONFIG  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
@@ -49,7 +49,7 @@ class Screenshot:
 
 
 ComputerToolAction: TypeAlias = Annotated[
-    Click | MoveMouse | Drag | MouseDown | MouseUp | Scroll | TypeText | KeyPress | HoldKey | Wait | Screenshot,
+    Click | MoveMouse | Drag | MouseDown | MouseUp | Scroll | TypeText | PressKeys | HoldKeys | Wait | Screenshot,
     Field(discriminator='type'),
 ]
 """What the `computer` tool accepts: the workspace's display actions, plus waiting and looking."""

@@ -21,12 +21,12 @@ from .computer import (
     Click,
     ComputerAction,
     Drag,
-    HoldKey,
-    KeyPress,
+    HoldKeys,
     MouseDown,
     MouseUp,
     MoveMouse,
     Point,
+    PressKeys,
     Scroll,
     TypeText,
 )
@@ -52,9 +52,8 @@ def _commands(backend: WorkspaceBackend) -> SupportsCommands:
 
 
 def _computer(backend: WorkspaceBackend) -> SupportsComputerUse:
-    # A `Workspace` has the display methods whatever its backend, so ask it whether one is there.
-    if not (backend.has_display if isinstance(backend, Workspace) else isinstance(backend, SupportsComputerUse)):
-        pytest.skip('backend does not implement SupportsComputerUse')
+    if not Workspace(backend).has_display:
+        pytest.skip('backend has no display')
     assert isinstance(backend, SupportsComputerUse)
     return backend
 
@@ -598,15 +597,15 @@ class WorkspaceBackendSuite:
             Click(x=x, y=y),
             Click(count=2),
             Click(button='right', modifiers=('shift',)),
-            KeyPress(keys=('escape',)),
+            PressKeys(keys=('escape',)),
             Scroll(x=x, y=y, direction='down'),
             Scroll(direction='left', amount=1),
             Drag(path=(Point(x=x, y=y), Point(x=x + 10, y=y + 10))),
             MouseDown(),
             MouseUp(),
             TypeText(text='a'),
-            KeyPress(keys=('backspace',), repeat=1),
-            HoldKey(keys=('shift',), seconds=0.1),
+            PressKeys(keys=('backspace',), repeat=1),
+            HoldKeys(keys=('shift',), seconds=0.1),
         ]
         for action in actions:
             with suppress(UnsupportedComputerActionError):

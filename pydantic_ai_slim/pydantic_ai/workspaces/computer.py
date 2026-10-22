@@ -2,7 +2,7 @@
 
 The vocabulary follows OpenAI's computer tool (`click`, `move`, `drag`, `scroll`, `type`, `keypress`), plus the
 pointer and key holds Anthropic's tool adds. Actions are validated on construction, every model-controlled amount is
-bounded, and unknown fields are ignored. Coordinates are display pixels with the origin at the top left; a click or
+bounded, and unknown fields are ignored. Coordinates are pixels of the backend's screenshot, with the origin at the top left; a click or
 scroll without coordinates happens at the pointer.
 
 Common key names are normalized to one lowercase spelling (`ctrl`, `shift`, `alt`, `super`, `enter`, `escape`,
@@ -23,13 +23,13 @@ __all__ = (
     'Click',
     'ComputerAction',
     'Drag',
-    'HoldKey',
-    'KeyPress',
+    'HoldKeys',
     'MouseButton',
     'MouseDown',
     'MouseUp',
     'MoveMouse',
     'Point',
+    'PressKeys',
     'Scroll',
     'TypeText',
 )
@@ -124,7 +124,7 @@ def _check_position(x: int | None, y: int | None) -> None:
 
 @dataclass(frozen=True, config=_CONFIG)
 class Point:
-    """A position in display pixels."""
+    """A position on the screenshot."""
 
     x: _Coordinate
     y: _Coordinate
@@ -136,9 +136,9 @@ class Click:
 
     type: Literal['click'] = 'click'
     x: _Coordinate | None = None
-    """Pixels from the left edge of the screenshot. Omit both `x` and `y` to click where the pointer is."""
+    """From the left edge of the screenshot. Omit both `x` and `y` to click where the pointer is."""
     y: _Coordinate | None = None
-    """Pixels from the top edge of the screenshot."""
+    """From the top edge of the screenshot."""
     button: MouseButton = 'left'
     count: Annotated[int, Field(ge=1, le=3)] = 1
     """1 for a click, 2 for a double click, 3 for a triple click."""
@@ -156,9 +156,9 @@ class MoveMouse:
 
     type: Literal['move'] = 'move'
     x: _Coordinate
-    """Pixels from the left edge of the screenshot."""
+    """From the left edge of the screenshot."""
     y: _Coordinate
-    """Pixels from the top edge of the screenshot."""
+    """From the top edge of the screenshot."""
     modifiers: _Keys = ()
     """Keys held while moving."""
 
@@ -206,9 +206,9 @@ class Scroll:
     amount: Annotated[int, Field(ge=1, le=50)] = 3
     """Mouse-wheel clicks; one click scrolls about three lines."""
     x: _Coordinate | None = None
-    """Pixels from the left edge of the screenshot. Omit both `x` and `y` to scroll where the pointer is."""
+    """From the left edge of the screenshot. Omit both `x` and `y` to scroll where the pointer is."""
     y: _Coordinate | None = None
-    """Pixels from the top edge of the screenshot."""
+    """From the top edge of the screenshot."""
     modifiers: _Keys = ()
     """Keys held while scrolling, such as `["shift"]` to scroll sideways in some applications."""
 
@@ -227,7 +227,7 @@ class TypeText:
 
 
 @dataclass(frozen=True, kw_only=True, config=_CONFIG)
-class KeyPress:
+class PressKeys:
     """Press keys together as one combination, then release them."""
 
     type: Literal['keypress'] = 'keypress'
@@ -241,7 +241,7 @@ class KeyPress:
 
 
 @dataclass(frozen=True, kw_only=True, config=_CONFIG)
-class HoldKey:
+class HoldKeys:
     """Hold keys down for a while, then release them."""
 
     type: Literal['hold_key'] = 'hold_key'
@@ -255,7 +255,7 @@ class HoldKey:
 
 
 ComputerAction: TypeAlias = Annotated[
-    Click | MoveMouse | Drag | MouseDown | MouseUp | Scroll | TypeText | KeyPress | HoldKey,
+    Click | MoveMouse | Drag | MouseDown | MouseUp | Scroll | TypeText | PressKeys | HoldKeys,
     Field(discriminator='type'),
 ]
 """A mouse or keyboard action on a display. New types may be added, so a backend must refuse one it doesn't know with

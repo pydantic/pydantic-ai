@@ -25,8 +25,8 @@
             - MouseButton
             - Scroll
             - TypeText
-            - KeyPress
-            - HoldKey
+            - PressKeys
+            - HoldKeys
             - WorkspaceCommand
             - CommandResult
             - FileEntry

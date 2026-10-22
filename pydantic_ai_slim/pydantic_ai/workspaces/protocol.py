@@ -42,19 +42,19 @@ from .computer import ComputerAction
 __all__ = (
     'CommandResult',
     'FileEntry',
-    'WorkspaceBackend',
-    'WorkspaceCommand',
-    'WorkspaceError',
-    'WorkspaceOutputLimitError',
-    'WorkspaceRef',
-    'WorkspaceReadOnlyError',
-    'WorkspaceTimeoutError',
-    'WorkspaceUnavailableError',
     'SupportsCommands',
     'SupportsComputerUse',
     'SupportsFilesystem',
     'SupportsRealpath',
     'UnsupportedComputerActionError',
+    'WorkspaceBackend',
+    'WorkspaceCommand',
+    'WorkspaceError',
+    'WorkspaceOutputLimitError',
+    'WorkspaceReadOnlyError',
+    'WorkspaceRef',
+    'WorkspaceTimeoutError',
+    'WorkspaceUnavailableError',
 )
 
 
@@ -235,8 +235,17 @@ class SupportsComputerUse(Protocol):
     implement it by delegating to [`X11Computer`][pydantic_ai.workspaces.X11Computer].
     """
 
+    @property
+    def has_display(self) -> bool:
+        """Whether this environment has a display, decided without I/O.
+
+        An implementation whose environments may lack one, such as a sandbox started without a desktop, returns
+        `False` for those, and its other display methods raise `UserError`.
+        """
+        ...
+
     async def display_size(self) -> tuple[int, int]:
-        """The display's `(width, height)` in pixels, the coordinate space of every action."""
+        """The screenshot's `(width, height)` in pixels: the coordinate space of every action."""
         ...
 
     async def screenshot(self) -> bytes:

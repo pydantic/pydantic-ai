@@ -48,9 +48,9 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     FileEntry,
-    HoldKey,
-    KeyPress,
+    HoldKeys,
     LocalWorkspaceBackend,
+    PressKeys,
     ReadOnlyWorkspace,
     UnsupportedComputerActionError,
     Workspace,
@@ -444,7 +444,7 @@ async def test_result_workspace_calls_directly_once_the_container_has_ended() ->
     await workspace.remove('after.bin')
     assert await workspace.exists('after.bin') is False
     assert await workspace.realpath('sub/../after.txt') == '/workspace/after.txt'
-    for display_call in (workspace.display_size(), workspace.screenshot(), workspace.act(KeyPress(keys=('a',)))):
+    for display_call in (workspace.display_size(), workspace.screenshot(), workspace.act(PressKeys(keys=('a',)))):
         with pytest.raises(UserError, match='has no display to control'):
             await display_call
     assert _workspace_units(durability) == ['ensure']
@@ -583,10 +583,10 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
         await workspace.run('ls', shell=False)
     assert await workspace.display_size() == (1280, 800)
     assert await workspace.screenshot() == FAKE_SCREENSHOT
-    await workspace.act(KeyPress(keys=('ctrl', 's')))
+    await workspace.act(PressKeys(keys=('ctrl', 's')))
     with pytest.raises(UnsupportedComputerActionError, match="cannot perform 'hold_key'"):
-        await workspace.act(HoldKey(keys=('shift',), seconds=1))
-    assert provider.actions == [KeyPress(keys=('ctrl', 's'))]
+        await workspace.act(HoldKeys(keys=('shift',), seconds=1))
+    assert provider.actions == [PressKeys(keys=('ctrl', 's'))]
     assert _workspace_units(durability) == snapshot(
         [
             'ensure',
@@ -626,7 +626,7 @@ def test_non_utf8_bytes_round_trip_through_json_and_pickle() -> None:
     assert pickle.loads(pickle.dumps(call)) == call
     result = WorkspaceCallResult(data=raw, entries=[FileEntry(name='a', path='/a', is_dir=False, size=1)])
     assert JSON_CODEC.load(WorkspaceCallResult, JSON_CODEC.dump(WorkspaceCallResult, result)) == result
-    act = WorkspaceCall(method='act', action=KeyPress(keys=('ctrl', 's')))
+    act = WorkspaceCall(method='act', action=PressKeys(keys=('ctrl', 's')))
     assert JSON_CODEC.load(WorkspaceCall, JSON_CODEC.dump(WorkspaceCall, act)) == act
     assert pickle.loads(pickle.dumps(act)) == act
     size = WorkspaceCallResult(size=(1280, 800))
