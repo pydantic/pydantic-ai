@@ -17,7 +17,6 @@ Application Default Credentials.
 from __future__ import annotations as _annotations
 
 import asyncio
-import copy
 import time
 import warnings
 from collections import deque
@@ -34,6 +33,7 @@ from typing_extensions import TypedDict
 try:
     import websockets
     from google.genai import Client, errors as genai_errors, types as genai_types
+    from google.genai._api_client import BaseApiClient
     from google.genai.live import AsyncLive, AsyncSession, ConnectionClosed
 except ImportError as _import_error:
     raise ImportError(
@@ -897,6 +897,23 @@ def _single_ws_user_agent(client: Client) -> Generator[None]:
         headers.update(removed)
 
 
+class _ApiClientView(BaseApiClient):
+    """A shallow copy of a `google-genai` API client that doesn't own the HTTP clients it shares.
+
+    `BaseApiClient.__del__` closes the client's HTTP clients when it is collected, which on a copy would
+    close the ones the original (and every request made through it) still uses.
+    """
+
+    @classmethod
+    def of(cls, api_client: BaseApiClient) -> _ApiClientView:
+        view = cls.__new__(cls)
+        view.__dict__.update(api_client.__dict__)
+        return view
+
+    def __del__(self) -> None:
+        pass
+
+
 _PROACTIVITY_API_VERSION = 'v1alpha'
 """The Gemini Developer API version that serves `proactivity` on the Live setup message."""
 
@@ -1094,7 +1111,8 @@ class GoogleRealtimeModel(RealtimeModel):
         client's API client with only the version changed. The caller's client is left untouched, so
         its other requests (including concurrent `GoogleModel` ones) keep their version. The copy's
         `HttpOptions` is a shallow copy too, so it shares the client's `headers` dict, which
-        `_single_ws_user_agent` and `_ws_trace_context` adjust for the handshake.
+        `_single_ws_user_agent` and `_ws_trace_context` adjust for the handshake. The copy doesn't own
+        the HTTP clients it shares, so collecting it never closes them (see `_ApiClientView`).
 
         Vertex AI is left alone: its version line has no `v1alpha`.
         """
@@ -1107,9 +1125,9 @@ class GoogleRealtimeModel(RealtimeModel):
             or http_options.api_version == _PROACTIVITY_API_VERSION
         ):
             return live
-        alpha_client = copy.copy(api_client)
-        alpha_client._http_options = http_options.model_copy(update={'api_version': _PROACTIVITY_API_VERSION})  # pyright: ignore[reportPrivateUsage]
-        return AsyncLive(alpha_client)
+        view = _ApiClientView.of(api_client)
+        view._http_options = http_options.model_copy(update={'api_version': _PROACTIVITY_API_VERSION})  # pyright: ignore[reportPrivateUsage]
+        return AsyncLive(view)
 
     def _input_transcription(self, settings: GoogleRealtimeModelSettings) -> bool:
         """Whether to transcribe the user's audio.

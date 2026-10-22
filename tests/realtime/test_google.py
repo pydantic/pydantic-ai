@@ -3985,6 +3985,23 @@ async def test_proactive_audio_dials_v1alpha_without_touching_the_client(
     assert client._api_client._http_options.api_version == original_version  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_proactive_audio_view_does_not_close_the_clients_http_clients(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The `v1alpha` view shares the client's HTTP clients; collecting it must not close them."""
+    client = Client(api_key='k')
+    api_client = client._api_client  # pyright: ignore[reportPrivateUsage]
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
+
+    monkeypatch.setattr('google.genai.live.ws_connect', _capture_ws_connect({}))
+    with pytest.raises(_StopDial):
+        async with _connect(model, 'hi', model_settings=GoogleRealtimeModelSettings(google_proactive_audio=True)):
+            pass  # pragma: no cover
+    gc.collect()
+    await asyncio.sleep(0)  # a collected `BaseApiClient` closes its async HTTP client in a task
+
+    assert not api_client._httpx_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert not api_client._async_httpx_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_proactive_audio_on_vertex_keeps_the_client_version(monkeypatch: pytest.MonkeyPatch) -> None:
     """Vertex AI's version line has no `v1alpha`, so its Live connection keeps the client's version."""
     provider = gateway_provider('google', api_key='gw-key', base_url='https://gateway.pydantic.dev/proxy')
