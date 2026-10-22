@@ -776,6 +776,25 @@ class TestInputGuardrailRedaction:
         assert isinstance(part, UserPromptPart)
         assert part.content == 'my key is [redacted:anthropic_key]'
 
+    async def test_a_changed_copy_beside_same_text_copies_is_left_alone(self):
+        """The guard's verdict is on the prompt's text, so a changed copy sharing its timestamp is not rewritten."""
+        screened: list[str] = []
+
+        def guard(prompt: str) -> GuardrailResult:
+            screened.append(prompt)
+            return redact_secrets(prompt)
+
+        seen, model = _request_prompts_model()
+        agent = Agent(model, capabilities=[_CopyWithChangedSibling(), InputGuardrail(guard=guard)])
+
+        result = await agent.run(f'my key is {_SECRET}')
+
+        assert screened == [f'my key is {_SECRET}']
+        assert seen == [['my key is [redacted:anthropic_key]', 'a changed copy']]
+        part = result.all_messages()[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert part.content == 'my key is [redacted:anthropic_key]'
+
     async def test_a_redacted_copy_is_not_replayed_unredacted_after_a_tool_call(self):
         """Later steps send the history, which the guard does not screen again, so it must already be clean."""
         requests: list[str] = []
@@ -1911,6 +1930,21 @@ def _request_prompts_model_all() -> tuple[list[list[str]], FunctionModel]:
         return ModelResponse(parts=[TextPart(content='ok')])
 
     return seen, FunctionModel(respond)
+
+
+@dataclasses.dataclass
+class _CopyWithChangedSibling(AbstractCapability[Any]):
+    """Sends a copy of the prompt part and a changed copy of it, both keeping its timestamp."""
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        last = request_context.messages[-1]
+        assert isinstance(last, ModelRequest)
+        prompts = [part for part in last.parts if isinstance(part, UserPromptPart)]
+        siblings = [dataclasses.replace(prompts[-1]), dataclasses.replace(prompts[-1], content='a changed copy')]
+        request_context.messages[-1] = dataclasses.replace(last, parts=siblings)
+        return await handler(request_context)
 
 
 @dataclasses.dataclass
