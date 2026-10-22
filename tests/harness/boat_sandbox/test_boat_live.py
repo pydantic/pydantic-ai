@@ -15,7 +15,8 @@ Gating:
   * also requires a non-empty `BOAT_API_KEY`; without one it skips, or fails when
     `BOAT_REQUIRE_LIVE=1` (CI's live job). The gate is `pytest_runtest_setup` in `conftest.py`.
   * every sandbox is `small` where a test picks the size, and Boat stops it `LIVE_AUTO_STOP`
-    seconds after it starts, so one a killed job leaves behind does not run for Boat's default hour.
+    seconds after the backend last extended it, so one a killed job leaves behind does not run for
+    Boat's default hour.
 
 Run locally:
 `PYDANTIC_AI_HARNESS_BOAT_LIVE=1 uv run pytest -m boat_live tests/harness/boat_sandbox/test_boat_live.py`
@@ -112,6 +113,34 @@ async def _assert_stopped(backend: BoatSandboxBackend, pid_file: str) -> None:
         script = 'for pid; do kill -0 "$pid" 2>/dev/null && exit 0; done; exit 1'
         while (await backend.run(['sh', '-c', script, 'sh', *pids], timeout=30)).exit_code == 0:
             await anyio.sleep(0.2)
+
+
+async def test_an_operation_extends_the_auto_stop(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Validates the fake-encoded assumption that `PATCH /sandboxes/{id}` with `ttlSeconds` moves Boat's
+    auto-stop deadline to that many seconds from now, and that the key the live tier runs with may
+    send it, so an active run keeps its sandbox up."""
+    # Extend on every operation, so the test needs no real wait.
+    monkeypatch.setattr('pydantic_ai_harness.boat_sandbox._backend._KEEP_ALIVE_INTERVAL', 0)
+    async with _owned(client) as backend:
+        assert backend.ref is not None
+        sandbox_id = backend.ref.id
+
+        async def deadline() -> str:
+            response = await client.get(f'/sandboxes/{sandbox_id}')
+            response.raise_for_status()
+            archive_after = response.json()['sandbox']['archiveAfter']
+            assert isinstance(archive_after, str)
+            return archive_after
+
+        before = await deadline()
+        await anyio.sleep(2)
+        with caplog.at_level('WARNING', logger='pydantic_ai_harness.boat_sandbox._backend'):
+            assert (await backend.run(['true'])).exit_code == 0
+        assert not caplog.records
+        # ISO 8601 timestamps in UTC compare in time order.
+        assert await deadline() > before
 
 
 async def test_commands_get_a_usable_environment(client: httpx.AsyncClient) -> None:

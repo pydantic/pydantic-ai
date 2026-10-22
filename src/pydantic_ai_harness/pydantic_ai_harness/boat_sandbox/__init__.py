@@ -8,11 +8,12 @@ retry may fix, such as a rate limit or a server error, propagates as.
 """
 
 from pydantic_ai_harness.boat_sandbox._api import BoatAPIError
-from pydantic_ai_harness.boat_sandbox._backend import BoatSandboxBackend
+from pydantic_ai_harness.boat_sandbox._backend import BoatSandboxBackend, MachineType
 from pydantic_ai_harness.boat_sandbox._capability import BoatSandbox
 
 __all__ = [
     'BoatAPIError',
     'BoatSandbox',
     'BoatSandboxBackend',
+    'MachineType',
 ]

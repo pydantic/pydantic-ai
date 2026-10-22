@@ -40,8 +40,8 @@ class BoatSandbox(AbstractCapability[AgentDepsT]):
     """Supply an isolated [Boat](https://boat.dev) sandbox as the run's workspace.
 
     A run with no reference creates a fresh sandbox on first use; pass a `WorkspaceRef` to attach
-    to an existing one. Ending a run does not delete the sandbox: Boat stops it once it has been
-    idle for `auto_stop` and keeps it until you delete it. Commands run under `sh -c` as the
+    to an existing one. Ending a run does not delete the sandbox: Boat stops it once `auto_stop`
+    seconds pass without an operation and keeps it until you delete it. Commands run under `sh -c` as the
     sandbox's `user` account, and a new sandbox gets none of your Boat account's credentials.
 
     This capability supplies the workspace only. Compose it with capabilities that use it, such
@@ -65,9 +65,9 @@ class BoatSandbox(AbstractCapability[AgentDepsT]):
 
     auto_stop: int | None = None
     """Seconds a newly created sandbox runs without the backend extending it before Boat stops it,
-    keeping its disk; `0` disables it, and `None` keeps Boat's default of an hour. The backend
-    extends it while the run works in the sandbox, so an active run keeps it up and an idle one
-    stops. Attaching resumes a stopped sandbox."""
+    keeping its disk; `0` disables it, and `None` keeps Boat's default of an hour. Operations extend
+    it at most once a minute, so a run that works in the sandbox at least every `auto_stop` minus a
+    minute keeps it up, and an idle one stops. Attaching resumes a stopped sandbox."""
 
     working_dir: str | None = None
     """Absolute directory commands start in and relative paths resolve against; `None` uses the sandbox's own.

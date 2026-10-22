@@ -692,25 +692,27 @@ class TestAttach:
 class TestAutoStop:
     """Boat stops a sandbox once its auto-stop runs out from creation or resume, whatever runs in it."""
 
-    async def test_an_operation_extends_the_auto_stop_once_half_of_it_has_passed(
-        self, fake_boat: FakeBoat, monkeypatch: pytest.MonkeyPatch
+    # At most once a minute, or once per half of a shorter auto-stop.
+    @pytest.mark.parametrize(('auto_stop', 'interval'), [(900, 60), (100, 50)])
+    async def test_an_operation_extends_the_auto_stop_at_most_once_an_interval(
+        self, fake_boat: FakeBoat, monkeypatch: pytest.MonkeyPatch, auto_stop: int, interval: int
     ) -> None:
         advance = advance_clock(monkeypatch)
-        backend = await started(BoatSandboxBackend(auto_stop=900))
+        backend = await started(BoatSandboxBackend(auto_stop=auto_stop))
         path = f'{only(fake_boat).home}/note'
-        advance(449)
+        advance(interval - 1)
         assert await backend.exists(path) is False
         assert fake_boat.bodies('update') == []
         advance(1)
         assert await backend.exists(path) is False
-        # A full auto-stop from now, which the next operations do not repeat until half of it has passed again.
-        assert fake_boat.bodies('update') == [{'ttlSeconds': 900}]
-        advance(449)
+        # A full auto-stop from now, which the next operations do not repeat until the interval has passed again.
+        assert fake_boat.bodies('update') == [{'ttlSeconds': auto_stop}]
+        advance(interval - 1)
         assert await backend.exists(path) is False
-        assert fake_boat.bodies('update') == [{'ttlSeconds': 900}]
+        assert fake_boat.bodies('update') == [{'ttlSeconds': auto_stop}]
         advance(1)
         assert await backend.exists(path) is False
-        assert fake_boat.bodies('update') == [{'ttlSeconds': 900}, {'ttlSeconds': 900}]
+        assert fake_boat.bodies('update') == [{'ttlSeconds': auto_stop}, {'ttlSeconds': auto_stop}]
 
     @pytest.mark.parametrize(('state', 'updates'), [('idle', [{'ttlSeconds': 3600}]), ('archived', [])])
     async def test_attaching_extends_a_running_sandbox_and_a_resume_sets_it_again(

@@ -14,7 +14,7 @@ marked otherwise:
 - `noEnv` keeps the account's GitHub and Boat tokens out of commands.
 - `ttlSeconds: 0` means Boat's default auto-stop of an hour, and `null` disables it (not exercised).
 - Command activity does not move the auto-stop deadline; `PATCH /sandboxes/{id}` with `ttlSeconds` sets it to
-  that many seconds from now (not exercised).
+  that many seconds from now.
 - Deleting a sandbox needs `X-Ascii-Confirm-Delete` set to its ID.
 - A stopped command gets about 5 seconds after SIGTERM before SIGKILL (not exercised).
 - Commands run under `bash -lc`, whose `~/.bash_logout` prints to the output unless the command `exec`s.
@@ -104,6 +104,8 @@ _MAX_OUTPUT_BYTES = 8 * 1024 * 1024
 _OUTPUT_PREVIEW_BYTES = 64 * 1024
 # Boat's file API moves at most 5 MiB in one call; a larger file goes through a signed transfer URL.
 _MAX_INLINE_FILE_BYTES = 5 * 1024 * 1024
+# The most time between extensions of a sandbox's auto-stop while operations run; half the auto-stop when shorter.
+_KEEP_ALIVE_INTERVAL = 60
 
 _READY_STATES = frozenset({'ready', 'idle', 'running'})
 _STOPPED_STATES = frozenset({'archiving', 'archived'})
@@ -525,9 +527,9 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         snapshot: Named Boat snapshot a newly created sandbox starts from; Boat's base image when `None`.
         auto_stop: Seconds a newly created sandbox runs without the backend extending it before
             Boat stops it (its disk is kept); `0` disables it, and `None` keeps Boat's default of an
-            hour. Once half of the sandbox's auto-stop has passed since it was last set, an operation
-            or a check on a running command sets it again from now, so an active run keeps the
-            sandbox up and an idle one stops.
+            hour. An operation or a check on a running command sets it again from now, at most once a
+            minute (or once per half of it, if that is shorter), so a run that works in the sandbox
+            at least every `auto_stop` minus a minute keeps it up, and an idle one stops.
         working_dir: Absolute directory commands start in and relative paths resolve against; the
             sandbox's own default when `None`, discovered with `pwd -P` on first use.
         env: Environment variables every command gets; a command's own `env` is layered on top.
@@ -604,13 +606,13 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         return sandbox
 
     async def _keep_alive(self, sandbox: _Sandbox) -> None:
-        """Set the sandbox's auto-stop deadline again from now once half of it has passed.
+        """Set the sandbox's auto-stop deadline again from now, at most once a minute (or per half of it, if shorter).
 
         Boat counts the auto-stop from creation or resume, and commands do not move it. Best effort:
         only a sandbox found deleted or stopped raises.
         """
         ttl, set_at, now = self._ttl, self._ttl_set_at, anyio.current_time()
-        if ttl is None or (set_at is not None and now - set_at < ttl / 2):
+        if ttl is None or (set_at is not None and now - set_at < min(ttl / 2, _KEEP_ALIVE_INTERVAL)):
             return
         try:
             await _api.call(
