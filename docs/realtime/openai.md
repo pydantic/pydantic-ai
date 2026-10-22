@@ -504,8 +504,8 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
 - Before the session connects: `turn_detection`, `max_tokens`, `input_transcription_model`,
   `output_modality='text'` (the profile reports `supports_text_output=False`; see
   [Shared settings](overview.md#shared-settings)), a `tool_choice` of `'required'` or a list of
-  tool names, and `audio_input_sample_rate` and `audio_output_sample_rate` that differ or aren't
-  16000 or 24000.
+  tool names, and a [`profile=`](overview.md#provider-support) whose `audio_input_sample_rate` and
+  `audio_output_sample_rate` keys differ or aren't 16000 or 24000.
 - [`commit_audio()`][pydantic_ai.realtime.RealtimeSession.commit_audio],
   [`clear_audio()`][pydantic_ai.realtime.RealtimeSession.clear_audio],
   [`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response], and
