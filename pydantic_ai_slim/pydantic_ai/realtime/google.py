@@ -130,6 +130,7 @@ from ._utils import (
     seed_retry_feedback_text,
     seed_speech_content,
     seed_user_content,
+    without_media,
 )
 from .codec import (
     AudioDelta,
@@ -1113,6 +1114,28 @@ class GoogleRealtimeModel(RealtimeModel):
             '    provider = GoogleProvider(client=client)'
         )
 
+    async def _replay_turns(
+        self, connection: GoogleRealtimeConnection | None, handle: str | None, function_parts: bool
+    ) -> list[genai_types.Content]:
+        """The turns a re-dial of `connection` replays: none when it resumes from `handle`, else the session's conversation.
+
+        A session resumed from a handle already has the conversation. Without one (the connection dropped
+        before Gemini issued a handle) the re-dial is a fresh session, so the conversation so far is replayed
+        into it, and the model continues the call rather than starting over with amnesia. Like the
+        OpenAI-protocol replay, media is left behind: the model needs the conversation, and re-sending a long
+        call's retained audio (or a stale video frame) would cost far more than it restores.
+        """
+        if handle is not None or connection is None or (message_history := connection.message_history) is None:
+            return []
+        return await _seed_turns(
+            [replayable for message in message_history() if (replayable := without_media(message)) is not None],
+            # Not `replace`d on the model's profile: these say what *this* seeding pass will carry, not what
+            # the model supports.
+            profile={**self.profile, 'supports_seeding_audio': False, 'supports_seeding_images': False},
+            provider_name=self.system,
+            function_parts=function_parts,
+        )
+
     def _input_transcription(self, settings: GoogleRealtimeModelSettings) -> bool:
         """Whether to transcribe the user's audio.
 
@@ -1330,39 +1353,42 @@ class GoogleRealtimeModel(RealtimeModel):
                 f'`google_affective_dialog=True` is not supported by {self.model!r}; Gemini Live rejects it. '
                 'Leave it unset for this model.'
             )
-        # Prior conversation is seeded once, after the initial connect. Normalized before dialing, so
-        # unsupported content is a caller `UserError` rather than a session opened for nothing.
+        # Prior conversation is seeded by the initial dial. Normalized before dialing, so unsupported
+        # content is a caller `UserError` rather than a session opened for nothing.
+        function_parts = self._google_profile.get('google_supports_seeding_function_parts', False)
         turns = await _seed_turns(
             messages,
             profile=self.profile,
             provider_name=self.system,
-            function_parts=self._google_profile.get('google_supports_seeding_function_parts', False),
-        )
-        # A seed with native function parts goes in as the session's initial history, which ends with
-        # `turn_complete` without triggering a reply; one without is sent as before. Only the first dial
-        # asks for it: a session resumed from a handle already has the history, and one that isn't
-        # wouldn't get it again, so either way a server waiting for initial history would take the next
-        # typed turn as history and not answer it.
-        history_in_client_content = any(
-            part.function_call or part.function_response for turn in turns for part in turn.parts or ()
+            function_parts=function_parts,
         )
         # The live connection's context manager. A reconnect closes the previous one before opening
         # the next (so they don't accumulate), and teardown closes whatever is current.
         cm: AbstractAsyncContextManager[AsyncSession] | None = None
         dialed = False
+        connection: GoogleRealtimeConnection | None = None
 
         async def dial(handle: str | None) -> AsyncSession:
             nonlocal cm, dialed
             if cm is not None:
                 previous, cm = cm, None
                 await previous.__aexit__(None, None, None)
+            # The first dial seeds `message_history`; a re-dial into a fresh session replays the conversation.
+            seed = await self._replay_turns(connection, handle, function_parts) if dialed else turns
+            # A seed with native function parts goes in as the session's initial history, which ends with
+            # `turn_complete` without triggering a reply; one without is sent as context turns. A server
+            # waiting for initial history would take the next typed turn as history and not answer it, so
+            # only a dial that sends such a seed asks for it.
+            history_in_client_content = any(
+                part.function_call or part.function_response for turn in seed for part in turn.parts or ()
+            )
             config = self._config(
                 instructions,
                 model_request_parameters.function_tools,
                 model_settings=settings,
                 native_tools=model_request_parameters.native_tools,
                 resumption_handle=handle,
-                initial_history_in_client_content=history_in_client_content and not dialed,
+                initial_history_in_client_content=history_in_client_content,
             )
             dialed = True
             opening = client.aio.live.connect(model=self.model, config=config)
@@ -1383,6 +1409,11 @@ class GoogleRealtimeModel(RealtimeModel):
                     except TimeoutError as e:
                         raise TimeoutError(f'no setup_complete within {handshake_timeout} seconds') from e
             cm = opening
+            if seed:
+                # Seeded as inactive context turns: without `turn_complete` the model doesn't respond yet,
+                # and initial history ends with one without prompting a reply. Unpacked into a new list,
+                # which the SDK's invariant `list[Content | ContentDict]` accepts.
+                await session.send_client_content(turns=[*seed], turn_complete=history_in_client_content)
             return session
 
         try:
@@ -1429,14 +1460,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 # so this is a `RealtimeError` too, rather than a bare built-in from what looks like an
                 # ordinary model call.
                 raise RealtimeError(model_name=self.model, message=f'Could not reach the realtime API: {e}') from e
-            # Seed prior conversation as inactive context turns: without `turn_complete` the model doesn't
-            # respond yet, and initial history ends with one without prompting a reply. Reconnects don't
-            # re-seed: session resumption restores server state, and a `RealtimeSessionReconnectEvent`
-            # starts a fresh turn.
-            if turns:
-                # Unpacked into a new list, which the SDK's invariant `list[Content | ContentDict]` accepts.
-                await session.send_client_content(turns=[*turns], turn_complete=history_in_client_content)
-            yield GoogleRealtimeConnection(
+            connection = GoogleRealtimeConnection(
                 session,
                 profile=self.profile,
                 provider_name=self._provider.name,
@@ -1446,6 +1470,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 input_transcription_enabled=self._input_transcription(settings),
                 async_tool_calls=self._async_tool_calls(settings),
             )
+            yield connection
         finally:
             if cm is not None:
                 await cm.__aexit__(None, None, None)
@@ -1547,6 +1572,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._dial = dial
         self._reconnect = reconnect
         self._resumption_handle: str | None = None
+        # The session's conversation, which a re-dial without a resumption handle replays into the fresh
+        # session (see `set_message_history`).
+        self._message_history: Callable[[], Sequence[ModelMessage]] | None = None
         self._turn_interrupted = False
         # Whether the model has streamed response output (audio, transcript, text, or native-tool
         # parts) since the last `turn_complete`. A dropped-and-redialed connection never continues an
@@ -1573,6 +1601,14 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # Which response, user turn, and input each message is about (see `frames()`).
         cuts_off = cast('GoogleRealtimeModelProfile', self._profile).get('google_input_cuts_off_reply', False)
         self._lifecycle = (_CutOffLifecycle if cuts_off else InferredLifecycle)(transcribes=input_transcription_enabled)
+
+    def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
+        self._message_history = message_history
+
+    @property
+    def message_history(self) -> Callable[[], Sequence[ModelMessage]] | None:
+        """The call so far, when a session has offered it for replay into a fresh session on reconnect."""
+        return self._message_history
 
     @property
     def _can_reconnect(self) -> bool:

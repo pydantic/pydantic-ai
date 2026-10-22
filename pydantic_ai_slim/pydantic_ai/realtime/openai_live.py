@@ -109,7 +109,6 @@ from ._inferred_lifecycle import InferredLifecycle
 from ._lifecycle import AnswersRevised, InputId, LifecycleEvent, RealtimeFrame, ResponseStatus, ToolCallsAbandoned
 from ._openai_protocol import (
     RealtimeHandshakeError,
-    _without_media as without_media,  # pyright: ignore[reportPrivateUsage]
     expect_event,
     map_connect_errors,
     openai_websocket_auth_headers,
@@ -123,6 +122,7 @@ from ._utils import (
     reconnect_with_backoff,
     resolve_advertised_tools,
     seed_retry_feedback_text,
+    without_media,
 )
 from .codec import (
     AudioDelta,

@@ -228,7 +228,9 @@ policy, and explicitly setting it to `False` next to a policy raises
 [`UserError`][pydantic_ai.exceptions.UserError] rather than silently losing the conversation).
 Reconnection uses the latest in-memory server handle and emits `state_restored=True`, unless the
 drop cut off an exchange the resumed session no longer has (see
-[State restoration](lifecycle.md#state-restoration)).
+[State restoration](lifecycle.md#state-restoration)). A drop before the server has issued a handle
+dials a fresh session instead and replays the session's local history into it, as on the other
+providers, with `state_restored=False`.
 
 !!! note "The connection cap can briefly interrupt a turn"
     Gemini sends `GoAway` shortly before its provider-defined connection cap. Pydantic AI reconnects
