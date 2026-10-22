@@ -28,7 +28,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import FileSystem
 from pydantic_ai_harness.cloud_storage import S3Filesystem
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[FileSystem()])
+agent = Agent('{{ anthropic:large }}', capabilities=[FileSystem()])
 exports = S3Filesystem('s3://acme-data/exports/')
 
 
@@ -63,7 +63,7 @@ def customer_files(ctx: RunContext[Customer]) -> list[Mount]:
     return [Mount('files', files, read_only=True, description="The customer's files")]
 
 
-agent = Agent('anthropic:claude-opus-5-5', deps_type=Customer, capabilities=[E2BSandbox(mounts=customer_files), Coder()])
+agent = Agent('{{ anthropic:large }}', deps_type=Customer, capabilities=[E2BSandbox(mounts=customer_files), Coder()])
 ```
 
 File tools reach `files/`; shell commands don't, and the model is told so.

@@ -392,11 +392,30 @@ Python up to 3.14.
 - With Docker, a background child holding stdout/stderr open keeps `run()` waiting: redirect it.
   With Podman, `run()` returns when the command exits.
 
+## Cloud storage
+
+`pydantic_ai_harness.cloud_storage` (extra `cloud-storage`) has one workspace backend per cloud. Each stores files
+and has no shell. All take `credentials=` (keys, or a function returning them) and `endpoint=`.
+
+| Filesystem | URL |
+|---|---|
+| `S3Filesystem(url, *, region=None, ...)` | `s3://bucket/folder/`; R2 and MinIO with `endpoint=` |
+| `GCSFilesystem(url, ...)` | `gs://bucket/folder/` |
+| `AzureFilesystem(url, *, account=None, ...)` | `https://account.blob.core.windows.net/container/folder/` |
+
+Pass one as `agent.run(..., workspace=s3)` to make the bucket the whole workspace.
+`Mount(path, filesystem, *, read_only=False, description=None, shell=False)` (`pydantic_ai.workspaces`) shows one as
+a folder; `LocalWorkspace` and every sandbox capability take `mounts=[...]`, or a function of the run context that
+returns them (one folder per customer from `deps`).
+
+- File tools always reach a mount; `FileSystem` tells the model which folders are mounts and whether commands see them.
+- Durable runs rebuild the workspace from capabilities, so mount the bucket on a sandbox or `LocalWorkspace` there.
+
 ## Remote hosts and bubblewrap
 
 ### SSHWorkspace
 
-`SSHWorkspace(destination, *, working_dir=None, read_only=False, env=None, ssh_args=())` (backend
+`SSHWorkspace(destination, *, working_dir=None, read_only=False, env=None, ssh_args=(), mounts=())` (backend
 `SSHWorkspaceBackend`) runs commands and file operations on a remote host through your `ssh` client,
 so keys, ports and jump hosts come from `~/.ssh/config` and `ssh-agent`. No extra, no SDK.
 
