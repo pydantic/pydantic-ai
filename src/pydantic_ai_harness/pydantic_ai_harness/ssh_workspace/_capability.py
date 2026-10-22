@@ -7,6 +7,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import ReadOnlyWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._workspace_provider import Mounts, with_mounts
 from pydantic_ai_harness.ssh_workspace._backend import SSHWorkspaceBackend
 
 
@@ -40,6 +41,9 @@ class SSHWorkspace(AbstractCapability[AgentDepsT]):
 
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables for every command, on top of the remote login environment."""
+
+    mounts: Mounts = ()
+    """Storage to show as folders in the workspace, such as a [`Bucket`][pydantic_ai_harness.bucket.Bucket]; a function of the run can pick them per run."""
 
     ssh_args: Sequence[str] = ()
     """Extra `ssh` arguments, such as `['-i', key_path]`; prefer your SSH configuration where you can."""
@@ -80,4 +84,8 @@ class SSHWorkspace(AbstractCapability[AgentDepsT]):
         backend = self._configured()
         if ref is not None and ref != backend.ref:
             return None
-        return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend
+        workspace = with_mounts(backend, self.mounts, ctx)
+        if self.read_only:
+            # `with_mounts` returns the backend itself when there are no mounts to manage.
+            workspace = ReadOnlyWorkspace(workspace if isinstance(workspace, Workspace) else Workspace(workspace))
+        return workspace

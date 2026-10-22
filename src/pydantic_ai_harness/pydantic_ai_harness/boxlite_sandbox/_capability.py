@@ -10,7 +10,13 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir, running_on_asyncio
+from pydantic_ai_harness._workspace_provider import (
+    Mounts,
+    check_integer,
+    check_working_dir,
+    running_on_asyncio,
+    with_mounts,
+)
 from pydantic_ai_harness.boxlite_sandbox import _backend
 from pydantic_ai_harness.boxlite_sandbox._backend import BoxLiteSandboxBackend
 
@@ -46,6 +52,9 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
 
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, also on an attached box; nothing is read from the host."""
+
+    mounts: Mounts = ()
+    """Storage to show as folders in the sandbox, such as a [`Bucket`][pydantic_ai_harness.bucket.Bucket]; a function of the run can pick them per run."""
 
     box_options: Mapping[str, Any] | None = field(default=None, repr=False)
     """Other keyword arguments for a new box's `boxlite.BoxOptions`, such as `volumes`, `ports`, `secrets` or `disk_size_gb`.
@@ -87,13 +96,12 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it creates or attaches on first use."""
-        del ctx
         if ref is not None:
             if ref.provider != 'boxlite':
                 return None
             # A ref from message history only reaches boxes `BoxLiteSandbox` created.
             _backend.check_ref(ref)
-        return self._new_backend(ref)
+        return with_mounts(self._new_backend(ref), self.mounts, ctx)
 
     def _new_backend(self, ref: WorkspaceRef | None) -> BoxLiteSandboxBackend:
         return BoxLiteSandboxBackend(

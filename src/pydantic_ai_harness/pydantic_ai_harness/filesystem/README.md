@@ -45,6 +45,10 @@ read tools are offered. `list_files` and `grep` run `rg` inside the workspace;
 where it can't run commands, they walk its files instead, as `find_files` and
 `search_files` do.
 
+Folders that are [mounted storage](https://pydantic.dev/docs/ai/core-concepts/workspace/#mounting-storage), such as a [`Bucket`](https://pydantic.dev/docs/ai/harness/bucket/), are listed in the
+instructions, with whether shell commands see them. A search that includes a mount commands can't see
+walks it through the storage, which is slower than `rg`.
+
 ## Tools
 
 | Tool | Purpose |

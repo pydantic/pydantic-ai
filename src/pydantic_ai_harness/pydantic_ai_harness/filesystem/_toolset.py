@@ -215,6 +215,20 @@ class _Scope:
         self.bounds.lacks_ripgrep = value
 
 
+def _commands_reach(scope: _Scope, path: str) -> bool:
+    """Whether `rg` can search `path`: the workspace runs commands, and shell commands see every mount there."""
+    if not supports_commands(scope.workspace):
+        return False
+    target = posixpath.normpath(posixpath.join(scope.cwd, path))
+    for mount in scope.workspace.mounts:
+        root = posixpath.join(scope.cwd, mount.path)
+        if not scope.workspace.shell_can_see(mount) and (
+            root == target or root.startswith(f'{target.rstrip("/")}/') or target.startswith(f'{root}/')
+        ):
+            return False
+    return True
+
+
 def _fall_back_from_ripgrep(scope: _Scope) -> None:
     """Search this workspace without `rg` from now on, saying so once, since the results differ slightly."""
     if not scope.lacks_ripgrep:
@@ -632,8 +646,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """Offer only the tools the run's workspace can serve.
 
-        A read-only workspace keeps only `READ_ONLY_TOOL_NAMES`. Where the workspace cannot run
-        `rg`, the ripgrep tools walk its files instead.
+        A read-only workspace keeps only `READ_ONLY_TOOL_NAMES`. Where `rg` can't search a path (the workspace
+        can't run it, or a mount there is hidden from commands), the ripgrep tools walk the files instead.
         """
         tools = await super().get_tools(ctx)
         if ctx.workspace.read_only:
@@ -1394,7 +1408,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         entry = await self._stat(scope, resolved)
         # Probe rg on the first call too: walking remote files is only for backends
         # without commands, or when the command path itself fails.
-        if entry is not None and supports_commands(scope.workspace):
+        if entry is not None and _commands_reach(scope, resolved):
             return await self._command_search_files(scope, ctx, entry, resolved, pattern, include_glob)
         include_hidden = bool(include_glob and _explicit_hidden(include_glob))
         walk_cut = False
@@ -1672,7 +1686,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     async def _list_files(
         self, scope: _Scope, ctx: RunContext[AgentDepsT] | None, path: str = '.', *, glob: str | None
     ) -> str:
-        if not supports_commands(scope.workspace):
+        if not _commands_reach(scope, path):
             # Read-only and filesystem-only workspaces refuse `rg`; walk the files instead.
             pattern = '**' if glob is None else glob if '/' in glob else f'**/{glob}'
             return await self._find_files(scope, ctx, pattern, path=path, files_only=True)
@@ -1805,7 +1819,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     ) -> str:
         if not 0 <= context <= 20:
             raise ValueError('context must be between 0 and 20.')
-        if not supports_commands(scope.workspace):
+        if not _commands_reach(scope, path):
             # Read-only and filesystem-only workspaces refuse `rg`; read the files instead.
             if file_type is not None:
                 raise ValueError(_FILE_TYPE_NEEDS_RIPGREP)

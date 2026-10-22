@@ -238,7 +238,7 @@ class BubblewrapWorkspace(WrapperWorkspace):
         self._network = network
         self._bwrap_args = tuple(bwrap_args)
         self._sandbox_works = False
-        self._files = wrapped if wrapped.read_only else Workspace(_SandboxedCommands(self))
+        self._files = wrapped if wrapped.read_only else Workspace(_SandboxedCommands(self), mounts=wrapped.mounts)
         self._login_guard: tuple[str, ...] | None = None
 
     def durable_policy(self) -> tuple[object, ...]:

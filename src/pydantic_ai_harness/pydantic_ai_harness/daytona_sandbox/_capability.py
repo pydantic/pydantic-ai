@@ -11,7 +11,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace import innermost_backend
-from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir
+from pydantic_ai_harness._workspace_provider import Mounts, check_integer, check_working_dir, with_mounts
 from pydantic_ai_harness.daytona_sandbox._backend import DaytonaSandboxBackend, destroy_sandbox
 
 if TYPE_CHECKING:
@@ -73,6 +73,9 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
     """Environment variables every command gets, also on an attached sandbox; a command's `env` is
     layered on top. Nothing is read from the host."""
 
+    mounts: Mounts = ()
+    """Storage to show as folders in the sandbox, such as a [`Bucket`][pydantic_ai_harness.bucket.Bucket]; a function of the run can pick them per run."""
+
     def __post_init__(self) -> None:
         if self.defer_loading:
             # Core picks the run's workspace from the always-on capabilities only.
@@ -101,7 +104,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
         """Build the backend for this run. No I/O here: it attaches or creates on first use."""
         if ref is not None and ref.provider != 'daytona':
             return None
-        return _SuppliedBackend(
+        backend = _SuppliedBackend(
             run_id=ctx.run_id,
             client=self.client,
             ref=ref,
@@ -111,6 +114,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
             working_dir=self.working_dir,
             env=self.env,
         )
+        return with_mounts(backend, self.mounts, ctx)
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         # Only the backend this run built: one passed in as `workspace=`, such as a parent run's

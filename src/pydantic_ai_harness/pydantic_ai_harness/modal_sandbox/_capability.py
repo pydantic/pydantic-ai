@@ -12,7 +12,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
-from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir
+from pydantic_ai_harness._workspace_provider import Mounts, check_integer, check_working_dir, with_mounts
 from pydantic_ai_harness.modal_sandbox._backend import (
     DEFAULT_APP_NAME,
     DEFAULT_SANDBOX_TIMEOUT,
@@ -166,6 +166,9 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command in the sandbox gets; a command's own `env` is layered on top."""
 
+    mounts: Mounts = ()
+    """Storage to show as folders in the sandbox, such as a [`Bucket`][pydantic_ai_harness.bucket.Bucket]; a function of the run can pick them per run."""
+
     warn_if_no_tools: bool = True
     """Warn, once per `ModalSandbox` instance, when none of a run's tools has a `Shell` or `FileSystem` tool name.
 
@@ -194,6 +197,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         idle_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        mounts: Mounts = (),
         warn_if_no_tools: bool = True,
         workdir: str | None = None,
         **removed_arguments: Never,
@@ -236,6 +240,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         self.idle_timeout = idle_timeout
         self.working_dir = working_dir
         self.env = env
+        self.mounts = mounts
         self.warn_if_no_tools = warn_if_no_tools
         self._warned_no_tools = False
         # `removed_arguments` is typed `Never` to close the signature; its values are whatever the caller passed.
@@ -260,10 +265,9 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build a backend without performing Modal I/O."""
-        del ctx
         if ref is not None and ref.provider != 'modal':
             return None
-        return ModalSandboxBackend(
+        backend = ModalSandboxBackend(
             ref=ref or self._sandbox_id_ref,
             image=self.image,
             app_name=self.app_name,
@@ -273,6 +277,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             working_dir=self.working_dir,
             env=self.env,
         )
+        return with_mounts(backend, self.mounts, ctx)
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         # The previous `ModalSandbox` registered its own tools, so `ModalSandbox(image=...)` on its

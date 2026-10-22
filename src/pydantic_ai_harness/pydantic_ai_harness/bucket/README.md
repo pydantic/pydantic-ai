@@ -45,6 +45,32 @@ agent = Agent(
 
 The agent's file tools read `exports/2026-10-01.csv` from `s3://acme-data/exports/2026-10-01.csv`. Commands on your machine don't see the folder.
 
+## In a sandbox
+
+Every workspace capability takes `mounts=`. Pass a function of the run instead of a list to pick the mounts per run, for example one folder per customer:
+
+```python {names="defined"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.workspaces import Mount
+from pydantic_ai_harness.bucket import Bucket
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.e2b_sandbox import E2BSandbox
+
+
+@dataclass
+class Customer:
+    id: str
+
+
+def customer_files(ctx: RunContext[Customer]) -> list[Mount]:
+    return [Mount('files', Bucket(f's3://acme-customers/{ctx.deps.id}/'), description="The customer's files")]
+
+
+agent = Agent('anthropic:claude-opus-5-5', deps_type=Customer, capabilities=[E2BSandbox(mounts=customer_files), Coder()])
+```
+
 ## Choosing the bucket
 
 | Storage | URL |
