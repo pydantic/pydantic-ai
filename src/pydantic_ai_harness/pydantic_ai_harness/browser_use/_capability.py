@@ -184,9 +184,9 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     `{'https://example.com': {'x_password': '...'}}`. Flat entries require a
     non-empty `allowed_domains` on the capability or `browser_profile` with explicit
     hostnames, and are substituted only on the hosts that allowlist names.
-    Secret-bearing sessions process same-origin frames only, the default factory
-    removes browser-use's `evaluate` action, and `browse_web` replaces any secret
-    value in its result with the placeholder.
+    Secret-bearing sessions process same-origin frames only, `evaluate` is removed
+    from the `settings.tools` every agent factory receives, and `browse_web`
+    replaces any secret value in its result with the placeholder.
     """
 
     extend_system_message: str | None = None
