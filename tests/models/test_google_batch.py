@@ -469,6 +469,21 @@ async def test_gemini_batch_results_only_delete_the_input_file_this_process_uplo
     assert deleted == ['files/input']
 
 
+async def test_gemini_batch_results_dont_delete_a_file_another_project_uploaded_for_a_job_with_the_same_name(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Job names are only unique within a project, so another project's job of the same name isn't this upload's."""
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    _fake_jobs(monkeypatch, model, {'state': 'JOB_STATE_PENDING'})
+    batch = await model.batch_create([await model.batch_encode(_request())])
+    other = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='other-project-key'))
+    deleted = _fake_jobs(monkeypatch, other, {'state': 'JOB_STATE_SUCCEEDED', 'dest': {'file_name': 'files/out'}})
+
+    handle = replace(batch, group=(await other.batch_encode(_request())).group)
+    await other.batch_results(await other.batch_status(handle))
+    assert deleted == []
+
+
 async def test_gemini_batch_results_keep_the_input_file_of_a_job_still_running(
     allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:

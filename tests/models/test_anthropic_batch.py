@@ -126,6 +126,22 @@ def test_anthropic_batch_request_that_never_ran_is_a_model_error(status: str) ->
         )
 
 
+async def test_anthropic_batch_group_is_the_credential_the_client_sends() -> None:
+    """A credential in the client's default headers replaces its API key, whatever the header's casing."""
+
+    async def group(**client_kwargs: Any) -> str:
+        client = AsyncAnthropic(api_key='placeholder', **client_kwargs)
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+        return (await model.batch_encode(_request())).group
+
+    tenant_a = await group(default_headers={'x-api-key': 'tenant-a'})
+    assert tenant_a != await group(default_headers={'x-api-key': 'tenant-b'})
+    assert tenant_a == await group(default_headers={'X-Api-Key': 'tenant-a'})
+    assert await group(default_headers={'Authorization': 'Bearer a'}) != await group(
+        default_headers={'authorization': 'Bearer b'}
+    )
+
+
 async def test_anthropic_batch_refuses_a_different_registered_client(allow_model_requests: None) -> None:
     first = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='first-key'))
     second = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='second-key'))

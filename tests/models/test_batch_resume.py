@@ -158,10 +158,23 @@ class _BatchAPI:
 
 
 def _agent(
-    api: _BatchAPI, api_key: str = 'submitting-key', batching: BatchModelRequests | None = None
+    api: _BatchAPI,
+    api_key: str = 'submitting-key',
+    batching: BatchModelRequests | None = None,
+    *,
+    in_header: bool = False,
 ) -> Agent[None, str | PendingModelResponse]:
-    """A new agent with a new client, model and capability, as a new process would build."""
-    client = AsyncOpenAI(api_key=api_key, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(api.handle)))
+    """A new agent with a new client, model and capability, as a new process would build.
+
+    With `in_header`, the client's API key is a placeholder that its `Authorization` default header overrides.
+    """
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(api.handle))
+    if in_header:
+        client = AsyncOpenAI(
+            api_key='placeholder', default_headers={'Authorization': f'Bearer {api_key}'}, http_client=http_client
+        )
+    else:
+        client = AsyncOpenAI(api_key=api_key, http_client=http_client)
     model = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(openai_client=client))
     return Agent(
         model,
@@ -171,9 +184,16 @@ def _agent(
 
 
 async def _resume(
-    api: _BatchAPI, stored: bytes, api_key: str = 'submitting-key', batching: BatchModelRequests | None = None
+    api: _BatchAPI,
+    stored: bytes,
+    api_key: str = 'submitting-key',
+    batching: BatchModelRequests | None = None,
+    *,
+    in_header: bool = False,
 ) -> tuple[str | PendingModelResponse, bytes]:
-    result = await _agent(api, api_key, batching).run(message_history=ModelMessagesTypeAdapter.validate_json(stored))
+    result = await _agent(api, api_key, batching, in_header=in_header).run(
+        message_history=ModelMessagesTypeAdapter.validate_json(stored)
+    )
     return result.output, result.all_messages_json()
 
 
@@ -317,44 +337,47 @@ async def _two_histories(api: _BatchAPI) -> tuple[bytes, bytes]:
     return first.all_messages_json(), second.all_messages_json()
 
 
-async def test_a_credential_the_provider_denies_doesnt_get_cached_results() -> None:
+@pytest.mark.parametrize('in_header', [False, True], ids=['api-key', 'authorization-header'])
+async def test_a_credential_the_provider_denies_doesnt_get_cached_results(in_header: bool) -> None:
     """Results fetched with one credential aren't handed to a request checking the batch with another."""
     api = _BatchAPI(denied_keys={'other-project-key'})
     first, second = await _two_histories(api)
     api.complete('batch_0', 'Hi!')
     shared = BatchModelRequests(**FAST_BATCH_SETTINGS)
 
-    assert (await _resume(api, first, batching=shared))[0] == 'Hi!'
+    assert (await _resume(api, first, batching=shared, in_header=in_header))[0] == 'Hi!'
     with pytest.raises(SuspendedResponseExpired):
-        await _resume(api, second, api_key='other-project-key', batching=shared)
+        await _resume(api, second, api_key='other-project-key', batching=shared, in_header=in_header)
     assert ('GET', '/batches/batch_0', 'other-project-key') in api.calls
 
 
-async def test_a_credential_the_provider_denies_doesnt_get_a_cached_status() -> None:
+@pytest.mark.parametrize('in_header', [False, True], ids=['api-key', 'authorization-header'])
+async def test_a_credential_the_provider_denies_doesnt_get_a_cached_status(in_header: bool) -> None:
     api = _BatchAPI(denied_keys={'other-project-key'})
     first, second = await _two_histories(api)
     shared = BatchModelRequests(poll_interval=timedelta(hours=1), max_poll_interval=timedelta(hours=1))
 
-    assert isinstance((await _resume(api, first, batching=shared))[0], PendingModelResponse)
+    assert isinstance((await _resume(api, first, batching=shared, in_header=in_header))[0], PendingModelResponse)
     with pytest.raises(SuspendedResponseExpired):
-        await _resume(api, second, api_key='other-project-key', batching=shared)
+        await _resume(api, second, api_key='other-project-key', batching=shared, in_header=in_header)
     # Another history checked with the first credential still shares its status.
-    assert isinstance((await _resume(api, second, batching=shared))[0], PendingModelResponse)
+    assert isinstance((await _resume(api, second, batching=shared, in_header=in_header))[0], PendingModelResponse)
     assert [key for _, path, key in api.calls if path == '/batches/batch_0'] == [
         'submitting-key',
         'other-project-key',
     ]
 
 
-async def test_a_credential_the_provider_denies_doesnt_join_a_concurrent_check() -> None:
+@pytest.mark.parametrize('in_header', [False, True], ids=['api-key', 'authorization-header'])
+async def test_a_credential_the_provider_denies_doesnt_join_a_concurrent_check(in_header: bool) -> None:
     api = _BatchAPI(denied_keys={'other-project-key'})
     first, second = await _two_histories(api)
     api.complete('batch_0', 'Hi!')
     shared = BatchModelRequests(**FAST_BATCH_SETTINGS)
 
     allowed, denied = await asyncio.gather(
-        _resume(api, first, batching=shared),
-        _resume(api, second, api_key='other-project-key', batching=shared),
+        _resume(api, first, batching=shared, in_header=in_header),
+        _resume(api, second, api_key='other-project-key', batching=shared, in_header=in_header),
         return_exceptions=True,
     )
     assert isinstance(allowed, tuple) and allowed[0] == 'Hi!'

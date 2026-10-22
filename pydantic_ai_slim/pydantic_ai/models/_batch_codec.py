@@ -71,17 +71,27 @@ def refuse_http_client_auth(http_client: object, provider: str) -> None:
         raise UserError(f'Batching requires the credential on the {provider} client, not an `auth` on its HTTP client.')
 
 
-def credential_hash(headers: Mapping[str, object], query: object) -> str:
-    """A hash of the headers and query a client sends with every request, which include its credentials."""
+def credential_hash(header_layers: Sequence[Mapping[str, object]], query: object) -> str:
+    """A hash of the headers and query a client sends with every request, which include its credentials.
+
+    `header_layers` are merged as the provider SDKs merge them: by name whatever its casing, a later layer replacing an
+    earlier one's header, and a value that isn't a string, like the SDKs' `Omit`, removing it. So a credential set
+    through the client's `default_headers` counts in place of the API key it overrides.
+    """
+    headers: dict[str, str] = {}
+    for layer in header_layers:
+        for name, value in layer.items():
+            if isinstance(value, str):
+                headers[name.lower()] = value
+            else:
+                headers.pop(name.lower(), None)
     return hashlib.sha256(
         to_json(
             {
                 'headers': {
                     name: value
-                    for name, value in headers.items()
-                    if isinstance(value, str)
-                    and name.lower() != 'user-agent'
-                    and not name.lower().startswith('x-stainless-')
+                    for name, value in sorted(headers.items())
+                    if name != 'user-agent' and not name.startswith('x-stainless-')
                 },
                 'query': query,
             }

@@ -123,8 +123,11 @@ class _ResultLine(TypedDict):
 
 _RESULT_LINE_ADAPTER = TypeAdapter(_ResultLine)
 
-_UPLOADED_INPUT_FILES: OrderedDict[str, str] = OrderedDict()
-"""The input file this process uploaded for each job it created, by job name, to delete once the job has ended.
+_UPLOADED_INPUT_FILES: OrderedDict[tuple[str, str], str] = OrderedDict()
+"""The input file this process uploaded for each job it created, to delete once the job has ended.
+
+Keyed by the endpoint and credential that created the job, from `batch_credential`, and its name, as job names are only
+unique within one project: a client of another project never finds, or deletes, this one's file.
 
 A `Batch` handle can come from a stored message history, which a caller controls, and the Gemini API doesn't say which
 file a job reads, so only a file this process uploaded for the job is ever deleted. The oldest are forgotten first,
@@ -191,7 +194,7 @@ async def batch_create(model: GoogleModel, requests: Sequence[EncodedBatchReques
         config=CreateBatchJobConfigDict(display_name='pydantic-ai-batch', http_options=no_retries),
     )
     assert job.name is not None
-    _UPLOADED_INPUT_FILES[job.name] = file.name
+    _UPLOADED_INPUT_FILES[batch_credential(model), job.name] = file.name
     while len(_UPLOADED_INPUT_FILES) > _UPLOADED_INPUT_FILES_SIZE:
         _UPLOADED_INPUT_FILES.popitem(last=False)
     return _to_batch(model, job, group, len(requests), {'input_file': file.name})
@@ -211,7 +214,7 @@ async def batch_results(model: GoogleModel, batch: Batch) -> list[BatchResult]:
     client = _batch_client(model)
     job = await client.aio.batches.get(name=batch.id)
     if _STATUSES.get(job.state or JobState.JOB_STATE_UNSPECIFIED) == 'ended' and (
-        input_file := _UPLOADED_INPUT_FILES.pop(batch.id, None)
+        input_file := _UPLOADED_INPUT_FILES.pop((batch_credential(model), batch.id), None)
     ):
         # The job has ended, so its input file isn't needed again; it would otherwise count against the project's
         # file storage until it expires. The handle's `input_file` isn't trusted: see `_UPLOADED_INPUT_FILES`.

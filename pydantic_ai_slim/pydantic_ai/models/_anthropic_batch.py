@@ -215,7 +215,8 @@ def _to_batch(model: AnthropicModel, batch: BetaMessageBatch, group: str) -> Bat
 def _batch_group(model: AnthropicModel, betas: Iterable[str]) -> str:
     group: _Group = {
         'endpoint': hashlib.sha256(str(_batch_client(model).base_url).encode()).hexdigest(),
-        'credential': credential_hash(_batch_client(model).default_headers, _batch_client(model).default_query),
+        # The client's `default_headers` already put its custom headers after its API key's, as it sends them.
+        'credential': credential_hash([_batch_client(model).default_headers], _batch_client(model).default_query),
         'betas': sorted(betas),
     }
     return json.dumps(group, sort_keys=True)

@@ -203,6 +203,26 @@ async def test_batch_encode_continues_a_stored_response() -> None:
     assert body['input'] == [{'role': 'user', 'content': 'Again'}]
 
 
+@pytest.mark.parametrize('header', ['Authorization', 'authorization', 'api-key'])
+async def test_batch_group_is_the_credential_the_client_sends(header: str) -> None:
+    """A credential in the client's default headers replaces its API key, so clients that differ only there don't share."""
+
+    def model(credential: str) -> OpenAIResponsesModel:
+        value = f'Bearer {credential}' if header.lower() == 'authorization' else credential
+        return _model(api_key='placeholder', default_headers={header: value})
+
+    async def group(model: OpenAIResponsesModel) -> str:
+        return (await model.batch_encode(_request())).group
+
+    tenant_a, tenant_b = model('tenant-a'), model('tenant-b')
+    assert await group(tenant_a) != await group(tenant_b)
+    assert tenant_a._batch_credential() != tenant_b._batch_credential()  # pyright: ignore[reportPrivateUsage]
+    assert await group(tenant_a) == await group(model('tenant-a'))
+    if header.lower() == 'authorization':
+        # Overriding the API key's header with the same key is the same credential.
+        assert await group(tenant_a) == await group(_model(api_key='tenant-a'))
+
+
 async def test_batch_group_holds_the_model_but_no_secrets() -> None:
     model = _model(api_key='secret-key', organization='org-secret', default_headers={'X-Tenant': 'tenant-secret'})
     group = (await model.batch_encode(_request())).group
@@ -839,6 +859,33 @@ async def test_batch_results_delete_the_input_file_only_once_openai_says_the_bat
     api.batch = _batch_json('completed', output_file_id='file-output')
     await model.batch_results(await model.batch_status(batch))
     assert [path for method, path in api.requests if method == 'DELETE'] == ['/files/file-input']
+
+
+async def test_batch_results_dont_delete_a_file_another_account_uploaded_for_a_batch_with_the_same_id(
+    allow_model_requests: None,
+) -> None:
+    """Batch IDs are only unique within an account, so another account's batch of the same ID isn't this upload's."""
+    api = _FakeBatchAPI(batch=_batch_json('in_progress'))
+    model = _fake_model(api)
+    await model.batch_create([await model.batch_encode(_request('ok'))])
+    other_client = AsyncOpenAI(
+        api_key='other-account-key', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(api.handle))
+    )
+    other = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(openai_client=other_client))
+    api.files['file-output'] = _line('ok', {'status_code': 200, 'body': _RESPONSE_BODY})
+    api.batch = _batch_json('completed', output_file_id='file-output')
+    handle = Batch(
+        id='batch_1',
+        model_name='gpt-4.1-nano',
+        provider_name='openai',
+        group=(await other.batch_encode(_request('ok'))).group,
+        status='in_progress',
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        request_count=1,
+    )
+
+    await other.batch_results(await other.batch_status(handle))
+    assert [path for method, path in api.requests if method == 'DELETE'] == []
 
 
 async def test_batch_forgets_the_oldest_uploaded_input_files(
