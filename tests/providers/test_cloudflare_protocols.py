@@ -3,15 +3,35 @@
 import httpx2
 import pytest
 
-from pydantic_ai.exceptions import ModelConnectionError, ModelHTTPError, ModelTimeoutError, UnexpectedModelBehavior
+from pydantic_ai.embeddings import infer_embedding_model
+from pydantic_ai.exceptions import (
+    ModelConnectionError,
+    ModelHTTPError,
+    ModelTimeoutError,
+    UnexpectedModelBehavior,
+    UserError,
+)
+from pydantic_ai.images import infer_image_generation_model
 from pydantic_ai.models.cloudflare_clef import CloudflareClefModel
 from pydantic_ai.providers.cloudflare import CloudflareProvider
+from pydantic_ai.providers.system_one import SystemOneProvider
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.embeddings.cloudflare import CloudflareEmbeddingModel
     from pydantic_ai.models.cloudflare import CloudflareChatModel
+
+
+@pytest.mark.skipif(not imports_successful(), reason='OpenAI SDK not installed')
+async def test_inference_rejects_other_provider():
+    async with SystemOneProvider(api_key='token', base_url='https://example.com') as provider:
+        with pytest.raises(UserError, match='Cloudflare embeddings require a `CloudflareProvider`'):
+            infer_embedding_model('cloudflare:@cf/baai/bge-m3', provider_factory=lambda _: provider)
+        with pytest.raises(UserError, match='Cloudflare images require a `CloudflareProvider`'):
+            infer_image_generation_model(
+                'cloudflare:@cf/black-forest-labs/flux-2-klein-4b', provider_factory=lambda _: provider
+            )
 
 
 @pytest.mark.skipif(not imports_successful(), reason='OpenAI SDK not installed')

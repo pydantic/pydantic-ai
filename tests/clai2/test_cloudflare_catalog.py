@@ -1,5 +1,7 @@
 """Cloudflare keeps native decision imports independent from the optional chat SDK."""
 
+from unittest.mock import Mock
+
 import pytest
 
 from pydantic_clai2.models.model_catalog import check_installed
@@ -16,8 +18,7 @@ def test_chat_checks_optional_sdk(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_clef_does_not_require_chat_sdk(monkeypatch: pytest.MonkeyPatch):
-    def no_chat_import(module: str):
-        pytest.fail(f'Unexpected SDK import: {module}')
-
+    no_chat_import = Mock()
     monkeypatch.setattr('pydantic_clai2.models.model_catalog.import_module', no_chat_import)
     check_installed('cloudflare:@cf/cloudflare/clef-flash')
+    no_chat_import.assert_not_called()
