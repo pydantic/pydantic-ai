@@ -24,6 +24,7 @@ from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, Mode
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
+from pydantic_ai_harness.subagents import TaskQuestionEvent
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
 from pydantic_clai2.cli.self_update import Relaunch, Updates, WebHandoff
@@ -1455,6 +1456,23 @@ async def _prompt_with_steering(
     return result
 
 
+def _run_events(
+    observe: Callable[[AgentStreamEvent], Awaitable[None]], tasks: Tasks | None
+) -> Callable[[AgentStreamEvent], Awaitable[None]]:
+    """The main run's stream handler. With the tasks' feed, a task's question shows once, from that feed.
+
+    The run streams only the questions asked while it is open to them; the feed gets every one.
+    """
+    if tasks is None:
+        return observe
+
+    async def observe_run(event: AgentStreamEvent) -> None:
+        if not isinstance(event, TaskQuestionEvent):
+            await observe(event)
+
+    return observe_run
+
+
 async def _run_prompt(
     session: Session[DepsT, OutputT],
     text: str | None,
@@ -1501,7 +1519,8 @@ async def _run_prompt(
 
     session.on_context_usage = context_usage
     session.on_context_window = context_window
-    session.on_stream_event = observe
+
+    session.on_stream_event = _run_events(observe, tasks)
     # A session the terminal does not show yet prints nowhere: no footer of its own may draw over the editor later.
     status_line = StatusLine(console, status, enabled=screen.editor is None and console.is_terminal, spinner=spinner)
 

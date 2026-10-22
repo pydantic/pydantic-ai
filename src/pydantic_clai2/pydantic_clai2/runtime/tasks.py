@@ -291,7 +291,8 @@ class Tasks:
             await self.fire(TaskEvent(task=self.info(record), event=event))
         if record.parent_id is None and self.wake is not None and self._for_main_run(record):
             self.wake()
-        if isinstance(event, TaskQuestionEvent) and not self._shows_question(record, event):
+        if isinstance(event, TaskQuestionEvent) and event.task_id != record.id:
+            # The copy in a parent task's stream: it shows once, as the asking task's own event.
             return
         if not isinstance(event, (DelegationStartEvent, DelegationEndEvent, TaskQuestionEvent)):
             return
@@ -305,14 +306,6 @@ class Tasks:
         return bool(
             self.owner.reports(conversation_id=conversation_id) or self.owner.questions(conversation_id=conversation_id)
         )
-
-    def _shows_question(self, record: DelegationTask, event: TaskQuestionEvent) -> bool:
-        """Whether to show a question here: once, as the asking task's own event, unless the main run shows it.
-
-        A question also comes in the stream of the run that delegated the task, and so as an event of a parent
-        task. A main run's turn renders the copy in its own stream.
-        """
-        return event.task_id == record.id and not (record.parent_id is None and self.sink is not None)
 
     def _for_main_run(self, record: DelegationTask) -> bool:
         """Whether `record`, a task of a main run, has a report or a question that run has not received."""

@@ -389,7 +389,7 @@ async def test_promote_all_foreground_siblings() -> None:
 
 
 async def test_a_question_shows_once() -> None:
-    """Shown as the asking task's own event, unless the main run's turn renders it from its own stream."""
+    """Shown as the asking task's own event, not as the copy in the stream of the run that delegated it."""
     output = io.StringIO()
     ui = Tasks(console=Console(file=output, width=200), conversation_id=lambda: 'root', directory=None)
     record = task()
@@ -402,14 +402,14 @@ async def test_a_question_shows_once() -> None:
 
     ui.sink = sink
     await ui.observe(DelegationTaskEvent(task=record, event=question))
-    assert received == [], 'the main run shows it'
+    assert received == [question]
     child = task(task_id='b' * 32, parent_id=record.id)
     ui.owner.records[child.id] = child
     nested = TaskQuestionEvent(task_id=child.id, agent_name='self', question_id='q', question='Which?')
     await ui.observe(DelegationTaskEvent(task=record, event=nested))
-    assert received == [], 'the copy in its parent task stream'
+    assert received == [question], 'not the copy in its parent task stream'
     await ui.observe(DelegationTaskEvent(task=child, event=nested))
-    assert received == [nested]
+    assert received == [question, nested]
     ui.sink = None
     await ui.observe(DelegationTaskEvent(task=record, event=question))
     assert 'asks: Which?' in output.getvalue()
@@ -788,10 +788,11 @@ async def test_consumed_background_report_does_not_start_another_turn(
     assert shell.session.messages == []
 
 
-async def test_a_background_task_question_wakes_the_idle_parent_which_answers_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize('timing', ['idle', 'active'])
+async def test_a_background_task_question_reaches_the_parent_which_answers_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, timing: str
 ) -> None:
-    """The question shows once, and an idle parent wakes for it, as for a report."""
+    """The question shows once, whether it comes during a turn or wakes the idle parent, as a report does."""
     import asyncio
     import re
 
@@ -862,6 +863,12 @@ async def test_a_background_task_question_wakes_the_idle_parent_which_answers_it
             arguments = '{"agent_name":"self","task":"child","background":true}'
             yield {0: DeltaToolCall(name='delegate_task', json_args=arguments)}
         else:
+            if timing == 'active' and len(messages) == 3:
+                # The question comes while this turn runs, and is queued on it.
+                release.set()
+                (record,) = shell.tasks.owner.records.values()
+                while shell.tasks.owner.pending_question(record.id) is None:
+                    await asyncio.sleep(0.05)
             yield 'Waiting.'
 
     shell = create_shell(
