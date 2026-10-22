@@ -167,7 +167,7 @@ KNOWN: dict[str, tuple[Known, ...]] = {
 }
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
 
-ALLOWED: dict[str, Allowed | tuple[Allowed, ...]] = {
+ALLOWED: dict[str, Allowed] = {
     'agent:dynamic_instructions': Allowed(
         'docs/agent.md: dynamic instructions are re-rendered for every request, after the static ones and outside '
         'the cached prefix; append mode is #8188',
@@ -186,23 +186,14 @@ ALLOWED: dict[str, Allowed | tuple[Allowed, ...]] = {
         )
         for name in ('tool-retry', 'output-validation-retry')
     },
-    'retry:no-output-retry+request-scoped': (
-        Allowed(
-            'A request-scoped system prompt (#9711) is sent for one request, as the tail, and left out of the next '
-            'one, retried steps included',
-            (('messages', 'system-prompt'),),
-            tail=True,
-            records=('request-scoped system prompt',),
-            providers=('openai-responses', 'openai-chat'),
-        ),
-        Allowed(
-            'Anthropic clears a request-scoped system prompt at the next user message; a `no_output` retry has none, '
-            'so the prompt before it is left out from the retry on (#10938). That happens as the adapter renders the '
-            'request, so the recorded messages still have it',
-            (('messages', 'system-prompt'),),
-            tail=True,
-            providers=('anthropic',),
-        ),
+    # #10938 leaves a request-scoped prompt no user message would clear out from a `no_output` retry on, so
+    # there Anthropic drops it from the tail like the OpenAI APIs.
+    'retry:no-output-retry+request-scoped': Allowed(
+        'A request-scoped system prompt (#9711) is sent for one request, as the tail, and left out of the next '
+        'one, retried steps included',
+        (('messages', 'system-prompt'),),
+        tail=True,
+        records=('request-scoped system prompt',),
     ),
 }
 """Documented prefix movers, checked exactly."""

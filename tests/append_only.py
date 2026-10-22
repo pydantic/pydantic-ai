@@ -1077,14 +1077,13 @@ def _change_violations(changes: Sequence[Change], prefix: str = '') -> list[Viol
 
 
 def _violations(
-    result: ConversationResult, *, allowed: Allowed | Sequence[Allowed] | None, check_ids: bool
+    result: ConversationResult, *, allowed: Allowed | None, check_ids: bool
 ) -> dict[Check, tuple[str, list[Violation]]]:
     """Every violation of each check, as a summary and one item per violation."""
     violations: dict[Check, tuple[str, list[Violation]]] = {}
     changes = result.changes()
-    # Several entries can describe one case, each for the providers it names.
-    candidates = (allowed,) if isinstance(allowed, Allowed) else allowed or ()
-    allowed = next((entry for entry in candidates if result.provider in entry.providers), None)
+    if allowed is not None and result.provider not in allowed.providers:
+        allowed = None
     prefix: list[Violation] = []
     if allowed is None:
         prefix = _change_violations(changes)
@@ -1172,7 +1171,7 @@ def check_conversation(
     result: ConversationResult,
     *,
     known: Sequence[Known] = (),
-    allowed: Allowed | Sequence[Allowed] | None = None,
+    allowed: Allowed | None = None,
     check_ids: bool = True,
 ) -> None:
     """Fail on any violation not listed in `known`, and on any `known` entry that no longer fails."""
