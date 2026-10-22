@@ -33,6 +33,8 @@ machine.
 On a model trained with a computer tool of its own, the `computer` tool is sent as that native tool, so the model uses
 the vocabulary it was trained on: OpenAI's `computer` tool on GPT-5.4 and later. Every other model with image input
 gets the same tool as a function, and Gemini 3 models are asked for coordinates on the 0-999 grid they point on.
+OpenAI can attach safety checks to a call; they are acknowledged when the call runs, so turn on `require_approval` to
+review calls first.
 
 ## Requirements
 

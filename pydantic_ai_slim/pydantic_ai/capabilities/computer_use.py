@@ -250,19 +250,19 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
-        """Ask for approval when configured or flagged by the provider, and scale a grid model's coordinates to pixels.
+        """Ask for approval when configured, and scale a grid model's coordinates to pixels.
 
         Runs where the run's model is known, before the tool; the scaled actions are what the workspace receives.
         """
         if tool_def.tool_kind != COMPUTER_KIND.id:
             return args
         actions: list[ComputerToolAction] = args['actions']
-        if not ctx.tool_call_approved:
-            # A provider can flag a call as risky (OpenAI's `pending_safety_checks`); it runs only once approved.
-            if safety_checks := (call.provider_details or {}).get('safety_checks'):
-                raise ApprovalRequired(metadata={'safety_checks': safety_checks})
-            if self.require_approval and any(action.type not in OBSERVING_ACTIONS for action in actions):
-                raise ApprovalRequired
+        if (
+            self.require_approval
+            and not ctx.tool_call_approved
+            and any(action.type not in OBSERVING_ACTIONS for action in actions)
+        ):
+            raise ApprovalRequired
         if (grid := _coordinate_grid(ctx)) is not None and any(
             action.type not in OBSERVING_ACTIONS for action in actions
         ):
