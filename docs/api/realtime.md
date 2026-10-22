@@ -1,8 +1,8 @@
 # `pydantic_ai.realtime`
 
 Support for **realtime, bidirectional speech-to-speech models** (OpenAI Realtime, OpenAI GPT-Live,
-Azure OpenAI, Gemini Live, xAI Grok Voice, and any other provider that streams audio in and out over
-a persistent connection).
+Azure OpenAI, Gemini Live, xAI Grok Voice, Eleven Realtime, ElevenLabs Agents, and any other provider that
+streams audio in and out over a persistent connection).
 
 Unlike [`Model`][pydantic_ai.models.Model], which is request-response, a realtime model opens a
 long-lived connection: you stream audio (or text/images) in, and consume audio, transcripts, and
@@ -266,6 +266,7 @@ The lower-level codec vocabulary is documented in
 [`pydantic_ai.realtime.codec`](realtime/codec.md), and each provider in its own module:
 [`pydantic_ai.realtime.openai`](realtime/openai.md), [`pydantic_ai.realtime.openai_live`](realtime/openai_live.md),
 [`pydantic_ai.realtime.google`](realtime/google.md), [`pydantic_ai.realtime.xai`](realtime/xai.md),
-[`pydantic_ai.realtime.azure`](realtime/azure.md), and [`pydantic_ai.realtime.elevenlabs_agents`](realtime/elevenlabs_agents.md).
+[`pydantic_ai.realtime.azure`](realtime/azure.md), [`pydantic_ai.realtime.elevenlabs`](realtime/elevenlabs.md),
+and [`pydantic_ai.realtime.elevenlabs_agents`](realtime/elevenlabs_agents.md).
 
 ::: pydantic_ai.realtime
