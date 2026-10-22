@@ -523,8 +523,7 @@ class BatchPool:
         """
         key = _batch_key(batch)
         with self._lock:
-            for check_key in [check_key for check_key in self._unread if check_key[1:] == key]:
-                self._read(check_key, custom_id)
+            self._forget_reader(key, custom_id)
             if (submitted := self._submitted.get(key)) is None or custom_id not in submitted:
                 return False
             abandoned = self._abandoned.setdefault(key, set())
@@ -534,16 +533,22 @@ class BatchPool:
             del self._submitted[key], self._abandoned[key]
             return True
 
-    def release(self, batch: Batch) -> None:
+    def release(self, batch: Batch, custom_id: str) -> None:
         """Record that a run left a request waiting on `batch` for a later run to collect, so it's never cancelled.
 
         The later run can't be told apart from one that resumed a history this pool didn't submit, whose abandoning
-        the batch can't cancel it either.
+        the batch can't cancel it either, and nothing in this process waits to read the request's result any more.
         """
         key = _batch_key(batch)
         with self._lock:
             self._submitted.pop(key, None)
             self._abandoned.pop(key, None)
+            self._forget_reader(key, custom_id)
+
+    def _forget_reader(self, key: _BatchKey, custom_id: str) -> None:
+        for check_key in [check_key for check_key in self._unread if check_key[1:] == key]:
+            self._read(check_key, custom_id)
+        self._evict_results()
 
     def collected(self, model: Model, batch: Batch, custom_id: str) -> None:
         """Record that a request read its result, dropping the batch's results once every request waiting on it has."""
@@ -638,7 +643,7 @@ class BatchPool:
         with self._lock:
             self._statuses.pop(check_key, None)
             self._results[check_key] = batch, results
-            self._results_bytes[check_key] = sum(len(result.body or '') for result in results.values())
+            self._results_bytes[check_key] = sum(len((result.body or '').encode()) for result in results.values())
             # The requests this pool submitted and still waits on read the results, which are kept until they have.
             # Requests abandoned while it ran no longer matter: an ended batch can't be cancelled.
             submitted = self._submitted.pop(_batch_key(batch), frozenset[str]())
@@ -739,7 +744,7 @@ class BatchedModel(WrapperModel):
     def _release_suspended_response(self, response: ModelResponse) -> None:
         if (ticket := _pending_ticket(response)) is None:
             return self.wrapped._release_suspended_response(response)
-        self.pool.release(ticket['batch'])
+        self.pool.release(ticket['batch'], ticket['custom_id'])
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         if (ticket := _pending_ticket(response)) is None:

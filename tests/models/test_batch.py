@@ -463,6 +463,35 @@ async def test_an_ended_batchs_results_are_kept_until_every_request_waiting_on_i
     assert wrapped.canceled == []
 
 
+async def test_a_request_left_for_a_later_run_no_longer_keeps_its_batchs_results() -> None:
+    wrapped = SlowBatchTestModel()
+    model = _batched(wrapped, **FAST_BATCH_SETTINGS)
+    prompts = [ModelRequest(parts=[UserPromptPart(prompt)]) for prompt in ('one', 'two')]
+    first, second = await asyncio.gather(
+        *(model.request([prompt], None, ModelRequestParameters()) for prompt in prompts)
+    )
+    await model.request([prompts[0], first], None, ModelRequestParameters())
+    assert len(model.pool._results) == 1  # pyright: ignore[reportPrivateUsage]
+
+    model._release_suspended_response(second)  # pyright: ignore[reportPrivateUsage]
+    assert model.pool._results == {}  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_the_results_cache_counts_the_bytes_of_result_bodies(monkeypatch: pytest.MonkeyPatch) -> None:
+    text = 'é' * 1_000
+    wrapped = SlowBatchTestModel()
+    wrapped.custom_output_text = text
+    pending = await _pending_response(_batched(wrapped, **FAST_BATCH_SETTINGS))
+    # Between the characters and the UTF-8 bytes of the result body, which holds the text.
+    monkeypatch.setattr('pydantic_ai.models._batch_model._RESULTS_CACHE_BYTES', 2_000)
+    collecting = _batched(wrapped, **FAST_BATCH_SETTINGS)
+    response = await collecting.request(
+        [ModelRequest(parts=[UserPromptPart('Hello')]), pending], None, ModelRequestParameters()
+    )
+    assert response.parts == [TextPart(text)]
+    assert collecting.pool._results == {}  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_a_streamed_run_gets_the_batch_result_all_at_once() -> None:
     """A streamed run waits for its batch like any run, and then streams each part of the result in one event."""
     wrapped = SlowBatchTestModel(pending_checks=2)
