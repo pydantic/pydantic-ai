@@ -39,9 +39,9 @@ from pydantic_ai_harness.subagents._events import (
     TaskForceCancelEvent,
     TaskProgressEvent,
     TaskQuestionEvent,
+    TaskRequestEvent,
     TaskSettledEvent,
     TaskStartedEvent,
-    TaskStartEvent,
 )
 from pydantic_ai_harness.subagents._tasks import CANCELLED_ANSWER, DelegationTask, DelegationTasks
 
@@ -253,7 +253,7 @@ async def run_remote(
     *,
     owner: DelegationTasks,
     record: DelegationTask,
-    start: TaskStartEvent,
+    start: TaskRequestEvent,
     transport: SubAgentTransport,
     accept_timeout: float | None,
     usage: RunUsage | None,
@@ -303,7 +303,7 @@ async def run_remote(
 async def _relay(
     owner: DelegationTasks,
     record: DelegationTask,
-    start: TaskStartEvent,
+    start: TaskRequestEvent,
     transport: SubAgentTransport,
     mailbox: str,
     accept_timeout: float | None,

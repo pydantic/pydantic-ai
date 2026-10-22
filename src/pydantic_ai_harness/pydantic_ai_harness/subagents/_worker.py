@@ -31,14 +31,17 @@ from pydantic_ai_harness.subagents._events import (
     TaskMessageEvent,
     TaskProgressEvent,
     TaskQuestionEvent,
+    TaskRequestEvent,
     TaskRetryEvent,
     TaskSettledEvent,
     TaskStartedEvent,
-    TaskStartEvent,
 )
 from pydantic_ai_harness.subagents._tasks import CANCELLED_ANSWER
 from pydantic_ai_harness.subagents._toolset import SubAgent, delegation_level
 from pydantic_ai_harness.subagents._transport import SubAgentTransport
+
+_STOP_REPORT_SECONDS = 5.0
+"""How long a stopping worker tries to report each task it was running."""
 
 _logger = logging.getLogger(__name__)
 
@@ -46,7 +49,7 @@ _logger = logging.getLogger(__name__)
 class _WorkerLink(TaskLink):
     """Joins a served sub-agent's run to its delegating run, over the transport."""
 
-    def __init__(self, *, start: TaskStartEvent, transport: SubAgentTransport) -> None:
+    def __init__(self, *, start: TaskRequestEvent, transport: SubAgentTransport) -> None:
         super().__init__(can_ask=start.can_ask_questions)
         self.start = start
         self.transport = transport
@@ -183,14 +186,14 @@ class SubAgentWorker(Generic[AgentDepsT]):
     async def _serve_agent(self, group: anyio.abc.TaskGroup, name: str, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         while True:
             start = await self.transport.receive(f'agent:{name}')
-            if isinstance(start, TaskStartEvent):
+            if isinstance(start, TaskRequestEvent):
                 group.start_soon(self._run, agent, start)
             else:
                 _logger.warning(
                     'Sub-agent worker for %r skipped a %r message, which does not start a task.', name, start.kind
                 )
 
-    async def _run(self, agent: AbstractAgent[AgentDepsT, Any], start: TaskStartEvent) -> None:
+    async def _run(self, agent: AbstractAgent[AgentDepsT, Any], start: TaskRequestEvent) -> None:
         context_token = otel_context.attach(propagate.extract(start.trace_context))
         try:
             await self._run_task(agent, start)
@@ -213,24 +216,50 @@ class SubAgentWorker(Generic[AgentDepsT]):
             while len(self._histories) > self.max_conversations:
                 del self._histories[next(iter(self._histories))]
 
-    async def _run_task(self, agent: AbstractAgent[AgentDepsT, Any], start: TaskStartEvent) -> None:
+    async def _run_task(self, agent: AbstractAgent[AgentDepsT, Any], start: TaskRequestEvent) -> None:
         link = (_ForwardingWorkerLink if start.forward_events else _WorkerLink)(start=start, transport=self.transport)
+        settled: TaskSettledEvent | None = None
         try:
-            await self.transport.send(TaskStartedEvent(task_id=start.task_id, agent_name=start.agent_name))
-            async with task_group() as group:
-                group.start_soon(link.receive)
-                try:
-                    with delegation_level(start.depth):
-                        settled = await self._attempts(agent, start, link)
-                finally:
-                    group.cancel_scope.cancel()
-            await self.transport.send(settled)
+            try:
+                await self.transport.send(TaskStartedEvent(task_id=start.task_id, agent_name=start.agent_name))
+                async with task_group() as group:
+                    group.start_soon(link.receive)
+                    try:
+                        with delegation_level(start.depth):
+                            settled = await self._attempts(agent, start, link)
+                    finally:
+                        group.cancel_scope.cancel()
+            except anyio.get_cancelled_exc_class():
+                # The worker is stopping. Its delegating run would otherwise wait for this task forever, so it
+                # gets the task's report if it settled, or else a failure.
+                report = settled or TaskFailedEvent(
+                    task_id=start.task_id,
+                    agent_name=start.agent_name,
+                    error='The worker serving this task stopped before it finished.',
+                )
+                with anyio.CancelScope(shield=True), anyio.move_on_after(_STOP_REPORT_SECONDS) as deadline:
+                    try:
+                        await self.transport.send(report)
+                    except Exception:
+                        _logger.exception('Could not report sub-agent task %s as its worker stopped.', start.task_id)
+                if deadline.cancelled_caught:
+                    _logger.error('Timed out reporting sub-agent task %s as its worker stopped.', start.task_id)
+                raise
+            assert settled is not None, 'the attempts returned, so the task settled'
+            # Sent even if the worker stops meanwhile, which then waits for it, so the report is neither lost
+            # nor followed by a failure.
+            with anyio.CancelScope(shield=True):
+                await self.transport.send(settled)
         finally:
             with anyio.CancelScope(shield=True):
-                await self.transport.release(f'task:{start.task_id}:worker')
+                try:
+                    await self.transport.release(f'task:{start.task_id}:worker')
+                except Exception:
+                    # The task was reported, or is reported as failed: this is no failure of the task.
+                    _logger.exception('Could not release the mailbox of sub-agent task %s.', start.task_id)
 
     async def _attempts(
-        self, agent: AbstractAgent[AgentDepsT, Any], start: TaskStartEvent, link: _WorkerLink
+        self, agent: AbstractAgent[AgentDepsT, Any], start: TaskRequestEvent, link: _WorkerLink
     ) -> TaskSettledEvent:
         task_id, agent_name = start.task_id, start.agent_name
         history: list[ModelMessage] | None = None

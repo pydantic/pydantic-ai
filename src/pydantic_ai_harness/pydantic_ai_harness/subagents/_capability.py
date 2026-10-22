@@ -675,6 +675,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         ):
             return output
         owner = entry[1]
+        # The run's own owner, so its top-level tasks are this run's.
         await owner.wait_children(None)
         owner.queue_reports(conversation_id=ctx.conversation_id or ctx.run_id or '', parent_id=None)
         return output

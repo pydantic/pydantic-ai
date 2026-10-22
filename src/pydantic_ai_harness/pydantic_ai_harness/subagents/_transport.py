@@ -28,6 +28,9 @@ class SubAgentTransport(ABC):
     Implement this class to reach agents in other processes or machines, over a WebSocket, gRPC, a Redis
     list, or anything else that can move bytes: use `serialize_message` and `deserialize_message` at the
     boundary. `InMemoryTransport` serves a worker in the same process.
+
+    The transport is the trust boundary: anyone who can send to it can run the served agents, with their
+    tools and dependencies. Authenticate and authorize senders in the transport.
     """
 
     @abstractmethod
@@ -37,7 +40,11 @@ class SubAgentTransport(ABC):
 
     @abstractmethod
     async def receive(self, mailbox: str) -> SubAgentMessage:
-        """Wait for the next message delivered to `mailbox` and return it, in the order they were sent."""
+        """Wait for the next message delivered to `mailbox` and return it, in the order they were sent.
+
+        A stopping worker reports its running tasks as failed. Raise once a worker is gone without doing so,
+        if the transport can tell: otherwise its delegating run waits for the task until it is cancelled.
+        """
         raise NotImplementedError
 
     async def release(self, mailbox: str) -> None:

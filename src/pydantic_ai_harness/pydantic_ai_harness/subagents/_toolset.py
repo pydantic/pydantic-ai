@@ -71,7 +71,7 @@ from pydantic_ai_harness.subagents._events import (
     TaskForceCancelEvent,
     TaskMessageEvent,
     TaskProgressEvent,
-    TaskStartEvent,
+    TaskRequestEvent,
     bounded_text,
 )
 from pydantic_ai_harness.subagents._models import ModelOption, validate_restriction
@@ -330,12 +330,15 @@ def _task_line(owner: DelegationTasks, record: DelegationTask) -> str:
     if record.parent_id != DelegationTasks.child_id():
         details.append(f'started by task {record.parent_id}')
     details.append('resumable' if record.resumable and not record.user_stopped else 'not resumable')
-    prompt = record.prompt
-    preview = prompt if len(prompt) <= _PREVIEW_CHARS else f'{prompt[:_PREVIEW_CHARS]}...'
-    line = f'- {record.id} ({record.agent_name}, {", ".join(details)}): {preview!r}'
+    line = f'- {record.id} ({record.agent_name}, {", ".join(details)}): {_preview(record.prompt)!r}'
     if (question := owner.pending_question(record.id)) is not None:
-        line += f'\n  Waiting for an answer to: {question[1]!r}'
+        # The question came whole as its own message; this is a reminder of which one it is.
+        line += f'\n  Waiting for an answer to: {_preview(question[1])!r}'
     return line
+
+
+def _preview(text: str) -> str:
+    return text if len(text) <= _PREVIEW_CHARS else f'{text[:_PREVIEW_CHARS]}...'
 
 
 class SubAgentToolset(FunctionToolset[AgentDepsT]):
@@ -391,6 +394,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         # Agents created with `create_agent`, keyed by run_id then name. Shared with the capability, which
         # clears each run's entry in wrap_run.
         self._created: dict[str, dict[str, SubAgent[AgentDepsT]]] = created if created is not None else {}
+        # Names a `create_agent` call holds while listeners see it, keyed by run_id: parallel calls see them taken.
+        self._creating: dict[str, set[str]] = {}
         self._agents: dict[str, SubAgent[AgentDepsT]] = dict(agents)
         self._forward_usage = forward_usage
         self._inherit_tools = inherit_tools
@@ -749,7 +754,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         sub_agent: SubAgent[AgentDepsT],
         *,
         key: str | None,
-        start: TaskStartEvent,
+        start: TaskRequestEvent,
     ) -> str:
         """Run a local task and report how it settled as task events."""
         link = LocalTaskLink(owner=owner, record=record, can_ask=start.can_ask_questions)
@@ -928,12 +933,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if (problem := validate_agent_name(name)) is not None:
             raise ModelRetry(problem)
         created = self._created.setdefault(ctx.run_id or '', {})
-        taken = {*self._agents, *self._remote, *created}
+        creating = self._creating.setdefault(ctx.run_id or '', set())
+        taken = {*self._agents, *self._remote, *created, *creating}
         if self._include_self:
             taken.add(SELF_AGENT_NAME)
         if name in taken:
             raise ModelRetry(f'A sub-agent named {name!r} already exists.')
-        if len(created) >= dynamic.max_agents:
+        if len(created) + len(creating) >= dynamic.max_agents:
             raise ModelRetry(f'You already created {dynamic.max_agents} sub-agents, the most allowed in one run.')
         if dynamic.models:
             if model is None:
@@ -943,15 +949,24 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         elif model is not None:
             raise ModelRetry('You cannot choose a model; omit `model` to use your own.')
         event = AgentCreatedEvent(name=name, description=description, instructions=instructions, model=model)
-        if _emits_events(ctx):
-            await ctx.emit(event)
-        if event.vetoed:
-            return f'The sub-agent was not created: {event.veto_reason or "a policy refused it"}.'
-        spec = DynamicAgentSpec(name=name, description=event.description, instructions=event.instructions, model=model)
-        agent = (dynamic.factory or default_factory)(spec)
-        created[name] = SubAgent(
-            agent, name=name, description=event.description, models=None if model is None else [model]
-        )
+        # Reserved before listeners see it, so a parallel call cannot take the name or the last place meanwhile.
+        creating.add(name)
+        try:
+            if _emits_events(ctx):
+                await ctx.emit(event)
+            if event.vetoed:
+                return f'The sub-agent was not created: {event.veto_reason or "a policy refused it"}.'
+            spec = DynamicAgentSpec(
+                name=name, description=event.description, instructions=event.instructions, model=model
+            )
+            agent = (dynamic.factory or default_factory)(spec)
+            created[name] = SubAgent(
+                agent, name=name, description=event.description, models=None if model is None else [model]
+            )
+        finally:
+            creating.discard(name)
+            if not creating:
+                del self._creating[ctx.run_id or '']
         return f'Created sub-agent {name!r}. Delegate tasks to it with `{self._tool_name}`.'
 
     async def _run_delegation(
