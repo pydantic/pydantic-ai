@@ -254,6 +254,19 @@ async def test_tool_choice_naming_the_computer_names_the_native_tool(allow_model
     assert allowed['tool_choice']['tools'] == [{'type': 'computer'}, {'type': 'function', 'name': 'note'}]
 
 
+async def test_a_computer_tool_waiting_to_be_loaded_is_not_sent(allow_model_requests: None) -> None:
+    client = MockOpenAIResponses.create_mock(_done())
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    computer = ToolDefinition(
+        name='computer', parameters_json_schema={'type': 'object'}, tool_kind='computer', defer_loading=True
+    )
+    params = ModelRequestParameters(function_tools=[computer], allow_text_output=True)
+    await model.request([ModelRequest.user_text_prompt('Look.')], None, params)
+
+    (request,) = get_mock_responses_kwargs(client)
+    assert 'tools' not in request or not request['tools']
+
+
 async def test_a_failed_call_still_sends_a_screenshot_and_says_why(allow_model_requests: None) -> None:
     provider = InMemoryProvider()
 
