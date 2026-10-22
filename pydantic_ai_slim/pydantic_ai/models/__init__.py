@@ -711,17 +711,17 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         return None
 
-    @cached_property
-    def _batch_instance_id(self) -> str:
-        return uuid.uuid4().hex
-
     def _batch_credential(self) -> str:
         """Identifies the endpoint and credential this model reaches batches with.
 
         `BatchModelRequests` only shares a batch's checks and results between models that give the same identity, so
         a model with another credential asks the provider itself. By default, the identity is this model instance.
         """
-        return f'instance:{self._batch_instance_id}'
+        # Created on first use, on whichever thread gets there first: `setdefault` keeps one ID for all of them.
+        instance_id: str | None = vars(self).get('_batch_instance_id')
+        if instance_id is None:
+            instance_id = vars(self).setdefault('_batch_instance_id', uuid.uuid4().hex)
+        return f'instance:{instance_id}'
 
     def _batch_unlisted_status(self, batch: Batch) -> BatchResultStatus | None:
         """How the provider ended the requests an ended `batch` has no result for, if it says.

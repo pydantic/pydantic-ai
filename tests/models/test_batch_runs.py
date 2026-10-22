@@ -341,7 +341,7 @@ async def test_a_pending_history_round_trips_through_json_into_a_new_model_insta
 
     def agent(pending_checks: int = 0) -> Agent[None, str | PendingModelResponse]:
         model = SlowBatchTestModel(pending_checks=pending_checks)
-        vars(model)['_batch_state'] = store
+        vars(model)['_in_memory_batch_state'] = store
         return Agent(
             model, output_type=[str, PendingModelResponse], capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)]
         )
@@ -651,3 +651,22 @@ def test_a_fallback_model_is_not_batched() -> None:
     )
     with pytest.raises(UserError, match=r'`FallbackModel` .* has no batch API\.'):
         agent.run_sync('Hello')
+
+
+def test_a_model_used_from_several_threads_at_once_has_one_batch_store_and_identity() -> None:
+    """The first use of a model's in-memory batches, or of its batch identity, can happen on several threads at once."""
+    for _ in range(50):
+        model = TestModel()
+        barrier = threading.Barrier(4)
+        seen: list[tuple[int, str]] = []
+
+        def first_use() -> None:
+            barrier.wait()
+            seen.append((id(model._batch_state), model._batch_credential()))  # pyright: ignore[reportPrivateUsage]
+
+        threads = [threading.Thread(target=first_use) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert len(set(seen)) == 1

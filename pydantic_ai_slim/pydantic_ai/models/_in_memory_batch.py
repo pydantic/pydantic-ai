@@ -5,7 +5,6 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from functools import cached_property
 
 from pydantic import TypeAdapter
 from pydantic_core import to_json
@@ -41,9 +40,14 @@ class InMemoryBatchModel(Model):
     def batch_max_requests(self) -> int | None:
         return 10_000
 
-    @cached_property
+    @property
     def _batch_state(self) -> _State:
-        return _State()
+        # Created on first use, which runs on several threads at once when one model serves runs on several event loops,
+        # as `cached_property` doesn't lock: `setdefault` keeps the first state any of them stored.
+        state: _State | None = vars(self).get('_in_memory_batch_state')
+        if state is not None:
+            return state
+        return vars(self).setdefault('_in_memory_batch_state', _State())
 
     async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
         token = uuid.uuid4().hex

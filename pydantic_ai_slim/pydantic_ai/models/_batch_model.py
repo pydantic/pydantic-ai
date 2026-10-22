@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import math
+import threading
 import time
 import weakref
 from collections import OrderedDict
@@ -285,6 +286,10 @@ class BatchPool:
         # other requests share its batch. The oldest are forgotten first, which leaves their batches running.
         self._submitted: OrderedDict[_BatchKey, frozenset[str]] = OrderedDict()
         self._abandoned: dict[_BatchKey, set[str]] = {}
+        # The records above are shared by every event loop, and so every thread, the pool serves, unlike its queues
+        # and checks. Their updates read and change several of them at once, so they hold this lock, never across an
+        # `await`.
+        self._lock = threading.Lock()
         # The batches each request span is already linked to, so a span waiting on several checks links to one once.
         self._linked: weakref.WeakKeyDictionary[Span, set[_BatchKey]] = weakref.WeakKeyDictionary()
 
@@ -431,9 +436,10 @@ class BatchPool:
             for queued in requests:
                 queued.future.set_exception(error)
         else:
-            self._submitted[_batch_key(batch)] = frozenset(queued.request.custom_id for queued in requests)
-            while len(self._submitted) > _SUBMITTED_BATCHES_SIZE:
-                self._abandoned.pop(self._submitted.popitem(last=False)[0], None)
+            with self._lock:
+                self._submitted[_batch_key(batch)] = frozenset(queued.request.custom_id for queued in requests)
+                while len(self._submitted) > _SUBMITTED_BATCHES_SIZE:
+                    self._abandoned.pop(self._submitted.popitem(last=False)[0], None)
             for queued in requests:
                 queued.future.set_result((batch, trace_context))
             for queued in requests:
@@ -465,14 +471,15 @@ class BatchPool:
         process, is left running, as is one that has ended. Returns `True` at most once per batch.
         """
         key = _batch_key(batch)
-        if (submitted := self._submitted.get(key)) is None or custom_id not in submitted:
-            return False
-        abandoned = self._abandoned.setdefault(key, set())
-        abandoned.add(custom_id)
-        if abandoned < submitted:
-            return False
-        del self._submitted[key], self._abandoned[key]
-        return True
+        with self._lock:
+            if (submitted := self._submitted.get(key)) is None or custom_id not in submitted:
+                return False
+            abandoned = self._abandoned.setdefault(key, set())
+            abandoned.add(custom_id)
+            if abandoned < submitted:
+                return False
+            del self._submitted[key], self._abandoned[key]
+            return True
 
     async def poll(
         self, model: Model, ticket: _Ticket, requester: _Requester | None
@@ -480,10 +487,12 @@ class BatchPool:
         """The batch's current state, and its results once it has ended, shared by concurrent checks of the batch."""
         batch = ticket['batch']
         check_key: _CheckKey = (model._batch_credential(), *_batch_key(batch))  # pyright: ignore[reportPrivateUsage]
-        if (ended := self._results.get(check_key)) is not None:
-            self._results.move_to_end(check_key)
-            return ended
-        if (status := self._statuses.get(check_key)) is not None:
+        with self._lock:
+            if (ended := self._results.get(check_key)) is not None:
+                self._results.move_to_end(check_key)
+                return ended
+            status = self._statuses.get(check_key)
+        if status is not None:
             checked_at, checked = status
             if time.monotonic() - checked_at < self.poll_interval.total_seconds():
                 return checked, None
@@ -530,20 +539,22 @@ class BatchPool:
             if span is not None:
                 span.set_attribute(BATCH_STATUS_ATTRIBUTE, batch.status)
             if batch.status != 'ended':
-                self._statuses[check_key] = (time.monotonic(), batch)
-                self._statuses.move_to_end(check_key)
-                while len(self._statuses) > _SUBMITTED_BATCHES_SIZE:
-                    self._statuses.popitem(last=False)
+                with self._lock:
+                    self._statuses[check_key] = (time.monotonic(), batch)
+                    self._statuses.move_to_end(check_key)
+                    while len(self._statuses) > _SUBMITTED_BATCHES_SIZE:
+                        self._statuses.popitem(last=False)
                 return batch, None
             with _expired_after_retention(batch):
                 results = {result.custom_id: result for result in await model.batch_results(batch)}
-        self._statuses.pop(check_key, None)
-        self._results[check_key] = batch, results
-        # Requests abandoned while it ran no longer matter: an ended batch can't be cancelled.
-        self._submitted.pop(_batch_key(batch), None)
-        self._abandoned.pop(_batch_key(batch), None)
-        while len(self._results) > _RESULTS_CACHE_SIZE:
-            self._results.popitem(last=False)
+        with self._lock:
+            self._statuses.pop(check_key, None)
+            self._results[check_key] = batch, results
+            # Requests abandoned while it ran no longer matter: an ended batch can't be cancelled.
+            self._submitted.pop(_batch_key(batch), None)
+            self._abandoned.pop(_batch_key(batch), None)
+            while len(self._results) > _RESULTS_CACHE_SIZE:
+                self._results.popitem(last=False)
         return batch, results
 
 
