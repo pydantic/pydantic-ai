@@ -220,6 +220,7 @@ RUN apt-get update \\
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
         xvfb xdotool scrot fluxbox xterm firefox-esr fonts-dejavu-core ca-certificates \\
     && rm -rf /var/lib/apt/lists/*
+ENV LANG=C.UTF-8
 """
 """The image `DockerSandbox(desktop=True)` builds on first use: an X server, a window manager, a terminal and a browser."""
 

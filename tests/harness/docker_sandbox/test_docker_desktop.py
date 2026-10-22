@@ -108,11 +108,12 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
     docker.remove_display(can_start=False)
     workspace = Workspace(_desktop(container_dir, image='my-desktop'))
 
-    with anyio.fail_after(5):
-        with pytest.raises(WorkspaceError, match='the image needs Xvfb, xdotool, scrot and setsid') as error:
-            await workspace.screenshot()
+    with pytest.raises(WorkspaceError, match='the image needs Xvfb, xdotool, scrot and setsid') as error:
+        await workspace.screenshot()
     assert 'the X server did not start' in str(error.value)
     assert 'Fatal server error' in str(error.value)
+    # It stopped once the X server exited, before the 100 polls that give up on one that never answers.
+    assert len(docker.xdotool_calls) < 100
 
 
 async def test_a_container_without_a_desktop_has_no_display(docker: FakeDocker, container_dir: Path) -> None:
@@ -140,7 +141,7 @@ def test_a_desktop_sandbox_reattaches_with_its_display(docker: FakeDocker) -> No
     assert Workspace(DockerSandbox(image='python:3.13-slim').backend(ref)).has_display is False
 
 
-async def test_a_desktop_capability_gives_each_new_run_a_display(docker: FakeDocker, container_dir: Path) -> None:
+async def test_a_desktop_capability_gives_a_new_run_a_display(docker: FakeDocker, container_dir: Path) -> None:
     agent = Agent(
         TestModel(call_tools=['probe']), capabilities=[DockerSandbox(desktop=True, working_dir=str(container_dir))]
     )
