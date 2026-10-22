@@ -751,26 +751,42 @@ class TestAutoStop:
         assert routes(fake_boat)[-4:] == ['start', 'status', 'update', 'status']
 
     async def test_a_failed_extension_does_not_fail_the_operation(
-        self, fake_boat: FakeBoat, caplog: pytest.LogCaptureFixture
+        self, fake_boat: FakeBoat, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
+        advance = advance_clock(monkeypatch)
         existing = fake_boat.sandbox()
-        forbidden = boat_error(403, 'api_key_action_forbidden', 'The action is not on the key.')
-        fake_boat.errors['update'] = [forbidden, httpx.ConnectError('offline')]
+        fake_boat.errors['update'] = [httpx.ConnectError('offline'), httpx.ConnectError('offline')]
+        backend = BoatSandboxBackend(ref=WorkspaceRef(provider='boat', id=existing.id))
+        path = f'{existing.home}/note'
+        with caplog.at_level(logging.DEBUG, logger=_BACKEND):
+            # Tried again once the interval has passed, not on the next operation; only the first
+            # failure in a row is a warning.
+            for elapsed in (0, 0, 60, 60):
+                advance(elapsed)
+                assert await backend.exists(path) is False
+        assert routes(fake_boat).count('update') == 3
+        assert [(record.levelno, record.getMessage()) for record in caplog.records] == [
+            (logging.WARNING, f"Could not extend the auto-stop of Boat sandbox {existing.id}: ConnectError('offline')"),
+            (logging.DEBUG, f"Could not extend the auto-stop of Boat sandbox {existing.id}: ConnectError('offline')"),
+        ]
+
+    async def test_an_extension_boat_refuses_for_the_key_is_not_asked_again(
+        self, fake_boat: FakeBoat, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        advance = advance_clock(monkeypatch)
+        existing = fake_boat.sandbox()
+        fake_boat.errors['update'] = [boat_error(403, 'api_key_action_forbidden', 'The action is not on the key.')]
         backend = BoatSandboxBackend(ref=WorkspaceRef(provider='boat', id=existing.id))
         with caplog.at_level(logging.DEBUG, logger=_BACKEND):
-            # Each operation tries again until one succeeds; only the first failure in a row is a warning.
-            for _ in range(4):
+            for _ in range(3):
                 assert await backend.exists(f'{existing.home}/note') is False
-        assert routes(fake_boat).count('update') == 3
+                advance(3600)
+        assert routes(fake_boat).count('update') == 1
         assert [(record.levelno, record.getMessage()) for record in caplog.records] == [
             (
                 logging.WARNING,
                 f'Could not extend the auto-stop of Boat sandbox {existing.id}: BoatAPIError('
                 "'Boat API returned HTTP 403 (api_key_action_forbidden): The action is not on the key.')",
-            ),
-            (
-                logging.DEBUG,
-                f"Could not extend the auto-stop of Boat sandbox {existing.id}: ConnectError('offline')",
             ),
         ]
 

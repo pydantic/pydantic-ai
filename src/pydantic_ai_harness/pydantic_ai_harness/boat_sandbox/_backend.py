@@ -528,8 +528,9 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         auto_stop: Seconds a newly created sandbox runs without the backend extending it before
             Boat stops it (its disk is kept); `0` disables it, and `None` keeps Boat's default of an
             hour. An operation or a check on a running command sets it again from now, at most once a
-            minute (or once per half of it, if that is shorter), so a run that works in the sandbox
-            at least every `auto_stop` minus a minute keeps it up, and an idle one stops.
+            minute (once per half of it when it is under two minutes), so a run that works in the
+            sandbox more often than `auto_stop` minus that interval keeps it up, and an idle one stops
+            at most `auto_stop` seconds after its last operation.
         working_dir: Absolute directory commands start in and relative paths resolve against; the
             sandbox's own default when `None`, discovered with `pwd -P` on first use.
         env: Environment variables every command gets; a command's own `env` is layered on top.
@@ -627,8 +628,12 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             ):
                 # Deleted or stopped: the operation would find that too.
                 raise gone from error
-            # The next operation tries again; a failure that repeats, such as a key without
-            # `sandbox.update`, is logged at `WARNING` once.
+            if isinstance(error, _api.BoatAPIError) and error.status in (402, 403):
+                # Refused for good, as for a key without `sandbox.update`: stop asking.
+                self._ttl = None
+            # Tried again once the interval has passed, not on every operation and check; a failure
+            # that repeats is logged at `WARNING` once.
+            self._ttl_set_at = now
             level = logging.DEBUG if self._keep_alive_failing else logging.WARNING
             self._keep_alive_failing = True
             logger.log(level, 'Could not extend the auto-stop of Boat sandbox %s: %r', sandbox.id, error)

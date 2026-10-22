@@ -29,6 +29,7 @@ import os
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import anyio
@@ -118,29 +119,35 @@ async def _assert_stopped(backend: BoatSandboxBackend, pid_file: str) -> None:
 async def test_an_operation_extends_the_auto_stop(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Validates the fake-encoded assumption that `PATCH /sandboxes/{id}` with `ttlSeconds` moves Boat's
-    auto-stop deadline to that many seconds from now, and that the key the live tier runs with may
-    send it, so an active run keeps its sandbox up."""
-    # Extend on every operation, so the test needs no real wait.
-    monkeypatch.setattr('pydantic_ai_harness.boat_sandbox._backend._KEEP_ALIVE_INTERVAL', 0)
+    """Validates the fake-encoded assumptions that command activity does not move Boat's auto-stop
+    deadline, that `PATCH /sandboxes/{id}` with `ttlSeconds` sets it to that many seconds from now,
+    and that the key the live tier runs with may send it, so an active run keeps its sandbox up."""
     async with _owned(client) as backend:
         assert backend.ref is not None
         sandbox_id = backend.ref.id
 
-        async def deadline() -> str:
+        async def deadline() -> datetime:
             response = await client.get(f'/sandboxes/{sandbox_id}')
             response.raise_for_status()
             archive_after = response.json()['sandbox']['archiveAfter']
             assert isinstance(archive_after, str)
-            return archive_after
+            return datetime.fromisoformat(archive_after)
 
         before = await deadline()
         await anyio.sleep(2)
+        # A command alone, with no extension due, leaves the deadline where creation set it.
+        monkeypatch.setattr('pydantic_ai_harness.boat_sandbox._backend._KEEP_ALIVE_INTERVAL', 3600)
+        assert (await backend.run(['true'])).exit_code == 0
+        assert await deadline() == before
+        # With an extension due on every operation, the next one sets it to a full auto-stop from then.
+        monkeypatch.setattr('pydantic_ai_harness.boat_sandbox._backend._KEEP_ALIVE_INTERVAL', 0)
+        requested = datetime.now(UTC)
         with caplog.at_level('WARNING', logger='pydantic_ai_harness.boat_sandbox._backend'):
             assert (await backend.run(['true'])).exit_code == 0
         assert not caplog.records
-        # ISO 8601 timestamps in UTC compare in time order.
-        assert await deadline() > before
+        extended = await deadline()
+        assert extended > before
+        assert abs((extended - requested - timedelta(seconds=LIVE_AUTO_STOP)).total_seconds()) < 10
 
 
 async def test_commands_get_a_usable_environment(client: httpx.AsyncClient) -> None:
