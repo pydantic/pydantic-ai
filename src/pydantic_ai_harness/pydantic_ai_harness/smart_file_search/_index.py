@@ -12,7 +12,6 @@ take turns on its lock, so its index is built once and reused rather than built 
 
 from __future__ import annotations
 
-import asyncio
 import heapq
 import posixpath
 from collections import OrderedDict
@@ -23,6 +22,7 @@ from hashlib import blake2b
 import anyio
 import anyio.to_thread
 
+from pydantic_ai._utils import gather
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness.smart_file_search._chunks import (
@@ -236,7 +236,7 @@ async def _refresh(
     lines = size = 0
     for offset in range(0, len(paths), _READ_BATCH):
         batch = paths[offset : offset + _READ_BATCH]
-        contents = await asyncio.gather(*(read_or_error(workspace, posixpath.join(root, path)) for path in batch))
+        contents = await gather(*(read_or_error(workspace, posixpath.join(root, path)) for path in batch))
         read: list[tuple[str, bytes]] = []
         for path, raw in zip(batch, contents):
             if isinstance(raw, OSError):
@@ -260,7 +260,7 @@ async def read_snippets(workspace: Workspace, root: str, directory: str, hits: S
     Paths are `directory` joined with each file's path below it, so they read the way the caller spelled it.
     """
     digests = {hit.path: hit.digest for hit in hits}
-    contents = await asyncio.gather(*(read_or_error(workspace, posixpath.join(root, path)) for path in digests))
+    contents = await gather(*(read_or_error(workspace, posixpath.join(root, path)) for path in digests))
     lines = {
         path: raw.decode('utf-8').splitlines()
         for path, raw in zip(digests, contents)

@@ -69,7 +69,7 @@ A search runs in four steps:
 
 The result is a `SmartFileSearchResult`: the matches, how many passed but were cut by `limit`, coverage figures
 (files seen and skipped, snippets built and judged, and whether the shortlist was complete) and warnings, so
-an empty result is never mistaken for proof that the code does not exist. Matches in test files are labelled
+the model can tell an empty result from a complete search that found nothing. Matches in test files are labelled
 `kind='test'` rather than demoted.
 
 A failed judgment fails the whole search, and the error is reported to the model as a tool failure, so it
@@ -103,7 +103,7 @@ The judge is any Pydantic AI model, set with `model`:
 
 - **Unset** (the default): TypeSafe's Jev (`'typesafe:jev-latest'`) when the `typesafe` SDK is installed and
   `TYPESAFE_API_KEY` is set, and the run's own model otherwise.
-- **A model or model name**: that model, always. Jev is never forced on you.
+- **A model or model name**: that model, whatever is installed or set in the environment.
 
 A [decision model](../models/decision.md) is the recommended judge: it answers each relevance question with a
 probability in a fraction of the time a language model takes to write one, which is what 128 judgments per
@@ -151,9 +151,18 @@ fails. Pass `guidance` to replace it, or
 
 ## Telemetry
 
-`SmartFileSearch` adds no spans of its own, and its judge runs are not instrumented: their prompts carry source
-snippets, so global instrumentation must not export them past the host agent's own `instrument` or
-`include_content` settings. A search shows up as its tool call's span.
+Each search opens a `smart file search` span under its tool call, on the run's tracer. The span has these
+attributes:
+
+- `smart_file_search.judge_model`: the judge model.
+- `smart_file_search.files`, `.skipped_files`, `.snippets` and `.evaluated`: the coverage figures.
+- `smart_file_search.selection_complete`: whether the coverage was complete.
+- `smart_file_search.matches` and `.omitted_matches`: how many matches were returned and cut.
+- `smart_file_search.query`: the query, only when the run includes content in traces.
+
+The judge runs themselves are not instrumented. Their prompts carry source snippets, so global
+instrumentation must not export them past the host agent's own `instrument` or `include_content`
+settings.
 
 ## Agent spec (YAML/JSON)
 

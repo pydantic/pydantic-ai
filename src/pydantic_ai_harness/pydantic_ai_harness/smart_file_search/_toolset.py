@@ -107,21 +107,42 @@ class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
                 Defaults to 128. Higher = better recall, slower and costlier.
         """
         model = resolve_judge_model(self._model, ctx.model)
-        try:
-            return await search_code(
-                ctx.workspace,
-                model,
-                query,
-                directory,
-                indexes=self._indexes,
-                glob=glob,
-                limit=limit,
-                candidates=candidates,
-                threshold=self._threshold,
-                concurrency=self._concurrency,
-            )
-        except WorkspaceError as error:
-            raise_tool_failure(error)
-        except (ModelAPIError, UnexpectedModelBehavior) as error:
-            # Report the judge's failure to the model, which can fall back to regular search.
-            raise ToolFailed(f'smart_file_search failed: {type(error).__name__}: {error}') from error
+        attributes: dict[str, str] = {
+            'smart_file_search.judge_model': model if isinstance(model, str) else f'{model.system}:{model.model_name}'
+        }
+        if ctx.trace_include_content:
+            attributes['smart_file_search.query'] = query
+        # The judge runs are not instrumented (their prompts carry source), so this span is what a trace shows.
+        with ctx.tracer.start_as_current_span('smart file search', attributes=attributes) as span:
+            try:
+                result = await search_code(
+                    ctx.workspace,
+                    model,
+                    query,
+                    directory,
+                    indexes=self._indexes,
+                    glob=glob,
+                    limit=limit,
+                    candidates=candidates,
+                    threshold=self._threshold,
+                    concurrency=self._concurrency,
+                )
+            except WorkspaceError as error:
+                raise_tool_failure(error)
+            except (ModelAPIError, UnexpectedModelBehavior) as error:
+                # Report the judge's failure to the model, which can fall back to regular search.
+                raise ToolFailed(f'`smart_file_search` failed: {type(error).__name__}: {error}') from error
+            if span.is_recording():
+                coverage = result.coverage
+                span.set_attributes(
+                    {
+                        'smart_file_search.files': coverage.files,
+                        'smart_file_search.skipped_files': coverage.skipped_files,
+                        'smart_file_search.snippets': coverage.snippets,
+                        'smart_file_search.evaluated': coverage.evaluated,
+                        'smart_file_search.selection_complete': coverage.selection_complete,
+                        'smart_file_search.matches': len(result.matches),
+                        'smart_file_search.omitted_matches': result.omitted_matches,
+                    }
+                )
+            return result

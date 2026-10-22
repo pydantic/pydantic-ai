@@ -11,11 +11,11 @@ workspace is searched where it lives, never on the host.
 
 from __future__ import annotations
 
-import asyncio
 import posixpath
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from pydantic_ai._utils import gather
 from pydantic_ai.exceptions import ModelRetry, ToolFailed
 from pydantic_ai.workspaces import Workspace, WorkspaceError
 from pydantic_ai_harness.filesystem._ripgrep import RipgrepMissing, run_ripgrep
@@ -140,7 +140,7 @@ async def _ripgrep_files(
         )
     except RipgrepMissing:
         raise ToolFailed(
-            'smart_file_search needs ripgrep (`rg`) in the workspace. Install it there '
+            '`smart_file_search` needs ripgrep (`rg`) in the workspace. Install it there '
             '(the `coder` extra does for a local workspace), or use regular file search instead.'
         ) from None
     if capped:
@@ -161,7 +161,9 @@ async def read_or_error(workspace: Workspace, path: str) -> bytes | OSError:
 async def searchable_root(workspace: Workspace, directory: str) -> str:
     """The real path of `directory`, refused outside the working directory: its source would go to the judge."""
     root = await workspace.resolve(directory)
-    cwd, real = await asyncio.gather(workspace.realpath(await workspace.working_dir()), workspace.realpath(root))
+    cwd, real = await gather(workspace.realpath(await workspace.working_dir()), workspace.realpath(root))
     if posixpath.commonpath([cwd, real]) != cwd:
-        raise ModelRetry(f'`{directory}` is outside the working directory; smart_file_search only searches inside it.')
+        raise ModelRetry(
+            f'`{directory}` is outside the working directory; `smart_file_search` only searches inside it.'
+        )
     return real
