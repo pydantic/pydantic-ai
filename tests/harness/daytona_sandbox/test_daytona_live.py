@@ -90,11 +90,19 @@ async def _owned(client: daytona.AsyncDaytona) -> AsyncGenerator[DaytonaSandboxB
             raise AssertionError(f'Daytona sandbox {native.id} was not deleted')
 
 
-async def test_destroy_by_ref_does_not_start_sandbox(client: daytona.AsyncDaytona) -> None:
+async def test_destroy_by_ref_does_not_start_sandbox(
+    client: daytona.AsyncDaytona, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Validates the fake-encoded assumptions that SDK get + delete does not resume a stopped sandbox,
     and that a sandbox being deleted reports the `destroying` state, so destroying it again returns quietly."""
+
+    async def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError('destroy started the sandbox')
+
     async with _owned(client) as backend:
         assert backend.ref is not None
+        await (await client.get(backend.ref.id)).stop()
+        monkeypatch.setattr(daytona.AsyncSandbox, 'start', refuse)
         await DaytonaSandbox(client=client).destroy(backend.ref)
         assert (await client.get(backend.ref.id)).state in (
             daytona.SandboxState.DESTROYING,
@@ -173,7 +181,8 @@ async def test_timeout_stops_only_its_command(client: daytona.AsyncDaytona) -> N
         marker = f'/tmp/{_unique("daytona-stopped")}'
         with pytest.raises(WorkspaceTimeoutError):
             await backend.run(f'sleep 5; touch {marker}', shell=True, timeout=1)
-        assert (await backend.run(['true'], timeout=30)).exit_code == 0
+        # Outlasts the stopped command's `sleep 5`, so a command left running would have written the marker.
+        assert (await backend.run(['sleep', '6'], timeout=30)).exit_code == 0
         assert not await backend.exists(marker)
 
 
@@ -193,8 +202,12 @@ async def test_a_cancelled_run_stops_the_command(client: daytona.AsyncDaytona) -
         if await backend.exists(pid_file):
             with anyio.fail_after(60):
                 pid = (await backend.read_bytes(pid_file)).decode().strip()
+                assert pid.isdigit()
                 while (await backend.run(['kill', '-0', pid], timeout=30)).exit_code == 0:
                     await anyio.sleep(0.2)
+        else:
+            assert (await backend.run(['sleep', '16'], timeout=30)).exit_code == 0
+            assert await backend.exists(pid_file) is False
         assert await backend.exists(marker) is False
 
 
@@ -267,7 +280,9 @@ async def test_commands_get_a_usable_environment(client: daytona.AsyncDaytona) -
             timeout=60,
         )
         path, home, user, cwd, git, python, rg = result.stdout.splitlines()
-        assert (home, user, cwd, rg) == ('/home/daytona', 'daytona', '/home/daytona', '/usr/bin/rg')
+        assert (home, user, cwd) == ('/home/daytona', 'daytona', '/home/daytona')
+        # Only being on `PATH` matters; where the snapshot installs ripgrep is Daytona's choice.
+        assert rg.endswith('/rg')
         assert path and git.startswith('git version') and python.startswith('Python 3')
         assert await backend.working_dir() == '/home/daytona'
 
