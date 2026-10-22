@@ -165,11 +165,12 @@ class DurableRunContext(RunContext[AgentDepsT]):
 
     def __getattribute__(self, name: str) -> Any:
         if name in _GUARDED_FIELDS and name not in object.__getattribute__(self, '__dataclass_fields__'):
-            if name == 'validation_context':
+            if name == 'validation_context' and (agent := object.__getattribute__(self, '__dict__').get('agent')):
                 # Not carried, because it's an arbitrary user object: rebuilt on first read from the
-                # agent's `validation_context` setting (`None` without an agent), so a resolver that
-                # reads a field this context doesn't carry fails only where it's actually used.
-                value = validation_context_from_agent(object.__getattribute__(self, '__dict__').get('agent'))(self)
+                # agent's `validation_context` setting, so a resolver that reads a field this context
+                # doesn't carry fails only where it's actually used. Without an agent there is no
+                # setting to rebuild from, so it stays guarded like any other uncarried field.
+                value = validation_context_from_agent(agent)(self)
                 self.__dict__['validation_context'] = value
                 self._expose_field('validation_context')
                 return value

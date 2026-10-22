@@ -114,7 +114,8 @@ async def test_validation_context_is_rebuilt_from_the_agent_on_first_read():
     assert calls == ['capture']
 
     without_agent = DurableRunContext.restore(payloads[0], deps='acme', agent=None, engine_spec=SPEC)
-    assert without_agent.validation_context is None
+    with pytest.raises(UserError, match="'validation_context' is not available"):
+        without_agent.validation_context
 
 
 async def test_revalidate_function_call_rebuilds_the_tool_and_validated_arguments():

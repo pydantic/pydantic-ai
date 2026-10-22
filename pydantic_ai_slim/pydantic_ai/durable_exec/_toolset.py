@@ -70,6 +70,17 @@ def _serializable_validation_input(value: Any) -> Any:
         return {'type': f'{type(value).__module__}.{type(value).__qualname__}', 'repr': representation}
 
 
+def unit_validation_context(ctx: RunContext[Any]) -> Any:
+    """The validation context to validate tool arguments with inside a durable unit.
+
+    A context rebuilt without an agent (a toolset used on its own, outside an agent) has no
+    `validation_context` setting to rebuild from, so its arguments validate without one.
+    """
+    if ctx.agent is None and 'validation_context' not in ctx.__dict__:
+        return None
+    return ctx.validation_context
+
+
 def validation_context_from_agent(agent: AbstractAgent[Any, Any] | None) -> ValidationContextResolver:
     """Rebuild a run's validation context inside a serialized durable unit."""
 
@@ -265,7 +276,7 @@ async def call_dynamic_tool(
         run_toolset = await run_toolset.for_run_step(ctx)
         tool = await _dynamic_tool(toolset, run_toolset, name, tool_def, ctx)
         tool_ctx = without_tool_name_path(ctx)
-        args = tool.args_validator.validate_python(tool_args, context=tool_ctx.validation_context)
+        args = tool.args_validator.validate_python(tool_args, context=unit_validation_context(tool_ctx))
         return await run_toolset.call_tool(name, args, tool_ctx, tool)
 
 
@@ -290,7 +301,7 @@ async def validate_tool_args(
     ctx: RunContext[AgentDepsT],
 ) -> None:
     """Schema-validate arguments and run the tool's validator inside a durable unit."""
-    args = tool.args_validator.validate_python(tool_args, context=ctx.validation_context)
+    args = tool.args_validator.validate_python(tool_args, context=unit_validation_context(ctx))
     await run_args_validator(tool, args, ctx)
 
 
@@ -472,7 +483,7 @@ async def revalidate_function_call(
                 f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
                 f'Removing or renaming tools during an agent run is not supported with {engine_name}.'
             ) from exc
-    args = tool.args_validator.validate_python(params.tool_args, context=params.ctx.validation_context)
+    args = tool.args_validator.validate_python(params.tool_args, context=unit_validation_context(params.ctx))
     return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)
 
 
