@@ -1138,8 +1138,8 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
     In both cases, messages that precede the chosen response in the history are omitted
     from the input, since OpenAI reconstructs them from server-side state. A response is only
-    chosen while it and those messages are unchanged: each response created with this setting records a
-    digest of its parts and the history it was created from as
+    chosen while it and those messages are unchanged: each response created with this setting, or with
+    `openai_transport='websocket'`, records a digest of its parts and the history it was created from as
     [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest], and if a
     history processor or compaction has changed either since, the full history is sent instead.
 
@@ -3114,7 +3114,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> responses.CompactedResponse | ModelResponse:
         """Call the OpenAI Responses compaction endpoint."""
         previous_response_id, messages = self._resolve_previous_response_id(
-            model_settings.get('openai_previous_response_id'), messages, allow_no_new_messages=True
+            model_settings.get('openai_previous_response_id'),
+            messages,
+            store=self._resolve_store(model_settings),
+            allow_no_new_messages=True,
         )
 
         # Same ordering rule as `_build_responses_request_params`: the introduced-tools derivation
@@ -3213,8 +3216,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _history_to_record(
         self, messages: Sequence[ModelMessage], settings: OpenAIResponsesModelSettings
     ) -> _Hasher | None:
-        """The history a new response is created from, to digest with it, when a later request may continue from it."""
-        if settings.get('openai_previous_response_id') is None:
+        """The history a new response is created from, to digest with it, when a later request may continue from it.
+
+        In WebSocket mode that's every response, including one sent over HTTP instead, since a later socket request
+        continues from it by default.
+        """
+        if settings.get('openai_previous_response_id') is None and settings.get('openai_transport') != 'websocket':
             return None
         return _history_hasher(messages, self._history_digest_key)
 
@@ -4312,6 +4319,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         setting: str | None,
         messages: list[ModelMessage],
         *,
+        store: bool | Omit | None = OMIT,
         allow_no_new_messages: bool = False,
     ) -> tuple[str | None, list[ModelMessage]]:
         # Resolve the effective `previous_response_id` and trim already-stored messages.
@@ -4328,7 +4336,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if setting is None:
             return None, messages
         auto_id, trimmed, at_boundary = self._get_previous_response_id_and_new_messages(
-            messages, allow_no_new_messages=allow_no_new_messages
+            messages, store=store, allow_no_new_messages=allow_no_new_messages
         )
         if auto_id is not None:
             return auto_id, trimmed
@@ -4354,25 +4362,35 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 if message.provider_details and message.provider_details.get('compaction'):
                     return None
                 response_id = message.provider_response_id
-                if not self._is_response_id_reachable(message):
+                if not self._is_response_id_reachable(message, self._resolve_store(model_settings)):
                     return None
                 return response_id if response_id and response_id.startswith('resp_') else None
         return None
 
-    def _is_response_id_reachable(self, response: ModelResponse) -> bool:
-        """Whether a request can continue from `response`, as far as where it's kept goes.
+    def _is_response_id_reachable(self, response: ModelResponse, store: bool | Omit | None) -> bool:
+        """Whether a request with the resolved `openai_store` value `store` can continue from `response`.
 
-        A response a Responses WebSocket created without storing it is kept only in that socket's cache, while it's
-        the latest on its lane. Any other response is reachable wherever it's stored, as over HTTP.
+        A Responses WebSocket keeps the latest response on each lane in its cache, so a request on that lane can always
+        continue from it. A response the socket created without storing it is kept nowhere else. Any other response
+        is reachable wherever it's stored, as over HTTP, except from a socket request that doesn't store either: that
+        conversation may never have been stored, as with Zero Data Retention, so only the lane's cache is relied on.
         """
-        details = response.provider_details or {}
-        if details.get('transport') != 'websocket' or details.get('store') is True:
-            return True
         stream = self._websocket_stream
-        return stream is not None and stream.lane.latest_response_id == response.provider_response_id
+        if stream is not None:
+            response_id = response.provider_response_id
+            if response_id is not None and stream.lane.latest_response_id == response_id:
+                return True
+            if store is False:
+                return False
+        details = response.provider_details or {}
+        return details.get('transport') != 'websocket' or details.get('store') is True
 
     def _get_previous_response_id_and_new_messages(
-        self, messages: list[ModelMessage], *, allow_no_new_messages: bool = False
+        self,
+        messages: list[ModelMessage],
+        *,
+        store: bool | Omit | None = OMIT,
+        allow_no_new_messages: bool = False,
     ) -> tuple[str | None, list[ModelMessage], bool]:
         # Find the most recent `provider_response_id` from messages produced by this
         # provider, and return it along with the messages that came after it (which
@@ -4397,7 +4415,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 if self._history_changed(m, messages[:index]):
                     return None, messages, True
                 # A response cached only on another socket, or one that's gone, means replaying the history.
-                if not self._is_response_id_reachable(m):
+                if not self._is_response_id_reachable(m, store):
                     return None, messages, False
                 previous_response_id = m.provider_response_id
                 break
@@ -4424,7 +4442,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             conversation_id, messages = self._resolve_conversation_id(conversation_id_setting, messages)
             return None, conversation_id, messages
 
-        previous_response_id, messages = self._resolve_previous_response_id(previous_response_id_setting, messages)
+        previous_response_id, messages = self._resolve_previous_response_id(
+            previous_response_id_setting, messages, store=self._resolve_store(model_settings)
+        )
         return previous_response_id, None, messages
 
     def _resolve_conversation_id(

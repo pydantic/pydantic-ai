@@ -812,8 +812,8 @@ async def test_request_without_a_lease_uses_http(
         response = await model.request(user_prompt('hello'), None, ModelRequestParameters())
     assert response.text == 'from HTTP'
     assert sockets.connect_count == 0
-    # The HTTP request keeps HTTP's defaults: nothing defaults it to continue from an earlier response.
-    assert response.history_digest is None
+    # The setting still records the response's history, since a later socket request continues from it by default.
+    assert response.history_digest is not None
 
 
 async def test_lease_on_another_event_loop_doesnt_use_the_open_socket(
@@ -1293,9 +1293,10 @@ async def test_socket_requests_keep_an_explicit_server_side_state_setting(
 async def test_per_step_selection_switches_websocket_and_http(
     allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses
 ):
-    """A selector can change transport inside one run: an unstored socket turn is replayed over HTTP.
+    """A selector can change transport inside one run; with `openai_store=False`, nothing is continued across it.
 
-    The HTTP response is continued from on the socket afterwards, as over HTTP.
+    The unstored socket turn is replayed over HTTP, and the HTTP turn, which OpenAI didn't store either, is replayed
+    on the socket instead of chained from.
     """
     socket = sockets.pending[0]
     socket.responses = deque([tool_call_events('resp_socket', 'call_socket'), text_events('done', 'resp_final')])
@@ -1333,10 +1334,88 @@ async def test_per_step_selection_switches_websocket_and_http(
     assert 'previous_response_id' not in http_body
     assert [(frame.get('stream_id'), frame.get('previous_response_id')) for frame in socket.sent] == [
         (None, None),
-        ('lane-1', 'resp_http'),
+        ('lane-1', None),
     ]
-    assert socket.sent[1]['input'] == [{'type': 'function_call_output', 'call_id': 'call_http', 'output': '2'}]
+    assert socket.sent[1]['input'] == [
+        *replayed_socket_turn,
+        {'type': 'function_call', 'name': 'step', 'arguments': '{}', 'call_id': 'call_http'},
+        {'type': 'function_call_output', 'call_id': 'call_http', 'output': '2'},
+    ]
     assert socket.close_count == 1
+
+
+@pytest.mark.parametrize('history', ['http', 'stored_socket'])
+async def test_unstored_socket_request_continues_only_from_its_lane(
+    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, history: str
+):
+    """A socket request with `openai_store=False` replays a history its lane didn't cache.
+
+    That covers an HTTP response, which may never have been stored, as in a Zero Data Retention history saved before
+    the setting was turned on, and a response another socket stored. Its own lane's response is still continued from.
+    """
+    unstored: OpenAIResponsesModelSettings = {'openai_store': False}
+    if history == 'http':
+        earlier = await Agent(OpenAIResponsesModel('gpt-4o', provider=http.provider()), model_settings=unstored).run(
+            'earlier'
+        )
+        earlier_text = 'from HTTP'
+    else:
+        sockets.pending[0].responses = deque([text_events('stored', 'resp_stored', store=True)])
+        sockets.pending.append(ScriptedSocket())
+        earlier = await Agent(websocket_model()).run('earlier')
+        earlier_text = 'stored'
+    socket = sockets.pending[0]
+    socket.responses.append(text_events('again', 'resp_again'))
+    agent = Agent(websocket_model(http.provider()), model_settings=unstored)
+    async with agent:
+        later = await agent.run('later', message_history=earlier.all_messages())
+        await agent.run('again', message_history=later.all_messages())
+
+    replayed, continued = socket.sent
+    assert 'previous_response_id' not in replayed
+    assert replayed['input'] == [
+        {'role': 'user', 'content': 'earlier'},
+        {'role': 'assistant', 'content': earlier_text},
+        {'role': 'user', 'content': 'later'},
+    ]
+    assert continued['previous_response_id'] == 'resp_test'
+    assert continued['input'] == [{'role': 'user', 'content': 'again'}]
+
+
+async def test_history_edit_after_an_http_fallback_replays_on_the_socket(
+    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses
+):
+    """A request that asked for the socket but went over HTTP records its history, like one on the socket.
+
+    So once earlier messages are edited, the next socket request replays them rather than chain from it.
+    """
+    socket = sockets.pending[0]
+    socket.responses.clear()
+    model = websocket_model(
+        http.provider(), profile=OpenAIModelProfile(openai_responses_supports_websocket_stream_id=False)
+    )
+    async with model:
+        busy = asyncio.create_task(Agent(model).run('busy'))
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await socket.receiving.wait()
+        # The socket's only lane is busy, so this request goes over HTTP.
+        fallback = await Agent(model).run('secret')
+        socket.push(*text_events('busy', 'resp_busy'))
+        assert (await busy).output == 'busy'
+        fallback_request, fallback_response = fallback.all_messages()
+        assert isinstance(fallback_request, ModelRequest) and isinstance(fallback_response, ModelResponse)
+        assert fallback_response.history_digest is not None
+        fallback_request.parts = [UserPromptPart('[redacted]')]
+        socket.responses.append(text_events('after', 'resp_after'))
+        await Agent(model).run('after', message_history=fallback.all_messages())
+
+    after = socket.sent[-1]
+    assert 'previous_response_id' not in after
+    assert after['input'] == [
+        {'role': 'user', 'content': '[redacted]'},
+        {'role': 'assistant', 'content': 'from HTTP'},
+        {'role': 'user', 'content': 'after'},
+    ]
 
 
 async def test_per_step_selection_switches_distinct_sockets(allow_model_requests: None, sockets: SocketHarness):
