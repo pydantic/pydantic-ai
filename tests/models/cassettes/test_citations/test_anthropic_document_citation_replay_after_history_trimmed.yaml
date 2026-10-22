@@ -1,0 +1,294 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "696"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 4096
+        messages:
+        - role: user
+          content:
+          - text: How long does shipping take? Cite the document.
+            type: text
+          - source:
+              data: Orders ship within two business days.
+              media_type: text/plain
+              type: text
+            type: document
+            citations:
+              enabled: true
+        - role: assistant
+          content:
+          - text: Orders ship within two business days.
+            type: text
+            citations:
+            - type: char_location
+              cited_text: Orders ship within two business days.
+              document_index: 0
+              document_title: null
+              start_char_index: 0
+              end_char_index: 37
+        - role: user
+          content:
+          - text: Thanks. Repeat the shipping time in one sentence.
+            type: text
+        model: claude-sonnet-4-5
+        stream: false
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-6ad8b5bf000000007022b3af23d3eb49-d9daa546bd68781e-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-sonnet-4-5-20250929
+        id: msg_011CgFR2k8nrGyRnUXtkst6q
+        type: message
+        role: assistant
+        content:
+        - citations:
+          - type: char_location
+            cited_text: Orders ship within two business days.
+            document_index: 0
+            document_title: null
+            start_char_index: 0
+            end_char_index: 37
+          type: text
+          text: Shipping takes two business days.
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 598
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 26
+          service_tier: standard
+          inference_geo: not_available
+          speed: standard
+        diagnostics: null
+  recorded_at: 2026-10-21T12:53:20.655472+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "869"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 4096
+        messages:
+        - role: user
+          content:
+          - text: What is the return window? Cite the document.
+            type: text
+          - source:
+              data: The return window is thirty days from purchase.
+              media_type: text/plain
+              type: text
+            type: document
+            citations:
+              enabled: true
+        - role: assistant
+          content:
+          - text: The return window is thirty days from purchase.
+            type: text
+            citations:
+            - type: char_location
+              cited_text: The return window is thirty days from purchase.
+              document_index: 0
+              document_title: null
+              start_char_index: 0
+              end_char_index: 47
+        - role: user
+          content:
+          - text: How long does shipping take? Cite the document.
+            type: text
+          - source:
+              data: Orders ship within two business days.
+              media_type: text/plain
+              type: text
+            type: document
+            citations:
+              enabled: true
+        model: claude-sonnet-4-5
+        stream: false
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-6ad8b5be0000000076907c4ed84b56aa-50101894cf1436f9-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-sonnet-4-5-20250929
+        id: msg_011CgFR2e7PzW4X9s9h5Yb5S
+        type: message
+        role: assistant
+        content:
+        - citations:
+          - type: char_location
+            cited_text: Orders ship within two business days.
+            document_index: 1
+            document_title: null
+            start_char_index: 0
+            end_char_index: 37
+          type: text
+          text: Orders ship within two business days.
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 659
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 26
+          service_tier: standard
+          inference_geo: not_available
+          speed: standard
+        diagnostics: null
+  recorded_at: 2026-10-21T12:53:19.141084+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "331"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 4096
+        messages:
+        - role: user
+          content:
+          - text: What is the return window? Cite the document.
+            type: text
+          - source:
+              data: The return window is thirty days from purchase.
+              media_type: text/plain
+              type: text
+            type: document
+            citations:
+              enabled: true
+        model: claude-sonnet-4-5
+        stream: false
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-6ad8b5bc000000005c12a11e93dd68f1-31f25d81a21c0994-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-sonnet-4-5-20250929
+        id: msg_011CgFR2XsrGQTkdFyGJ1qf3
+        type: message
+        role: assistant
+        content:
+        - citations:
+          - type: char_location
+            cited_text: The return window is thirty days from purchase.
+            document_index: 0
+            document_title: null
+            start_char_index: 0
+            end_char_index: 47
+          type: text
+          text: The return window is thirty days from purchase.
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 560
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 28
+          service_tier: standard
+          inference_geo: not_available
+          speed: standard
+        diagnostics: null
+  recorded_at: 2026-10-21T12:53:17.830597+00:00

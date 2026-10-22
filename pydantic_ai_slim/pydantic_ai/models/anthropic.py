@@ -200,30 +200,102 @@ def _citations_provider_details(citations: Sequence[BetaTextCitation]) -> dict[s
     return {'citations': [citation.model_dump(mode='json') for citation in citations]}
 
 
-def _map_citation_for_replay(citation: dict[str, Any]) -> BetaCitationWebSearchResultLocationParam | None:
-    """Rebuild a web search citation Anthropic returned from its raw data on the text part, or return `None`.
+def _map_citation_for_replay(
+    citation: dict[str, Any], document_texts: Sequence[str | None]
+) -> BetaTextCitationParam | None:
+    """Rebuild a citation Anthropic returned from its raw data on the text part, or return `None` to leave it out.
 
-    Document citations aren't sent back: they name their document by its position in the request, which changes when
-    history is edited, and the citation can't tell which document it was.
+    `document_texts` holds the text of each document block before the cited text in the request, in Anthropic's
+    document index order, or `None` for documents that aren't plain text with citations enabled.
     """
-    if citation.get('type') != 'web_search_result_location':
+    cited_text = citation.get('cited_text')
+    if not isinstance(cited_text, str):
         return None
-    cited_text, url, title = citation.get('cited_text'), citation.get('url'), citation.get('title')
-    encrypted_index = citation.get('encrypted_index')
+
+    if citation.get('type') == 'web_search_result_location':
+        url, title, encrypted_index = citation.get('url'), citation.get('title'), citation.get('encrypted_index')
+        if not isinstance(url, str) or not isinstance(title, str | None) or not isinstance(encrypted_index, str):
+            return None
+        return BetaCitationWebSearchResultLocationParam(
+            type='web_search_result_location',
+            url=url,
+            title=title,
+            cited_text=cited_text,
+            encrypted_index=encrypted_index,
+        )
+
+    document_index, title = citation.get('document_index'), citation.get('document_title')
+    start, end = citation.get('start_char_index'), citation.get('end_char_index')
     if (
-        not isinstance(cited_text, str)
-        or not isinstance(url, str)
+        citation.get('type') != 'char_location'
         or not isinstance(title, str | None)
-        or not isinstance(encrypted_index, str)
+        or not isinstance(document_index, int)
+        or not isinstance(start, int)
+        or not isinstance(end, int)
+        or not 0 <= start < end
+        # Slicing stops at the end of a document, so a range past it could still match.
+        or end - start != len(cited_text)
     ):
         return None
-    return BetaCitationWebSearchResultLocationParam(
-        type='web_search_result_location',
-        url=url,
-        title=title,
+    # Anthropic numbers documents by their position in the request, which moves when earlier history is left out, so
+    # the citation goes to the document that holds its cited text at its range: the original one if it still does,
+    # otherwise the only other one. With none, or several others, the citation is left out.
+    matches = [index for index, text in enumerate(document_texts) if text is not None and text[start:end] == cited_text]
+    if document_index not in matches:
+        if len(matches) != 1:
+            return None
+        document_index = matches[0]
+    return BetaCitationCharLocationParam(
+        type='char_location',
         cited_text=cited_text,
-        encrypted_index=encrypted_index,
+        document_index=document_index,
+        document_title=title,
+        start_char_index=start,
+        end_char_index=end,
     )
+
+
+def _add_replayed_citations(
+    messages: Sequence[BetaMessageParam], replayed_citations: dict[int, list[dict[str, Any]]]
+) -> None:
+    """Add the citations Anthropic returned to the replayed text blocks of the finished request.
+
+    `replayed_citations` maps the `id()` of each replayed text block to its raw citations. Anthropic numbers every
+    `document` block in the request, wherever it's nested, such as in a tool result or a fetched page, so the request
+    is walked in order and each text block gets the citations that still match the documents before it.
+    """
+    document_texts: list[str | None] = []
+
+    def visit(value: object) -> None:
+        if isinstance(value, list):
+            for item in cast(list[object], value):
+                visit(item)
+        elif _utils.is_str_dict(value):
+            if (raw_citations := replayed_citations.get(id(value))) is not None:
+                if citations := [
+                    param
+                    for citation in raw_citations
+                    if _utils.is_str_dict(citation) and (param := _map_citation_for_replay(citation, document_texts))
+                ]:
+                    value['citations'] = citations
+            elif value.get('type') == 'document':
+                source, citations_config = value.get('source'), value.get('citations')
+                document_texts.append(
+                    source['data']
+                    if _utils.is_str_dict(source)
+                    and source.get('type') == 'text'
+                    and _utils.is_str_dict(citations_config)
+                    and citations_config.get('enabled')
+                    else None
+                )
+            else:
+                # A tool call's `input` holds arguments the model wrote, which can look like a document but isn't one.
+                for key, item in value.items():
+                    if key != 'input':
+                        visit(item)
+
+    for message in messages:
+        visit(message['content'])
 
 
 def _with_document_citations(
@@ -288,6 +360,7 @@ try:
         BetaBashCodeExecutionToolResultBlockParam,
         BetaCacheControlEphemeralParam,
         BetaCitationCharLocation,
+        BetaCitationCharLocationParam,
         BetaCitationContentBlockLocation,
         BetaCitationPageLocation,
         BetaCitationsConfigParamParam,
@@ -350,6 +423,7 @@ try:
         BetaTextBlock,
         BetaTextBlockParam,
         BetaTextCitation,
+        BetaTextCitationParam,
         BetaTextDelta,
         BetaTextEditorCodeExecutionToolResultBlock,
         BetaTextEditorCodeExecutionToolResultBlockParam,
@@ -2442,6 +2516,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         include_citations = model_settings.get('citations', False)
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
+        replayed_citations: dict[int, list[dict[str, Any]]] = {}
         # Cross-provider files are dropped silently here, not raised via
         # `_validate_uploaded_file_provider`; intentional per https://github.com/pydantic/pydantic-ai/issues/4338 (ignore over raise).
         pending_container_uploads = [
@@ -2734,19 +2809,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         if response_part.content:
                             text_block = BetaTextBlockParam(text=response_part.content, type='text')
                             raw_citations = (response_part.provider_details or {}).get('citations')
-                            if (
-                                response_part.provider_name == self.system
-                                and isinstance(raw_citations, list)
-                                and (
-                                    citations := [
-                                        param
-                                        for citation in cast(list[object], raw_citations)
-                                        if _utils.is_str_dict(citation)
-                                        and (param := _map_citation_for_replay(citation))
-                                    ]
-                                )
-                            ):
-                                text_block['citations'] = citations
+                            if response_part.provider_name == self.system and isinstance(raw_citations, list):
+                                # Added once the request is finished, when every document's position is known.
+                                replayed_citations[id(text_block)] = cast(list[dict[str, Any]], raw_citations)
                             assistant_content_params.append(text_block)
                     elif isinstance(response_part, ToolCallPart):
                         tool_use_block_param = BetaToolUseBlockParam(
@@ -3034,6 +3099,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         _drop_unpaired_native_tool_calls(anthropic_messages)
         _place_system_messages_before_generation(anthropic_messages)
         _anchor_system_messages(anthropic_messages)
+        _add_replayed_citations(anthropic_messages, replayed_citations)
 
         if pending_container_uploads:
             for message in anthropic_messages:
