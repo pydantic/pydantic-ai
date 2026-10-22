@@ -61,6 +61,9 @@ from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
+
+STEERING = 'clai2_steering'
+"""Request metadata marking the user's steering message, so a UI can tell it from input a capability enqueues."""
 _CURRENT_SESSION_ID: ContextVar[str | None] = ContextVar('clai2_session_id', default=None)
 
 
@@ -441,7 +444,7 @@ class Session(Generic[DepsT, OutputT]):
         self._record_resumed: Callable[[], None] | None = None
         self._accepting_steering = False
         self._run_context: RunContext[DepsT] | None = None
-        self._pending_steering: list[Sequence[UserContent]] = []
+        self._pending_steering: list[ModelRequest] = []
         self._monty_notes: list[tuple[str, str]] = []
         """Cells the user ran in Monty since the last prompt, with the conversation they ran in."""
         self.on_context_usage: Callable[[int], None] | None = None
@@ -740,10 +743,11 @@ class Session(Generic[DepsT, OutputT]):
             return False
         # A blank text beside images is left out: some providers reject an empty text block.
         content: Sequence[UserContent] = [*([text] if text or not images else []), *images]
+        request = ModelRequest(parts=[UserPromptPart(content if images else text)], metadata={STEERING: True})
         if self._run_context is None:
-            self._pending_steering.append(content)
+            self._pending_steering.append(request)
         else:
-            self._run_context.enqueue(*content, priority='asap')
+            self._run_context.enqueue(request, priority='asap')
         return True
 
     async def run_in_monty(self, code: str) -> MontyCell:
@@ -896,8 +900,8 @@ class Session(Generic[DepsT, OutputT]):
     async def _stream(self, ctx: RunContext[DepsT], events: AsyncIterable[AgentStreamEvent]) -> None:
         self._accepting_steering = True
         self._run_context = ctx
-        for content in self._pending_steering:
-            ctx.enqueue(*content, priority='asap')
+        for request in self._pending_steering:
+            ctx.enqueue(request, priority='asap')
         self._pending_steering.clear()
         if self.on_context_window is not None and (window := ctx.model.context_window):
             self.on_context_window(window)
