@@ -44,9 +44,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
-from pydantic_ai_harness.compaction._summarizing_compaction import (
-    _SUMMARY_PREFIX,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_ai_harness.compaction._summarizing_compaction import SUMMARY_PREFIX
 from pydantic_ai_harness.conversation_search import (
     ConversationSearch,
     ConversationSearchToolset,
@@ -169,7 +167,7 @@ class TestSnapshotHistorySource:
         # local literal to avoid runtime coupling.
 
         store = InMemoryStepStore()
-        artifact = ModelRequest(parts=[SystemPromptPart(content=f'{_SUMMARY_PREFIX}older summarized context')])
+        artifact = ModelRequest(parts=[SystemPromptPart(content=f'{SUMMARY_PREFIX}older summarized context')])
         original = _user('KEEPME original detail')
         await _seed_run(store, 'r1', [artifact, original])
 
