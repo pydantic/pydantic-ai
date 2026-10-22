@@ -1030,7 +1030,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             return None  # pragma: no cover - `CodeMode` always contributes `run_code`
         return tool.toolset if isinstance(tool.toolset, cls) else None
 
-    async def functions_revealed_by(self, ctx: RunContext[AgentDepsT], names: Sequence[str]) -> dict[str, str]:
+    async def _functions_revealed_by(self, ctx: RunContext[AgentDepsT], names: Sequence[str]) -> dict[str, str]:
         """Map each of `names` that revealing it adds to `run_code` to the function name code calls it by.
 
         Called while this step's tools are current, for tools a search just found: the next step sandboxes

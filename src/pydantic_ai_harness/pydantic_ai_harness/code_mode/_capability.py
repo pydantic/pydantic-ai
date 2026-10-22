@@ -380,7 +380,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             # Only a hook called outside a run, with no tools installed, gets here.
             return
         announced = _visible_announced_tools(ctx.messages) | self._in_flight_announcements
-        functions = await toolset.functions_revealed_by(ctx, [name for name in names if name not in announced])
+        fresh = [name for name in names if name not in announced]
+        functions = await toolset._functions_revealed_by(ctx, fresh)  # pyright: ignore[reportPrivateUsage]
         if not functions:
             return
         self._in_flight_announcements.update(functions)
@@ -402,16 +403,17 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 def _visible_announced_tools(messages: Sequence[ModelMessage]) -> set[str]:
     """Read the names announced after the latest compaction boundary.
 
-    An announcement is identified by its `SystemPromptPart.metadata`, never by its text: a system prompt that
-    merely reads like one, or a name shaped like a list of names, must not count. Part metadata survives serialization and the merging of adjacent
-    requests, and an announcement a history processor or a UI round trip dropped no longer counts, so the
-    tool is announced again when it's next discovered.
+    An announcement is identified by its `SystemPromptPart.metadata` (`origin` and the `tools` it lists),
+    which survives serialization and the merging of adjacent requests. An announcement a history processor
+    or a UI round trip dropped no longer counts, so the tool is announced again when it's next discovered.
+    The text never decides which names count: a system prompt that merely reads like an announcement, or a
+    name shaped like a list of names, adds nothing.
 
-    Histories recorded before announcements were marked hold unmarked ones, recognizable only by their
-    text. For those, the names discovered by the window's search returns count instead, as every search
-    return was announced as soon as it arrived. That reads `ToolSearchReturnPart` and
-    `NativeToolSearchReturnPart` by type, so an announcement-shaped system prompt can at most bring back
-    that reading, never add a name of its own.
+    The one use of the text is a deliberately kept fallback for histories recorded before announcements were
+    marked. An unmarked system prompt that starts like an announcement switches to reading the window's
+    search returns instead, as every search return was announced as soon as it arrived. Those are read by
+    type (`ToolSearchReturnPart`, `NativeToolSearchReturnPart`), so announcement-shaped text can at most turn
+    that reading on, never add a name of its own.
     """
     window = post_compaction_window(messages)
     announced: set[str] = set()
