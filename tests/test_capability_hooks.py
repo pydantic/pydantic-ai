@@ -11,6 +11,7 @@ import threading
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from types import NoneType
@@ -5035,11 +5036,16 @@ class TestCompaction:
             ModelRequest(parts=[UserPromptPart(content='1')]),
             ModelResponse(parts=[TextPart(content='r1')], usage=RequestUsage(input_tokens=context_tokens)),
         ]
-        if compacts:
-            with pytest.raises(UserError, match='OpenAICompaction requires OpenAIResponsesModel'):
+        with (
+            pytest.warns(UserWarning, match='context window of model .* is unknown')
+            if context_window is None
+            else nullcontext()
+        ):
+            if compacts:
+                with pytest.raises(UserError, match='OpenAICompaction requires OpenAIResponsesModel'):
+                    await agent.run('2', message_history=history)
+            else:
                 await agent.run('2', message_history=history)
-        else:
-            await agent.run('2', message_history=history)
 
     @pytest.mark.parametrize('threshold', [0, -0.1, 1.1])
     def test_openai_compaction_rejects_invalid_context_window_threshold(self, threshold: float):

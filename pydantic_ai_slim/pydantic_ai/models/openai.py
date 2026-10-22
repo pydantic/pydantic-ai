@@ -5861,8 +5861,9 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
             context_window_threshold: Stateless-mode only. Compact when
                 [`RunContext.context_window_used`][pydantic_ai.tools.RunContext.context_window_used]
                 reaches this fraction of the model's context window. Must be
-                greater than `0` and at most `1`. If context-window usage is
-                unknown, this threshold does not trigger compaction.
+                greater than `0` and at most `1`. Before the first response
+                this threshold does not trigger compaction; if the model's
+                context window is unknown, it never does and a warning is emitted.
             message_count_threshold: Stateless-mode only. Compact when the
                 message count exceeds this threshold. When combined with
                 `context_window_threshold`, compaction runs when either is reached.
@@ -5942,7 +5943,15 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        if not self._should_compact(request_context.messages, request_context.model.context_window):
+        context_window = request_context.model.context_window
+        if self.context_window_threshold is not None and context_window is None:
+            warnings.warn(
+                f'`context_window_threshold` cannot trigger compaction because the context window of model '
+                f"{request_context.model.model_name!r} is unknown. Set it with `profile={{'context_window': ...}}` "
+                'on the model.',
+                UserWarning,
+            )
+        if not self._should_compact(request_context.messages, context_window):
             return request_context
 
         from .wrapper import WrapperModel
