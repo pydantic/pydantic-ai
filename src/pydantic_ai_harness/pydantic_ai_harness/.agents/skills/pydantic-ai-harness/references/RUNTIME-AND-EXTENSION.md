@@ -319,7 +319,9 @@ Gotchas:
 - `ModelRetry`, `ToolFailed`, `CallDeferred`, and `ApprovalRequired` from a tool call are not
   checkpointed, and `DynamicToolset`s are not wrapped, so that work re-runs.
 - Steps match by name and order, not inputs: in-flight tasks keep stored results across a deploy.
-- A running step extends the worker's claim, so steps may outlast `claim_timeout`.
+- A running step extends the worker's claim, so steps may outlast `claim_timeout`. A
+  `claim_timeout=0` worker's claims never expire and nothing checks them mid-step, so a cancelled
+  task's steps run until one is checkpointed.
 - Inside a task an `MCPToolset` keeps one session for the run: the first step that needs the server
   connects, and a failed connection fails that step, so the task's retry connects again.
 - Function, MCP, or dynamic toolsets passed with `run(toolsets=...)` inside a task raise `UserError`;
