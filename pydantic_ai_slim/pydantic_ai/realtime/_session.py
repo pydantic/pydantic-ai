@@ -1895,7 +1895,12 @@ class RealtimeSession:
             # including on a reply that finished generating before the user spoke over it. Only the
             # provider-side transcript sync is unavailable, so the truncations aren't sent.
             if cancel:
-                await self._send_frame(CancelResponse())
+                try:
+                    await self._send_frame(CancelResponse())
+                except RealtimeError:
+                    # As below: the listener heard only this much whether or not the cancel got out.
+                    self._apply_core(self._playback_interruption(played_ms, truncations))
+                    raise
             self._apply_core(self._playback_interruption(played_ms, truncations))
             self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
             return True

@@ -1718,6 +1718,31 @@ async def test_interrupt_played_bytes_after_the_reply_finished_generating_record
     assert _speech_cuts(session) == [('interrupted', [100]), ('interrupted', [None])]
 
 
+async def test_interrupt_played_bytes_without_truncation_records_the_cut_when_the_cancel_fails() -> None:
+    """A cancel that fails on a dropped link still leaves the reply recorded as cut where playback stopped."""
+
+    class _DroppedLink(_GatedRealtimeConnection):
+        transport_errors = (ConnectionResetError,)
+
+        async def send_input(self, content: RealtimeInput) -> None:
+            raise ConnectionResetError('link dropped')
+
+    conn = _DroppedLink([*_speech('item-a', 2), ResponseDone()], [])
+    session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_output_truncation=False))
+
+    async with session:
+        stream = session.stream_audio()
+        events = aiter(session)
+        await _consume_until(events, _is_turn_complete)
+        await anext(stream)  # the second chunk stays buffered and unheard
+
+        with pytest.raises(RealtimeError, match='link dropped'):
+            await session.interrupt(played_bytes=_CHUNK)
+        conn.release.set()
+
+    assert _speech_cuts(session) == [('interrupted', [100])]
+
+
 async def test_a_tool_after_a_barge_in_on_a_finished_reply_sees_it_cut_off() -> None:
     """A tool's `ctx.messages` (and a chat span's input) record the cut-off reply as `all_messages()` does."""
     seen: list[ModelMessage] = []
