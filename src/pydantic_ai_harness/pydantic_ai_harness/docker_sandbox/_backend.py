@@ -234,14 +234,15 @@ _START_DESKTOP = (
     'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
     f"echo 'the X server did not start:' >&2; tail -n 5 {_PID_DIR}/xvfb.log >&2; exit 1; fi; "
     'sleep 0.1; i=$((i+1)); done; fi; '
-    f'if ! kill -0 "$(cat {_PID_DIR}/fluxbox.pid 2>/dev/null)" 2>/dev/null; then '
-    f'setsid fluxbox >/dev/null 2>&1 & echo $! > {_PID_DIR}/fluxbox.pid; fi; '
+    f'if ! kill -0 "$(cat {_PID_DIR}/window-manager 2>/dev/null)" 2>/dev/null; then '
+    f'setsid fluxbox >/dev/null 2>&1 & echo $! > {_PID_DIR}/window-manager; fi; '
     'xdotool getdisplaygeometry'
 )
 """Starts a 1280x800 X display and a window manager, each unless it is running, then reports the display's size.
 
 It gives up as soon as the X server exits, or after 10 seconds. The window manager is checked on its own, so a start
-interrupted between the two still gets one next time.
+interrupted between the two still gets one next time. Its process ID goes in `window-manager` rather than a `.pid`
+file, which `_WRAPPER` would remove as a finished command's.
 """
 
 
