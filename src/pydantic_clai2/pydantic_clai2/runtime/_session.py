@@ -52,10 +52,10 @@ from pydantic_clai2.runtime.repl_state import ReplStates
 from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')
+OutputT = TypeVar('OutputT')
 
 STEERING = 'clai2_steering'
 """Request metadata marking the user's steering message, so a UI can tell it from input a capability enqueues."""
-OutputT = TypeVar('OutputT')
 _CURRENT_SESSION_ID: ContextVar[str | None] = ContextVar('clai2_session_id', default=None)
 
 

@@ -274,17 +274,14 @@ class UpdateInfo:
     """Installed: CLAI is restarting as the new build, and the page reconnects once it is back."""
 
 
-QueuedKind = InputKind
-"""A prompt can steer the running turn; a `/command` or a `!` shell line, queued from the terminal, cannot."""
-
-
 @dataclass(frozen=True, kw_only=True)
 class QueuedItem:
     """An input waiting for the session's running turn or command to end, editable until it runs."""
 
     id: str
     text: str
-    kind: QueuedKind
+    kind: InputKind
+    """A prompt can steer the running turn; a `/command` or a `!` shell line, queued from the terminal, cannot."""
 
 
 def queued_item(entry: QueuedInput) -> QueuedItem:

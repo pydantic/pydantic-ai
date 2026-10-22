@@ -22,7 +22,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 )
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import PluginHost, QueuedInput
 from pydantic_clai2.plugins.process_plugins import LiveRuntime
 from pydantic_clai2.runtime.image_codec import decode_images
 from pydantic_clai2.runtime.session_runtime import create_shell
@@ -249,3 +249,21 @@ def test_a_live_session_without_a_prompt_queues_nothing() -> None:
     for change in (lambda: session.edit_queued('q1', 'x'), lambda: session.remove_queued('q1')):
         with pytest.raises(LookupError, match='no longer queued'):
             change()
+    assert session.queued == 0
+
+
+def test_a_live_session_counts_the_queue_its_prompt_holds() -> None:
+    """`queued` counts the prompt's own queue, so the count and the list cannot disagree."""
+
+    class Inputs:
+        queue = [QueuedInput(id='q1', text='first'), QueuedInput(id='q2', text='/help')]
+
+        def edit_queued(self, input_id: str, text: str) -> None: ...  # pragma: no cover
+
+        def remove_queued(self, input_id: str) -> None: ...  # pragma: no cover
+
+        def steer(self, text: str) -> bool: ...  # pragma: no cover
+
+    host = PluginHost[None](name='', console=Console(file=StringIO()), settings={})
+    session = LiveRuntime(live_id='x', host=host, running=lambda: True, inputs=Inputs)
+    assert session.queued == len(session.queue) == 2

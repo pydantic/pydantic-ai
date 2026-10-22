@@ -446,7 +446,6 @@ def create_shell(
         running=lambda: shell.turning,
         default_model=partial(_default_model, store=store, models=models, fallback=agent.model),
         default_model_name=partial(_default_model_name, store=store, fallback=agent.model),
-        queued=lambda: shell.queued,
         inputs=lambda: shell,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed

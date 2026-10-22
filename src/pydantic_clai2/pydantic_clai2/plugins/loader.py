@@ -196,7 +196,6 @@ class SessionPlugins(Generic[DepsT]):
         tasks: Callable[[], TaskCatalog | None] = lambda: None,
         workspace: Callable[[], Path] = Path.cwd,
         running: Callable[[], bool] = lambda: False,
-        queued: Callable[[], int] = lambda: 0,
         inputs: Callable[[], PromptInputs | None] = lambda: None,
         live_id: str | None = None,
         default_model: Callable[[], Awaitable[Model | str | None]] | None = None,
@@ -213,7 +212,7 @@ class SessionPlugins(Generic[DepsT]):
         `full_screen` is handed to every host; the shell binds it to the live renderer per prompt.
         `conversation`, `status`, `submit_prompt`, `send_input`, `interrupt`, `sessions`, `setting`, `tasks`,
         `workspace`, `default_model`, `default_model_name`, and `commands` are handed to every host; see `PluginHost` for the defaults. `running`
-        says whether a turn runs, `queued` how much input waits for it, `inputs` the prompt holding that input,
+        says whether a turn runs, `inputs` the prompt holding the input that waits for it,
         and `live_id` names the session in `host.live`, by default a new ID.
         """
         if process is None:
@@ -272,7 +271,6 @@ class SessionPlugins(Generic[DepsT]):
             live_id=live_id or uuid4().hex,
             host=self._base,
             running=running,
-            queued=queued,
             changed=lambda: self._process.live.changed(self.live_session),
             inputs=inputs,
         )
