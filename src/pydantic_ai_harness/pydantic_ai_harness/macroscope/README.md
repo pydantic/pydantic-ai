@@ -112,7 +112,7 @@ Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_exec
 on Temporal, each review runs in its own activity, which gets `timeout` plus 30
 seconds. The workspace therefore stops a slow review first, and the model still
 gets the findings that arrived. To set a different activity limit, use
-`SetToolMetadata` as in
+[`SetToolMetadata`](https://pydantic.dev/docs/ai/capabilities/set-tool-metadata/) as in
 [Temporal command timeouts](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-command-timeouts).
 
 The activities are named after the capability's `id`, which defaults to
@@ -124,7 +124,8 @@ them, which in-flight runs then cannot find.
 The review uploads the branch diff to Macroscope's service. Finding bodies are
 written by Macroscope's model from that diff, so on a branch you do not trust,
 treat them as untrusted input: run the agent in a sandbox workspace, or require
-approval for its shell and write tools.
+[approval](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/)
+for its shell and write tools.
 
 ## Telemetry
 
