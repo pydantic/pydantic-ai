@@ -84,7 +84,9 @@ reads, chunks and indexes its directory from scratch.
 Set `cache_index=True` to keep each searched directory's index between searches, for the life of the agent:
 
 ```python {test="skip"}
-SmartFileSearch(model='system-one:clm-latest', cache_index=True)
+from pydantic_ai_harness import SmartFileSearch
+
+capability = SmartFileSearch(model='system-one:clm-latest', cache_index=True)
 ```
 
 Later searches of the same directory still read every file, to catch changes by content hash on any

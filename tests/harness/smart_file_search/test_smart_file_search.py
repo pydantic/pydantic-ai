@@ -577,6 +577,8 @@ async def test_run_without_a_workspace_fails_at_its_start() -> None:
 def test_toolset_advertises_the_upstream_schema() -> None:
     toolset = SmartFileSearch[None]().get_toolset()
     assert isinstance(toolset, SmartFileSearchToolset)
+    assert toolset.id == 'smart_file_search'  # durable execution needs a toolset `id`
+    assert SmartFileSearch[None](id='code').get_toolset().id == 'code'
     schema = toolset.tools['smart_file_search'].function_schema.json_schema
     assert set(schema['properties']) == {'query', 'directory', 'glob', 'limit', 'candidates'}
     assert schema['properties']['candidates']['default'] == 128

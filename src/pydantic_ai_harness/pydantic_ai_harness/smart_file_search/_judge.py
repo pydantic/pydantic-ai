@@ -14,10 +14,10 @@ from __future__ import annotations
 import os
 from collections.abc import Sequence
 from importlib.util import find_spec
-from typing import cast
 
 import anyio
 from pydantic import BaseModel, Field
+from typing_extensions import TypeIs
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
@@ -61,15 +61,19 @@ def typesafe_available() -> bool:
     return bool(os.environ.get('TYPESAFE_API_KEY')) and find_spec('typesafe_sdk') is not None
 
 
+def _is_request_response_model(model: object) -> TypeIs[Model]:
+    """Narrow the run's model to `Model` without leaving its client type unknown."""
+    return isinstance(model, Model)
+
+
 def resolve_judge_model(model: JudgeModel | None, run_model: object) -> JudgeModel:
     """The configured judge; else TypeSafe's Jev when available; else the run's own model."""
     if model is not None:
         return model
     if typesafe_available():
         return TYPESAFE_MODEL
-    if isinstance(run_model, Model):
-        # `isinstance` narrows to `Model[Unknown]`; the bare `Model` restores its declared client default.
-        return cast(Model, run_model)
+    if _is_request_response_model(run_model):
+        return run_model
     raise UserError(
         '`SmartFileSearch` could not pick a judge model: the run model is not a request-response `Model`. '
         'Pass `SmartFileSearch(model=...)`.'

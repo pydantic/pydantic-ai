@@ -130,4 +130,5 @@ class SmartFileSearch(AbstractCapability[AgentDepsT]):
             threshold=self.threshold,
             concurrency=self.concurrency,
             cache_index=self.cache_index,
+            id=self.id or 'smart_file_search',
         )

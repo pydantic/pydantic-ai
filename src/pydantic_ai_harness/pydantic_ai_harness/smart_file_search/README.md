@@ -6,6 +6,8 @@ System One API, or TypeSafe's Jev, as the recommended judge.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/smart_file_search/)
 
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
+
 ## The problem
 
 A coding agent in an unfamiliar repository spends its first turns locating code: guessing identifiers,
@@ -33,6 +35,9 @@ The judge is pluggable: pass any model or model name as `model`. A decision mode
 as `'system-one:clm-latest'`, needs only `SYSTEM_ONE_BASE_URL` (and `SYSTEM_ONE_API_KEY` if the API needs a key).
 Left unset, the judge is `'typesafe:jev-latest'` when the `typesafe` SDK is installed and `TYPESAFE_API_KEY` is
 set, and the run's own model otherwise.
+
+A search sends the query, the shortlisted snippets and their paths to the judge model's provider, and only searches
+inside the workspace's working directory. If no source may leave the machine, judge with a local model.
 
 See the [Smart File Search docs](https://pydantic.dev/docs/ai/harness/smart-file-search/) for the search
 pipeline, the result shape, choosing the judge and tuning `threshold`.
