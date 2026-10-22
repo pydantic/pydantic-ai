@@ -2,6 +2,24 @@
   "allowed_breakages": [
     {
       "against": "v2.59.0",
+      "fingerprint": "ca884de6c28ed4e97d48cd6c522936a934a38a929e25cb3440f903884b53d9c8",
+      "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `inputs=inputs`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "e728299e8b022b01f0a06b3eb8cf95974e2e124d4408d8933c3b0b1485596485",
+      "reason": "Adds `QueueChanged` to the web plugin's `ServerMessage` union; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "f7079c197a72ddfbdce33497a8729dae68f70b5456ebaa87d968ccd05ed8ae8a",
+      "reason": "Adds `QueueChanged` to the web plugin's `SessionMessage` union; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
+    },
+    {
+      "against": "v2.59.0",
       "fingerprint": "b881938683d7a5ced698e9551495f8a1098fce10d9c64642076231d15d211336",
       "reason": "Adds `RunInstructionSource` to the `InstructionSource` union; every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10789"

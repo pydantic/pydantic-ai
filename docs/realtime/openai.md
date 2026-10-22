@@ -516,7 +516,7 @@ the provider-agnostic workflows.
 | Text output | Unsupported | Live always speaks; read the answer from the transcript on the [`SpeechPart`][pydantic_ai.messages.SpeechPart] |
 | Image input | Limited parameter support | [For the backend, with `respond=True`](#images-go-to-the-backend) |
 | Manual turns and interruption | Unsupported | Live owns turn-taking and handles barge-in itself, but reports nothing when it does, so a reply the user cut off is recorded as complete, not interrupted. The [turn boundary is inferred](#the-turn-boundary-is-inferred) from silence |
-| Input transcription | Full feature support | Always on in both directions; no [model to choose](audio.md#input-transcription) and no way to disable it |
+| Input transcription | Full feature support | Always on in both directions; no [model to choose](audio.md#input-transcription) beyond the `'auto'` default, and no way to disable it |
 | Input speech events | Unsupported | No speech start/end frames, so a "listening" indicator should read the profile rather than wait for events |
 | Native tools | Limited parameter support | Web search only, run by the [backend](#how-delegation-works); sources and citations aren't recorded |
 | Usage | Limited parameter support | [Seconds, not tokens](#usage-is-measured-in-seconds); no duration-based `UsageLimits` field |
@@ -527,7 +527,7 @@ the provider-agnostic workflows.
 Live refuses a stated requirement it cannot meet rather than accepting and ignoring it. These raise
 [`UserError`][pydantic_ai.exceptions.UserError]:
 
-- Before the session connects: `turn_detection`, `max_tokens`, `input_transcription_model`,
+- Before the session connects: `turn_detection`, `max_tokens`, a pinned `input_transcription_model`,
   `output_modality='text'` (the profile reports `supports_text_output=False`; see
   [Shared settings](overview.md#shared-settings)), a `tool_choice` of `'required'` or a list of
   tool names, and a [`profile=`](overview.md#provider-support) whose `audio_input_sample_rate` and
@@ -583,8 +583,9 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   result is recorded in history, but goes nowhere: the turn doesn't wait for it.
 - The backend continues a delegated round only once it has every call's output, and Live has no
   command to cancel a delegation: left unfinished, the round keeps Live from delegating anything
-  more for the rest of the session. So when a tool raises, the model *does* get a result, unlike on
-  the [other providers](tools.md#function-tools): the call's output is the error history records,
+  more for the rest of the session. So when a tool raises, the model *does* get a result, as on
+  [Gemini Live](gemini.md#provider-specific-quirks) and unlike on the
+  [other providers](tools.md#function-tools): the call's output is the error history records,
   `{"error":"The tool raised an unhandled error."}`. The backend carries on (it may try the tool
   again), and Live speaks what it makes of it. The exception is still raised from the session as
   usual, but the exchange goes on as it would after a result that succeeded: a

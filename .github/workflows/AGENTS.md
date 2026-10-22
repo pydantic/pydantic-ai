@@ -253,13 +253,26 @@ environment entry are intentionally blocked without an operational incident.
 They fetch this controller from the default branch, so the skip applies even
 before their branch receives the provider migration. Update the branch from
 `main` to restore agent runs. An empty or missing Z.ai credential in current
-configuration still follows the normal provider-health checks.
+configuration blocks the run; the provider-incident rules below say which runs open an incident for it.
 
 The controller keeps one assigned operational incident for a matching failure
 scope and marks it with both `agentic-workflows` and `pydanty:meta`. Leave both labels
 in place: `pydanty:meta` keeps the automatic `@claude` issue/comment workflow from
 starting on controller metadata. Do not create a second issue for the same open
 provider, workflow, or task incident.
+
+A provider incident blocks every Z.AI workflow. Open one only on provider-wide evidence:
+exhausted or unverifiable quota, rejected credentials, or a 429 whose Z.AI code is a
+documented account or plan limit (runner kind `plan_limit`). Keep these outcomes local to their run:
+
+- Any other 429 that outlasts the runner's retry window (runner kind `rate_limit`), such as
+  `1302` request-rate limits and `1305` overload. A healthy quota check cannot show spare
+  concurrency, so such an incident has no recovery signal. An exhausted plan still blocks
+  the next run at its quota check.
+- A gate on a `pull_request`, `pull_request_review` or `pull_request_review_comment` event
+  that ran without `ZAI_API_KEY` (diagnostic `missing_api_key`). GitHub withholds secrets
+  from these events on fork and Dependabot pull requests. Gates on other events, and the
+  scheduled check, still open an incident for a missing key.
 
 Before the gate passes or incident reuse creates an issue, re-read a list that returned no
 readable incident. During a GitHub Issues degradation the labeled list returned HTTP 200 with
@@ -285,17 +298,18 @@ Unknown quota results may include one of these fixed diagnostic categories:
 also include a numeric HTTP status. These values contain no provider response text,
 request headers, URL, credential, or exception message. Version 1 artifacts without
 diagnostic fields remain valid. Diagnostics explain the unknown result; they do not
-change gate or recovery policy.
+change gate or recovery policy. Only `missing_api_key` changes incident creation, and only
+on the pull request events listed above.
 
 For manual provider recovery, run **Agent Provider Health** with `workflow_dispatch`
 and enter the incident's number as `recover_issue`. The controller finds that one
 open, marked incident whose provider key matches the currently configured provider.
 It never closes another incident in the same run. A fresh health check must pass
 before the controller closes the named incident. The hourly scheduled run closes Z.ai
-rate-limit, quota-exhaustion, and unknown-quota incidents after a fresh healthy check,
+plan-limit, quota-exhaustion, and unknown-quota incidents after a fresh healthy check,
 once the recorded reset time has passed or, when none was recorded, once the incident
-is an hour old. Keep the hour: a healthy quota check does not show spare concurrency,
-and closes within minutes of opening were followed by a new incident within minutes.
+is an hour old. Keep the hour: closes within minutes of opening were followed by a new
+incident within minutes.
 Credential and configuration incidents need operator attention rather than automatic recovery.
 
 For a workflow-scoped incident, dispatch the affected workflow from the repository's
