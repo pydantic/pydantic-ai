@@ -49,8 +49,9 @@ def test_each_workspace_capability_mounts_filesystems(name: str) -> None:
     mounted = capability.get_workspace(RunContext(deps='acme', model=TestModel(), usage=RunUsage()), ref=None)
     plain = capability.get_workspace(RunContext(deps='other', model=TestModel(), usage=RunUsage()), ref=None)
 
-    assert isinstance(mounted, Workspace) and isinstance(plain, Workspace)
-    assert (mounted.mounts, plain.mounts) == ((per_customer,), ())
+    assert isinstance(mounted, Workspace) and mounted.mounts == (per_customer,)
+    # With no mounts this run, the backend is used as it is.
+    assert not isinstance(plain, Workspace)
 
 
 async def test_bubblewrap_keeps_the_wrapped_workspace_mounts(tmp_path: Path) -> None:
@@ -60,3 +61,5 @@ async def test_bubblewrap_keeps_the_wrapped_workspace_mounts(tmp_path: Path) -> 
 
     # File operations on the mount reach the bucket without starting the sandbox.
     assert await BubblewrapWorkspace(inner).read_text('data/a.txt') == 'from the bucket'
+    # A bare backend works too, as with every wrapper.
+    assert BubblewrapWorkspace(LocalWorkspaceBackend(tmp_path)).mounts == ()

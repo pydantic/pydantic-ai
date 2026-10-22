@@ -40,7 +40,7 @@ async def main():
     print(result.output)
 ```
 
-The file tools read `2026-10-01.csv` from `s3://acme-data/exports/2026-10-01.csv`. Pass `workspace=ReadOnlyWorkspace(Workspace(exports))` (both from `pydantic_ai.workspaces`) to refuse changes.
+The file tools read `2026-10-01.csv` from `s3://acme-data/exports/2026-10-01.csv`. Pass `workspace=ReadOnlyWorkspace(exports)` (from `pydantic_ai.workspaces`) to refuse changes.
 
 ## As a folder
 
@@ -69,7 +69,7 @@ def customer_files(ctx: RunContext[Customer]) -> list[Mount]:
 agent = Agent('anthropic:claude-opus-5-5', deps_type=Customer, capabilities=[E2BSandbox(mounts=customer_files), Coder()])
 ```
 
-File tools reach `files/`; shell commands don't, and the model is told so.
+File tools reach `files/`; commands don't, and the model is told so.
 
 ## Choosing the class
 

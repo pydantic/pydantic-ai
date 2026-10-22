@@ -213,9 +213,9 @@ def _mount_instructions(ctx: RunContext[Any]) -> str | None:
         + (
             ''
             if not shell
-            else '; shell commands see it too'
-            if mount.shell
-            else '; file tools only, shell commands do not see it'
+            else '; commands see it too'
+            if mount.commands
+            else '; file tools only, commands do not see it'
         )
         + ')'
         + (f': {mount.description}' if mount.description else '')

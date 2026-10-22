@@ -24,8 +24,10 @@ import pytest
 
 from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
+from pydantic_ai_harness.cloud_storage import AzureFilesystem
 
 from .conftest import (
+    AZURE_KEY,
     BUCKET,
     S3_ENDPOINT,
     Filesystem,
@@ -49,7 +51,13 @@ class TestConformance(WorkspaceBackendSuite):
 async def test_a_missing_bucket_is_unavailable(new_bucket: Callable[..., Filesystem]) -> None:
     """Retrying can't help, so it is not a transient error."""
     bucket = new_bucket()
-    missing = replace(bucket, url=bucket.url.replace(BUCKET, f'pai-missing-{uuid.uuid4().hex[:8]}'))
+    # A SAS token covers one container, so Azure refuses it before saying that another one is missing.
+    credentials = {'access_key': AZURE_KEY, 'expires_at': None} if isinstance(bucket, AzureFilesystem) else None
+    missing = replace(
+        bucket,
+        url=bucket.url.replace(BUCKET, f'pai-missing-{uuid.uuid4().hex[:8]}'),
+        credentials=credentials or bucket.credentials,
+    )
 
     with pytest.raises(WorkspaceUnavailableError, match='does not exist'):
         await missing.read_bytes('/a.txt')

@@ -29,10 +29,8 @@ Mounts: TypeAlias = 'Sequence[Mount] | Callable[[RunContext[Any]], Sequence[Moun
 
 def with_mounts(backend: WorkspaceBackend, mounts: Mounts, ctx: RunContext[Any]) -> WorkspaceBackend:
     """`backend` with the capability's mounts, or `backend` itself when it has none."""
-    if not callable(mounts) and not mounts:
-        return backend
-    # A function that picks none this run still manages mounts: one it picked for an earlier run is removed.
-    return Workspace(backend, mounts=mounts(ctx) if callable(mounts) else mounts)
+    picked = mounts(ctx) if callable(mounts) else mounts
+    return Workspace(backend, mounts=picked) if picked else backend
 
 
 def safe_credential_reason(error: Exception) -> str:
