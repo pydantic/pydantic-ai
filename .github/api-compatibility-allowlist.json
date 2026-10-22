@@ -32,9 +32,15 @@
     },
     {
       "against": "v2.59.0",
+      "fingerprint": "1b295e087b0c5d9ce099eef747012b54cb660fed111f5b9c051942f8c5ed9d9f",
+      "reason": "Adds `FileUnderstanding` to `CAPABILITY_TYPES`; every existing capability type is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8453"
+    },
+    {
+      "against": "v2.59.0",
       "fingerprint": "5942d1f85250e036051aa785e370fb32df99305905a5995c525b7faa2d44a657",
       "reason": "Adds `thinking_summary` to `ModelSettingName` for the new unified `ModelSettings.thinking_summary` setting; every existing member is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/5652"
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11084"
     }
   ]
 }
