@@ -321,7 +321,7 @@ class UsesModels(AbstractCapability):
                 progress.set()
 
         monkeypatch.setitem(sys.modules, '_capability_load_sync', SimpleNamespace(in_body=in_body))
-        monkeypatch.setattr(_validate, '_LOAD_LOCK', _ContentionLock(progress), raising=False)
+        monkeypatch.setattr(_validate, '_LOAD_LOCK', _ContentionLock(progress))
         path = _write(tmp_path, 'm', CONCURRENT_LOAD_CODE)
         results: list[str | CapabilityValidationError] = []
 
@@ -341,6 +341,21 @@ class UsesModels(AbstractCapability):
         first.join()
         second.join()
         assert results == ['Loaded', 'Loaded']
+
+    def test_authored_code_can_load_another_authored_file(self, tmp_path: Path) -> None:
+        inner = _write(tmp_path, 'inner', VALID_CODE)
+        outer = _write(
+            tmp_path,
+            'outer',
+            'from pathlib import Path\n'
+            'from pydantic_ai_harness.capability_creation import load_capability_instance\n'
+            f'INNER = load_capability_instance(Path({str(inner)!r}))\n' + _marker_code('Outer', 'outer'),
+        )
+        results: list[str] = []
+        loader = threading.Thread(target=lambda: results.append(validate_capability_file(outer)), daemon=True)
+        loader.start()
+        loader.join(timeout=10)
+        assert results == ['Outer']
 
     def test_load_leaves_bytecode_settings_and_cache_alone(self, tmp_path: Path) -> None:
         before = sys.dont_write_bytecode

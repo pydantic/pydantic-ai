@@ -28,11 +28,12 @@ class CapabilityValidationError(Exception):
     """Raised when authored code cannot be imported, has the wrong shape, or fails to construct."""
 
 
-_LOAD_LOCK = threading.Lock()
-"""Serializes loads and their getter checks.
+_LOAD_LOCK = threading.RLock()
+"""Serializes loads and their getter checks across threads.
 
 An authored module's classes resolve names through its `sys.modules` entry, so a concurrent load of the same
-file would swap the namespace a half-built class resolves against.
+file would swap the namespace a half-built class resolves against. Reentrant, so authored code that loads
+another authored file in the same thread does not deadlock.
 """
 
 
@@ -149,7 +150,7 @@ def load_capability_instance(path: Path) -> AbstractCapability[object]:
     return type fails here instead of crashing the next `agent.run`. The async
     lifecycle hooks need a live `RunContext` and are not invoked. `SystemExit` raised
     by the authored code is reported as a validation error rather than ending the
-    process. Loads run one at a time in the process.
+    process. Loads from different threads run one at a time.
 
     Returns an `AbstractCapability[object]`; `AgentDepsT` is contravariant, so the
     instance is accepted by any agent's `capabilities=` parameter.

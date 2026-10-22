@@ -154,9 +154,9 @@ Authored code first runs when the model calls `author_capability`, not on the ne
 validation executes the module body, the constructor, and the static getters in the current
 run, with the agent process's environment and permissions, even when validation then
 rejects the code. Validation waits for that code to return, so authored code that blocks
-also blocks the tool call, and cancelling the run does not interrupt it. Loads run one at a
-time in a process, so it also holds up every other authored capability load, including
-`store.load_active()`.
+also blocks the tool call, and cancelling the run does not interrupt it. Loads from
+different threads run one at a time, so it also holds up every other authored capability
+load in the process, including `store.load_active()`.
 
 If the agent also has file or shell tools (such as `FileSystem` or `Shell`) over a
 workspace that contains `directory`, as with `LocalWorkspace('.')` and
