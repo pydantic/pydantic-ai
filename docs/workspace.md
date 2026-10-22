@@ -286,7 +286,7 @@ A backend that stores files and runs no commands, such as a bucket, is a
 filesystem. Pass it as a run's `workspace=` to make it the whole workspace: file tools work in it, and shell tools
 aren't offered. Or show it as a folder of another workspace with a [`Mount`][pydantic_ai.workspaces.Mount]:
 
-```python {test="skip"}
+```python {test="skip" lint="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.workspaces import Mount
