@@ -51,11 +51,14 @@ publish() {{
   printf '{{"pid": %s, "exit_code": %s}}' "$$" "$1" > "$dir/status.tmp" && mv -f "$dir/status.tmp" "$dir/status.json"
 }}
 watch_logs() {{
-  trap __harness_watch_stopped=1 TERM
+  trap '__harness_watch_stopped=1; kill "$__harness_sleeper" 2> /dev/null' TERM
   __harness_notice="[Log exceeded max_log_bytes=$1; earlier output was cleared.]"
+  __harness_interval=$2
   while [ -z "$__harness_watch_stopped" ] && kill -0 "$$" 2> /dev/null; do
-    {{ sleep "$2" 2> /dev/null || sleep 1; }} &
-    wait $!
+    sleep "$__harness_interval" 2> /dev/null & __harness_sleeper=$!
+    [ -z "$__harness_watch_stopped" ] || kill "$__harness_sleeper" 2> /dev/null
+    wait "$__harness_sleeper" || [ $? -gt 128 ] || __harness_interval=1
+    [ -z "$__harness_watch_stopped" ] || break
     for log in "$out" "$err"; do
       __harness_size=$(( $(wc -c < "$log" 2> /dev/null) + 0 ))
       [ "$__harness_size" -gt $(( ${{#__harness_notice}} + 1 )) ] || continue
@@ -67,6 +70,7 @@ watch_logs() {{
       fi
     done
   done
+  wait "$__harness_sleeper" 2> /dev/null
 }}
 unset __harness_stopped
 trap __harness_stopped=1 TERM
@@ -101,7 +105,8 @@ way (an odd size) or done, even once the log has grown back. The command keeps r
 log (a glob over job logs) reaches the end of it and stops, instead of copying the log into itself until the disk is
 full. A log holding no more than the notice is left alone, so a limit below its size doesn't clear it at every check.
 The watcher starts before `max_file_bytes` applies, since `log_clears` keeps growing, finishes a clear it has started
-when the wrapper stops it, and exits once the wrapper is gone (killed on its own and reaped).
+when the wrapper stops it, and exits once the wrapper is gone (killed on its own and reaped). It sleeps in a child it
+stops and reaps itself, so a stopped job leaves no orphan behind; a `sleep` without fractional seconds gets 1.
 
 The `TERM` trap lets the wrapper outlive a `SIGTERM` sent to the whole group long enough to
 publish the command's exit status; the command itself runs with default signal handling, since
