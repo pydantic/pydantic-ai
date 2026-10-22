@@ -120,7 +120,7 @@ session usage remains authoritative.
 When providers report both user speech start and end, Pydantic AI records a `user speech` span.
 Providers without both boundaries do not get a guessed duration.
 
-On a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) a `speak {model}` span additionally covers how
+On a gpt-realtime or Azure OpenAI [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) a `speak {model}` span additionally covers how
 long the model was *audible*, which the response spans can't show: the provider generates audio far
 ahead of playing it, so this span routinely outlasts the `model turn complete` that ended the
 response.
