@@ -404,6 +404,17 @@ class TestCapabilityStore:
         active = store.load_active()
         assert [capability.get_instructions() for capability in active] == ['V1']
 
+    def test_failed_reauthor_with_a_deleted_source_records_it(self, tmp_path: Path) -> None:
+        # With the kept version's file gone there is nothing to keep, so the attempt is what gets recorded.
+        store = CapabilityStore(tmp_path)
+        store.write('marker', VALID_CODE)
+        (tmp_path / 'marker.py').unlink()
+        record = store.write('marker', NO_SUBCLASS_CODE)
+        assert record.module_file == 'marker.py'
+        assert record.last_error is not None
+        assert store.list_all() == [record]
+        assert not (tmp_path / 'marker.rejected.py').exists()
+
     def test_successful_reauthor_removes_rejected_source(self, tmp_path: Path) -> None:
         store = CapabilityStore(tmp_path)
         store.write('marker', VALID_CODE)
@@ -640,6 +651,29 @@ class TestCapabilityStore:
             store.write('second', VALID_CODE)
         leftovers = [p.name for p in tmp_path.iterdir() if p.name.startswith('manifest.') and p.name.endswith('.tmp')]
         assert leftovers == []
+        assert not (tmp_path / 'second.py').exists()  # a new source goes with the entry that was not saved
+
+    def test_failed_manifest_save_keeps_the_previous_source(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The source and its manifest entry change together, so a failed save leaves both as they were.
+        store = CapabilityStore(tmp_path)
+        good = store.write('marker', _marker_code('Foo', 'V1'))
+        store.write('marker', NO_SUBCLASS_CODE)
+        files = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+        real_replace = os.replace
+
+        def _boom(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+            if Path(dst).name == 'manifest.json':
+                raise OSError('replace failed')
+            real_replace(src, dst)
+
+        monkeypatch.setattr(os, 'replace', _boom)
+        with pytest.raises(OSError, match='replace failed'):
+            store.write('marker', _marker_code('Bar', 'V2'))
+        assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == files
+        assert store.list_all() == [good]
+        assert [capability.get_instructions() for capability in store.load_active()] == ['V1']
 
     def test_load_active_skips_entry_that_failed_validation(self, tmp_path: Path) -> None:
         # A getter with a wrong return type fails at authoring and must not be loaded into the next run.
@@ -778,6 +812,7 @@ class TestCapabilityCreationToolset:
         toolset = CapabilityCreationToolset(CapabilityStore(tmp_path))
         result = await toolset.author_capability('bad', NO_SUBCLASS_CODE)
         assert 'failed validation' in result
+        assert 'was written but' not in result
         assert 'previous version' not in result
 
     async def test_author_failure_message_names_kept_version(self, tmp_path: Path) -> None:

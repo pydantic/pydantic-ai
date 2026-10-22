@@ -11,7 +11,7 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._durable import RetryRequest, raise_retry
-from pydantic_ai_harness.capability_creation._store import AuthoredCapability, CapabilityStore
+from pydantic_ai_harness.capability_creation._store import AuthoredCapability, CapabilityStore, rejected_module_file
 
 
 @dataclass(frozen=True)
@@ -78,7 +78,7 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
             # `CapabilityStore.write` saves rejected code elsewhere when it keeps a previous version.
             kept = (
                 f'The previous version of {name!r} is unchanged.\n'
-                if record.module_file == f'{name}.rejected.py'
+                if record.module_file == rejected_module_file(name)
                 else ''
             )
             return (
