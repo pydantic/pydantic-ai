@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import Any, get_type_hints
 
 import httpx2
 import pytest
 from inline_snapshot import snapshot
+from pydantic import TypeAdapter
 
 from pydantic_ai import Agent
+from pydantic_ai.durable_exec._capability_operation import capability_operation_result_type
 from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 from pydantic_ai.messages import (
     CompactionPart,
@@ -31,6 +33,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.system_one import SystemOneModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.system_one import SystemOneProvider
+from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai_harness.compaction import (
     FallbackCompaction,
@@ -40,6 +43,7 @@ from pydantic_ai_harness.compaction import (
     compact_now,
     pin,
 )
+from pydantic_ai_harness.compaction._summary import SUMMARY_METADATA_KEY
 
 from ...conftest import try_import
 
@@ -303,6 +307,32 @@ class TestRelevanceCompaction:
         again = await compact_now(compaction, later, model=TestModel())
         assert _shape(again).count('summary') == 1
         assert '<previous-summary>\nthe summary\n</previous-summary>' in prompts[1]
+
+    async def test_a_summary_recorded_before_its_time_was_kept_still_replays(self) -> None:
+        """A durable run recorded `summarize` as a bare `str` before the write time was kept with it.
+
+        The operation's declared result still accepts that payload, as Temporal validates it on replay,
+        and the compaction writes the summary from it without a time, as DBOS and Prefect hand it back.
+        """
+        result_type = get_type_hints(RelevanceCompaction._summarize)['return']  # pyright: ignore[reportPrivateUsage]
+        recorded = TypeAdapter(capability_operation_result_type(result_type)).validate_python(
+            {'value': 'recorded summary', 'usage_delta': {}}
+        )
+        assert recorded.value == 'recorded summary'
+
+        class _Recorded(RelevanceCompaction[None]):
+            async def _summarize(
+                self, ctx: RunContext[None], messages: list[ModelMessage], previous_summary: str | None
+            ) -> str:
+                return 'recorded summary'
+
+        compaction = _Recorded(
+            _Judge().model, summarizer=_summarizer(), max_tokens=3_000, target_tokens=2_000, keep_tokens=10
+        )
+        result = await compact_now(compaction, _history('GIST a ', 'last c '), model=TestModel())
+
+        assert _shape(result)[:3] == ['system sys', 'user do the task', 'summary']
+        assert result[1].parts == [CompactionPart(content='recorded summary', metadata={SUMMARY_METADATA_KEY: True})]
 
     async def test_without_incremental_summaries_the_previous_summary_is_not_passed(self) -> None:
         prompts: list[str] = []

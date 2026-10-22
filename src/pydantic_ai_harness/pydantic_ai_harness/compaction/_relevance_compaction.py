@@ -486,11 +486,13 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
                 # Without an anchor the earlier summary is summarized again, as `SummarizingCompaction` does.
                 summarized = [ModelRequest(parts=earlier), *summarized]
             written = await self._summarize(ctx, summarized, previous)
+            # A result recorded before the write time was kept is a bare `str`, and its summary goes without one.
+            text, created_at = (written, None) if isinstance(written, str) else (written.text, written.created_at)
             # The summarizer is reused as configured, including its cross-model bridge note.
-            summary = bridge_summary(self.summarizer, written.text, messages, ctx)
+            summary = bridge_summary(self.summarizer, text, messages, ctx)
             head = _without_summaries(head)
             # Written as `SummarizingCompaction` writes its own: a marked `CompactionPart` in a request of its own.
-            added.append(summary_request(summary, written.created_at))
+            added.append(summary_request(summary, created_at))
         if self.receipts and removed:
             head = [message for message in head if not is_receipt_message(message)]
             added.append(self._receipt(ctx, removed, has_summary=bool(summarized)))
@@ -592,12 +594,13 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
     @durable_operation('summarize')
     async def _summarize(
         self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage], previous_summary: str | None
-    ) -> WrittenSummary:
+    ) -> WrittenSummary | str:
         """The summarizer's summary of the reduced steps, as a durable operation of this capability.
 
         The summarizer is not registered on the agent, so its own durable operation does not bind; this
         one does, and the summary is written inline within it. Going through the summarizer's own operation
-        would hand the summary to a registered `SummarizingCompaction` that shares its `id`.
+        would hand the summary to a registered `SummarizingCompaction` that shares its `id`. The return
+        type keeps the `str` an earlier version recorded, so a durable run started before it replays.
         """
         assert self.summarizer is not None
         text = await write_summary(self.summarizer, messages, ctx, previous_summary=previous_summary)
