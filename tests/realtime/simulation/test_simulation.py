@@ -1342,7 +1342,7 @@ def test_live_wait_for_reply_waits_for_the_answer_to_a_failed_call() -> None:
 
     sim = LiveSimulation()
     run_clean(sim, scenario)
-    assert sim.failures_parked_at == []
+    assert sim.exchanges_abandoned_at == []
 
 
 def test_live_call_that_raises_after_its_siblings_answered_is_answered_with_its_failure() -> None:

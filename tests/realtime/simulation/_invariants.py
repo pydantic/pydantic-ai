@@ -598,7 +598,7 @@ class Checker:
             exchange in progress, though the session goes on receiving. (Not a tool failure whose result went out
             anyway, as on GPT-Live: the model answers it, so the exchange goes on.)
             """
-            return any(since < at <= returned for at in sim.failures_parked_at)
+            return any(since < at <= returned for at in sim.exchanges_abandoned_at)
 
         # A reply to a turn it had asked for, by the time the wait began, before the provider saw it...
         soliciting = [
