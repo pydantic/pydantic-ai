@@ -14,7 +14,6 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import Click, TypeText, WorkspaceBackend, WorkspaceError, WorkspaceRef
 
-from ..cassette_utils import request_json
 from ..conftest import try_import
 from ..workspace_fakes import InMemoryProvider, ProviderBackend
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
@@ -30,14 +29,6 @@ with try_import() as imports_successful:
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='openai not installed'), pytest.mark.anyio]
 
 TASK = 'Take a screenshot, then click at x=100 y=200, type "hello", and reply "done". Do nothing else.'
-
-
-def _bodies(cassette: Cassette) -> list[dict[str, Any]]:
-    return [request_json(request) for request in cassette.requests]
-
-
-def _items(body: dict[str, Any], kind: str) -> list[dict[str, Any]]:
-    return [item for item in body['input'] if item.get('type') == kind]
 
 
 def _agent(openai_api_key: str, provider: InMemoryProvider, **settings: Any) -> Agent[None, str]:
@@ -59,15 +50,8 @@ async def test_the_computer_tool_is_sent_natively_and_replayed(
 
     result = await agent.run(TASK, event_stream_handler=drain if stream else None)
 
+    # GPT-5.5's real `computer_call`s became `computer` calls that ran, and keep the item to send back.
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
-    first, *later = _bodies(vcr)
-    assert {'type': 'computer'} in first['tools']
-    assert not [tool for tool in first['tools'] if tool.get('name') == 'computer']
-    # Every later request sends each computer call back as it came, answered with a screenshot.
-    last = later[-1]
-    calls, outputs = _items(last, 'computer_call'), _items(last, 'computer_call_output')
-    assert [call['call_id'] for call in calls] == [output['call_id'] for output in outputs]
-    assert all(output['output']['image_url'].startswith('data:image/png;base64,') for output in outputs)
     assert all(
         isinstance(part, ToolCallPart) and part.provider_details and 'computer_call' in part.provider_details
         for message in result.all_messages()
@@ -75,24 +59,6 @@ async def test_the_computer_tool_is_sent_natively_and_replayed(
         for part in message.parts
         if isinstance(part, ToolCallPart)
     )
-
-
-@pytest.mark.vcr
-async def test_a_failed_action_is_explained_after_its_screenshot(
-    allow_model_requests: None, openai_api_key: str, vcr: Cassette
-) -> None:
-    provider = InMemoryProvider()
-    agent = _agent(openai_api_key, provider, read_only=True)
-    await agent.run('Click at x=100 y=200 once, then reply "done" whatever happens.')
-
-    body = _bodies(vcr)[-1]
-    looked, refused = _items(body, 'computer_call_output')
-    after = [body['input'][body['input'].index(output) + 1] for output in (looked, refused)]
-    # The screenshot-only call ran, so nothing follows it; the refused click is explained right after its output.
-    assert after[0].get('role') != 'user'
-    assert after[1]['role'] == 'user'
-    assert after[1]['content'].startswith('Action 1 of 1 (click) failed: This workspace is read-only')
-    assert provider.actions == []
 
 
 def _computer_call(*actions: dict[str, Any], safety_checks: list[dict[str, Any]] | None = None) -> resp.Response:
@@ -265,6 +231,39 @@ async def test_a_computer_tool_waiting_to_be_loaded_is_not_sent(allow_model_requ
 
     (request,) = get_mock_responses_kwargs(client)
     assert 'tools' not in request or not request['tools']
+
+
+async def test_the_native_tool_is_sent_and_its_call_answered_with_a_screenshot(allow_model_requests: None) -> None:
+    client = MockOpenAIResponses.create_mock(
+        [_computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}), _done()]
+    )
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    await Agent(model, capabilities=[InMemoryProvider().capability(), ComputerUse(settle_seconds=0)]).run('Go.')
+
+    first, second = get_mock_responses_kwargs(client)
+    assert first['tools'] == [{'type': 'computer'}]
+    (call,) = [item for item in second['input'] if item.get('type') == 'computer_call']
+    (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
+    assert call['call_id'] == output['call_id'] == 'call_1'
+    assert output['output']['image_url'].startswith('data:image/png;base64,')
+    # A call that ran needs no explanation after its output.
+    assert second['input'][-1] is output
+
+
+async def test_a_refused_action_is_explained_after_its_screenshot(allow_model_requests: None) -> None:
+    client = MockOpenAIResponses.create_mock(
+        [_computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}), _done()]
+    )
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    provider = InMemoryProvider()
+    await Agent(model, capabilities=[provider.capability(read_only=True), ComputerUse(settle_seconds=0)]).run('Go.')
+
+    _, second = get_mock_responses_kwargs(client)
+    output, note = second['input'][-2:]
+    assert output['type'] == 'computer_call_output'
+    assert note['role'] == 'user'
+    assert note['content'].startswith('Action 1 of 1 (click) failed: This workspace is read-only')
+    assert provider.actions == []
 
 
 async def test_a_failed_call_still_sends_a_screenshot_and_says_why(allow_model_requests: None) -> None:
