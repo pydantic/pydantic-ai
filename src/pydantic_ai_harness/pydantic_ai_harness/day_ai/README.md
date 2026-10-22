@@ -98,10 +98,14 @@ start](#before-you-start) and saves the token to their account. Before each run,
 load it (this can be async) and put it in the deps; the function only reads it.
 
 With durable execution such as Temporal, read the token from the run's deps
-rather than from a global, since the function may run in another process. The
-capability's `id` defaults to `day_ai`, so `defer_loading=True` works without
-one. To add more than one `DayAI` to an agent, give each a distinct `id` and
-wrap them in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/),
+rather than from a global, since the function may run in another process.
+Temporal stores deps in workflow history, so encrypt history with a [payload
+codec](https://docs.temporal.io/develop/python/converters-and-encryption#custom-payload-codec)
+before you put tokens there.
+
+The capability's `id` defaults to `day_ai`, so `defer_loading=True` works
+without one. To add more than one `DayAI` to an agent, give each a distinct `id`
+and wrap them in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/),
 since their tool names are the same; two that share an `id` but differ raise an
 error.
 
@@ -111,15 +115,14 @@ Day AI's server does not mark any tool as read-only, so there is no `read_only`
 option: the agent gets every tool your tier and role allow, including ones that
 change CRM records and send notifications.
 
-To filter tools or require approval in your application, wrap the toolset with
-the existing [toolset
-wrappers](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/). For example,
-this asks for approval before every tool call, which suits tools that create or
-update CRM records and send notifications:
+Tool results can include text written outside your workspace, such as inbound
+email and meeting notes, and that text can steer the model into calling those
+tools. To filter tools or require approval, wrap the toolset with the existing
+[toolset wrappers](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/). For
+example, this asks for approval before every tool call:
 
 ```python
-from pydantic_ai import Agent
-from pydantic_ai.messages import DeferredToolRequests
+from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai_harness import DayAI
 
 capability = DayAI()

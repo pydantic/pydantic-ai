@@ -817,7 +817,7 @@ DOCUMENT_CASES = [
                             excerpts=['Dummy PDF file'],
                         )
                     ],
-                    anchor=ContentCitationAnchor(start=0, end=42),
+                    anchor=ContentCitationAnchor(start=0, end=43),
                 )
             ]
         ),

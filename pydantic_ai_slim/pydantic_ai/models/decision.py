@@ -29,6 +29,8 @@ from ..messages import (
     CompactionPart,
     FilePart,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -37,16 +39,17 @@ from ..messages import (
     MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
 from ..profiles import ModelProfile, merge_profile
@@ -60,7 +63,9 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
 )
@@ -523,9 +528,13 @@ class DecisionModel(Model[InterfaceClient]):
     without it.
     """
 
+    # Retry feedback is a step taken for the prompt, so it goes along as a `retry` entry: translated, a validation
+    # error would become the user text judged as the request, and a `ModelRetry` message a system prompt.
+    _renders_retry_feedback = True
+
     @cached_property
     def profile(self) -> ModelProfile:
-        """The model profile: text output off and inline system prompts on, whatever the provider or `profile=` says.
+        """The model profile: text output off, inline system prompts on, and file input as the class takes it.
 
         A decision model answers questions and has no way to write text, so this is a fact about the class
         rather than a default to override: with text output left on, an `output_type` like `[Ticket, str]`
@@ -534,9 +543,21 @@ class DecisionModel(Model[InterfaceClient]):
         It also judges a system prompt rather than asking it, so a system prompt partway through the conversation
         stays a `system` entry: without inline system prompts, the shared request preparation would fold it into
         the user text, where it would be judged as the request.
+
+        Images are read only when the class sets
+        [`supports_image_input`][pydantic_ai.models.decision.DecisionModel.supports_image_input], and documents,
+        audio and video never are, so a file of those kinds that a tool returns is replaced by a note.
         """
         return merge_profile(
-            super().profile, ModelProfile(supports_text_output=False, supports_inline_system_prompts=True)
+            super().profile,
+            ModelProfile(
+                supports_text_output=False,
+                supports_inline_system_prompts=True,
+                supports_image_input=self.supports_image_input,
+                supports_document_input=False,
+                supports_audio_file_input=False,
+                supports_video_input=False,
+            ),
         )
 
     @abstractmethod
@@ -2113,8 +2134,8 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> tu
     A tool whose result is already in the turn is not offered again. A decision model judges the text in front of it
     and has no notion of having made a call: with a call and its result in view, the text still calls for the tool, so
     left on offer it is picked again until the usage limit, even with the result set apart under `done`. That goes for
-    a call made by a model behind this one too, since this model would propose it again on the same text. A call that
-    produced no result, because the tool asked for a retry, leaves the tool on offer. The turn is everything since the
+    a call made by a model behind this one too, since this model would propose it again on the same text. A call whose
+    result asked for a retry (`outcome='retried'`) leaves the tool on offer. The turn is everything since the
     last user prompt, which is the nearest thing to a run boundary the history has: a result from an earlier turn does
     not withhold the tool, but a judged history that ends in another agent's call to a tool of the same name does.
     """
@@ -2129,9 +2150,9 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> tu
                 # previous turn's.
                 returned.clear()
                 retried = False
-            elif isinstance(part, ToolReturnPart):
+            elif isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                 returned.add(part.tool_name)
-            elif isinstance(part, RetryPromptPart):
+            elif isinstance(part, ToolReturnPart | RetryFeedbackPart):
                 retried = True
     return [tool for tool in tools if tool.name not in returned], bool(returned) or retried
 
@@ -2259,10 +2280,16 @@ def _request_entry(part: ModelRequestPart, images: list[BinaryContent | ImageUrl
         return {'user': _prompt_text(part, images)}
     elif isinstance(part, ToolReturnPart):
         return _tool_return_entry(part, images)
-    elif isinstance(part, RetryPromptPart):
+    elif isinstance(part, RetryFeedbackPart):
         return {'retry': part.model_response()}
-    elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-        raise _unsynthesized_tool_availability_delta_error()
+    # TODO(v3): remove `RetryPromptPart`
+    elif isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        # A direct `request()` skips `prepare_messages`; judge the deprecated part as what it always meant.
+        return _request_entry(_translate_legacy_retry_part(part), images)
+    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):  # pragma: no cover
+        raise _unprojected_instruction_delta_error()
+    elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+        raise _unprepared_part_error(part)
     elif isinstance(part, SpeechPart):  # pragma: no cover
         # `Model.prepare_messages` turns realtime speech into `UserPromptPart`s before this runs.
         raise _unconverted_speech_part_error()
