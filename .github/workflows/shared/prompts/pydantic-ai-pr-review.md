@@ -93,8 +93,7 @@ Beyond free-form review, run these checks proactively; the first applies to ever
 2. Read `.review-context/pr-details.json` and `pr-size.txt`.
 3. Read `pr-comments.txt`, `related-issues.txt`, and the relevant
    `agents-md.txt` sections.
-4. Skim `review-comments.txt` for prior threads (note the most recent
-   review from this bot — you'll compare verdicts at the end).
+4. Skim `review-comments.txt` for prior threads.
 5. Read repo-root `CLAUDE.md` / `AGENTS.md` for project-wide conventions.
 
 ### Step 2 — Pick a strategy from PR size
@@ -224,11 +223,9 @@ After all comments are posted, call **`mcp__safeoutputs__submit_pull_request_rev
   or restate inline comments — the author already knows what they wrote
   and can read the inline thread.
 
-**Skip if redundant:** if you have **zero new findings** and your verdict
-matches the most recent review from this bot (visible in
-`review-comments.txt`), call `mcp__safeoutputs__noop` with a short reason like
-"No new findings — prior review still applies" instead of submitting a
-redundant review.
+**No inline comments:** submit the review anyway. This workflow runs only on a
+head it has not reviewed yet. No earlier review or comment, from this bot or
+another, covers that head.
 
 **Bot-authored PRs:** GitHub forbids `APPROVE` / `REQUEST_CHANGES` from a
 bot reviewing another bot's PR. If the PR author is a bot, submit a
