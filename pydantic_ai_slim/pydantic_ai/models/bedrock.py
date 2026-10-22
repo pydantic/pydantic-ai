@@ -1103,17 +1103,17 @@ class BedrockConverseModel(Model[BaseClient]):
                 elif citations_content := item.get('citationsContent'):
                     text = ''.join(content.get('text', '') for content in citations_content.get('content', []))
                     block_citations = citations_content.get('citations', [])
-                    if citations := _map_citations(block_citations, text):
+                    citations = _map_citations(block_citations, text)
+                    # Like a stream, a block with neither text nor citations makes no part.
+                    if text or citations:
                         items.append(
                             TextPart(
                                 content=text,
-                                provider_name=self.system,
-                                provider_details=_citations_provider_details(block_citations),
+                                provider_name=self.system if citations else None,
+                                provider_details=_citations_provider_details(block_citations) if citations else None,
                                 citations=citations,
                             )
                         )
-                    else:
-                        items.append(TextPart(content=text))
                 elif tool_use := item.get('toolUse'):
                     if tool_use.get('type') == 'server_tool_use':
                         if tool_use['name'] == 'nova_code_interpreter':  # pragma: no branch
@@ -1514,7 +1514,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                 if isinstance(item, AudioUrl):
                                     raise NotImplementedError('AudioUrl is not supported in Bedrock tool returns')
                                 file_block = await self._map_file_to_content_block(
-                                    cast(ImageUrl | DocumentUrl | VideoUrl | BinaryContent, item),
+                                    item,  # pyright: ignore[reportArgumentType]
                                     document_count,
                                     include_citations=include_citations,
                                 )
@@ -2181,7 +2181,7 @@ class BedrockStreamedResponse(StreamedResponse):
                         block_citations = citations.pop(index, [])
                         part = self._parts_manager.get_part_by_vendor_id(index)
                         text = part.content if isinstance(part, TextPart) else ''
-                        if block_citations and (block_text_citations := _map_citations(block_citations, text)):
+                        if block_text_citations := _map_citations(block_citations, text):
                             for event in self._parts_manager.handle_text_delta(
                                 vendor_part_id=index,
                                 content='',
