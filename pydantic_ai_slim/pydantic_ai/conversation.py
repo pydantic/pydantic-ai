@@ -104,6 +104,15 @@ class Conversation:
     [Pausing a conversation for deferred tools](../deferred-tools.md#pausing-a-conversation).
     """
 
+    revision: str | None = None
+    """The revision of the stored copy this conversation continues, or `None` if it wasn't loaded from a store.
+
+    A [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore]'s `load` sets it and
+    its `save` checks and advances it, so a save can tell when someone else saved the conversation
+    in between. A run carries it from the conversation it was given to its result's `conversation`.
+    It is an opaque token, compared for equality only.
+    """
+
 
 ConversationTypeAdapter: pydantic.TypeAdapter[Conversation] = pydantic.TypeAdapter(Conversation)
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing a [`Conversation`][pydantic_ai.conversation.Conversation].

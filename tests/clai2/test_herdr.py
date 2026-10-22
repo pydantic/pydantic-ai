@@ -19,7 +19,7 @@ from pydantic_ai import Agent, ToolDefinition
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
 from pydantic_ai_harness.compaction import ReportContextUsage
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_clai2._app import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins import _herdr_client, herdr
 from pydantic_clai2.builtin_plugins._herdr_client import HerdrClient
@@ -139,7 +139,7 @@ async def test_question_state_and_cleanup(recorded: RecordingClient, answer_erro
 
 
 async def test_session_titles_metadata(recorded: RecordingClient, tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     session = Session(Agent(TestModel()), deps=None, conversations=store)
     host = PluginHost(
         name='herdr', console=Console(file=io.StringIO(), force_terminal=True), settings={}, conversation=session

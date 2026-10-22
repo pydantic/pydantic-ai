@@ -38,9 +38,9 @@ from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 from pydantic_ai_harness.step_persistence import SqliteStepStore, StepStore
 from pydantic_ai_harness.step_persistence.conversations import (
-    ConversationConflict,
     ConversationSummary,
-    SqliteConversationStore,
+    SessionConflict,
+    SqliteSessionStore,
     ensure_inactive,
 )
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
@@ -71,7 +71,7 @@ def session_context(session_id: str) -> Generator[None]:
         _CURRENT_SESSION_ID.reset(token)
 
 
-def step_store(conversations: SqliteConversationStore) -> SqliteStepStore:
+def step_store(conversations: SqliteSessionStore) -> SqliteStepStore:
     """Where runs over `conversations`, delegated tasks' included, capture their steps."""
     return SqliteStepStore(database=conversations.database, max_snapshots_per_run=8)
 
@@ -346,7 +346,7 @@ class Session(Generic[DepsT, OutputT]):
         plugins: Sequence[AgentCapability[DepsT]] = (),
         message_history: Sequence[ModelMessage] = (),
         usage_limits: UsageLimits | None = None,
-        conversations: SqliteConversationStore | None = None,
+        conversations: SqliteSessionStore | None = None,
         workspace: Path | None = None,
         on_stream_event: Callable[[AgentStreamEvent], Awaitable[None]] | None = None,
         summary: ConversationSummary | None = None,
@@ -561,10 +561,10 @@ class Session(Generic[DepsT, OutputT]):
             saved = await self.conversations.get(conversation_id=conversation_id)
             if not allow_other_workspace:
                 self.check_workspace(saved.summary.workspace)
-            busy: ConversationConflict | None = None
+            busy: SessionConflict | None = None
             try:
                 ensure_inactive(saved.summary)
-            except ConversationConflict as conflict:
+            except SessionConflict as conflict:
                 busy = conflict
             messages = saved.messages
             interrupted = saved.summary.outcome in ('running', 'failed', 'cancelled')

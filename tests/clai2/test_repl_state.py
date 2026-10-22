@@ -26,7 +26,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_clai2.cli import headless
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
@@ -138,7 +138,7 @@ async def test_a_fork_never_inherits_a_stale_state(workspace: Path) -> None:
     """A REPL left under an ID does not reach a fork given that ID, even when the forked session has none."""
     script = Script()
     await turn(workspace, script, 'set', session_id=FORK_ID)
-    store = SqliteConversationStore(database=workspace / 'sessions.db')
+    store = SqliteSessionStore(database=workspace / 'sessions.db')
     # Deleted outside the `/resume` browser, so its REPL file stays behind.
     await store.delete(source=(await store.get(conversation_id=FORK_ID)).summary)
     saved = Session(Agent(TestModel()), deps=None, conversations=store, workspace=workspace)
@@ -174,7 +174,7 @@ async def test_background_fork_starts_from_the_session_state(workspace: Path) ->
 
 
 async def test_busy_session_resumes_as_a_fork_with_a_copy(workspace: Path) -> None:
-    store = SqliteConversationStore(database=workspace / 'sessions.db')
+    store = SqliteSessionStore(database=workspace / 'sessions.db')
     session = Session(Agent(TestModel()), deps=None, conversations=store, workspace=workspace)
     await session.prompt('earlier work')
     states = session.repl_states
@@ -197,7 +197,7 @@ async def test_busy_session_resumes_as_a_fork_with_a_copy(workspace: Path) -> No
 
 def catalog(workspace: Path) -> 'Sessions[None, str]':
     """The saved sessions as `/resume` and `PluginHost.sessions` manage them, from a shell on another session."""
-    store = SqliteConversationStore(database=workspace / 'sessions.db')
+    store = SqliteSessionStore(database=workspace / 'sessions.db')
     context = CommandContext(
         settings=Settings(model=None),
         store=SettingsStore(workspace / 'config.db'),
@@ -295,7 +295,7 @@ class TestReplStates:
         session = Session(
             Agent(TestModel()),
             deps=None,
-            conversations=SqliteConversationStore(database=tmp_path / 'sessions.db'),
+            conversations=SqliteSessionStore(database=tmp_path / 'sessions.db'),
             workspace=tmp_path,
         )
         stale = dump(tmp_path, SESSION_ID)

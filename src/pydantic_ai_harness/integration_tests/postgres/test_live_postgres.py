@@ -55,7 +55,8 @@ import anyio
 import asyncpg
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, Conversation
+from pydantic_ai.conversation_store import ConversationConflict
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
@@ -81,6 +82,7 @@ from pydantic_ai_harness.media import (
 from pydantic_ai_harness.memory import Memory, MemoryConflictError, MemoryOperation, PostgresMemoryStore
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
+    PostgresConversationStore,
     PostgresStepStore,
     RunRecord,
     StepEvent,
@@ -175,8 +177,12 @@ async def _connect(*, retry_seconds: float = _CONNECT_RETRY_SECONDS) -> asyncpg.
 
 def _derived_tables(prefix: str) -> list[str]:
     """Every table a test may create from `prefix`, and nothing else."""
+    # Referencing tables first, so dropping in order never trips a foreign key.
     return [
         prefix,
+        f'{prefix}_conv_records',
+        f'{prefix}_conv_entries',
+        f'{prefix}_conv_messages',
         f'{prefix}_runs',
         f'{prefix}_events',
         f'{prefix}_snapshots',
@@ -1477,3 +1483,91 @@ async def test_snapshot_table_with_a_foreign_layout_fails_loudly_on_read() -> No
 
         with pytest.raises(ValueError, match='snapshot row has wrong types'):
             await store.latest_snapshot(run_id='r1')
+
+
+async def test_conversation_store_round_trips_and_stores_only_new_messages() -> None:
+    """Continuing a stored conversation appends only the messages the run added."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresConversationStore(pool, table=prefix, media_store=None)
+        agent = Agent(TestModel())
+        first = (await agent.run('Hello')).conversation
+        await store.save(first)
+
+        loaded = await store.load(first.conversation_id)
+        assert loaded == first
+        second = (await agent.run('Again', conversation=loaded)).conversation
+        await store.save(second)
+
+        assert await store.load(first.conversation_id) == second
+        assert await _count_rows(pool, f'{prefix}_conv_entries') == len(second.messages)
+
+
+async def test_conversation_store_reads_a_long_history_in_order() -> None:
+    """The recursive query reads a history of 1500 entries back in order."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresConversationStore(pool, table=prefix, media_store=None)
+        conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart(str(i))]) for i in range(1500)])
+
+        await store.save(conversation)
+
+        assert await store.load(conversation.conversation_id) == conversation
+
+
+async def test_conversation_store_lets_only_one_of_two_concurrent_saves_win() -> None:
+    """Two saves from copies of the same revision race; the revision check lets exactly one through."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresConversationStore(pool, table=prefix, media_store=None)
+        conversation = Conversation(messages=_user_messages())
+        await store.save(conversation)
+        copies = [await store.load(conversation.conversation_id) for _ in range(2)]
+        outcomes: list[str] = []
+
+        async def save(copy: Conversation | None, text: str) -> None:
+            assert copy is not None
+            copy.messages.append(ModelResponse(parts=[TextPart(text)]))
+            try:
+                await store.save(copy)
+            except ConversationConflict:
+                outcomes.append('conflict')
+            else:
+                outcomes.append('saved')
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(save, copies[0], 'a')
+            tg.start_soon(save, copies[1], 'b')
+
+        assert sorted(outcomes) == ['conflict', 'saved']
+        # The losing save's entries were rolled back with its record write.
+        assert await _count_rows(pool, f'{prefix}_conv_entries') == 2
+
+
+async def test_conversation_store_deletes_what_no_other_conversation_uses() -> None:
+    """Deleting keeps the entries a fork shares, and deleting the fork leaves nothing behind."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresConversationStore(pool, table=prefix, media_store=None)
+        original = Conversation(messages=[*_user_messages('a'), ModelResponse(parts=[TextPart('b')])])
+        await store.save(original)
+        fork = await store.fork(original.conversation_id, at=1)
+
+        await store.delete(original.conversation_id)
+
+        assert await store.load(fork.conversation_id) == fork
+        assert await _count_rows(pool, f'{prefix}_conv_entries') == 1
+        await store.delete(fork.conversation_id)
+        assert await _count_rows(pool, f'{prefix}_conv_entries') == 0
+        assert await _count_rows(pool, f'{prefix}_conv_messages') == 0
+
+
+async def test_conversation_store_shares_a_prefix_with_the_step_store() -> None:
+    """Deleting a conversation doesn't touch the step store's messages under the same prefix."""
+    async with _live_tables() as (pool, prefix):
+        steps = PostgresStepStore(pool, table=prefix, media_store=None)
+        conversations = PostgresConversationStore(pool, table=prefix, media_store=None)
+        snapshot = ContinuableSnapshot(run_id='r1', step_index=0, messages=_user_messages('shared'))
+        await steps.save_snapshot(snapshot)
+        conversation = Conversation(messages=_user_messages('shared'))
+        await conversations.save(conversation)
+
+        await conversations.delete(conversation.conversation_id)
+
+        assert await steps.latest_snapshot(run_id='r1') == snapshot

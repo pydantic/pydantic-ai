@@ -15,7 +15,7 @@ from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_clai2 import chat
 from pydantic_clai2._app import create_stock_agent
 from pydantic_clai2.cli import _cli, headless
@@ -34,7 +34,7 @@ THIRD_ID = '7d2e3f4a-5b6c-4d7e-8f90-a1b2c3d4e5f6'
 
 
 def session_in(tmp_path: Path) -> Session[None, str]:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     return Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
 
 
@@ -93,7 +93,7 @@ async def test_fork_refuses_a_running_conversation(tmp_path: Path) -> None:
     session = Session(
         agent,
         deps=None,
-        conversations=SqliteConversationStore(database=tmp_path / 'sessions.db'),
+        conversations=SqliteSessionStore(database=tmp_path / 'sessions.db'),
         workspace=tmp_path,
     )
     async with anyio.create_task_group() as tasks:
@@ -187,9 +187,7 @@ class Launched(Plugin):
 
 
 async def test_chat_applies_launch_options_before_plugins(tmp_path: Path) -> None:
-    saved = Session(
-        Agent(TestModel()), deps=None, conversations=SqliteConversationStore(database=tmp_path / 'sessions.db')
-    )
+    saved = Session(Agent(TestModel()), deps=None, conversations=SqliteSessionStore(database=tmp_path / 'sessions.db'))
     await saved.prompt('earlier work')
     Launched.seen.clear()
     launches: list[tuple[str | None, str | None]] = [(None, NEW_ID), (saved.conversation_id, None), (None, None)]
@@ -253,7 +251,7 @@ async def test_headless_session_id(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         session_id=NEW_ID,
     )
     assert result == 0
-    saved = await SqliteConversationStore(database=tmp_path / 'sessions.db').get(conversation_id=NEW_ID)
+    saved = await SqliteSessionStore(database=tmp_path / 'sessions.db').get(conversation_id=NEW_ID)
     assert saved.summary.title == 'go' and saved.messages
 
 
@@ -275,9 +273,7 @@ async def test_fork_keeps_the_interrupted_warning(tmp_path: Path) -> None:
 
 async def test_headless_fork(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
-    saved = Session(
-        Agent(TestModel()), deps=None, conversations=SqliteConversationStore(database=tmp_path / 'sessions.db')
-    )
+    saved = Session(Agent(TestModel()), deps=None, conversations=SqliteSessionStore(database=tmp_path / 'sessions.db'))
     await saved.prompt('earlier work')
     monkeypatch.setattr(headless, 'create_agent', lambda: create_stock_agent(TestModel(call_tools=[])))
     result = await headless.run_headless(

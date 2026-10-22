@@ -54,6 +54,7 @@ class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
     usage: NotRequired[_usage.RunUsage]
     run_id: NotRequired[str]
     conversation_id: NotRequired[str]
+    conversation_revision: NotRequired[str | None]
     metadata: NotRequired[dict[str, Any] | None]
     traceparent: NotRequired[str | None]
 
@@ -73,6 +74,7 @@ class _AgentRunResultInput(TypedDict, Generic[OutputDataT], total=False):
     usage: _usage.RunUsage
     run_id: str
     conversation_id: str
+    conversation_revision: str | None
     metadata: dict[str, Any] | None
     traceparent: str | None
 
@@ -106,7 +108,7 @@ def _output_field_schema(schema: CoreSchema) -> CoreSchema:
     return next(field['schema'] for field in schema['fields'] if field['name'] == 'output')
 
 
-_STATE_KEYS = ('usage', 'run_id', 'conversation_id', 'metadata')
+_STATE_KEYS = ('usage', 'run_id', 'conversation_id', 'conversation_revision', 'metadata')
 """Serialized keys that live on `GraphAgentState` rather than on `AgentRunResult` itself."""
 
 
@@ -917,6 +919,7 @@ class AgentRunResult(Generic[OutputDataT]):
             'usage': self._state.usage,
             'run_id': self._state.run_id,
             'conversation_id': self._state.conversation_id,
+            'conversation_revision': self._state.conversation_revision,
             'metadata': self._state.metadata,
             'traceparent': self._traceparent_value,
         }
@@ -1046,6 +1049,11 @@ class AgentRunResult(Generic[OutputDataT]):
         it is waiting on. The messages list and the usage are copies, so the returned conversation
         can be stored, carried into another run, and mutated without touching this result's own
         accounting.
+
+        Each access builds a new conversation. A
+        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] advances the
+        [`revision`][pydantic_ai.conversation.Conversation.revision] of the conversation it saves,
+        so keep that one in a variable to carry into the next run or save again.
         """
         output = self.output
         return Conversation(
@@ -1059,6 +1067,7 @@ class AgentRunResult(Generic[OutputDataT]):
                 if isinstance(output, DeferredToolRequests)
                 else None
             ),
+            revision=self._state.conversation_revision,
         )
 
     @property

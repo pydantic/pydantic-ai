@@ -29,7 +29,7 @@ from termflow.tui.textinput import TextInput, TextInputResult
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.cli.self_update import Installed, Updates, latest
 from pydantic_clai2.commands import Command, Commands
@@ -472,7 +472,7 @@ async def test_conversations_cleared_and_resumed(exporter: InMemorySpanExporter,
     session = Session(
         Agent(TestModel(custom_output_text='answer')),
         deps=None,
-        conversations=SqliteConversationStore(database=tmp_path / 'sessions.db'),
+        conversations=SqliteSessionStore(database=tmp_path / 'sessions.db'),
         workspace=tmp_path,
     )
     await session.prompt('first')

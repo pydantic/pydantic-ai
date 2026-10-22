@@ -8,4 +8,6 @@ import importlib.util
 # the Mongo store tests. Ignore them at collection then. A conditional expression
 # rather than an `if` statement: branch coverage traces statement arcs, and no
 # single environment can take both arms of an install-dependent branch.
-collect_ignore = ['test_mongo.py'] if importlib.util.find_spec('pymongo') is None else []
+collect_ignore = (
+    ['test_mongo.py', 'test_conversation_store_mongo.py'] if importlib.util.find_spec('pymongo') is None else []
+)

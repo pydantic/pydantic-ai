@@ -54,10 +54,14 @@ from pymongo import AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import DuplicateKeyError, OperationFailure, PyMongoError
 
-from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai import Agent, Conversation
+from pydantic_ai.conversation_store import ConversationConflict
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.media import MongoMediaStore, parse_media_uri
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
+    MongoConversationStore,
     MongoStepStore,
     RunRecord,
     StepEvent,
@@ -318,3 +322,69 @@ async def test_tool_effect_unique_index_is_created_and_enforced() -> None:
 
         with pytest.raises(DuplicateKeyError):
             await db['tool_effects'].insert_one({'run_id': 'run-effects', 'tool_call_id': 'call-1'})
+
+
+async def test_conversation_store_round_trips_and_stores_only_new_messages() -> None:
+    """Continuing a stored conversation appends only the messages the run added."""
+    async with _live_database() as db:
+        store = MongoConversationStore(client=db.client, database=db.name, media_store=None)
+        agent = Agent(TestModel())
+        first = (await agent.run('Hello')).conversation
+        await store.save(first)
+
+        loaded = await store.load(first.conversation_id)
+        assert loaded == first
+        second = (await agent.run('Again', conversation=loaded)).conversation
+        await store.save(second)
+
+        assert await store.load(first.conversation_id) == second
+        assert await db['conversation_entries'].count_documents({}) == len(second.messages)
+
+
+async def test_conversation_store_reads_a_long_history_in_order() -> None:
+    """`$graphLookup` reads a history of 1500 entries back in order."""
+    async with _live_database() as db:
+        store = MongoConversationStore(client=db.client, database=db.name, media_store=None)
+        conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart(str(i))]) for i in range(1500)])
+
+        await store.save(conversation)
+
+        assert await store.load(conversation.conversation_id) == conversation
+
+
+async def test_conversation_store_lets_only_one_of_two_concurrent_saves_win() -> None:
+    """Two saves from copies of the same revision race; the revision filter lets exactly one through."""
+    async with _live_database() as db:
+        store = MongoConversationStore(client=db.client, database=db.name, media_store=None)
+        conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('a')])])
+        await store.save(conversation)
+        copies = [await store.load(conversation.conversation_id) for _ in range(2)]
+        outcomes: list[str] = []
+
+        async def save(copy: Conversation | None, text: str) -> None:
+            assert copy is not None
+            copy.messages.append(ModelResponse(parts=[TextPart(text)]))
+            try:
+                await store.save(copy)
+            except ConversationConflict:
+                outcomes.append('conflict')
+            else:
+                outcomes.append('saved')
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(save, copies[0], 'a')
+            tg.start_soon(save, copies[1], 'b')
+
+        assert sorted(outcomes) == ['conflict', 'saved']
+
+
+async def test_conversation_store_rejects_a_second_new_conversation_under_one_id() -> None:
+    """The record's `_id` makes a second insert under the same conversation id conflict."""
+    async with _live_database() as db:
+        store = MongoConversationStore(client=db.client, database=db.name, media_store=None)
+        await store.save(Conversation(conversation_id='taken'))
+        record = await store.read_record('taken')
+        assert record is not None
+
+        with pytest.raises(ConversationConflict):
+            await store.write_record(record, expected_revision=None)

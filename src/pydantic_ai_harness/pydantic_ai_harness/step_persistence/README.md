@@ -564,7 +564,7 @@ a short row per message. Reads rebuild the full history, so `latest_snapshot`
 and `list_snapshots` return the same messages either way.
 
 Deleting a snapshot, by pruning or by deleting its conversation with
-`SqliteConversationStore.delete`, also deletes the messages no remaining
+`SqliteSessionStore.delete`, also deletes the messages no remaining
 snapshot references.
 
 A database written by an earlier release keeps working: its rows hold the
@@ -819,17 +819,79 @@ your own `MediaStore` (five methods: `put`, `get`, `exists`, `public_url`,
 the eventual shared adapter layer with N >= 3 real implementations before
 abstracting.
 
+## Storing conversations
+
+`SqliteConversationStore`, `PostgresConversationStore`, and `MongoConversationStore` store a whole
+`Conversation` between runs. They implement Pydantic AI's
+`ConversationStore`, which keeps a conversation as a log of
+messages and stores each one once: continuing a conversation appends only its new messages, and a
+`fork` shares the history it keeps rather than copying it.
+
+```python
+import asyncio
+import sqlite3
+
+from pydantic_ai import Agent, Conversation
+from pydantic_ai_harness.step_persistence import SqliteConversationStore
+
+store = SqliteConversationStore(connection=sqlite3.connect(':memory:', check_same_thread=False))
+agent = Agent('openai:gpt-5')
+
+
+async def chat(conversation_id: str, prompt: str) -> str:
+    conversation = await store.load(conversation_id) or Conversation(conversation_id=conversation_id)
+    result = await agent.run(prompt, conversation=conversation)
+    await store.save(result.conversation)
+    return result.output
+
+
+async def main():
+    await chat('support-42', 'What is the capital of France?')
+    await chat('support-42', 'And of Germany?')
+
+
+asyncio.run(main())
+```
+
+A save is checked against the conversation's `revision`, which
+`load` sets and a run carries through to its result. When someone else saved the conversation in between, or a
+conversation with that ID already exists, `save` raises
+`ConversationConflict` instead of overwriting it. `save` advances
+the revision of the conversation you pass it, so keep that conversation in a variable to save again or continue from.
+
+Each message's JSON is stored once, keyed by its SHA-256, however many conversations hold it. Binary and text parts
+at or above `media_threshold_bytes` (64 KiB by default) are externalized like step snapshots' (see
+[Persisting media](#persisting-media)). The constructors take the same connection arguments as the matching step
+store:
+
+- `SqliteConversationStore(database= or connection=)` -- tables `conversation_records`, `conversation_entries`,
+  and `conversation_messages`. A save writes its new entries and the record in one transaction. Deleting a
+  conversation, or saving it with a rewritten or truncated history, also deletes the entries and messages no other
+  conversation uses.
+- `PostgresConversationStore(pool, table='step_persistence')` -- tables `{table}_conv_records`,
+  `{table}_conv_entries`, and `{table}_conv_messages`, which don't clash with `PostgresStepStore`'s, so the two
+  can share a prefix. Saves and deletes work as for SQLite. Foreign keys keep a concurrent save from
+  pointing at an entry or message a delete is removing: one of the two fails instead.
+- `MongoConversationStore(client= or db_url=, database=...)` -- collections `conversation_records`,
+  `conversation_entries`, and `conversation_messages`. The store uses no transactions, so deleting a conversation
+  deletes only its record: without one, it can't tell an entry no conversation uses from one a concurrent save or
+  fork is about to point at. Its entries and messages stay.
+
+Externalized media is never deleted, as for step snapshots.
+
 ## Conversation heads and background names
 
 `pydantic_ai_harness.step_persistence.conversations` provides
-`SqliteConversationStore`, `ConversationSummary`, and `SavedConversation` for
-multi-turn applications. A conversation head is separate from per-run checkpoints:
+`SqliteSessionStore`, `ConversationSummary`, and `SavedConversation` for
+a session browser like CLAI's: titles, workspaces, archiving, and search. `SqliteSessionStore` was
+called `SqliteConversationStore` before the [conversation stores](#storing-conversations) took that
+name; the old name still imports from this module, with a `HarnessDeprecationWarning`. A conversation head is separate from per-run checkpoints:
 it includes accepted prompts and between-run edits such as compaction. Do not
 reconstruct it by concatenating overlapping run snapshots.
 
 `save(summary=..., messages=...)` compares the supplied content revision and
 returns the committed summary. A stale writer or a deleted session raises
-`ConversationConflict`. `get(conversation_id=...)` restores messages through the
+`SessionConflict`. `get(conversation_id=...)` restores messages through the
 same media format used by step snapshots. `listing(query=..., limit=..., offset=...)`
 returns summaries without loading messages; search matches saved user/assistant
 text and metadata using Unicode case folding, including text entries within

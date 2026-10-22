@@ -5,8 +5,8 @@ from collections.abc import Mapping
 from pathlib import PurePath
 
 from pydantic_ai_harness.step_persistence.conversations import (
-    ConversationConflict,
     ConversationSummary,
+    SessionConflict,
     ensure_inactive,
 )
 from pydantic_clai2.builtin_plugins.web.protocol import SessionEntry, SessionState, Worktree
@@ -62,6 +62,6 @@ def busy_elsewhere(summary: ConversationSummary) -> bool:
         return False
     try:
         ensure_inactive(summary)
-    except ConversationConflict:
+    except SessionConflict:
         return True
     return False

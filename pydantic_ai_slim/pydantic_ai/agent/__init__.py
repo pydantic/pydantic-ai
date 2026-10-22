@@ -1585,7 +1585,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        message_history, usage, conversation_id = _agent_graph.resolve_conversation(
+        message_history, usage, conversation_id, conversation_revision = _agent_graph.resolve_conversation(
             conversation, message_history=message_history, usage=usage, conversation_id=conversation_id
         )
 
@@ -1598,6 +1598,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             conversation_id=conversation_id,
+            conversation_revision=conversation_revision,
             run_id=run_id,
             model=model,
             instructions=instructions,
@@ -1625,6 +1626,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
+        conversation_revision: str | None = None,
         run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
@@ -1785,6 +1787,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 message_history,
                 default=bootstrap_capability._default_conversation_id(resolved_run_id),  # pyright: ignore[reportPrivateUsage]
             ),
+            conversation_revision=conversation_revision,
         )
 
         # The deadline is absolute wall-clock time. Inside a durable workflow or flow, the durability

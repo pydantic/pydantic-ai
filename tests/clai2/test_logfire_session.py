@@ -22,7 +22,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_clai2 import DEFAULT_PLUGINS, chat
 from pydantic_clai2.builtin_plugins import logfire_session
 from pydantic_clai2.cli import headless
@@ -248,7 +248,7 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
     monkeypatch.chdir(tmp_path)
     agent = Agent(TestModel(call_tools=[], custom_output_text='answer'))
     saved = Session(
-        agent, deps=None, conversations=SqliteConversationStore(database=tmp_path / 'sessions.db'), workspace=tmp_path
+        agent, deps=None, conversations=SqliteSessionStore(database=tmp_path / 'sessions.db'), workspace=tmp_path
     )
     await saved.prompt('saved')
 
