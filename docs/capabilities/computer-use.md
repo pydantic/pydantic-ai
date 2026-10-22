@@ -58,6 +58,6 @@ machine.
 
 - Each screenshot costs about 1,000 to 3,000 input tokens, and every later request carries it again unless
   `keep_screenshots` is set.
-- Under [durable execution](../durable_execution/overview.md), a retried tool call can repeat actions it already
-  performed, such as a click, and every screenshot in the history rides in each model request's payload, so long
-  runs can reach Temporal's payload size limit.
+- Under [durable execution](../durable_execution/overview.md), each action and screenshot is its own durable
+  workspace operation, so a retry repeats only the one that failed. Every screenshot in the history rides in each
+  model request's payload, so long runs can reach Temporal's payload size limit.
