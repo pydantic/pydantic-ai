@@ -257,6 +257,7 @@ async def delegate_to_sub_agent(task: str) -> str:
 delegating_agent = Agent(
     TestModel(call_tools='all'),
     name='delegating_agent',
+    deps_type=type(None),
     toolsets=[delegation_toolset],
     capabilities=[TemporalDurability()],
 )
