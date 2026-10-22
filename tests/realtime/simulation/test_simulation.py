@@ -361,6 +361,23 @@ def test_turn_heard_before_a_cancelled_reply_ended_is_filed_after_it() -> None:
     run_clean(OpenAISimulation(), scenario)
 
 
+def test_gemini_raising_tool_completes_the_turn_once() -> None:
+    """A tool that raises ends the turn once on Gemini Live too, and a reply asked for afterwards completes its own."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.call_tools()
+        sim.finish_tool(outcome='error')
+        sim.settle()
+        assert len(sim.turn_completes) == 1
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.settle()
+        assert len(sim.turn_completes) == 2
+
+    run_clean(GeminiSimulation(), scenario)
+
+
 def test_gemini_tool_batch_answer_lost_to_a_drop_is_settled() -> None:
     """Every result of the batch went out, then the connection dropped before the answer (SIM-1, fixed by the session core).
 

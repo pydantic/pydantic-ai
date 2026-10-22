@@ -25,7 +25,7 @@ session goes on receiving: a consumer that catches it and iterates again keeps a
 and a reply asked for afterwards is answered as usual. Otherwise the session stops receiving, the
 audio and transcript views end, and the exception is raised when the session closes. If the receive
 side has already ended, an outbound session method raises the failure instead; it is delivered only
-once. The exchange the call was part of still ends with a
+once. Where the model never gets the result, the exchange the call was part of still ends with a
 [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent], after the exception
 (see [the turn boundary](events.md#the-turn-boundary)).
 The failed call is recorded with `outcome='failed'`, so the settled history can be passed to
