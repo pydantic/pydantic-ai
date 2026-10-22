@@ -190,7 +190,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset],
     which is always called per-run during toolset assembly, and
     [`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model], called for every
-    model request. On each model request,
+    attempt at a model request. On each model request,
     [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request]
     encloses the complete dynamic lifecycle: `before_model_request` once, then each attempt at the
     request, which runs `prepare_model_request`, the model call with `on_model_request_error`
@@ -712,12 +712,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def get_wrapper_model(self, model: Model) -> Model | None:
         """Wrap the model that serves a model request, or return None to leave it unchanged.
 
-        Called for every model request, with the model that will send it: the one
+        Called for every attempt at a model request, with the model that will send it: the one
         [`get_model`][pydantic_ai.capabilities.AbstractCapability.get_model], the run's `model=` or a
-        [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook selected,
-        after every `before_model_request` hook has run, so the wrapper also applies when a hook swaps the model. It's
-        meant to wrap the model each attempt is sent to, so falling back between models would wrap each of them; a
-        [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] is wrapped as a whole for now.
+        [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook selected, or
+        the one a hook moved the attempt to by raising [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest],
+        as [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] does. It's called after every
+        [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] hook has run, so
+        the wrapper applies to whichever model serves each attempt. A
+        [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] is wrapped as a whole.
         Return a [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel] around `model` to change how requests
         are sent, as [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] does.
 

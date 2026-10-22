@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
+import pytest
+
 from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext
-from pydantic_ai.capabilities import AbstractCapability, Hooks, WrapperCapability
-from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.capabilities import AbstractCapability, Hooks, ModelFallback, WrapperCapability
+from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
@@ -27,6 +33,18 @@ class _RecordingModel(WrapperModel):
     ) -> ModelResponse:
         self.calls.append(f'{self.name} -> {_describe(self.wrapped)}')
         return await super().request(messages, model_settings, model_request_parameters)
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncIterator[StreamedResponse]:
+        self.calls.append(f'{self.name} -> {_describe(self.wrapped)}')
+        async with super().request_stream(messages, model_settings, model_request_parameters, run_context) as stream:
+            yield stream
 
 
 def _describe(model: Model) -> str:
@@ -99,3 +117,27 @@ async def test_a_deferred_capability_does_not_wrap_the_model() -> None:
 
     await agent.run('Hello')
     assert calls == []
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_the_wrapper_applies_to_each_attempt(stream: bool) -> None:
+    """Each attempt is wrapped around the model serving it, including the one `ModelFallback` moved to."""
+    calls: list[str] = []
+
+    def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelAPIError('primary', 'down')
+
+    async def fail_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise ModelAPIError('primary', 'down')
+        yield  # pragma: no cover
+
+    primary = FunctionModel(fail, stream_function=fail_stream, model_name='primary')
+    backup = TestModel(custom_output_text='backup')
+    agent = Agent(primary, capabilities=[_Wrap('wrapper', calls), ModelFallback(backup)])
+
+    if stream:
+        async with agent.run_stream('Hello') as result:
+            assert await result.get_output() == 'backup'
+    else:
+        assert (await agent.run('Hello')).output == 'backup'
+    assert calls == ['wrapper -> primary', 'wrapper -> test']

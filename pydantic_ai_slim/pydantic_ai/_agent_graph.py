@@ -2281,7 +2281,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             state.response = None
             state.usage_recorded = False
             try:
-                request_context = await self._prepare_attempt(ctx, run_context, request_context)
+                request_context, attempt_model = await self._prepare_attempt(ctx, run_context, request_context)
             except exceptions.RetryModelRequest as retry:
                 # A `prepare_model_request` hook asked for another model before this attempt was sent.
                 await self._start_next_attempt(ctx, request_context, retry)
@@ -2290,6 +2290,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             try:
                 return await self._request_attempt(ctx, run_context, request_context, state, failed)
             except exceptions.RetryModelRequest as retry:
+                # The next attempt is wrapped afresh, for whichever model serves it.
+                request_context.model = attempt_model
                 baseline.rewind_suspended()
                 await self._start_next_attempt(ctx, request_context, retry)
 
@@ -2529,12 +2531,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         original_request_context.model_request_parameters = processed_context.model_request_parameters
         original_request_context.model_id = processed_context.model_id
         request_context = original_request_context
-        # After the before-chain, so capability model wrappers apply to the model that serves the request, even one a
-        # hook swapped in.
-        root_capability = ctx.deps.root_capability
-        request_context.model = request_context.model._with_serving_wrapper(  # pyright: ignore[reportPrivateUsage]
-            lambda model: root_capability.get_wrapper_model(model) or model
-        )
 
         messages = request_context.messages
         request_context.model_settings = request_context.model_settings or None
@@ -2649,17 +2645,27 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         run_context: RunContext[DepsT],
         request_context: ModelRequestContext,
-    ) -> ModelRequestContext:
+    ) -> tuple[ModelRequestContext, models.Model]:
         """Prepare one attempt at the request for the model that is about to serve it.
 
         Everything here depends on `request_context.model`, so it runs again for every attempt
         (see [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest]) rather than once per
         request step. The caller restores the post-`before_model_request` request first, so an
         attempt never inherits preparation done for a different model.
+
+        Returns the prepared request, whose model is wrapped by the capabilities'
+        [`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model], and the model the
+        `prepare_model_request` hooks picked, without those wrappers, which a further attempt starts from.
         """
-        processed_context = await ctx.deps.root_capability.prepare_model_request(run_context, request_context)
+        root_capability = ctx.deps.root_capability
+        processed_context = await root_capability.prepare_model_request(run_context, request_context)
         # Like the before-chain, a hook may return a copy: keep the object outer wrappers hold.
-        request_context.model = processed_context.model
+        attempt_model = processed_context.model
+        # After `prepare_model_request`, so capability model wrappers apply to the model serving this attempt, including
+        # one a hook moved the request to, like `ModelFallback`'s next candidate.
+        request_context.model = attempt_model._with_serving_wrapper(  # pyright: ignore[reportPrivateUsage]
+            lambda model: root_capability.get_wrapper_model(model) or model
+        )
         request_context.messages = list(processed_context.messages)
         request_context.model_settings = processed_context.model_settings or None
         request_context.model_request_parameters = processed_context.model_request_parameters
@@ -2770,7 +2776,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         self.last_request_context = request_context
 
-        return request_context
+        return request_context, attempt_model
 
     async def _open_stream(
         self,
@@ -2797,7 +2803,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         while True:
             baseline.restore(request_context)
             try:
-                request_context = await self._prepare_attempt(ctx, run_context, request_context)
+                request_context, attempt_model = await self._prepare_attempt(ctx, run_context, request_context)
             except exceptions.RetryModelRequest as retry:
                 # A `prepare_model_request` hook asked for another model before this attempt was sent.
                 await self._start_next_attempt(ctx, request_context, retry)
@@ -2841,6 +2847,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         ctx, run_context, request_context, e, failed, start
                     )
                 except exceptions.RetryModelRequest as retry:
+                    # The next attempt is wrapped afresh, for whichever model serves it.
+                    request_context.model = attempt_model
                     baseline.rewind_suspended()
                     await self._start_next_attempt(ctx, request_context, retry)
                     continue
