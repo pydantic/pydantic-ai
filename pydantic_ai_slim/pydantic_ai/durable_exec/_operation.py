@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import KW_ONLY, dataclass
-from typing import Any, Generic, Literal, Protocol, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeAlias, TypeVar, cast
 
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -12,6 +12,13 @@ from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from ._codec import IDENTITY_CODEC, JSON_CODEC, DurabilityCodec
+
+if TYPE_CHECKING:
+    from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+    from pydantic_ai.toolsets._dynamic import DynamicToolset
+
+    from ._capability_operation import CapabilityMethodDeclaration, CapabilityOperationParams
+    from ._workspace import WorkspaceCallParams
 
 ParamsT = TypeVar('ParamsT')
 WireT = TypeVar('WireT')
@@ -349,3 +356,64 @@ class TypedResultCodec(ResultCodec[ResultT], Generic[ResultT]):
 
     def load(self, payload: object) -> ResultT:
         return cast(ResultT, self._codec.load(self._result_type, payload))
+
+
+class ParameterTransports:
+    """The [`ParameterTransport`][pydantic_ai.durable_exec.ParameterTransport] each kind of durable operation uses.
+
+    The defaults pass parameters through unchanged, which suits engines whose durable units run in
+    the run's own process. An engine whose units run on another worker subclasses this, returning
+    transports that dump each operation's parameters to its wire format and load them worker-side,
+    and passes an instance to its backend. See
+    [Durable units in another process](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/#durable-units-in-another-process).
+    """
+
+    def model_request(self, result_type: object) -> ParameterTransport[ModelRequestParams, Any]:
+        """Transport for model requests; `result_type` is the type the request operation returns."""
+        return IdentityParameterTransport()
+
+    def compact_messages(self) -> ParameterTransport[ModelCompactMessagesParams, Any]:
+        """Transport for message compaction."""
+        return IdentityParameterTransport()
+
+    def cancel_suspended_response(self) -> ParameterTransport[ModelCancelSuspendedResponseParams, Any]:
+        """Transport for cancelling a suspended model response."""
+        return IdentityParameterTransport()
+
+    def event_stream_handler(self) -> ParameterTransport[EventStreamHandlerParams, Any]:
+        """Transport for event-stream handler invocations."""
+        return IdentityParameterTransport()
+
+    def capability_operation(
+        self, declaration: CapabilityMethodDeclaration
+    ) -> ParameterTransport[CapabilityOperationParams, Any]:
+        """Transport for one `@durable_operation` capability method."""
+        return IdentityParameterTransport()
+
+    def workspace_call(self) -> ParameterTransport[WorkspaceCallParams, Any]:
+        """Transport for workspace calls."""
+        return IdentityParameterTransport()
+
+    def function_call(self, toolset: FunctionToolset[Any]) -> ParameterTransport[ToolsetCallToolParams, Any]:
+        """Transport for function tool calls and argument validation in `toolset`."""
+        return IdentityParameterTransport()
+
+    def mcp_call(self, toolset: AbstractToolset[Any]) -> ParameterTransport[ToolsetCallToolParams, Any]:
+        """Transport for MCP tool calls in `toolset`."""
+        return IdentityParameterTransport()
+
+    def get_tools(self, toolset: AbstractToolset[Any]) -> ParameterTransport[ToolsetGetToolsParams, Any]:
+        """Transport for MCP tool discovery in `toolset`."""
+        return IdentityParameterTransport()
+
+    def get_instructions(self, toolset: AbstractToolset[Any]) -> ParameterTransport[ToolsetGetToolsParams, Any]:
+        """Transport for MCP instruction discovery in `toolset`."""
+        return IdentityParameterTransport()
+
+    def dynamic_get_tools(self, toolset: DynamicToolset[Any]) -> ParameterTransport[ToolsetGetToolsParams, Any]:
+        """Transport for dynamic toolset resolution and tool discovery."""
+        return IdentityParameterTransport()
+
+    def dynamic_call(self, toolset: DynamicToolset[Any]) -> ParameterTransport[DynamicToolsetCallToolParams, Any]:
+        """Transport for dynamic tool calls and argument validation in `toolset`."""
+        return IdentityParameterTransport()

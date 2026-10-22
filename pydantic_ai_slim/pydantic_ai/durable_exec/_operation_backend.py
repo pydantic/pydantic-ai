@@ -11,6 +11,7 @@ from ._operation import (
     DurableOperationConfig,
     DurableOperationId,
     OperationConfigRole,
+    ParameterTransports,
     resolve_tool_operation_config,
 )
 from ._operation_names import DurableOperationNamer, JournalOperationNamer
@@ -77,6 +78,9 @@ class DurableOperationBackend(ABC, Generic[ConfigT]):
     `RegisteredOperationBackend`. See
     [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
     """
+
+    parameter_transports: ParameterTransports = ParameterTransports()
+    """How each operation's parameters cross into a durable unit; unchanged unless the engine overrides it."""
 
     @abstractmethod
     def bind(
@@ -249,10 +253,18 @@ class RegisteredOperationBackend(DurableOperationBackend[ConfigT]):
     [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
     """
 
-    def __init__(self, *, namer: DurableOperationNamer, config: DurableOperationConfig[ConfigT]) -> None:
+    def __init__(
+        self,
+        *,
+        namer: DurableOperationNamer,
+        config: DurableOperationConfig[ConfigT],
+        parameter_transports: ParameterTransports | None = None,
+    ) -> None:
         self._namer = namer
         self._config = config
         self._registrations: list[Callable[..., object]] = []
+        if parameter_transports is not None:
+            self.parameter_transports = parameter_transports
 
     def bind(
         self, operation: DurableOperation[ParamsT, WireT, ResultT]

@@ -22,7 +22,6 @@ from pydantic_ai.durable_exec._base import (
     BaseDurabilityCapability,
     conversation_id_from_run_id,
 )
-from pydantic_ai.durable_exec._capability_operation import CapabilityMethodDeclaration
 from pydantic_ai.durable_exec._operation import (
     DurableOperationId,
     ToolsetCallToolId,
@@ -39,7 +38,6 @@ from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
-from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._event_stream import (
@@ -63,20 +61,10 @@ from ._toolset import (
     with_non_retryable_errors,
 )
 from ._transports import (
+    TemporalParameterTransports,
     _CancelParams as _CancelParams,
-    _CancelTransport,
-    _CapabilityOperationTransport,
-    _CompactMessagesTransport,
-    _DynamicCallTransport,
-    _DynamicGetToolsTransport,
     _EventStreamHandlerParams as _EventStreamHandlerParams,
-    _EventStreamHandlerTransport,
-    _FunctionCallTransport,
-    _GetToolsTransport,
-    _MCPCallTransport,
-    _ModelRequestTransport,
     _RequestParams as _RequestParams,
-    _WorkspaceCallTransport,
 )
 
 _STABLE_DEFAULT_RUN_ID_PATCH = 'pydantic_ai:stable_default_run_id'
@@ -301,11 +289,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def deserialize_operation_run_context(self, serialized_run_context: Any, deps: Any) -> RunContext[AgentDepsT]:
         return deserialize_run_context(self.run_context_type, serialized_run_context, deps=deps, agent=self._agent)
 
-    def _capability_operation_parameter_transport(
-        self, declaration: CapabilityMethodDeclaration
-    ) -> _CapabilityOperationTransport:
-        return _CapabilityOperationTransport(self, declaration)
-
     def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         # Discover the deps type from the agent unless explicitly configured.
         if self._deps_type is None:
@@ -321,11 +304,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             resolve_tool_config=self._resolve_temporal_tool_config,
             non_retryable_model_errors=self._non_retryable_model_errors,
             runtime=self,
+            parameter_transports=TemporalParameterTransports(self),
         )
         self._register_activities(agent)
-
-    def _workspace_call_transport(self) -> _WorkspaceCallTransport:
-        return _WorkspaceCallTransport(self)
 
     def _register_activities(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Bind common model/event operations and adopt the existing toolset activities."""
@@ -431,26 +412,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             return False
         return cast(ActivityConfig, {**base_config, **config})
 
-    def _function_call_parameter_transport(self, toolset: FunctionToolset[AgentDepsT]) -> _FunctionCallTransport:
-        return _FunctionCallTransport(self, toolset)
-
-    def _get_tools_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> _GetToolsTransport:
-        return _GetToolsTransport(self)
-
-    def _get_instructions_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> _GetToolsTransport:
-        return _GetToolsTransport(self)
-
-    def _dynamic_get_tools_parameter_transport(self, toolset: DynamicToolset[AgentDepsT]) -> _DynamicGetToolsTransport:
-        return _DynamicGetToolsTransport(self)
-
-    def _dynamic_call_parameter_transport(self, toolset: DynamicToolset[AgentDepsT]) -> _DynamicCallTransport:
-        return _DynamicCallTransport(self)
-
     def _validation_context(self, ctx: RunContext[Any]) -> Any:
         return validation_context_from_agent(self._agent)(ctx)
-
-    def _mcp_call_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> _MCPCallTransport:
-        return _MCPCallTransport(self, toolset)
 
     def _bound_operation_registrations(self, *operations: object) -> list[Callable[..., Any]]:
         return [cast(Any, operation).registration for operation in operations]
@@ -636,18 +599,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         if self.in_durable_context and isinstance(error, PydanticSerializationError):
             raise serialization_user_error(error) from error
         raise error
-
-    def _model_request_parameter_transport(self, result_type: object) -> _ModelRequestTransport:
-        return _ModelRequestTransport(self, result_type=result_type)
-
-    def _cancel_suspended_response_parameter_transport(self) -> _CancelTransport:
-        return _CancelTransport(self)
-
-    def _compact_messages_parameter_transport(self) -> _CompactMessagesTransport:
-        return _CompactMessagesTransport(self)
-
-    def _event_stream_handler_parameter_transport(self) -> _EventStreamHandlerTransport:
-        return _EventStreamHandlerTransport(self)
 
     async def _cancel_suspended_response_without_run_context(
         self, model_id: str | None, response: ModelResponse

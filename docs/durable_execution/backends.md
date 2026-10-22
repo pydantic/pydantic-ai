@@ -169,12 +169,11 @@ match that assumes the current union will never gain another arm.
 ## Durable units in another process
 
 Some engines run a durable unit on a different worker than the run that dispatched it, so its
-parameters have to cross the boundary as data. By default every operation passes its parameters
-through unchanged. An engine whose units run out of process overrides the capability's
-parameter-transport hooks, such as `_model_request_parameter_transport`,
-`_function_call_parameter_transport`, `_mcp_call_parameter_transport`,
-`_event_stream_handler_parameter_transport`, `_capability_operation_parameter_transport`, and
-`_workspace_call_transport`. Each returns a
+parameters have to cross the boundary as data. A backend's
+[`parameter_transports`][pydantic_ai.durable_exec.DurableOperationBackend.parameter_transports]
+decides how. The default [`ParameterTransports`][pydantic_ai.durable_exec.ParameterTransports]
+passes every operation's parameters through unchanged. An engine whose units run out of process
+subclasses it and passes an instance to `RegisteredOperationBackend.__init__`. Each method returns a
 [`ParameterTransport`][pydantic_ai.durable_exec.ParameterTransport] that dumps one of the public
 parameter types to the engine's wire format at dispatch and loads it back worker-side:
 [`ModelRequestParams`][pydantic_ai.durable_exec.ModelRequestParams],
@@ -186,24 +185,22 @@ parameter types to the engine's wire format at dispatch and loads it back worker
 [`DynamicToolsetCallToolParams`][pydantic_ai.durable_exec.DynamicToolsetCallToolParams],
 [`CapabilityOperationParams`][pydantic_ai.durable_exec.CapabilityOperationParams], and
 [`WorkspaceCallParams`][pydantic_ai.durable_exec.WorkspaceCallParams].
-A `RegisteredOperationBackend` receives each [`DurableOperation`][pydantic_ai.durable_exec.DurableOperation]
-in `register` and returns a [`BoundDurableOperation`][pydantic_ai.durable_exec.BoundDurableOperation].
-Its worker-side handler should run inside
-[`durable_unit_scope`][pydantic_ai.durable_exec.durable_unit_scope], so a durable operation
-called from inside the unit runs directly instead of scheduling another unit.
+The backend's `register` receives each [`DurableOperation`][pydantic_ai.durable_exec.DurableOperation]
+and returns a [`BoundDurableOperation`][pydantic_ai.durable_exec.BoundDurableOperation]. Run its
+worker-side handler inside [`durable_unit_scope`][pydantic_ai.durable_exec.durable_unit_scope], so
+a durable operation called from inside the unit runs directly instead of scheduling another unit.
 
-Every parameter type carries the live `RunContext`, which holds objects that cannot be serialized.
-Use [`DurableRunContext`][pydantic_ai.durable_exec.DurableRunContext] for that part:
+Every parameter type carries the run's `RunContext` (as `run_context`, or `ctx` on the toolset
+parameters; it is `None` when a suspended response is cancelled outside a run), and that context
+holds objects that cannot be serialized. Use [`DurableRunContext`][pydantic_ai.durable_exec.DurableRunContext] for it:
 `DurableRunContext.serialize_run_context(ctx)` returns a mapping of the fields that can cross,
 which the engine encodes with its own codec, and `DurableRunContext.restore(...)` rebuilds the
-context worker-side and re-attaches the worker's agent and workspace. Reading a field that wasn't
-carried raises a `UserError` instead of returning a default that could be mistaken for run state.
-Subclass it to word that error for your engine. Your users can subclass your context to carry more
-fields. Temporal's [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] is
-one such subclass.
-
-The run's validation context is an arbitrary user object, so it isn't carried. Rebuild it
-worker-side with [`validation_context_from_agent`][pydantic_ai.durable_exec.validation_context_from_agent].
+context worker-side and re-attaches the worker's agent and workspace. Pass
+`rebuild_validation_context=True` to rebuild the run's validation context from the agent as well.
+Reading a field that wasn't carried raises a `UserError` instead of returning a default that could
+be mistaken for run state. Override `unavailable_field_message` to word that error for your engine.
+Your users can subclass your context and override `serialize_run_context` to carry more fields.
+Temporal's [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] is one such subclass.
 
 ## Persisted names and recovery
 

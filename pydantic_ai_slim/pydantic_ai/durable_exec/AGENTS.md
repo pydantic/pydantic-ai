@@ -27,8 +27,8 @@ Choose the backend tier from the engine SDK's execution model:
   the four model operations during agent assembly, so `registrations()` is complete before worker
   start; pass the collected registrations to the engine SDK when creating the worker.
 
-When durable units can run in another process (Temporal activities, Render child tasks), override
-the capability's parameter-transport hooks to move the public `*Params` types across the boundary,
+When durable units can run in another process (Temporal activities, Render child tasks), give the
+backend a `ParameterTransports` subclass that moves the public `*Params` types across the boundary,
 and serialize and rebuild their `RunContext` with `DurableRunContext` (subclass it for
 engine-specific wording or extra fields). Do not copy its field lists, guards or workspace
 restoration into the integration.

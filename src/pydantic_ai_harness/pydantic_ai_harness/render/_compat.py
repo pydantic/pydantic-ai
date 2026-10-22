@@ -374,9 +374,6 @@ def make_model_request_context(
 class RenderRunContext(DurableRunContext[AgentDepsT]):
     """Restricted run context reconstructed inside a Render child task."""
 
-    # The codec attaches the worker's validation context after restoring the context.
-    _none_unless_attached = (*DurableRunContext._none_unless_attached, 'validation_context')
-
     def __init__(self, deps: AgentDepsT, **kwargs: Any):
         kwargs.setdefault('tracer', NoOpTracer())
         super().__init__(deps, **kwargs)
@@ -386,7 +383,7 @@ class RenderRunContext(DurableRunContext[AgentDepsT]):
         if isinstance(usage, RunUsage) and (recorder := current_effect_recorder()):
             recorder.watch_usage(usage)
 
-    def _unavailable_field_message(self, name: str) -> str:
+    def unavailable_field_message(self, name: str) -> str:
         return f'{name!r} is not available on {self.__class__.__name__!r} inside a Render child task.'
 
     @overload
@@ -482,10 +479,13 @@ class RenderRunContextCodec(Generic[AgentDepsT]):
         # The codec validates against the complete type form. A second `isinstance`
         # check would reject valid forms such as `dict[str, str]` and `TypedDict`.
         deps_value = JSON_CODEC.load(self._deps_type, payload['deps'])
-        ctx = self._run_context_type.restore(context, deps=deps_value, agent=self._agent, engine_spec=self._engine_spec)
-        if self._agent is not None:  # pragma: no branch - the bound capability supplies its agent
-            ctx.__dict__['validation_context'] = validation_context_from_agent(self._agent)(ctx)
-        return ctx
+        return self._run_context_type.restore(
+            context,
+            deps=deps_value,
+            agent=self._agent,
+            engine_spec=self._engine_spec,
+            rebuild_validation_context=True,
+        )
 
     def _resolve_tracer(self, model: Model | None) -> Tracer:
         """Recover instrumentation from worker configuration, never from the wire."""

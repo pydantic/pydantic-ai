@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
+from pydantic_ai.durable_exec import ParameterTransports
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
+from pydantic_ai.messages import AgentStreamEvent, InstructionPart, ModelMessage, ModelResponse
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._compat import (
@@ -42,7 +45,10 @@ from ._compat import (
     resolve_mcp_tool_for_definition,
 )
 
+Instructions = str | InstructionPart | Sequence[str | InstructionPart] | None
+
 __all__ = (
+    'RenderParameterTransports',
     'RenderCancelTransport',
     'RenderCapabilityOperationTransport',
     'RenderCompactMessagesTransport',
@@ -397,3 +403,46 @@ class RenderWorkspaceCallTransport(Generic[AgentDepsT], RenderJsonTransport[Work
         del runtime
         wire = load_json_type(_WorkspacePayload, payload)
         return WorkspaceCallParams(call=wire.call, ref=wire.ref, run_context=self._context_codec.load(wire.run_context))
+
+
+class RenderParameterTransports(ParameterTransports):
+    """Carry every operation's parameters into a Render child task as a JSON object."""
+
+    def __init__(self, codec: Callable[[], RenderRunContextCodec[Any]]) -> None:
+        self._codec = codec
+
+    def model_request(self, result_type: object) -> RenderModelRequestTransport[Any]:
+        return RenderModelRequestTransport(self._codec(), result_type=result_type)
+
+    def compact_messages(self) -> RenderCompactMessagesTransport[Any]:
+        return RenderCompactMessagesTransport(self._codec())
+
+    def cancel_suspended_response(self) -> RenderCancelTransport[Any]:
+        return RenderCancelTransport(self._codec())
+
+    def event_stream_handler(self) -> RenderEventStreamHandlerTransport[Any]:
+        return RenderEventStreamHandlerTransport(self._codec())
+
+    def capability_operation(self, declaration: CapabilityMethodDeclaration) -> RenderCapabilityOperationTransport[Any]:
+        return RenderCapabilityOperationTransport(self._codec(), declaration)
+
+    def workspace_call(self) -> RenderWorkspaceCallTransport[Any]:
+        return RenderWorkspaceCallTransport(self._codec())
+
+    def function_call(self, toolset: FunctionToolset[Any]) -> RenderFunctionCallTransport[Any]:
+        return RenderFunctionCallTransport(self._codec(), toolset)
+
+    def mcp_call(self, toolset: AbstractToolset[Any]) -> RenderMCPCallTransport[Any]:
+        return RenderMCPCallTransport(self._codec(), toolset)
+
+    def get_tools(self, toolset: AbstractToolset[Any]) -> RenderGetToolsTransport[Any]:
+        return RenderGetToolsTransport(self._codec(), result_type=dict[str, ToolDefinition])
+
+    def get_instructions(self, toolset: AbstractToolset[Any]) -> RenderGetToolsTransport[Any]:
+        return RenderGetToolsTransport(self._codec(), result_type=Instructions)
+
+    def dynamic_get_tools(self, toolset: DynamicToolset[Any]) -> RenderDynamicGetToolsTransport[Any]:
+        return RenderDynamicGetToolsTransport(self._codec())
+
+    def dynamic_call(self, toolset: DynamicToolset[Any]) -> RenderDynamicCallTransport[Any]:
+        return RenderDynamicCallTransport(self._codec())

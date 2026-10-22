@@ -116,6 +116,7 @@ def test_public_engine_builder_exports() -> None:
         'ModelRequestContextProjection',
         'ModelRequestParams',
         'ParameterTransport',
+        'ParameterTransports',
         'ResultCodec',
         'ToolsetCallToolParams',
         'ToolsetGetToolsParams',

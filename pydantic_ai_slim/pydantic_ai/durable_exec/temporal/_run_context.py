@@ -28,7 +28,7 @@ class TemporalRunContext(DurableRunContext[AgentDepsT]):
     To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A subclass can use this escape hatch to opt in to carrying `prompt` if it knows its prompts are text-only.
     """
 
-    def _unavailable_field_message(self, name: str) -> str:
+    def unavailable_field_message(self, name: str) -> str:
         return (
             f'{name!r} is not available on {self.__class__.__name__!r} inside a Temporal activity. '
             'To make the attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to `TemporalDurability`.'

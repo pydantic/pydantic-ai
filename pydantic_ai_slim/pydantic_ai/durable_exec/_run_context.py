@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, ClassVar, Self, overload
+from typing import TYPE_CHECKING, Any, Self, overload
 
 from pydantic import TypeAdapter
 from typing_extensions import TypeVar
@@ -17,7 +17,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import Workspace, WorkspaceRef
 from pydantic_ai.workspaces.unavailable import NO_WORKSPACE, UnavailableWorkspace
 
-from ._toolset import DispatchSnapshots, EnqueueGuard, enqueue_not_supported_message
+from ._toolset import DispatchSnapshots, EnqueueGuard, enqueue_not_supported_message, validation_context_from_agent
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -63,7 +63,7 @@ _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
 # `realtime_session` is a live session object that cannot cross the boundary, and its contract
 # already makes `None` mean "not available here". `_run_held_toolsets` is the same: a unit may run
 # in another process, so it enters its own toolset instead of reusing the one the run holds.
-_NONE_UNLESS_ATTACHED: tuple[str, ...] = (
+_NONE_UNLESS_ATTACHED = (
     'agent',
     'root_capability',
     'pending_messages',
@@ -73,6 +73,11 @@ _NONE_UNLESS_ATTACHED: tuple[str, ...] = (
     '_run_capabilities_by_id',
     '_run_held_toolsets',
 )
+
+# Reading any other omitted field raises instead of returning the `RunContext` dataclass default,
+# which would silently pass for real run state (e.g. `instrumentation_version` reading as the
+# default version rather than the run's, or `prompt` as `None` for a subclass that drops it).
+_GUARDED_FIELDS = frozenset(RunContext.__dataclass_fields__) - {'deps', *_NONE_UNLESS_ATTACHED}
 
 # Defaulted rather than guarded when a payload doesn't carry it. Unlike the guarded fields, the
 # dataclass default can't be mistaken for real run state here: empty means "no anchored evidence",
@@ -127,18 +132,6 @@ class DurableRunContext(RunContext[AgentDepsT]):
     keyword arguments and become readable attributes.
     """
 
-    _none_unless_attached: ClassVar[tuple[str, ...]] = _NONE_UNLESS_ATTACHED
-    """Fields readable as `None` when not carried, because the worker attaches them or they are live-only."""
-
-    _guarded_fields: ClassVar[frozenset[str]] = frozenset(RunContext.__dataclass_fields__) - {
-        'deps',
-        *_NONE_UNLESS_ATTACHED,
-    }
-
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
-        cls._guarded_fields = frozenset(RunContext.__dataclass_fields__) - {'deps', *cls._none_unless_attached}
-
     def __init__(self, deps: AgentDepsT, **kwargs: Any):
         kwargs.setdefault('workspace', Workspace(NO_WORKSPACE))
         self.__dict__ = {**kwargs, 'deps': deps}
@@ -149,7 +142,7 @@ class DurableRunContext(RunContext[AgentDepsT]):
             # reporting it as one that never crossed the boundary.
             if old_name in self.__dict__:
                 self.__dict__.setdefault(new_name, self.__dict__.pop(old_name))
-        for name in self._none_unless_attached:
+        for name in _NONE_UNLESS_ATTACHED:
             self.__dict__.setdefault(name, None)
         for name, default in _DEFAULTED_UNLESS_CARRIED:
             self.__dict__.setdefault(name, default)
@@ -169,12 +162,15 @@ class DurableRunContext(RunContext[AgentDepsT]):
         )
 
     def __getattribute__(self, name: str) -> Any:
-        if name in type(self)._guarded_fields and name not in object.__getattribute__(self, '__dataclass_fields__'):
-            raise UserError(self._unavailable_field_message(name))
+        if name in _GUARDED_FIELDS and name not in object.__getattribute__(self, '__dataclass_fields__'):
+            raise UserError(self.unavailable_field_message(name))
         return super().__getattribute__(name)
 
-    def _unavailable_field_message(self, name: str) -> str:
-        """The error raised when user code reads a field that didn't cross the boundary."""
+    def unavailable_field_message(self, name: str) -> str:
+        """The error raised when user code reads a field that didn't cross the boundary.
+
+        Engines override this to name their durable unit and how to carry more fields.
+        """
         return (
             f'{name!r} is not available on {self.__class__.__name__!r} inside a durable unit. '
             f'To make the attribute available, create a `{self.__class__.__name__}` subclass with a custom '
@@ -330,6 +326,7 @@ class DurableRunContext(RunContext[AgentDepsT]):
         deps: Any,
         agent: AbstractAgent[Any, Any] | None,
         engine_spec: DurabilityEngineSpec,
+        rebuild_validation_context: bool = False,
     ) -> RunContext[Any]:
         """Rebuild a run context worker-side and attach the worker's agent.
 
@@ -339,12 +336,18 @@ class DurableRunContext(RunContext[AgentDepsT]):
         model stream inside the unit. The workspace is rebuilt from its serialized
         [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef], and `pending_messages` gets a guard so
         `ctx.enqueue()` raises the shared explanation worded with `engine_spec`'s nouns.
+
+        With `rebuild_validation_context`, `ctx.validation_context` is rebuilt from the agent's
+        `validation_context` setting for this context instead of raising as an uncarried field.
         """
         ctx = cls.deserialize_run_context(dict(serialized), deps=deps)
         if agent is not None:
             ctx.__dict__['agent'] = agent
             ctx.__dict__['root_capability'] = agent.root_capability
             _restore_workspace(ctx, agent, engine_spec)
+            if rebuild_validation_context:
+                ctx.__dict__['validation_context'] = validation_context_from_agent(agent)(ctx)
+                ctx._expose_field('validation_context')
         # `pending_messages` isn't serialized across the boundary, and any code running inside a unit
         # (a tool, a `process_tool_call` hook, an `event_stream_handler`) has its result replayed
         # without re-running it, so an enqueue would be dropped.
