@@ -23,6 +23,12 @@
       "fingerprint": "c4aa7c8b9e94bd5ada5a90325d99ca764fed5f8bd156d31ef511842e4d854f3a",
       "reason": "False positive: `BackgroundTools` still inherits `prepare_tools` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; the tool preparation moved into the wrapper toolset.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10613"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "76c8e5b469f66ad102b2cdd3261834ead76190074752af9a971cd8ac9e6c4c4e",
+      "reason": "Changes the value of `AbsurdDurability.engine_spec`, a class-level engine configuration: it adds a `serialization_failure` mapping and keeps one MCP session per run (`'enter-in-durable-unit'`). Users don't set or read it, so no code changes.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10732"
     }
   ]
 }
