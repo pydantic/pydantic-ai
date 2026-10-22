@@ -14,7 +14,7 @@ as is and once with `PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE=podman`:
 - Docker reports a missing `exec --workdir` on stdout.
 - A missing container's errors contain `no such container`, in any case.
 - `inspect --format` reads labels through `{{index .Config.Labels "<key>"}}`.
-- Of repeated `--pids-limit` flags the last wins, and `-1` lifts the limit.
+- Of repeated `--pids-limit` flags the last wins.
 - Both refuse a second `--network` next to `--network none`.
 - A `--tmpfs` mount is mode 1777, so a non-root `--user` can write it, also with `--read-only`.
 - BusyBox's `kill` rejects `--` before a negative process group, as does dash's after `-0`.
@@ -65,7 +65,7 @@ A tmpfs the backend mounts in every container it creates, rather than `/tmp`, wh
 _PIDS_LIMIT = '2048'
 """A new container's process limit, so a runaway fork loop can't exhaust the Docker host's.
 
-`docker_args` can override it, such as with `['--pids-limit', '-1']` for no limit.
+`docker_args` can override it, such as with `['--pids-limit', '-1']` to remove it.
 """
 
 _WRAPPER = f"""tag=$1
