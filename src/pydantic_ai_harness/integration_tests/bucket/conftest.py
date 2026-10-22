@@ -96,6 +96,8 @@ def azure_bucket(folder: str, credentials: Any = None) -> Bucket:
         endpoint=AZURE_ENDPOINT,
         options={'account_name': AZURE_ACCOUNT},
         credentials=credentials or {'access_key': AZURE_KEY, 'expires_at': None},
+        # Azurite has only its one account key, and shell mounts on Azure take an account key.
+        share_long_lived_credentials=True,
     )
 
 

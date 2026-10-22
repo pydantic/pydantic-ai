@@ -94,6 +94,38 @@ The mount is the only part of your machine's files the commands can change; the 
 
 A new container gets `--pids-limit 2048`, so a runaway fork loop can't use up the process table of the machine (or VM) running Docker. A command that hits it fails with `Cannot fork` or `Resource temporarily unavailable`; pass your own `--pids-limit` in `docker_args` to change it, or `-1` to remove it.
 
+## Mount a bucket
+
+Pass `mounts=` to show a [bucket](bucket.md) as a folder. File tools always reach it; for commands to see it too, the container needs FUSE, and the image needs Python 3 and `fuse3`:
+
+```python {names="defined"}
+from pydantic_ai import Agent
+from pydantic_ai.workspaces import Mount
+from pydantic_ai_harness.bucket import Bucket
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.docker_sandbox import DockerSandbox
+
+
+def reports_keys():
+    ...  # Return keys that expire, as the Bucket page shows.
+
+
+reports = Bucket('s3://acme-reports/', credentials=reports_keys)
+agent = Agent(
+    'anthropic:claude-opus-5-5',
+    capabilities=[
+        DockerSandbox(
+            image='my-image-with-fuse3',
+            docker_args=['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', 'apparmor:unconfined'],
+            mounts=[Mount('reports', reports)],
+        ),
+        Coder(),
+    ],
+)
+```
+
+`SYS_ADMIN` lets commands in the container mount filesystems, so the container isolates less; use it for code you trust. Shell commands can read the keys a mount uses, so a bucket hands over only keys that expire; see the [Bucket page](bucket.md#shell-commands).
+
 ## Reattach later
 
 To come back to the container without the message history, store the run's workspace ref and pass it back as `workspace=`:
@@ -111,7 +143,7 @@ ref = result.workspace.ref  # store this, e.g. in your database
 later = agent.run_sync('Now make it print the first 100.', workspace=ref)
 ```
 
-The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`, the container's name. Attaching starts a stopped container on first use, so it comes back with its files. Pass `workspace='new'` to create a fresh container even when the message history names one. `image`, `allow_internet_access` and `docker_args` only shape a new container. `working_dir` and `env` apply to every command.
+The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`, the container's name. Attaching starts a stopped container on first use, so it comes back with its files. Pass `workspace='new'` to create a fresh container even when the message history names one. `image`, `allow_internet_access` and `docker_args` only shape a new container; on an attached one, `docker_args` still decide whether commands can see mounts. `working_dir` and `env` apply to every command.
 
 A ref is trusted input: whoever passes one runs commands in that container. `DockerSandbox` refuses a container without its `ai.pydantic.workspace=true` label, so a ref can't reach the other containers the Docker daemon serves. The label isn't proof of origin, though: any `DockerSandbox` on this machine, or anyone who can run `docker`, can create a container with it, so only pass refs your application stored itself.
 
@@ -203,7 +235,7 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM s
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the container except Docker's proxy settings, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
 | `mounts` | Storage to show as folders, such as a [`Bucket`](bucket.md), or a function of the run that picks them, for example one folder per customer. Default: none. |
 | `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `True`; `False` runs it with `--network none`. |
-| `docker_args` | Extra `docker run` arguments for a new container, such as mounts, `--memory` or `--user`; a `--pids-limit` here replaces the default of 2048. Default: `()`. |
+| `docker_args` | Extra `docker run` arguments for a new container, such as volumes, `--memory` or `--user`; a `--pids-limit` here replaces the default of 2048. Default: `()`. |
 | `executable` | The container CLI to run, such as `'podman'`, looked up on `PATH` when the capability is created. Default: `'docker'`. |
 
 ## Platforms

@@ -28,6 +28,7 @@ import re
 import secrets
 import shutil
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Literal
 
 import anyio
@@ -35,7 +36,9 @@ import anyio
 from pydantic_ai.workspaces import (
     CommandResult,
     LocalWorkspaceBackend,
+    Mount,
     SupportsCommands,
+    SupportsMounts,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -44,6 +47,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness import _mounts
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
 
 __all__ = ('DockerSandboxBackend', 'remove_container')
@@ -205,7 +209,7 @@ async def remove_container(name: str, *, executable: str = 'docker') -> None:
         raise WorkspaceError(f'could not remove container {name}: {result.stderr.strip()}')
 
 
-class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
+class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsMounts):
     """Run commands in a local Docker container, created on first use, through the `docker` CLI.
 
     The image needs a POSIX `sh` and the usual file utilities; its own entrypoint and command don't run. A
@@ -230,6 +234,9 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             can't change the container's name, workspace label or entrypoint. A `--pids-limit` here replaces the
             default of 2048.
         executable: The container CLI to run, such as `'podman'`.
+
+    Shell commands see [mounted](https://pydantic.dev/docs/ai/harness/bucket/) buckets when `docker_args` give the
+    container FUSE: `['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', 'apparmor:unconfined']`.
     """
 
     def __init__(
@@ -425,6 +432,24 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             raise WorkspaceUnavailableError(f'Docker workspace {self._name}: the container stopped during the command')
         return CommandResult(
             exit_code=int(done[2]), stdout=result.stdout, stderr=stderr[: done.start()] + stderr[done.end() :]
+        )
+
+    def can_mount(self, mount: Mount) -> bool:
+        # Only `docker_args` can give the container the FUSE device that mounting needs.
+        fuse = any('/dev/fuse' in arg or arg == '--privileged' for arg in self._docker_args)
+        return fuse and _mounts.can_mount(mount)
+
+    async def ensure_mounts(self, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
+        await self._acquire()
+        return await _mounts.ensure_mounts(self._run_as_root, mounts, working_dir)
+
+    async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
+        docker = [self._executable, 'exec', '--interactive', '--user', '0', '--workdir', '/', self._name]
+        result = await anyio.run_process([*docker, *argv], input=stdin, check=False)
+        return CommandResult(
+            exit_code=result.returncode,
+            stdout=result.stdout.decode(errors='replace'),
+            stderr=result.stderr.decode(errors='replace'),
         )
 
     async def _stop(self, tag: str) -> None:

@@ -47,7 +47,7 @@ The agent's file tools read `exports/2026-10-01.csv` from `s3://acme-data/export
 
 ## In a sandbox
 
-Every workspace capability takes `mounts=`. Pass a function of the run instead of a list to pick the mounts per run, for example one folder per customer:
+`LocalWorkspace` and every sandbox capability take `mounts=`. Pass a function of the run instead of a list to pick the mounts per run, for example one folder per customer:
 
 ```python {names="defined"}
 from dataclasses import dataclass
@@ -70,6 +70,53 @@ def customer_files(ctx: RunContext[Customer]) -> list[Mount]:
 
 agent = Agent('anthropic:claude-opus-5-5', deps_type=Customer, capabilities=[E2BSandbox(mounts=customer_files), Coder()])
 ```
+
+## Shell commands
+
+Commands in a sandbox see a mounted bucket too, as an ordinary folder, when the sandbox can mount it: `grep -r`, `pandas`, `git` and editors all work there. The model is told which folders commands see.
+
+A sandbox mounts an S3 or Azure bucket with [rclone](https://rclone.org) when:
+
+- its image has Python 3; `fuse3` (with apt) and rclone are installed on first use if the image lacks them, which needs internet access;
+- the sandbox allows FUSE: [Docker](https://pydantic.dev/docs/ai/harness/docker-sandbox/) when its `docker_args` give the container `/dev/fuse`;
+- the bucket's keys expire: commands in the sandbox can read the keys a mount uses, so a bucket hands over only keys with an `expires_at`, given directly or returned by a function, which is called again before they expire. Make them keys limited to the bucket's folder, so a command that reads them can't reach anything else. Azure mounts use the storage account key, so they also need `share_long_lived_credentials=True` on the bucket.
+
+Otherwise, and for Google Cloud Storage buckets, the folder is reachable through file tools only. With AWS, a function like this one hands out keys that last 15 minutes and reach only `exports/`:
+
+```python {names="defined"}
+import json
+
+import boto3
+
+from pydantic_ai_harness.bucket import Bucket
+
+sts = boto3.client('sts')
+
+
+def exports_keys():
+    folder = {'Effect': 'Allow', 'Action': ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'], 'Resource': 'arn:aws:s3:::acme-data/exports/*'}
+    listing = {
+        'Effect': 'Allow',
+        'Action': 's3:ListBucket',
+        'Resource': 'arn:aws:s3:::acme-data',
+        'Condition': {'StringLike': {'s3:prefix': ['exports', 'exports/*']}},
+    }
+    policy = json.dumps({'Version': '2012-10-17', 'Statement': [folder, listing]})
+    keys = sts.assume_role(
+        RoleArn='arn:aws:iam::123456789012:role/agent-buckets', RoleSessionName='agent', Policy=policy, DurationSeconds=900
+    )['Credentials']
+    return {
+        'access_key_id': keys['AccessKeyId'],
+        'secret_access_key': keys['SecretAccessKey'],
+        'token': keys['SessionToken'],
+        'expires_at': keys['Expiration'],
+    }
+
+
+exports = Bucket('s3://acme-data/exports/', credentials=exports_keys)
+```
+
+What commands write reaches the bucket a few seconds after the file is closed, so a sandbox destroyed right after a run can lose its last writes. If the sandbox restarts while files are still being sent, they are sent when the bucket is mounted again. Files written into the folder while it wasn't mounted, such as after a restart, are moved to `.pydantic-ai-recovered/` next to it when it is mounted again. A sandbox has one set of mounts at a time: a run with other mounts replaces them.
 
 ## Choosing the bucket
 
@@ -121,6 +168,6 @@ agent = Agent(
 
 ## Limits
 
-- A bucket is not a filesystem: there are no symlinks or permissions, and when two agents write the same file, the last write wins.
+- A bucket is not a filesystem: through file tools there are no symlinks or permissions, and when two agents write the same file, the last write wins.
 - A folder exists while it holds a file. An empty folder made by the agent holds a hidden `.pydantic-ai-dir` file.
 - Every file operation is a request to the storage service, so searching a large folder through file tools is slow.

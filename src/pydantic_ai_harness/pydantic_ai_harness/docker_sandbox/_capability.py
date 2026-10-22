@@ -79,7 +79,11 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     def backend(self, ref: WorkspaceRef) -> DockerSandboxBackend:
         """Attach lazily to an existing container by ref, starting it on first use if it is stopped."""
         return DockerSandboxBackend(
-            ref=ref, working_dir=self.working_dir, env=self.env, executable=self._executable_path
+            ref=ref,
+            working_dir=self.working_dir,
+            env=self.env,
+            docker_args=self.docker_args,
+            executable=self._executable_path,
         )
 
     async def destroy(self, ref: WorkspaceRef) -> None:

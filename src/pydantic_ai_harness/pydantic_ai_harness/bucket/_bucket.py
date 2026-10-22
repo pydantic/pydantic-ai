@@ -67,6 +67,13 @@ class Bucket(SupportsFilesystem):
     region: str | None = None
     """The bucket's region, where the cloud needs one."""
 
+    share_long_lived_credentials: bool = False
+    """Whether keys that never expire may be handed to a sandbox to mount the bucket, where its commands can read them.
+
+    Without it, only keys with an `expires_at`, given directly or returned by a function, are handed on, and a bucket
+    with other keys is reachable through file tools only.
+    """
+
     # Left out of the hash, which a dict can't take; it still counts for equality.
     options: Mapping[str, str] = field(default_factory=dict[str, str], hash=False)
     """Further [obstore store settings](https://developmentseed.org/obstore/latest/api/store/), such as
