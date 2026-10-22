@@ -3780,7 +3780,7 @@ async def test_a_sideband_does_not_reattach_to_a_session_that_ended(reason: str)
     """The browser hanging up ends the session (`connection_lost`): there is nothing left to attach to."""
 
     async def reattach() -> Any:
-        raise AssertionError('re-attached to a session that ended')
+        raise AssertionError('re-attached to a session that ended')  # pragma: no cover
 
     dropping = _DroppingWebSocket([json.dumps(_session_closed(reason))])
     connection = OpenAILiveConnection(dropping, reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
