@@ -2435,12 +2435,15 @@ def _map_responses_citations_for_replay(
         if citation.get('type') == 'url_citation':
             url, title = citation.get('url'), citation.get('title')
             start, end = citation.get('start_index'), citation.get('end_index')
+            # The range covers the link the model wrote into its answer, so it must still contain the URL. OpenAI
+            # accepts a range that has moved or runs past the text, so a range edited history moved is left out here.
             if (
                 isinstance(url, str)
                 and isinstance(title, str)
                 and isinstance(start, int)
                 and isinstance(end, int)
                 and 0 <= start <= end <= len(text)
+                and url in text[start:end]
             ):
                 annotations.append(
                     responses.response_output_text_param.AnnotationURLCitation(

@@ -228,19 +228,21 @@ async def test_openai_responses_leaves_out_annotations_it_cannot_rebuild() -> No
     `test_openai_responses_file_citation_context_replay`.
     """
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='not-used'))
+    # As OpenAI writes it: the annotation's range covers the link the model put in its answer.
+    text = 'The source supports this claim. ([example.com](https://example.com/source))'
     url_citation = {
         'type': 'url_citation',
         'url': 'https://example.com/source',
         'title': 'Source',
-        'start_index': 0,
-        'end_index': 10,
+        'start_index': text.index('(['),
+        'end_index': len(text),
     }
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('Research the topic.')]),
         ModelResponse(
             parts=[
                 TextPart(
-                    'The source supports this claim.',
+                    text,
                     id='msg-historical',
                     provider_name='openai',
                     provider_details={
@@ -248,7 +250,9 @@ async def test_openai_responses_leaves_out_annotations_it_cannot_rebuild() -> No
                             url_citation,
                             'not an annotation',
                             # The range is past the end of the text, which a history processor may have shortened.
-                            {**url_citation, 'start_index': 20, 'end_index': 40},
+                            {**url_citation, 'start_index': 60, 'end_index': 90},
+                            # The range is in the text but no longer covers the link, as when the text was edited.
+                            {**url_citation, 'start_index': 0, 'end_index': 10},
                             {'type': 'file_citation', 'file_id': 'file-123', 'index': 3},
                             {'type': 'file_path', 'file_id': 'file-123', 'index': 3},
                         ]
@@ -270,15 +274,15 @@ async def test_openai_responses_leaves_out_annotations_it_cannot_rebuild() -> No
             'id': 'msg-historical',
             'content': [
                 {
-                    'text': 'The source supports this claim.',
+                    'text': 'The source supports this claim. ([example.com](https://example.com/source))',
                     'type': 'output_text',
                     'annotations': [
                         {
                             'type': 'url_citation',
                             'url': 'https://example.com/source',
                             'title': 'Source',
-                            'start_index': 0,
-                            'end_index': 10,
+                            'start_index': 32,
+                            'end_index': 75,
                         }
                     ],
                 }
