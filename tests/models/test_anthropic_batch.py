@@ -269,9 +269,14 @@ class _FakeBatchAPI:
     )
     raw_creates: list[bytes] = field(default_factory=list[bytes])
     sent: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    create_status: int = 200
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
         path = request.url.path
+        if path == '/v1/messages/batches' and self.create_status != 200:
+            self.raw_creates.append(request.read())
+            error = {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'Overloaded'}}
+            return httpx2.Response(self.create_status, json=error)
         if path == '/v1/messages':
             self.sent.append(json.loads(request.read()))
             return httpx2.Response(200, json=self.message)
@@ -592,3 +597,12 @@ async def test_a_model_without_a_byte_limit_counts_a_request_as_its_id_and_body(
     assert model.batch_max_bytes is None
     encoded = EncodedBatchRequest(custom_id='ïd', group='group', body='{"a":"ü"}')
     assert model.batch_request_size(encoded) == len('ïd'.encode()) + len('{"a":"ü"}'.encode())
+
+
+async def test_anthropic_batch_create_errors_are_categorized_and_not_retried(allow_model_requests: None) -> None:
+    """A failed submission raises its category, and isn't retried: Anthropic may have created the batch anyway."""
+    api = _FakeBatchAPI(create_status=529)
+    model = _fake_model(api)
+    with pytest.raises(ModelOverloadedError):
+        await model.batch_create([await model.batch_encode(_request())])
+    assert len(api.raw_creates) == 1

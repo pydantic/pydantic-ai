@@ -300,6 +300,7 @@ class _FakeBatchAPI:
     files: dict[str, str] = field(default_factory=dict[str, str])
     requests: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
     delete_status: int = 200
+    create_error: tuple[int, dict[str, Any]] | None = None
     response_bodies: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
@@ -309,6 +310,9 @@ class _FakeBatchAPI:
             if self.delete_status != 200:
                 return httpx2.Response(self.delete_status, json={'error': {'message': 'Nope', 'type': 'server_error'}})
             return httpx2.Response(200, json={'id': path.split('/')[2], 'object': 'file', 'deleted': True})
+        if request.method == 'POST' and path == '/batches' and self.create_error is not None:
+            status_code, body = self.create_error
+            return httpx2.Response(status_code, json=body)
         if request.method == 'POST' and path == '/responses':
             # A request sent on its own, outside a batch.
             self.response_bodies.append(json.loads(request.read()))
@@ -887,3 +891,25 @@ async def test_batch_usage_has_cached_and_reasoning_tokens(allow_model_requests:
         standard_price.output_mtok,
     )
     assert response.cost().total_price < standard.cost().total_price
+
+
+@pytest.mark.parametrize(
+    'status_code,body,error_class',
+    [
+        (
+            429,
+            {'error': {'message': 'Too many batches.', 'type': 'requests', 'code': 'rate_limit_exceeded'}},
+            ModelRateLimitError,
+        ),
+        (500, {'error': {'message': 'The server had an error.', 'type': 'server_error'}}, ModelServerError),
+    ],
+)
+async def test_batch_create_errors_are_categorized_and_not_retried(
+    allow_model_requests: None, status_code: int, body: dict[str, Any], error_class: type[ModelAPIError]
+) -> None:
+    """A failed submission raises its category, and isn't retried: OpenAI may have created the batch anyway."""
+    api = _FakeBatchAPI(batch=_batch_json('validating'), create_error=(status_code, body))
+    model = _fake_model(api)
+    with pytest.raises(error_class):
+        await model.batch_create([await model.batch_encode(_request())])
+    assert api.requests.count(('POST', '/batches')) == 1

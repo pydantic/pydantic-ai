@@ -595,3 +595,22 @@ async def test_model_request_batch_keeps_other_jobs_results_when_one_fails(
     assert isinstance(first, ModelResponse) and first.text == 'Hi!'
     assert isinstance(second, ModelHTTPError)
     assert second.status_code == 429
+
+
+@pytest.mark.parametrize('state', ['JOB_STATE_FAILED', 'JOB_STATE_CANCELLED', 'JOB_STATE_EXPIRED'])
+async def test_gemini_job_that_ended_early_returns_the_rows_it_wrote(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, state: str
+) -> None:
+    """A job that failed, was canceled or expired after writing results keeps them; its other requests have no row."""
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    deleted = _fake_jobs(
+        monkeypatch,
+        model,
+        {'state': state, 'dest': {'file_name': 'files/out'}},
+        [{'key': 'ran', 'response': _OK_RESPONSE}],
+    )
+    requests = [_request('ran'), _request('unrun')]
+    batch = await model.batch_status(await model.batch_create([await model.batch_encode(r) for r in requests]))
+    [result] = await model.batch_results(batch)
+    assert (result.custom_id, result.status) == ('ran', 'succeeded')
+    assert deleted == ['files/input']
