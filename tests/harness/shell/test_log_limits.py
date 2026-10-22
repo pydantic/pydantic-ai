@@ -67,6 +67,30 @@ class _ReadsHeldUntilWritten(LocalWorkspaceBackend):
         return result
 
 
+class _ClearedOnEveryRead(LocalWorkspaceBackend):
+    """Reports a new `max_log_bytes` clear of every job's log each time a log is read."""
+
+    def __init__(self, working_dir: Path) -> None:
+        super().__init__(working_dir)
+        self.jobs = working_dir / '.pydantic-ai-harness' / 'shell'
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        assert isinstance(command, str)
+        result = await super().run(command, shell=shell, env=env, timeout=timeout)
+        if 'tail -c +' in command:
+            for job in self.jobs.iterdir():
+                with (job / 'log_clears').open('ab') as clears:
+                    clears.write(b'x')
+        return result
+
+
 class TestShellLogLimits:
     @pytest.mark.parametrize('limit', [0, -1, True, sys.maxsize + 1])
     def test_invalid(self, limit: int) -> None:
@@ -114,6 +138,20 @@ class TestShellLogLimits:
         )
         assert '"exit_code": 0' in output
         assert recorder.output.endswith(f'{NOTICE}\n{"0" * 1800}\nafter\n')
+        assert recorder.finished.truncated
+        assert recorder.finished.total_lines is None
+
+    async def test_events_end_while_clears_keep_coming(self, tmp_path: Path) -> None:
+        # Each restart after a clear reads the log again, so the events' byte budget still bounds the reads.
+        recorder = Recorder()
+        with anyio.fail_after(10):
+            output = await call_tool(
+                [Shell[None](denied_commands=[], tools=['shell']), recorder],
+                'shell',
+                {'command': "printf '%04000d\\n' 0", 'timeout': 30},
+                workspace=_ClearedOnEveryRead(tmp_path),
+            )
+        assert '"exit_code": 0' in output
         assert recorder.finished.truncated
         assert recorder.finished.total_lines is None
 

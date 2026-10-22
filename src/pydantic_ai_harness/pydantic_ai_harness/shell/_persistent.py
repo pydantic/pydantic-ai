@@ -81,21 +81,26 @@ class _CommandOutput(Generic[AgentDepsT]):
     async def _clears(self) -> int:
         return await self.job.size(self.job.clears_path) if self.log_limited else 0
 
-    async def emit(self) -> bool:
-        if self.ctx is None or self.emitted >= _OUTPUT_TAIL_BYTES:
-            return False
-        chunk = await self.job.read(
+    async def _read(self) -> bytes:
+        return await self.job.read(
             self.job.output_path, self.offset, min(_EVENT_CHUNK_BYTES, _OUTPUT_TAIL_BYTES - self.emitted)
         )
+
+    async def emit(self) -> bool:
+        """Emit the next chunk of the log, returning whether there was one."""
+        if self.ctx is None or self.emitted >= _OUTPUT_TAIL_BYTES:
+            return False
+        chunk = await self._read()
         # Checked after the read: a chunk read from a log emptied since the last read may come from
-        # the output that followed, at the wrong position, so it is dropped and the log read from its start.
+        # the output that followed, at the wrong position, so it is dropped and the log read again from
+        # its start, in this call so that every chunk emitted counts against `_OUTPUT_TAIL_BYTES`.
         # The count goes up only after the log is emptied, so a read between the two can repeat a few bytes
         # once; counting first instead could restart before the clear and then miss it.
         if (clears := await self._clears()) != self.clears:
             self.clears = clears
             self.offset = 0
             self.decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
-            return True
+            chunk = await self._read()
         self.offset += len(chunk)
         self.emitted += len(chunk)
         if chunk:
