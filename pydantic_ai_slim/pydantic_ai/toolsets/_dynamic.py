@@ -130,11 +130,15 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         return await self._toolset.get_instructions(ctx)
 
     def _instruction_children(self) -> Sequence[AbstractToolset[AgentDepsT]]:
-        # With an `id`, this toolset speaks for the one its function builds, and keys what it says by that
-        # id. Without one there's nothing to key it by here, so the built toolset's instructions keep the
-        # keys it gives them, such as an `MCPToolset`'s server host, the way a wrapper passes its
-        # wrapped toolset's along.
-        return (self._toolset,) if self.id is None and self._toolset is not None else ()
+        # This toolset speaks for the one its function builds: with an `id`, what that toolset says is
+        # keyed by it, and without one it goes out unkeyed. The exception is a built toolset whose
+        # instructions append by the framework's choice, such as an `MCPToolset`'s server instructions:
+        # unkeyed, they'd be downgraded with a warning on every request, so an id-less dynamic toolset
+        # passes that one's own key along instead.
+        toolset = self._toolset
+        if self.id is None and toolset is not None and toolset._framework_appended_instruction_ids():
+            return (toolset,)
+        return ()
 
     def _authors_own_instructions(self) -> bool:
         return not self._instruction_children() or type(self).get_instructions is not DynamicToolset.get_instructions

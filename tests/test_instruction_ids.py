@@ -489,6 +489,24 @@ async def test_a_wrapper_cannot_write_under_a_key_it_wraps(
     assert await run_and_capture(agent) == expected
 
 
+async def test_id_less_dynamic_toolsets_leave_their_toolsets_instructions_unkeyed():
+    """An id-less `DynamicToolset` doesn't pass on the key of a toolset it builds, so two whose toolsets share an `id` don't collide.
+
+    Only server instructions an `MCPToolset` appends by the framework's choice keep their own key through one.
+    """
+    agent = Agent(
+        toolsets=[
+            DynamicToolset[Any](lambda _ctx: InstructionsToolset('First.', id='same')),
+            DynamicToolset[Any](lambda _ctx: InstructionsToolset('Second.', id='same')),
+        ]
+    )
+
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='First.', dynamic=True),
+        InstructionPart(content='Second.', dynamic=True),
+    ]
+
+
 async def test_a_dynamic_toolset_owns_what_the_toolset_it_builds_says():
     """A `DynamicToolset` speaks for the toolset its function builds, however that toolset is composed.
 
