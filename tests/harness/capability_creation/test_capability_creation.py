@@ -288,10 +288,39 @@ class WithNativeTools(AbstractCapability):
         with pytest.raises(CapabilityValidationError, match='get_toolset\\(\\) returned int'):
             validate_capability_file(_write(tmp_path, 'm', BAD_TOOLSET_RETURN_CODE))
 
-    def test_system_exit_wrapped(self, tmp_path: Path) -> None:
-        # Authored code that exits must fail validation, not end the host process.
-        with pytest.raises(CapabilityValidationError, match='SystemExit'):
-            validate_capability_file(_write(tmp_path, 'm', 'raise SystemExit(0)\n'))
+    @pytest.mark.parametrize(
+        ('code', 'expected'),
+        [
+            ('raise SystemExit(0)\n', 'SystemExit'),
+            ('class Boom(BaseException):\n    pass\n\nraise Boom()\n', 'Boom'),
+        ],
+        ids=['system-exit', 'base-exception'],
+    )
+    def test_base_exception_wrapped(self, tmp_path: Path, code: str, expected: str) -> None:
+        # Authored code that exits or raises a `BaseException` must fail validation, not end the host process.
+        with pytest.raises(CapabilityValidationError, match=expected):
+            validate_capability_file(_write(tmp_path, 'm', code))
+
+    def test_keyboard_interrupt_propagates(self, tmp_path: Path) -> None:
+        with pytest.raises(KeyboardInterrupt):
+            validate_capability_file(_write(tmp_path, 'm', 'raise KeyboardInterrupt\n'))
+
+    @pytest.mark.parametrize(
+        'getter',
+        [
+            'def get_toolset(self):\n        return lambda ctx: None\n',
+            "def get_instructions(self):\n        return [lambda ctx: 'dynamic', InstructionPart(content='part')]\n",
+        ],
+        ids=['toolset-function', 'callable-and-part-instructions'],
+    )
+    def test_accepted_getter_shapes(self, tmp_path: Path, getter: str) -> None:
+        code = (
+            'from pydantic_ai.capabilities import AbstractCapability\n'
+            'from pydantic_ai.messages import InstructionPart\n\n'
+            'class Accepted(AbstractCapability):\n'
+            f'    {getter}'
+        )
+        assert validate_capability_file(_write(tmp_path, 'm', code)) == 'Accepted'
 
     def test_future_annotations_dataclass_field(self, tmp_path: Path) -> None:
         # `dataclasses` resolves string annotations through `sys.modules`, so the authored module must be
