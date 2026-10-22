@@ -5,7 +5,7 @@ import warnings
 from collections.abc import AsyncGenerator, Awaitable, Sequence
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self, TypeVar
@@ -42,10 +42,12 @@ _T = TypeVar('_T')
 class _Borrowed:
     """A model whose lifecycle its owner manages, which a wrapper being entered or exited around a request leaves alone.
 
-    Only while `active`: a task the wrapper starts meanwhile copies the context, and must enter the model as usual.
+    Only in the task entering or exiting the wrapper, and only while it is: a task the wrapper starts copies the
+    context, and must enter and exit the model as usual.
     """
 
     model: Model
+    task_id: int = field(default_factory=lambda: anyio.get_current_task().id)
     active: bool = True
 
 
@@ -53,7 +55,12 @@ _borrowed: ContextVar[_Borrowed | None] = ContextVar('_borrowed', default=None)
 
 
 def _is_borrowed(model: Model) -> bool:
-    return (borrowed := _borrowed.get()) is not None and borrowed.active and borrowed.model is model
+    return (
+        (borrowed := _borrowed.get()) is not None
+        and borrowed.active
+        and borrowed.model is model
+        and borrowed.task_id == anyio.get_current_task().id
+    )
 
 
 async def _leaving_borrowed_alone(borrowed: Model, call: Awaitable[_T]) -> _T:

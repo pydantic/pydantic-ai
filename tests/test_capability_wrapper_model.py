@@ -396,3 +396,44 @@ async def test_a_suspended_stream_cancelled_while_consumed_is_cancelled_through_
         tg.cancel_scope.cancel()
     assert ('cancel', True) in events
     assert len(model.cancelled) == 1
+
+
+class _SpawningOnEnterModel(_ScopedModel):
+    """Starts a task while being entered, which uses the model it wraps before and after the entry finishes."""
+
+    def __init__(self, wrapped: Model, events: list[object]) -> None:
+        super().__init__(wrapped, events)
+        self.inside = asyncio.Event()
+        self.leave = asyncio.Event()
+
+    async def __aenter__(self) -> Self:
+        self.task = asyncio.create_task(self._use())
+        await self.inside.wait()
+        return await super().__aenter__()
+
+    async def _use(self) -> None:
+        async with WrapperModel(self.wrapped):
+            self.inside.set()
+            await self.leave.wait()
+
+
+@dataclass
+class _ScopedSpawningOnEnter(AbstractCapability[Any]):
+    events: list[object]
+    wrappers: list[_SpawningOnEnterModel]
+
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        wrapper = _SpawningOnEnterModel(model, self.events)
+        self.wrappers.append(wrapper)
+        return wrapper
+
+
+async def test_a_task_started_while_the_wrapper_is_entered_enters_the_wrapped_model_as_usual() -> None:
+    events: list[object] = []
+    wrappers: list[_SpawningOnEnterModel] = []
+    agent = Agent(_RecordingLifecycle(events), capabilities=[_ScopedSpawningOnEnter(events, wrappers)])
+    await agent.run('Hello')
+    [wrapper] = wrappers
+    wrapper.leave.set()
+    await wrapper.task
+    assert events == ['base enter', 'enter', ('request', True), 'exit', 'base exit']
