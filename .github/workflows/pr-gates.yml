@@ -59,6 +59,8 @@ jobs:
           EVENT_ACTION: ${{ github.event.action }}
           BEFORE_SHA: ${{ github.event.before }}
           AFTER_SHA: ${{ github.event.after }}
+          # Set only when an `edited` event changed the base branch.
+          BASE_FROM: ${{ github.event.changes.base.ref.from }}
         run: python3 .github/scripts/pr_gates.py protected-paths
 
   compatibility-waiver:

@@ -126,11 +126,13 @@ def _scoped(paths: Iterable[str]) -> dict[str, list[str]]:
     return by_scope
 
 
-def protected_paths(github: GitHub, *, pushed: tuple[str, str] | None = None, reopened: bool = False) -> Verdict:
+def protected_paths(github: GitHub, *, pushed: tuple[str, str] | None = None, unlisted_change: bool = False) -> Verdict:
     """Require an `approved:<scope>` label, applied by a maintainer, for every protected scope touched.
 
     `pushed` is the `(before, after)` pair of a `synchronize` event. A push that changes the
     PR's files in a scope voids that scope's approval, so its label is removed before the verdict.
+    `unlisted_change` marks an event that changes the PR without a push to list, which voids
+    every approval the PR depends on.
     """
     verdict = Verdict()
     pr_paths = _paths(github.changed_files())
@@ -140,9 +142,7 @@ def protected_paths(github: GitHub, *, pushed: tuple[str, str] | None = None, re
         return verdict
 
     labels = github.labels()
-    if pushed is not None or reopened:
-        # A closed PR's branch takes pushes that fire no `synchronize`, so reopening it is treated
-        # like a push whose changes can't be listed: it voids every approval the PR depends on.
+    if pushed is not None or unlisted_change:
         delta = None if pushed is None else github.changed_files_between(*pushed)
         # Only the PR's own files count: a merge of `main` brings in protected changes the PR doesn't make.
         voided = set(touched) if delta is None else set(_scoped(_paths(delta) & pr_paths))
@@ -298,7 +298,10 @@ def run(gate: str, github: GitHub, env: Mapping[str, str]) -> int:
         if gate == 'protected-paths':
             action = env.get('EVENT_ACTION')
             pushed = (env['BEFORE_SHA'], env['AFTER_SHA']) if action == 'synchronize' else None
-            verdict = protected_paths(github, pushed=pushed, reopened=action == 'reopened')
+            # A closed PR's branch takes pushes that fire no `synchronize`, and a new base branch
+            # changes the diff without a push.
+            unlisted_change = action == 'reopened' or (action == 'edited' and bool(env.get('BASE_FROM')))
+            verdict = protected_paths(github, pushed=pushed, unlisted_change=unlisted_change)
         else:
             verdict = compatibility_waiver(github, base_sha=env['BASE_SHA'], head_sha=env['HEAD_SHA'])
     except (GateError, ValidationError) as error:

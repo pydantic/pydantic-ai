@@ -216,16 +216,32 @@ def test_a_push_that_cannot_be_listed_voids_every_approval_the_pr_needs():
     assert github.removed == ['approved:ci-config', 'approved:dependencies']
 
 
-def test_reopening_voids_every_approval_the_pr_needs():
+@pytest.mark.parametrize(
+    'event',
+    [
+        pytest.param({'EVENT_ACTION': 'reopened'}, id='reopened'),
+        pytest.param({'EVENT_ACTION': 'edited', 'BASE_FROM': 'v1'}, id='base-changed'),
+    ],
+)
+def test_a_change_no_push_lists_voids_every_approval_the_pr_needs(event: dict[str, str]):
     github = FakeGitHub(
         files=['uv.lock'],
         current_labels={'approved:dependencies', 'approved:ci-config'},
         events=[_labeled('approved:dependencies'), _labeled('approved:ci-config')],
     )
 
-    assert run('protected-paths', github, {'EVENT_ACTION': 'reopened'}) == 1
+    assert run('protected-paths', github, event) == 1
     # The PR touches no CI config, so that approval is not the PR's to void.
     assert github.removed == ['approved:dependencies']
+
+
+def test_editing_the_title_or_body_keeps_the_labels():
+    github = FakeGitHub(
+        files=['uv.lock'], current_labels={'approved:dependencies'}, events=[_labeled('approved:dependencies')]
+    )
+
+    assert run('protected-paths', github, {'EVENT_ACTION': 'edited', 'BASE_FROM': ''}) == 0
+    assert github.removed == []
 
 
 def test_a_merge_of_main_that_changes_protected_files_the_pr_does_not_keeps_the_labels():
