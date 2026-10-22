@@ -60,7 +60,7 @@ if TYPE_CHECKING:
 # Token estimation
 # ---------------------------------------------------------------------------
 
-_CHARS_PER_TOKEN = 4
+CHARS_PER_TOKEN = 4
 """Rough approximation: ~4 characters per token on average."""
 
 _COMPACTION_RECLAIM: ContextVar[tuple[str | None, int, int] | None] = ContextVar(
@@ -246,14 +246,14 @@ def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = Non
     """
     if tokenizer is not None:
         return tokenizer(text)
-    return len(text) // _CHARS_PER_TOKEN
+    return len(text) // CHARS_PER_TOKEN
 
 
 def _count_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
     """Token count of text segments: per segment with *tokenizer*, otherwise the heuristic over their total."""
     if tokenizer is not None:
         return sum(tokenizer(s) for s in segments)
-    return sum(len(s) for s in segments) // _CHARS_PER_TOKEN
+    return sum(len(s) for s in segments) // CHARS_PER_TOKEN
 
 
 def estimate_token_count(
@@ -371,7 +371,7 @@ def estimate_message_tokens(
 def _estimate_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
     if tokenizer is not None:
         return sum(tokenizer(s) for s in segments)
-    return sum(len(s) for s in segments) // _CHARS_PER_TOKEN
+    return sum(len(s) for s in segments) // CHARS_PER_TOKEN
 
 
 def _reported_input_tokens(message: ModelMessage) -> int:
@@ -943,7 +943,7 @@ CLEARED_TOOL_RESULT_METADATA = 'pydantic-ai-harness.compaction.cleared-tool-resu
 """Model-invisible `ToolReturnPart.metadata` key marking a result compaction has cleared."""
 
 
-def _cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | None:
+def cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | None:
     """*part* with its content replaced by *placeholder*, or `None` if it can't be cleared.
 
     A plain `ToolReturnPart` can always be cleared. Of the typed subclasses, only `FileSystem`'s
@@ -976,7 +976,7 @@ def is_cleared_return(part: ToolReturnPart, placeholder: str) -> bool:
     """Whether a compaction using *placeholder* cleared *part*.
 
     The content must be *placeholder*, so another strategy's clears, which use their own placeholder,
-    don't count. A typed result must also carry the mark `_cleared_return` leaves in its metadata, as
+    don't count. A typed result must also carry the mark `cleared_return` leaves in its metadata, as
     its content is the tool's output and may equal the placeholder by coincidence. A plain
     `ToolReturnPart` counts without the mark: histories cleared before the mark existed only ever
     cleared plain parts.
@@ -1007,7 +1007,7 @@ def rebuild_with_cleared(
             changed = False
             for part in msg.parts:
                 cleared = (
-                    _cleared_return(part, placeholder)
+                    cleared_return(part, placeholder)
                     if isinstance(part, ToolReturnPart)
                     and part.tool_call_id in clear_return_ids
                     and str(part.content) != placeholder

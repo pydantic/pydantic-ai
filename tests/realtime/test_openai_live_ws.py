@@ -230,62 +230,76 @@ async def test_thinking_sets_the_backends_reasoning_effort(
     assert session.usage.details == {'reasoning_tokens': 0}
 
 
-async def test_text_reaches_the_model_as_context(
-    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+async def test_typed_question_runs_the_agents_tool(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
 ) -> None:
-    """`send(text)` steers a Live session even though Live has no user-message event.
+    """`send(text)` is a user turn: the backend is run on it, calls the agent's tool, and Live speaks the answer.
 
-    Text is injected as speakable context, and lands on the session's audio timeline, so it only
-    takes effect while audio is flowing — hence the silence on both sides of it. Nobody speaks here:
-    the reply is entirely the result of the injected text.
+    Live has no user-message event, so the text goes to the backend as the user's message, with `response.create`
+    to run it, and the wait for its reply ends once Live has spoken the answer, not at what it says while the
+    backend works.
     """
     provider, cassette = openai_live_ws_cassette
-    # Relaying injected context takes the model a beat longer than answering, and a turn boundary
-    # inferred from silence will cut in if it is too eager — the tradeoff the setting exists for.
     model = OpenAILiveModel(
-        'gpt-live-1', provider=provider, settings=OpenAILiveModelSettings(openai_live_turn_silence_ms=2500)
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(openai_live_idle_audio=True, openai_live_turn_silence_ms=2500),
     )
-    agent = Agent(_BACKEND, instructions='Relay what you are told, in one short sentence.')
+    agent = Agent(
+        _BACKEND, instructions='Always use the `get_weather` tool for weather questions. Answer in one sentence.'
+    )
 
-    async def silence(frames: int) -> None:
-        for _ in range(frames):
-            await session.send_audio(b'\x00' * 4800)
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        """Look up the current weather for a city."""
+        return f'It is foggy and 12 degrees Celsius in {city}.'
 
     async with agent.realtime(model).session() as session:
-        await silence(20)
-        await session.send('Tell the user their package arrives on Friday.')
-        # Enough for the relayed sentence, which needs no delegated round-trip first.
-        await silence(120)
+        await session.send('What is the weather in London?')
         with anyio.fail_after(60):
-            async for event in session:  # pragma: no branch
-                if isinstance(event, RealtimeTurnCompleteEvent):
-                    break
+            await session.wait_for_reply()
+        if realtime_recording:  # pragma: no cover
+            # Replay's clock moves with the recorded frames: keep the ones that carry it past the turn's end.
+            await anyio.sleep(0.5)
+        messages = session.all_messages()
 
-    spoken = ' '.join(
-        part.transcript or ''
-        for message in session.all_messages()
-        if isinstance(message, ModelResponse)
-        for part in message.parts
-        if isinstance(part, SpeechPart)
+    assert [
+        [
+            f'{part.part_kind}: {part.content}'
+            if isinstance(part, UserPromptPart)
+            else f'{part.part_kind}: {part.tool_name} {part.args}'
+            if isinstance(part, ToolCallPart)
+            else f'{part.part_kind}: {part.content}'
+            if isinstance(part, ToolReturnPart)
+            else f'{part.part_kind}: {part.transcript}'
+            if isinstance(part, SpeechPart)
+            else part.part_kind
+            for part in message.parts
+        ]
+        for message in messages
+    ] == snapshot(
+        [
+            ['user-prompt: What is the weather in London?'],
+            ['speech:  Let me check the', 'tool-call: get_weather {"city":"London"}', 'speech:  current weather in'],
+            ['tool-return: It is foggy and 12 degrees Celsius in London.'],
+            ['speech:  London. It\u2019s foggy and 12 degrees Celsius.'],
+        ]
     )
-    assert 'Friday' in spoken
-    # Closing asked Live to end the session, and the seconds it billed came back with `session.closed`.
+    # Closing asked Live to end the session, which it confirmed.
     assert [
         interaction.data['type']
         for interaction in cassette.interactions
         if isinstance(interaction, CassetteMessage) and interaction.data.get('type', '').startswith('session.clos')
     ] == ['session.close', 'session.closed']
-    assert session.usage.audio_seconds > 0
 
 
-async def test_a_text_only_session_streams_its_own_silence(
-    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+async def test_typed_small_talk_is_answered_in_one_reply(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
 ) -> None:
-    """With `openai_live_idle_audio`, text reaches the model with no microphone at all.
+    """Text that needs no tool runs the backend too, and Live speaks its answer as the one reply to the text.
 
-    Live's timeline only advances while audio arrives. The connection streams silence in the
-    microphone's place, so the text lands and the model speaks, just as it does with the silence the
-    test above streams by hand.
+    With `openai_live_idle_audio`, there is no microphone at all: the connection streams silence in its place, which
+    Live's timeline needs to advance for the model to speak.
     """
     provider, _ = openai_live_ws_cassette
     model = OpenAILiveModel(
@@ -293,23 +307,28 @@ async def test_a_text_only_session_streams_its_own_silence(
         provider=provider,
         settings=OpenAILiveModelSettings(openai_live_idle_audio=True, openai_live_turn_silence_ms=2500),
     )
-    agent = Agent(_BACKEND, instructions='Relay what you are told, in one short sentence.')
+    agent = Agent(_BACKEND, instructions='Keep replies short.')
 
     async with agent.realtime(model).session() as session:
-        await session.send('Tell the user their package arrives on Friday.')
+        await session.send("Thanks, that's all I needed. Have a nice day!")
         with anyio.fail_after(60):
-            async for event in session:  # pragma: no branch
-                if isinstance(event, RealtimeTurnCompleteEvent):
-                    break
+            await session.wait_for_reply()
+        if realtime_recording:  # pragma: no cover
+            # Replay's clock moves with the recorded frames: keep the ones that carry it past the turn's end.
+            await anyio.sleep(0.5)
+        messages = session.all_messages()
 
-    spoken = ' '.join(
-        part.transcript or ''
-        for message in session.all_messages()
-        if isinstance(message, ModelResponse)
-        for part in message.parts
-        if isinstance(part, SpeechPart)
+    assert [
+        [part.content for part in message.parts if isinstance(part, UserPromptPart)]
+        if isinstance(message, ModelRequest)
+        else [part.transcript for part in message.parts if isinstance(part, SpeechPart)]
+        for message in messages
+    ] == snapshot(
+        [
+            ["Thanks, that's all I needed. Have a nice day!"],
+            [" Oh, okay, let me just, check on that. You're welcome! Have a great day!"],
+        ]
     )
-    assert 'Friday' in spoken
 
 
 async def test_history_seeding(
@@ -882,11 +901,11 @@ async def test_a_session_that_is_not_stored_reconnects_by_replaying_its_history(
 async def test_text_sent_mid_reply_is_answered_by_that_reply(
     openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
 ) -> None:
-    """Live speaks to text placed on its timeline mid-reply in that same reply, not in one of its own.
+    """Live speaks to text sent mid-reply in that same reply, not in one of its own.
 
-    Live acknowledges the text (`session.commentary.appended`), and the reply under way goes on to answer it:
-    that reply settles the text's reply obligation, so the wait for it ends with that reply instead of waiting
-    for another that never comes.
+    Live opens a delegation for the text (`session.delegation.created`, under the `response.create`'s id), and the
+    reply under way goes on to answer it: that reply settles the text's reply obligation, so the wait for it ends
+    with that reply instead of waiting for another that never comes.
     """
     provider, _ = openai_live_ws_cassette
     model = OpenAILiveModel(
@@ -924,7 +943,7 @@ async def test_text_sent_mid_reply_is_answered_by_that_reply(
         [
             ['Tell me a three-sentence story about a cat.'],
             [
-                " Once, a cat chased a bouncing beam of sunlight across a kitchen floor. Actually, what is two plus two? It's four."
+                ' Sure, I can give you a three sentence cat story. Milo the cat found a tiny golden key beneath the moonlit porch. It opened a secret garden filled with singing flowers. By dawn, Milo was home again, with one silver petal tucked behind his ear. 2 plus 2 is 4.'
             ],
             ['Actually, what is 2 plus 2?'],
         ]
