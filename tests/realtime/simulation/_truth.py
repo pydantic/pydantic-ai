@@ -101,6 +101,8 @@ class ToolCallTruth:
     cancelled_by_server: bool = False
     read: bool = False
     """Whether the client read the call (a cancelled response's calls can be dropped as stragglers)."""
+    read_seq: int | None = None
+    """When the client read it (the Gemini simulator records it, for the accepted in-flight finding)."""
 
 
 @dataclass
@@ -164,8 +166,6 @@ class GroundTruth:
     """Those whose `input_audio_buffer.cleared` the client read."""
     speech_stopped_uncommitted: set[str] = field(default_factory=set[str])
     """Spoken user turns server VAD heard stop without committing them (the user went on, as one turn)."""
-    speech_reopened: set[str] = field(default_factory=set[str])
-    """xAI: spoken user turns its VAD heard stop, then start again under the same item before it committed them."""
     transcripts_read: dict[str, int] = field(default_factory=dict[str, int])
     """When the client read each spoken user turn's completed transcript."""
     models_every_spoken_turn: bool = False

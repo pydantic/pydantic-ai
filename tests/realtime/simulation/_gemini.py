@@ -437,7 +437,9 @@ class GeminiServer:
         if (word := tags.get('word')) is not None:
             self.truth.word_read.setdefault(word, now)
         for call_id in tags.get('calls', ()):
-            self.truth.tool_calls[call_id].read = True
+            call = self.truth.tool_calls[call_id]
+            call.read = True
+            call.read_seq = now
         for key, tokens in tags.get('usage', {}).items():
             self.truth.usage_read.setdefault(key, tokens)
 

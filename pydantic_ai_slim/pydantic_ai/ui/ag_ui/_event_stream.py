@@ -26,7 +26,6 @@ from ...messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolResultEvent,
-    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -500,11 +499,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             # it by overriding `to_payload`.
             yield AGUICustomEvent(name=event.name, value=payload)
 
-    async def _handle_tool_result(self, result: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseEvent]:
-        if isinstance(result, RetryPromptPart):
-            output = result.model_response()
-        else:
-            output = _tool_return_content(result)
+    async def _handle_tool_result(self, result: ToolReturnPart) -> AsyncIterator[BaseEvent]:
+        output = _tool_return_content(result)
 
         # Regular tool results arrive after `ToolCallEvent` moved the stream to the request turn.
         # The next model response starts with `PartStartEvent`, whose request-to-response transition
@@ -521,31 +517,30 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
         # ToolCallResultEvent.content may hold user parts (e.g. text, images) that AG-UI does not currently have events for
 
-        if isinstance(result, ToolReturnPart):
-            async for event in self._handle_tool_return_outcome(result, message_id):
-                yield event
+        async for event in self._handle_tool_return_outcome(result, message_id):
+            yield event
 
-            if (
-                parse_ag_ui_version(self.ag_ui_version) >= ACTIVITY_EVENTS_VERSION
-                and (app := get_mcp_app_tool_result(result.metadata)) is not None
-            ):
-                from ag_ui.core import ActivitySnapshotEvent
+        if (
+            parse_ag_ui_version(self.ag_ui_version) >= ACTIVITY_EVENTS_VERSION
+            and (app := get_mcp_app_tool_result(result.metadata)) is not None
+        ):
+            from ag_ui.core import ActivitySnapshotEvent
 
-                yield ActivitySnapshotEvent(
-                    message_id=str(uuid4()), activity_type=MCP_APPS_UI_TYPE, content=mcp_app_ui_payload(app)
-                )
+            yield ActivitySnapshotEvent(
+                message_id=str(uuid4()), activity_type=MCP_APPS_UI_TYPE, content=mcp_app_ui_payload(app)
+            )
 
-            # Check for AG-UI events returned by tool calls.
-            possible_event = result.metadata or result.content
-            if isinstance(possible_event, BaseEvent):
-                yield possible_event
-            elif isinstance(possible_event, str | bytes):  # pragma: no branch
-                # Avoid iterable check for strings and bytes.
-                pass
-            elif isinstance(possible_event, Iterable):  # pragma: no branch
-                for item in possible_event:  # type: ignore[reportUnknownMemberType]
-                    if isinstance(item, BaseEvent):  # pragma: no branch
-                        yield item
+        # Check for AG-UI events returned by tool calls.
+        possible_event = result.metadata or result.content
+        if isinstance(possible_event, BaseEvent):
+            yield possible_event
+        elif isinstance(possible_event, str | bytes):  # pragma: no branch
+            # Avoid iterable check for strings and bytes.
+            pass
+        elif isinstance(possible_event, Iterable):  # pragma: no branch
+            for item in possible_event:  # type: ignore[reportUnknownMemberType]
+                if isinstance(item, BaseEvent):  # pragma: no branch
+                    yield item
 
     async def _handle_tool_return_outcome(
         self, part: NativeToolReturnPart | ToolReturnPart, message_id: str
@@ -556,7 +551,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # A non-success outcome carries the return's `tool_kind` with it, as `dump_messages` does; a
         # successful return needs no event, as loading falls back to the call's claim.
         tool_kind = part.tool_kind if part.outcome != 'success' else None
-        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(tool_kind, part.outcome)):
+        retry = part.retry if isinstance(part, ToolReturnPart) else None
+        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(tool_kind, part.outcome, retry)):
             from ag_ui.core import ReasoningEncryptedValueEvent
 
             yield ReasoningEncryptedValueEvent(subtype='message', entity_id=message_id, encrypted_value=encrypted_value)

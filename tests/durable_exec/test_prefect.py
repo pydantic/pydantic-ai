@@ -48,7 +48,6 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
     RunContext,
     RunTimedOut,
     TextPart,
@@ -70,6 +69,7 @@ from pydantic_ai.capabilities import (
     Instrumentation,
     ProcessEventStream,
     ResolveModelId,
+    SelectModel,
     Toolset,
     durable_operation,
 )
@@ -103,7 +103,13 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, ModelResolutionContext
+from pydantic_ai.models import (
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    ModelResolutionContext,
+    ModelSelectionContext,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -174,7 +180,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsSameStr, IsStr
+from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
 from ..realtime_connections import InferredConnection
@@ -687,7 +693,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -766,7 +772,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -786,7 +792,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -946,7 +952,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"final_result","content":"Final result processed\.","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","part_kind":"tool-return"\},"event_kind":"output_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"final_result","content":"Final result processed\.","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"event_kind":"output_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -1161,7 +1167,7 @@ async def test_capability_contributed_toolset_id_from_capability():
         toolset.apply(leaves.append)
     # The contributed MCP leaf carries the URL-derived id, so its durable Prefect wrapper is built
     # under a stable id; the `billing` function toolset carries the capability id.
-    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com-api' for ts in leaves)
+    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com' for ts in leaves)
     assert any(isinstance(ts, FunctionToolset) and ts.id == 'billing' for ts in leaves)
 
 
@@ -2118,7 +2124,7 @@ def test_cache_policy_normalizes_only_framework_tool_call_ids():
     mock_task_ctx = MagicMock()
 
     def key_for(tool_call_id: str) -> str | None:
-        part = RetryPromptPart(content='retry', tool_name='tool', tool_call_id=tool_call_id)
+        part = legacy_retry_prompt_part(content='retry', tool_name='tool', tool_call_id=tool_call_id)
         return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'messages': [part]}, flow_parameters={})
 
     assert key_for('pyd_ai_first') == key_for('pyd_ai_second')
@@ -2718,6 +2724,45 @@ async def test_flow_retry_keeps_run_deadline() -> None:
     first, retried = deadlines
     assert first is not None
     assert retried == first
+
+
+async def test_flow_retry_selector_sees_run_ids_and_deadline() -> None:
+    """A model selector sees the run's flow-derived IDs and deadline on every step, and again on a flow retry."""
+    selections: list[tuple[int, str | None, str | None, datetime | None]] = []
+
+    def select(ctx: ModelSelectionContext[object]) -> Model:
+        selections.append((ctx.run_step, ctx.run_id, ctx.conversation_id, ctx.deadline))
+        assert ctx.model is not None
+        return ctx.model
+
+    agent = Agent(
+        TestModel(),
+        name='retry_selector_agent',
+        capabilities=[SelectModel(select), PrefectDurability[object]()],
+    )
+
+    @agent.tool_plain
+    def advance() -> str:
+        return 'advanced'
+
+    attempts: list[tuple[str, str, str]] = []
+
+    @flow(retries=1)
+    async def flaky() -> str:
+        context = FlowRunContext.get()
+        assert context is not None and context.flow_run is not None
+        result = await agent.run('go', timeout=3600)
+        attempts.append((str(context.flow_run.id), result.run_id, result.conversation_id))
+        if len(attempts) == 1:
+            raise RuntimeError('boom')
+        return result.output
+
+    await flaky()
+    [(flow_run_id, run_id, conversation_id)] = set(attempts)
+    assert run_id == f'{flow_run_id}:0'
+    deadline = selections[0][3]
+    assert deadline is not None
+    assert selections == [(step, run_id, conversation_id, deadline) for _ in attempts for step in (1, 2)]
 
 
 async def test_flow_retry_keeps_each_concurrent_run_deadline() -> None:
@@ -3923,7 +3968,7 @@ async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -
 
 
 async def test_prefect_durability_streaming_in_flow() -> None:
-    """`ProcessEventStream` receives captured model events in flow code."""
+    """`ProcessEventStream` receives model events replayed from the task's final response in flow code."""
     events_in_task: list[tuple[AgentStreamEvent, bool]] = []
 
     async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
@@ -3958,7 +4003,7 @@ async def _chunks_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> As
 
 
 async def test_prefect_durability_process_event_stream_fires_flow_side() -> None:
-    """`ProcessEventStream` sees the real captured events replayed in the flow."""
+    """`ProcessEventStream` sees the task's final response replayed in the flow, one event per part."""
     events_received: list[AgentStreamEvent] = []
 
     async def collect(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
@@ -3981,12 +4026,8 @@ async def test_prefect_durability_process_event_stream_fires_flow_side() -> None
     output = await run_durable_agent()
     assert output == 'Streamed response'
 
-    delta_events = [
-        e.delta.content_delta
-        for e in events_received
-        if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
-    ]
-    assert delta_events == ['ed ', 'response']
+    model_events = [e for e in events_received if isinstance(e, (PartStartEvent, PartDeltaEvent))]
+    assert model_events == snapshot([PartStartEvent(index=0, part=TextPart(content='Streamed response'))])
 
 
 async def test_prefect_durability_buffers_caller_streams_and_keeps_handlers_distinct() -> None:
@@ -4010,7 +4051,7 @@ async def test_prefect_durability_buffers_caller_streams_and_keeps_handlers_dist
     )
 
     @flow
-    async def run_durable_streams() -> tuple[list[str], str, list[str], int, int]:
+    async def run_durable_streams() -> tuple[list[str], str, list[PartStartEvent | PartDeltaEvent], int, int]:
         async with agent.run_stream('Hello') as stream:
             chunks = [chunk async for chunk in stream.stream_text(debounce_by=None)]
             output = await stream.get_output()
@@ -4019,19 +4060,11 @@ async def test_prefect_durability_buffers_caller_streams_and_keeps_handlers_dist
 
         async with agent.run_stream_events('Hello') as event_stream:
             events = [event async for event in event_stream]
-        deltas = [
-            event.delta.content_delta
-            for event in events
-            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta)
-        ]
-        return chunks, output, deltas, live_handler_calls, buffered_handler_calls
+        model_events = [event for event in events if isinstance(event, (PartStartEvent, PartDeltaEvent))]
+        return chunks, output, model_events, live_handler_calls, buffered_handler_calls
 
-    assert await run_durable_streams() == (
-        ['hello ', 'hello world'],
-        'hello world',
-        ['hello ', 'world'],
-        1,
-        1,
+    assert await run_durable_streams() == snapshot(
+        (['hello world'], 'hello world', [PartStartEvent(index=0, part=TextPart(content='hello world'))], 1, 1)
     )
 
 
@@ -4725,11 +4758,10 @@ def test_prefect_durability_without_handler_does_not_wrap_event_stream() -> None
     assert PrefectDurability().has_wrap_run_event_stream is False
 
 
-async def test_prefect_durability_runtime_handler_receives_buffered_events() -> None:
+async def test_prefect_durability_runtime_handler_receives_replayed_events() -> None:
     """A per-run `event_stream_handler` passed to `agent.run()` inside a flow receives events.
 
-    The buffered replay preserves real granular deltas — the per-run handler sees the same
-    multi-chunk stream the construction-time handler would see.
+    The task's live deltas stay out of the flow: the per-run handler sees each part once, complete.
     """
     events_received: list[AgentStreamEvent] = []
 
@@ -4748,12 +4780,8 @@ async def test_prefect_durability_runtime_handler_receives_buffered_events() -> 
     output = await run_durable_agent()
     assert output == 'Streamed response'
 
-    delta_events = [
-        e.delta.content_delta
-        for e in events_received
-        if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
-    ]
-    assert delta_events == ['ed ', 'response']
+    model_events = [e for e in events_received if isinstance(e, (PartStartEvent, PartDeltaEvent))]
+    assert model_events == snapshot([PartStartEvent(index=0, part=TextPart(content='Streamed response'))])
 
 
 # --- Continuation chains (suspended → complete) run one task per segment ---
@@ -4909,8 +4937,8 @@ async def test_prefect_cancellation_rejects_enqueue() -> None:
 async def test_prefect_durability_streaming_continuation_chain_in_flow() -> None:
     """A streamed suspended → complete chain is stitched across per-segment tasks.
 
-        `ProcessEventStream` receives each captured segment in flow code, and the
-    final response merges both segments' text with usage summed once.
+        `ProcessEventStream` receives each segment's final response in flow code, one event per
+    part, and the final response merges both segments' text with usage summed once.
     """
     model = ScriptedContinuationModel(
         segments=[
@@ -4959,9 +4987,7 @@ async def test_prefect_durability_streaming_continuation_chain_in_flow() -> None
         for event in events_received
         if isinstance(event, (PartStartEvent, PartDeltaEvent))
     ]
-    assert indices == snapshot(
-        [('PartStartEvent', 0), ('PartDeltaEvent', 0), ('PartStartEvent', 1), ('PartDeltaEvent', 1)]
-    )
+    assert indices == snapshot([('PartStartEvent', 0), ('PartStartEvent', 1)])
     assert model.request_stream_calls == 2
 
 

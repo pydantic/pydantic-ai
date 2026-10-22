@@ -54,6 +54,33 @@ async def test_roundtrip_search_paging_and_media(tmp_path: Path) -> None:
         assert conn.execute('SELECT count(*) FROM media').fetchone()[0] >= 2
 
 
+async def test_listing_newest_first_reads_an_index_not_every_transcript(tmp_path: Path) -> None:
+    """A database from before the index gains it, so listing never orders by reading every saved transcript."""
+    database = tmp_path / 'sessions.db'
+    with closing(sqlite3.connect(database)) as conn, conn:
+        conn.execute(
+            'CREATE TABLE conversations (id TEXT PRIMARY KEY, revision INTEGER NOT NULL, metadata TEXT NOT NULL, '
+            'messages TEXT NOT NULL, search_text TEXT NOT NULL, updated_at TEXT NOT NULL)'
+        )
+    store = SqliteConversationStore(database=database)
+    first = await store.save(summary=ConversationSummary(workspace='/a', title='First'), messages=[])
+    second = await store.save(summary=ConversationSummary(workspace='/a', title='Second'), messages=[])
+    assert [e.id for e in await store.listing()] == [second.id, first.id]
+    assert [e.id for e in await store.listing(query='first')] == [first.id]
+    with closing(sqlite3.connect(database)) as conn:
+        # The query `listing(archived=False)` runs.
+        plan = conn.execute(
+            'EXPLAIN QUERY PLAN SELECT metadata FROM conversations '
+            "WHERE (? IS NULL OR (json_extract(metadata, '$.archived_at') IS NOT NULL) = ?) "
+            'ORDER BY updated_at DESC, id LIMIT ? OFFSET ?',
+            (False, False, 200, 0),
+        ).fetchall()
+    # SQLite versions word the plan differently; a temporary B-tree would mean sorting every row.
+    steps = ' '.join(row[-1] for row in plan)
+    assert 'USING INDEX conversations_updated_at' in steps
+    assert 'TEMP B-TREE' not in steps
+
+
 async def test_content_and_naming_compare_and_swap(tmp_path: Path) -> None:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     source = ConversationSummary(workspace='/a', title='Fallback')

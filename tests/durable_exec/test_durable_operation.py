@@ -15,6 +15,7 @@ from pydantic_ai import (
     Agent,
     AgentRunResult,
     AgentStreamEvent,
+    FinalResultEvent,
     FunctionToolset,
     ModelResponse,
     RunContext,
@@ -78,12 +79,16 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_tool_call_result,
     wrap_tool_call_result,
 )
-from pydantic_ai.durable_exec._utils import DurableModel, StreamedActivityResult
+from pydantic_ai.durable_exec._utils import DurableModel, StreamedActivityResult, StreamedModelRequestResult
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
-    RetryPromptPart,
+    ModelResponseStreamEvent,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+    TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -548,7 +553,6 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
         _CancelParams,  # pyright: ignore[reportPrivateUsage]
         _EventStreamHandlerParams,  # pyright: ignore[reportPrivateUsage]
         _RequestParams,  # pyright: ignore[reportPrivateUsage]
-        _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._toolset import toolset_temporal_activities
     from pydantic_ai.durable_exec.temporal._transports import (
@@ -590,7 +594,7 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
 
     expected_signatures = {
         durability.request_activity: (_RequestParams, ModelResponse),
-        durability.request_stream_activity: (_RequestParams, _StreamedActivityPayload),
+        durability.request_stream_activity: (_RequestParams, StreamedModelRequestResult),
         durability.compact_messages_activity: (_CompactMessagesParams, ModelResponse),
         durability.event_stream_handler_activity: (_EventStreamHandlerParams, type(None)),
         durability.cancel_suspended_response_activity: (_CancelParams, type(None)),
@@ -703,7 +707,7 @@ async def test_temporal_compaction_payload_round_trips_live_durable_model() -> N
     # Converter round-tripping inspects these callables but cannot dispatch them.
     async def request_segment(request: ModelRequestContext) -> ModelResponse: ...  # pragma: no branch
 
-    async def stream_segment(request: ModelRequestContext) -> StreamedActivityResult: ...
+    async def stream_segment(request: ModelRequestContext) -> StreamedModelRequestResult: ...
 
     async def compact_segment(  # pragma: no cover
         request: ModelRequestContext, instructions: str | None
@@ -901,7 +905,9 @@ async def test_durable_model_compact_messages_dispatches_operation(
     # Compact-message dispatch must not enter the other model segment callables.
     async def unused_request(request_context: ModelRequestContext) -> ModelResponse: ...  # pragma: no branch
 
-    async def unused_stream(request_context: ModelRequestContext) -> StreamedActivityResult: ...  # pragma: no branch
+    async def unused_stream(
+        request_context: ModelRequestContext,
+    ) -> StreamedModelRequestResult: ...  # pragma: no branch
 
     async def unused_cancel(response: ModelResponse) -> None: ...  # pragma: no branch
 
@@ -921,6 +927,58 @@ async def test_durable_model_compact_messages_dispatches_operation(
 
     assert await model.compact_messages(request_context, instructions='Keep decisions') == response
     assert backend.calls[0][0] == expected_name
+
+
+async def test_durable_model_replays_streamed_segment_results() -> None:
+    """A bare response replays one event per part; a recorded `StreamedActivityResult` replays its events as recorded."""
+    response = ModelResponse(parts=[TextPart('Hello world')])
+    recorded = StreamedActivityResult(
+        response=response,
+        events=[
+            PartStartEvent(index=0, part=TextPart('Hello')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world')),
+            PartEndEvent(index=0, part=TextPart('Hello world')),
+        ],
+    )
+    results: list[StreamedModelRequestResult] = [response, recorded]
+
+    async def stream_segment(request: ModelRequestContext) -> StreamedModelRequestResult:
+        return results.pop(0)
+
+    async def unused_request(request: ModelRequestContext) -> ModelResponse: ...  # pragma: no branch
+
+    async def unused_compact(  # pragma: no branch
+        request: ModelRequestContext, instructions: str | None
+    ) -> ModelResponse: ...
+
+    async def unused_cancel(response: ModelResponse) -> None: ...  # pragma: no branch
+
+    model = DurableModel(
+        TestModel(),
+        request_segment=unused_request,
+        request_stream_segment=stream_segment,
+        compact_messages_segment=unused_compact,
+        cancel_suspended_response_segment=unused_cancel,
+    )
+
+    replays: list[tuple[list[ModelResponseStreamEvent], ModelResponse]] = []
+    for _ in range(2):
+        async with model.request_stream([], None, ModelRequestParameters()) as stream:
+            replays.append(([event async for event in stream], stream.get()))
+
+    assert replays == snapshot(
+        [
+            (
+                [
+                    PartStartEvent(index=0, part=TextPart(content='Hello world')),
+                    FinalResultEvent(tool_name=None, tool_call_id=None),
+                    PartEndEvent(index=0, part=TextPart(content='Hello world')),
+                ],
+                response,
+            ),
+            (recorded.events, response),
+        ]
+    )
 
 
 async def test_base_durable_model_compact_messages_dispatches_bound_operation() -> None:
@@ -1318,7 +1376,7 @@ async def test_dynamic_args_validator_runs_in_declarative_unit_and_preserves_sch
         str(part.content)
         for message in rejected.all_messages()
         for part in message.parts
-        if isinstance(part, RetryPromptPart)
+        if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
     ] == ['forbidden path']
     recorded_names = [name for name, _, _ in durability.calls]
     assert 'validation__dynamic_toolset__files.validate_args' in recorded_names
@@ -1371,11 +1429,14 @@ async def test_tool_body_validation_error_preserves_detailed_retry() -> None:
 
     assert result.output == 'done'
     assert len(model_messages) == 2
-    retry = next(part for message in model_messages[1] for part in message.parts if isinstance(part, RetryPromptPart))
+    returns: list[ToolReturnPart[Any]] = [
+        part for message in model_messages[1] for part in message.parts if isinstance(part, ToolReturnPart)
+    ]
+    retry = next(part for part in returns if part.outcome == 'retried')
     assert retry.content == [
         {
             'type': 'int_parsing',
-            'loc': (),
+            'loc': [],
             'msg': 'Input should be a valid integer, unable to parse string as an integer',
             'input': invalid_input,
         }
@@ -1439,9 +1500,17 @@ async def test_legacy_dynamic_execution_unit_preserves_argument_validation_retry
 
     def model(messages: list[Any], info: AgentInfo) -> ModelResponse:
         nonlocal retries
-        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        if any(
+            isinstance(part, ToolReturnPart) and part.outcome != 'retried'
+            for message in messages
+            for part in message.parts
+        ):
             return ModelResponse(parts=[TextPart('done')])
-        if any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts):
+        if any(
+            isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+            for message in messages
+            for part in message.parts
+        ):
             retries += 1
             return ModelResponse(parts=[ToolCallPart('double', {'x': 5})])
         return ModelResponse(parts=[ToolCallPart('double', {'x': 'not-a-number'})])

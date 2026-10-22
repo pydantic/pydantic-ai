@@ -94,7 +94,6 @@ settings = GoogleRealtimeModelSettings(
     google_voice='Puck',
     google_language_code='en-US',
     google_affective_dialog=True,
-    google_proactive_audio=True,
     google_vad={'start_sensitivity': 'high', 'end_sensitivity': 'low'},
     google_turn_coverage='all_video',
     google_context_compression={'trigger_tokens': 16000, 'target_tokens': 8000},
@@ -104,7 +103,7 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 
 | Setting | Purpose |
 | --- | --- |
-| `google_voice`, `google_language_code`, `google_multi_speaker` | Voice, output language, and per-speaker voices |
+| `google_voice`, `google_language_code` | Voice and output language. `google_multi_speaker` is unsupported on every Live model and raises when the session connects |
 | `google_affective_dialog` | Emotion-aware delivery, on the 2.5 models (not 3.1 Flash Live or the 3.8 models) |
 | `google_proactive_audio` | Model-decided speech on native-audio models; needs a `v1alpha` client (see below). Always on for the 3.8 models |
 | `google_vad` | Exact automatic VAD; fully overrides shared [`turn_detection`](turns.md#automatic-turn-detection) |
@@ -155,8 +154,9 @@ Gemini normally pauses generation while a function tool is outstanding. On the n
 [`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls] setting to `True` to
 let it keep speaking and answering: tools are then declared `NON_BLOCKING`, and their results are
 returned with `INTERRUPT` scheduling, so each cuts into whatever the model is saying when it arrives.
-This is best for slow tools; a fast result can interrupt speech that barely started and leave an empty
-interrupted turn in history.
+This is best for slow tools, since a fast result can cut off speech that barely started. What the model
+says while the tool runs is recorded with the call, ahead of its result: see
+[Transcription and history edge cases](history.md#transcription-and-history-edge-cases).
 
 The other Live models accept a `NON_BLOCKING` declaration and then wait for the result anyway, so
 they ignore the setting, and `gemini-3.8-live-extended-thinking`, which has no blocking mode, runs every
@@ -170,8 +170,8 @@ only native tool it supports — no Live model runs native code execution or URL
 [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] nor
 [`WebFetch`][pydantic_ai.capabilities.WebFetch] is advertised in `supported_native_tools`. Give
 those a [`local=` fallback](tools.md#native-tools) and the session runs the local tool instead:
-`CodeExecutionTool(local=...)`, or `WebFetch(native=False, local=True)`, which requires the
-`web-fetch` optional group (`pip/uv-add "pydantic-ai-slim[google-realtime,web-fetch]"`).
+[`NativeOrLocalTool(native=CodeExecutionTool(), local=...)`](../capabilities/overview.md#building-your-own),
+or `WebFetch(native=False, local=True)`, which requires the `web-fetch` optional group (`pip/uv-add "pydantic-ai-slim[google-realtime,web-fetch]"`).
 Google Search grounding takes no domain filters or usage limit, so a `WebSearch` with
 `allowed_domains`, `blocked_domains`, `max_uses`, or `external_web_access=False` set fails before the session connects (see
 [restricting parameters](../native-tools.md#restricting-parameters)).
@@ -182,8 +182,10 @@ The built-in profile describes the speech-to-speech Live models. Gemini also ser
 streaming models on the same endpoint that behave differently — `gemini-robotics-er-2-streaming-preview`,
 for instance, is text-only and rejects audio output. Point a session at one of those and correct the
 facts with [`profile=`](overview.md#provider-support), which resolves like a
-[standard model profile](../models/overview.md#inspecting-a-models-profile), e.g.
-`GoogleRealtimeModel('gemini-robotics-er-2-streaming-preview', profile={'supports_text_output': True})`.
+[standard model profile](../models/overview.md#inspecting-a-models-profile).
+`gemini-robotics-er-2-streaming-preview`, for example, needs `profile={'supports_text_output': True}` to
+allow text output and the `output_modality='text'` setting to ask for it, since a session asks for audio
+by default.
 
 ## Feature support and limitations
 

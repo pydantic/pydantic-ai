@@ -84,6 +84,7 @@ from .exceptions import ToolRetryError
 from .messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _clean_message_history,  # pyright: ignore[reportPrivateUsage]
+    _is_tool_result_part,  # pyright: ignore[reportPrivateUsage]
     _merge_consecutive_messages,  # pyright: ignore[reportPrivateUsage]
     _repair_dangling_tool_calls,  # pyright: ignore[reportPrivateUsage]
 )
@@ -451,6 +452,7 @@ class GraphAgentState:
         self,
         max_output_retries: int,
         error: BaseException | None = None,
+        feedback: _messages.ModelRequestPart | None = None,
     ) -> None:
         """Record one unit of output-retry budget consumption.
 
@@ -459,12 +461,19 @@ class GraphAgentState:
         and for `ToolRetryError`s from output-tool dispatch / empty-or-non-actionable
         responses; per-tool retry limits are still enforced separately by
         `ToolManager._check_max_retries`.
+
+        A `RetryFeedbackPart` passed as `feedback` is stamped with the attempt this consumed, so
+        its `retry.attempt` is the `ctx.retry` the next output validation sees.
         """
         self.output_retries_used += 1
         if self.output_retries_used > max_output_retries:
             self.check_incomplete_tool_call()
             message = f'Exceeded maximum output retries ({max_output_retries})'
             raise exceptions.UnexpectedModelBehavior(message) from error
+        if isinstance(feedback, _messages.RetryFeedbackPart):  # pragma: no branch
+            feedback.retry = dataclasses.replace(
+                feedback.retry, attempt=self.output_retries_used, max_retries=max_output_retries
+            )
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -820,7 +829,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         if last_model_request:
             for part in last_model_request.parts:
-                if isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart):
+                if _is_tool_result_part(part):
                     if part.tool_call_id in tool_call_results:
                         raise exceptions.UserError(
                             f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
@@ -1356,8 +1365,8 @@ async def model_request_stream(
 
     Under the bundled durable-execution capabilities (Temporal/DBOS/Prefect) this runs in
     workflow code: the capability swaps `request_context.model` for a wrapper whose
-    `request_stream` drains one segment inside its own activity/step/task and replays its
-    buffered events, so the composite below stitches per-segment replays.
+    `request_stream` drains one segment inside its own activity/step/task and replays that
+    segment's final response, so the composite below stitches per-segment replays.
 
     The yielded stream is a composite that stitches the (possibly suspended → complete)
     segments into one continuous stream: it opens a `model.request_stream(...)` per segment
@@ -2331,11 +2340,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
             # More model responses may provide priceable usage, so only warn after the run successfully finishes.
             ctx.deps.usage_limits.check_cost(ctx.state.usage, warn_if_cost_unavailable=False)
-            # For a continuation chain (Anthropic `pause_turn`, OpenAI background mode) the merged
-            # response sums usage across segments (see `_check_continuation_usage`), so this caps the
-            # chain's combined input rather than any single segment's — conservative, not lenient.
-            # A response a provider SDK merged from several requests (Google long decode) is checked against
-            # the input of the first; see `context_input_tokens`.
+            # The limit caps context size, so it reads `context_input_tokens`: `usage.input_tokens`, except for
+            # a response whose usage sums several model requests. A Google long decode is checked against its
+            # first request's input, and an Anthropic response that reported its sampling passes against its
+            # last pass's. An Anthropic `pause_turn` chain sums usage across segments (see
+            # `_check_continuation_usage`), so it is checked against that sum, unless the last segment stamped its
+            # context size: then against that segment's.
             for response in responses:
                 ctx.deps.usage_limits.check_per_request_input_tokens(context_input_tokens(response))
 
@@ -2346,13 +2356,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> ModelRequestNode[DepsT, NodeRunEndT]:
         """Build a retry ModelRequestNode from a ModelRetry exception.
 
-        Increments the retry counter and creates a new request with a RetryPromptPart.
+        Increments the retry counter and creates a new request with a `RetryFeedbackPart`.
         """
-        ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error)
+        m = _messages.RetryFeedbackPart(content=error.message, retry=_messages.RetryInfo(cause='model_retry'))
+        ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error, feedback=m)
         # A retry without a response gives up on this step, so its request-scoped parts go with it. When the
         # response was kept in history it answers them, and this is a no-op.
         _drop_unanswered_request_scoped_prompts(ctx.state.message_history)
-        m = _messages.RetryPromptPart(content=error.message)
         retry_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[m]))
         self._result = retry_node
         return retry_node
@@ -2519,7 +2529,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             ctx, result.FinalResult(cast(NodeRunEndT, result_data)), []
                         )
                     except ToolRetryError as e:
-                        ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e)
+                        ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e, feedback=e.tool_retry)
                         self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
                             _messages.ModelRequest(parts=[e.tool_retry])
                         )
@@ -2594,34 +2604,35 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         yield event
                     return
                 elif output_schema.toolset:
-                    alternatives.append('include your response in a tool call')
+                    alternatives.append(_messages._NO_OUTPUT_USE_OUTPUT_TOOL)  # pyright: ignore[reportPrivateUsage]
                 elif ctx.deps.tool_manager.tools is None or ctx.deps.tool_manager.tools:
                     # tools is None when the tool manager is unprepared (e.g. UserPromptNode
                     # skips to CallToolsNode, bypassing for_run_step); in that case we
                     # default to suggesting tools to be safe
-                    alternatives.append('call a tool')
+                    alternatives.append(_messages._NO_OUTPUT_CALL_A_TOOL)  # pyright: ignore[reportPrivateUsage]
 
                 if output_schema.allows_image:
                     if image := next((file for file in files if isinstance(file, _messages.BinaryImage)), None):
                         self._next_node = await self._handle_image_response(ctx, image)
                         return
-                    alternatives.append('return an image')
+                    alternatives.append(_messages._NO_OUTPUT_RETURN_IMAGE)  # pyright: ignore[reportPrivateUsage]
 
                 if text_processor := output_schema.text_processor:
                     if text:
                         self._next_node = await self._handle_text_response(ctx, text, text_processor)
                         return
-                    alternatives.insert(0, 'return text')
+                    alternatives.insert(0, _messages._NO_OUTPUT_RETURN_TEXT)  # pyright: ignore[reportPrivateUsage]
 
                 # handle responses with only parts that don't constitute output.
                 # This can happen with models that support thinking mode when they don't provide
                 # actionable output alongside their thinking content. so we tell the model to try again.
-                m = _messages.RetryPromptPart(
-                    content=f'Please {" or ".join(alternatives)}.',
+                m = _messages.RetryFeedbackPart(
+                    content=_messages._no_output_feedback_text(alternatives),  # pyright: ignore[reportPrivateUsage]
+                    retry=_messages.RetryInfo(cause='no_output'),
                 )
                 raise ToolRetryError(m)
             except ToolRetryError as e:
-                ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e)
+                ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e, feedback=e.tool_retry)
                 self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
         try:
@@ -2930,6 +2941,12 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
         # holds. Copy it so selectors can't mutate graph state through the context.
         messages=list(ctx.state.message_history),
         usage=ctx.state.usage,
+        retry=ctx.state.output_retries_used,
+        max_retries=ctx.deps.max_output_retries,
+        usage_limits=ctx.deps.usage_limits,
+        deadline=ctx.deps.deadline,
+        run_id=ctx.state.run_id,
+        conversation_id=ctx.state.conversation_id,
     )
     model, model_id = await ctx.deps.evaluate_model_selector(selector, selection_ctx)
     await ctx.deps.enter_model(model)
