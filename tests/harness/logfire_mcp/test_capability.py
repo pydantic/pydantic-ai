@@ -147,8 +147,10 @@ class TestLogfireMCP:
             def __bool__(self) -> bool:
                 return False
 
+        token = FalsyToken()
+        assert not token
         with pytest.raises(UserError, match='`client` owns the connection'):
-            LogfireMCP[None](client='https://example.com/mcp', auth=FalsyToken())
+            LogfireMCP[None](client='https://example.com/mcp', auth=token)
 
     def test_client_accepts_empty_auth(self) -> None:
         # The `auth` table documents `''` as unset, so it does not conflict with `client`.
