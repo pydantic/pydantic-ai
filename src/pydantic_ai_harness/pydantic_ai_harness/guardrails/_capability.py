@@ -98,14 +98,16 @@ def _require_prompt_text(replacement: object, position: int) -> str:
 def _find_prompt_part(
     ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessage]
 ) -> tuple[UserPromptPart | None, UserPromptPart | None]:
-    """The user's prompt for this run as it appears in this request, and its original in the history.
+    """The user's prompt for this run as it appears in this request, and its history original if separate.
+
+    The original is set only when it is a different object from the part sent to the model.
 
     The prompt is the most recent `UserPromptPart` in the run's history, `ctx.messages`. `messages`
     is this request's copy of the history, where an outer capability can add a `UserPromptPart` for
     this request only (`SystemReminders`, `Planning` and `Memory` append one to the last request).
     That part is not the user's prompt, so the prompt is found by identity: the guard neither
     screens nor overwrites the added part. A prompt an outer capability rewrote in place is still
-    the same object, so the guard reads the rewritten text, and the two returned parts are the same.
+    the same object, so the guard reads the rewritten text, and there is no separate original.
 
     When a capability replaced the prompt with a copy, the copy is the part at the prompt's
     position: the same part index in the message the same distance from the end. Parts appended
@@ -122,7 +124,7 @@ def _find_prompt_part(
     else:
         return _latest_prompt_part(messages), None
     if any(part is prompt for request in messages for part in request.parts):
-        return prompt, prompt
+        return prompt, None
     parts = messages[-from_end].parts if from_end <= len(messages) else ()
     copy = parts[index] if index < len(parts) else None
     if isinstance(copy, UserPromptPart):
@@ -230,12 +232,14 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     with `parallel=True`, since the model call has already started with the
     original prompt.
 
-    Scope: the guard runs once per run, on the first model request, and
-    evaluates the most recent user prompt in the run's history. Subsequent
-    model requests in the same run (e.g. after tool calls) are not re-checked,
-    since the user input has not changed. A run resumed without a new prompt
-    (to answer deferred tool calls, say) has no new user input either, so its
-    first request screens the most recent prompt in the history again.
+    Scope: the guard runs once per run, on the first model request (twice
+    when it redacts a changed copy of the prompt an outer capability sent the
+    model, see above), and evaluates the most recent user prompt in the run's
+    history. Subsequent model requests in the same run (e.g. after tool calls)
+    are not re-checked, since the user input has not changed. A run resumed
+    without a new prompt (to answer deferred tool calls, say) has no new user
+    input either, so its first request screens the most recent prompt in the
+    history again.
 
     Ordering: declares `position='innermost'` so any capability that rewrites
     the user prompt (a prompt rewriter, a history processor) runs first and the
@@ -275,7 +279,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
 
         `allow` returns; `block` raises `SkipModelRequest`; `replace` rewrites
         the prompt `part` sent to the model and its `original` in the run's
-        history when that is a different object (see `_redact_history_prompt`);
+        history when there is a separate one (see `_redact_history_prompt`);
         `retry` and `replace` under `parallel=True` raise `UserError`.
         """
         verdict, position = await evaluate_all(
@@ -310,12 +314,16 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
                 replacement = _require_prompt_text(verdict.replacement, position)
                 if part is None:
                     raise UserError('InputGuardrail could not find a user prompt to redact in the request.')
-                history_part = None if original is part else original
-                same_text = history_part is not None and history_part.content == part.content
+                same_text = original is not None and original.content == part.content
                 _replace_prompt(part, replacement)
-                if history_part is not None:
-                    await self._redact_history_prompt(ctx, history_part, same_text=same_text, replacement=replacement)
+                history_replacement = None
+                if original is not None:
+                    history_replacement = await self._redact_history_prompt(
+                        ctx, original, same_text=same_text, replacement=replacement
+                    )
                 trace_redaction(ctx, direction='input', replacement=replacement)
+                if history_replacement is not None:
+                    trace_redaction(ctx, direction='input', replacement=history_replacement)
             case _:  # pragma: no cover - assert_never exhaustiveness guard
                 assert_never(verdict.action)
 
@@ -326,7 +334,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         *,
         same_text: bool,
         replacement: str,
-    ) -> None:
+    ) -> str | None:
         """Redact the history's `original` of a prompt the model was sent a copy of.
 
         The history is what later requests in the run, and any stored conversation, replay, so a
@@ -342,18 +350,24 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         `same_text` is decided before the copy is rewritten: rewriting a text copy changes its
         content, so comparing afterwards would take an unchanged copy for a changed one and call
         the guard again.
+
+        Returns the replacement written from that second evaluation, for its own redaction span,
+        or `None` when it wrote nothing or reused `replacement`.
         """
         if same_text:
             _replace_prompt(original, replacement)
-            return
+            return None
         verdict, position = await evaluate_all(
             as_guards(self.guard, capability='InputGuardrail'),
             ctx,
             _prompt_text(original.content),
             check_replacement=_require_prompt_text,
         )
-        if verdict.action == 'replace':
-            _replace_prompt(original, _require_prompt_text(verdict.replacement, position))
+        if verdict.action != 'replace':
+            return None
+        history_replacement = _require_prompt_text(verdict.replacement, position)
+        _replace_prompt(original, history_replacement)
+        return history_replacement
 
     async def wrap_model_request(
         self,

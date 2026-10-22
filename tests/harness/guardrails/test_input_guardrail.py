@@ -583,13 +583,19 @@ class TestInputGuardrailRedaction:
 
     async def test_replace_of_a_copied_prompt_also_redacts_the_history(self):
         """The copy goes to the model and the original stays in the history, so both are redacted."""
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
         seen, model = _request_prompts_model()
         agent = Agent(model, capabilities=[_CopyPrompt(), _AppendNote(), InputGuardrail(guard=redact_secrets)])
+        agent.instrument = InstrumentationSettings(tracer_provider=provider)
 
         result = await agent.run(f'my key is {_SECRET}')
 
         assert seen == [['my key is [redacted:anthropic_key]', 'note: be brief']]
         assert _SECRET not in str(result.all_messages())
+        # The history got the same replacement, so the one redaction span covers both.
+        assert [span.name for span in exporter.get_finished_spans()].count('guardrail redacted input') == 1
         part = result.all_messages()[0].parts[0]
         assert isinstance(part, UserPromptPart)
         assert part.content == 'my key is [redacted:anthropic_key]'
@@ -622,10 +628,43 @@ class TestInputGuardrailRedaction:
 
     async def test_a_multimodal_original_of_a_redacted_text_copy_is_a_usage_error(self):
         """Writing the redaction back would drop the original's attachments, as for any multimodal prompt."""
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
         agent = Agent(TestModel(), capabilities=[_FlattenPrompt(), InputGuardrail(guard=redact_secrets)])
+        agent.instrument = InstrumentationSettings(tracer_provider=provider)
 
         with pytest.raises(UserError, match='multimodal prompt'):
             await agent.run([f'my key is {_SECRET}', ImageUrl(url='https://example.com/image.png')])
+
+        # Spans are recorded only once every rewrite has succeeded, so a failed one leaves none.
+        assert 'guardrail redacted input' not in [span.name for span in exporter.get_finished_spans()]
+
+    async def test_a_changed_copy_calls_the_guard_twice_and_traces_both_redactions(self):
+        """The history's redaction differs from the copy's, so it gets its own span."""
+        screened: list[str] = []
+
+        def guard(prompt: str) -> GuardrailResult:
+            screened.append(prompt)
+            return redact_secrets(prompt)
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        agent = Agent(
+            TestModel(custom_output_text='ok'), capabilities=[_CopyPrompt(suffix='\nctx'), InputGuardrail(guard=guard)]
+        )
+        agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=True)
+
+        await agent.run(f'my key is {_SECRET}')
+
+        assert screened == [f'my key is {_SECRET}\nctx', f'my key is {_SECRET}']
+        replacements = [
+            (span.attributes or {}).get('guardrail.replacement')
+            for span in exporter.get_finished_spans()
+            if span.name == 'guardrail redacted input'
+        ]
+        assert replacements == ['my key is [redacted:anthropic_key]\nctx', 'my key is [redacted:anthropic_key]']
 
     async def test_a_redacted_copy_is_not_replayed_unredacted_after_a_tool_call(self):
         """Later steps send the history, which the guard does not screen again, so it must already be clean."""
@@ -1344,7 +1383,7 @@ class TestFindPromptPart:
             ModelRequest(parts=[second]),
         ]
         run_ctx, _ = _build_ctx_and_req(messages=messages)
-        assert _find_prompt_part(run_ctx, messages) == (second, second)
+        assert _find_prompt_part(run_ctx, messages) == (second, None)
 
     def test_skips_a_part_that_is_not_in_the_history(self):
         prompt = UserPromptPart(content='the prompt')
@@ -1353,7 +1392,7 @@ class TestFindPromptPart:
         run_ctx, _ = _build_ctx_and_req(messages=history)
         part, original = _find_prompt_part(run_ctx, request)
         assert part is prompt
-        assert original is prompt
+        assert original is None
 
     def test_a_copied_prompt_is_not_mistaken_for_an_earlier_turn(self):
         earlier = UserPromptPart(content='earlier turn')
