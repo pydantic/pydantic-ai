@@ -6899,38 +6899,43 @@ _BLANK_SCREENSHOT = (
 """A 1x1 PNG for a `computer_call_output` with no screenshot to send, since the API requires one."""
 
 
-def _map_computer_action(action: dict[str, Any]) -> dict[str, Any]:
-    """One OpenAI computer action as a `computer` tool action; an unknown type fails validation, so the model retries."""
+def _map_computer_action(action: dict[str, Any]) -> list[dict[str, Any]]:
+    """One OpenAI computer action as `computer` tool actions; an unknown type fails validation, so the model retries."""
     modifiers: list[str] = action.get('keys') or []
     position = {'x': action.get('x'), 'y': action.get('y')}
     match action.get('type'):
         case 'click':
             button = action['button']
-            return {
-                'type': 'click',
-                **position,
-                'button': 'middle' if button == 'wheel' else button,
-                'modifiers': modifiers,
-            }
+            return [
+                {
+                    'type': 'click',
+                    **position,
+                    'button': 'middle' if button == 'wheel' else button,
+                    'modifiers': modifiers,
+                }
+            ]
         case 'double_click':
-            return {'type': 'click', **position, 'count': 2, 'modifiers': modifiers}
+            return [{'type': 'click', **position, 'count': 2, 'modifiers': modifiers}]
         case 'drag':
-            return {'type': 'drag', 'path': action['path'], 'modifiers': modifiers}
+            return [{'type': 'drag', 'path': action['path'], 'modifiers': modifiers}]
         case 'move':
-            return {'type': 'move', **position, 'modifiers': modifiers}
+            return [{'type': 'move', **position, 'modifiers': modifiers}]
         case 'scroll':
-            # OpenAI scrolls by pixels on both axes; the tool scrolls one way, in wheel clicks.
-            dx, dy = action['scroll_x'], action['scroll_y']
-            if not dx and not dy:
-                return {'type': 'move', **position, 'modifiers': modifiers}
-            if abs(dx) > abs(dy):
-                direction, pixels = ('right' if dx > 0 else 'left'), abs(dx)
-            else:
-                direction, pixels = ('down' if dy >= 0 else 'up'), abs(dy)
-            amount = min(50, max(1, round(pixels / _SCROLL_PIXELS_PER_CLICK)))
-            return {'type': 'scroll', **position, 'direction': direction, 'amount': amount, 'modifiers': modifiers}
+            # OpenAI scrolls by pixels on both axes at once; the tool scrolls one way at a time, in wheel clicks.
+            scrolls: list[dict[str, Any]] = []
+            for pixels, direction in (
+                (action['scroll_x'], 'right' if action['scroll_x'] > 0 else 'left'),
+                (action['scroll_y'], 'down' if action['scroll_y'] > 0 else 'up'),
+            ):
+                if pixels:
+                    amount = min(50, max(1, round(abs(pixels) / _SCROLL_PIXELS_PER_CLICK)))
+                    scrolls.append(
+                        {'type': 'scroll', **position, 'direction': direction, 'amount': amount, 'modifiers': modifiers}
+                    )
+            # A scroll by nothing only moves the pointer there.
+            return scrolls or [{'type': 'move', **position, 'modifiers': modifiers}]
         case _:  # `keypress`, `type` and `wait` have the tool's own shape; anything else fails validation.
-            return action
+            return [action]
 
 
 def _map_computer_call(
@@ -6947,7 +6952,11 @@ def _map_computer_call(
         tool_name,
         # A call with no actions only asks to look.
         {
-            'actions': [_map_computer_action(action.model_dump(mode='json', exclude_none=True)) for action in actions]
+            'actions': [
+                mapped
+                for action in actions
+                for mapped in _map_computer_action(action.model_dump(mode='json', exclude_none=True))
+            ]
             or [{'type': 'screenshot'}]
         },
         tool_call_id=tool_call_id,
