@@ -7,6 +7,7 @@ expired, was canceled or is missing from the results, an error per request, or a
 from __future__ import annotations
 
 import asyncio
+import gc
 import threading
 import time
 from collections.abc import Callable, Sequence
@@ -626,16 +627,21 @@ async def test_queueing_many_identical_requests_takes_linear_time() -> None:
     async def queue(count: int) -> float:
         model = FastModel()
         pool = BatchPool(max_requests=count, max_wait=None)
-        start = time.perf_counter()
-        await asyncio.gather(*(pool.enqueue(model, encoded, None) for _ in range(count)))
-        elapsed = time.perf_counter() - start
+        # Collections of the test process's whole heap would add pauses that have nothing to do with queueing.
+        gc.disable()
+        try:
+            start = time.perf_counter()
+            await asyncio.gather(*(pool.enqueue(model, encoded, None) for _ in range(count)))
+            elapsed = time.perf_counter() - start
+        finally:
+            gc.enable()
         assert len(set(model.custom_ids)) == count
         return elapsed
 
     # Eight times the requests take about eight times as long in linear time, and 64 times as long in quadratic time.
-    small = min([await queue(1_000) for _ in range(3)])
-    large = min([await queue(8_000) for _ in range(3)])
-    assert large / small < 24
+    # Each round times both sizes back to back, so a busy machine slows both, and the best round is kept.
+    ratios = [await queue(8_000) / await queue(1_000) for _ in range(5)]
+    assert min(ratios) < 24
 
 
 def test_one_capability_serves_runs_on_several_event_loops_and_threads() -> None:
