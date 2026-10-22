@@ -5596,10 +5596,9 @@ async def test_anthropic_sonnet_5_5_thinking_false_sends_between_tools(
 @pytest.mark.parametrize(
     'settings',
     [
-        pytest.param(AnthropicModelSettings(thinking=False, anthropic_effort='xhigh'), id='unified'),
+        pytest.param({'thinking': False, 'anthropic_effort': 'xhigh'}, id='unified'),
         pytest.param(
-            AnthropicModelSettings(anthropic_thinking={'type': 'between_tools'}, anthropic_effort='max'),
-            id='anthropic_thinking',
+            {'anthropic_thinking': {'type': 'between_tools'}, 'anthropic_effort': 'max'}, id='anthropic_thinking'
         ),
     ],
 )
