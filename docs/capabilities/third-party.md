@@ -37,6 +37,7 @@ Pydantic AI supports [multi-agent patterns](../multi-agent-applications.md) dire
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) ships sandboxed [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) and [`Shell`](https://pydantic.dev/docs/ai/harness/shell/) capabilities, plus [`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) for running tool calls as sandboxed Python. As a community alternative:
 
 * [`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend) - `ConsoleCapability` registers `ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, and `execute` tools with a fine-grained permission system. Backends include `StateBackend` (in-memory, for testing), `LocalBackend` (real filesystem), `DockerSandbox` (isolated container execution), and `CompositeBackend` (routing across backends). Also available as a lower-level `ConsoleToolset`.
+* [`pydantic-ai-boat`](https://github.com/zozo123/pydantic-ai-boat) - `BoatSandbox` supplies a [Boat](https://boat.dev) cloud sandbox, a root Ubuntu VM that stops and resumes from snapshots, as the run's [workspace](../workspace.md), so [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) capabilities such as `Coder`, `Shell`, and `FileSystem` run there. A continued run reattaches to the same sandbox and resumes it if Boat stopped it. `BoatSandboxBackend` implements the `WorkspaceBackend` protocol and passes its conformance suite against real Boat.
 
 ## Agent Skills
 
