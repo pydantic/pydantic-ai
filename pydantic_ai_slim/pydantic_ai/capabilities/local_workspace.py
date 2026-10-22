@@ -49,8 +49,8 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     """
 
     mounts: Sequence[Mount] | Callable[[RunContext[AgentDepsT]], Sequence[Mount]] = ()
-    """Storage to show as folders, such as a bucket, or a function of the run that picks them; file tools reach them,
-    commands don't."""
+    """[Filesystems to show as folders](../workspace.md#mounting-filesystems), such as a bucket, or a function of the
+    run that picks them. File tools reach them; commands on the host don't, so `shell=True` is refused."""
 
     id: str | None = 'local_workspace'
     """Fixed, so a later `LocalWorkspace` replaces an earlier one whole; pass distinct ids to keep both."""
@@ -59,6 +59,22 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
         # Pin a relative `working_dir` to today's directory, and surface an unusable platform where the
         # capability is written, not on the first run.
         self.working_dir = LocalWorkspaceBackend(self.working_dir).ref.id
+
+    @classmethod
+    def from_spec(
+        cls,
+        working_dir: str | Path,
+        *,
+        read_only: bool = False,
+        env: Mapping[str, str] | None = None,
+        id: str | None = 'local_workspace',
+        description: str | None = None,
+        defer_loading: bool = False,
+    ) -> LocalWorkspace[AgentDepsT]:
+        # Every field but `mounts`, which holds live filesystem objects that an agent spec can't describe.
+        return cls(
+            working_dir, read_only=read_only, env=env, id=id, description=description, defer_loading=defer_loading
+        )
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
