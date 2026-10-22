@@ -127,9 +127,7 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: Computer
     [
         PressKeys(keys=('exec',)),
         PressKeys(keys=('ctrl', 'a b')),
-        Click(modifiers=('ctrl', 'exec')),
         # xdotool matches command names in any case.
-        Click(modifiers=('GETACTIVEWINDOW', 'WindowKill')),
         HoldKeys(keys=('Exec',), seconds=1),
         # A command only newer xdotool releases have.
         PressKeys(keys=('windowquit',)),
@@ -300,6 +298,9 @@ def test_actions_normalize_key_names_and_validate_from_json() -> None:
         lambda: TypeText(text='a\x00b'),
         lambda: PressKeys(keys=('a+b+c+d+e+f+g+h+i',)),
         lambda: HoldKeys(keys=('',), seconds=1),
+        # Modifiers are checked before anything runs, so an unknown one can't be skipped mid-action.
+        lambda: Click(modifiers=('ctrl', 'exec')),
+        lambda: Scroll(direction='down', modifiers=('capslock',)),
         lambda: Drag(path=(Point(x=0, y=0),) * 51),
     ],
 )
