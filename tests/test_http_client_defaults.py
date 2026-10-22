@@ -63,6 +63,27 @@ async def test_httpx2_client_numeric_timeout():
         assert client.timeout == httpx2.Timeout(30)
 
 
+async def test_httpx2_client_custom_transport(transport_limits: list[httpx.Limits | httpx2.Limits]):
+    """Requests go through the given transport, and the client keeps its timeouts, user agent and connect cap."""
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200)
+
+    async with create_async_httpx2_client(transport=httpx2.MockTransport(handler)) as client:
+        assert client.timeout == httpx2.Timeout(600, connect=5)
+        response = await client.get('https://example.com', timeout=30)
+
+    assert response.status_code == 200
+    assert len(requests) == 1
+    assert requests[0].headers['User-Agent'] == get_user_agent()
+    # `ConnectPoolTimeoutCap` keeps the 30-second request timeout from lengthening the 5-second connect timeout.
+    assert requests[0].extensions['timeout'] == {'connect': 5, 'read': 30, 'write': 30, 'pool': 30}
+    # The given transport owns the connection pool: the client builds no transport of its own.
+    assert transport_limits == []
+
+
 async def test_legacy_httpx_client_defaults(transport_limits: list[httpx.Limits | httpx2.Limits]):
     async with create_async_http_client() as client:
         assert client.timeout == httpx.Timeout(600, connect=5)

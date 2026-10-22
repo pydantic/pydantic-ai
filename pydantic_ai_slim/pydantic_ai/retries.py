@@ -263,9 +263,10 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
 
     Example:
         ```python
-        from httpx2 import AsyncClient, HTTPStatusError
+        from httpx2 import HTTPStatusError
         from tenacity import retry_if_exception_type, stop_after_attempt
 
+        from pydantic_ai.models import create_async_httpx2_client
         from pydantic_ai.retries import (
             AsyncHTTPX2TenacityTransport,
             RetryConfig,
@@ -281,7 +282,7 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
             ),
             validate_response=lambda r: r.raise_for_status()
         )
-        client = AsyncClient(transport=transport)
+        client = create_async_httpx2_client(transport=transport)
         ```
     """
 
@@ -535,9 +536,10 @@ def wait_retry_after(
 
     Example:
         ```python
-        from httpx2 import AsyncClient, HTTPStatusError
+        from httpx2 import HTTPStatusError
         from tenacity import retry_if_exception_type, stop_after_attempt
 
+        from pydantic_ai.models import create_async_httpx2_client
         from pydantic_ai.retries import (
             AsyncHTTPX2TenacityTransport,
             RetryConfig,
@@ -553,7 +555,7 @@ def wait_retry_after(
             ),
             validate_response=lambda r: r.raise_for_status()
         )
-        client = AsyncClient(transport=transport)
+        client = create_async_httpx2_client(transport=transport)
         ```
     """
     if fallback_strategy is None:
