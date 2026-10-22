@@ -72,7 +72,9 @@ async def running_task_context(
 
 
 @asynccontextmanager
-async def reenter_running_task(absurd: AsyncAbsurd, task_id: str) -> AsyncGenerator[AsyncTaskContext]:
+async def reenter_running_task(
+    absurd: AsyncAbsurd, task_id: str, *, claim_timeout: int = 120
+) -> AsyncGenerator[AsyncTaskContext]:
     """Fail the task's current run and enter the retry, whose checkpoints come from Postgres."""
     conn = _conn(absurd)
     queue = _queue(absurd)
@@ -83,9 +85,9 @@ async def reenter_running_task(absurd: AsyncAbsurd, task_id: str) -> AsyncGenera
     row = await cursor.fetchone()
     assert row is not None
     await conn.execute('SELECT absurd.fail_run(%s, %s, %s, %s)', (queue, row[0], '{"type": "test.Replay"}', None))
-    [task] = await absurd.claim_tasks(batch_size=1)
+    [task] = await absurd.claim_tasks(batch_size=1, claim_timeout=claim_timeout)
     assert task['task_id'] == task_id
-    async with _entered(absurd, task) as ctx:
+    async with _entered(absurd, task, claim_timeout=claim_timeout) as ctx:
         yield ctx
 
 

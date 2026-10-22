@@ -891,6 +891,11 @@ class TestClaim:
             ['slow__model.request', 'slow__function_toolset__tools.call_tool:slow', 'slow__model.request#2']
         )
 
+        # A retry on the same worker claims without expiry too, and replays from the checkpoints.
+        async with reenter_running_task(absurd, ctx.task_id, claim_timeout=0):
+            assert (await agent.run('go')).output == 'done'
+            assert await claim_expiry(absurd, ctx.task_id) is None
+
     async def test_step_extends_the_claim_before_its_body_runs(self, absurd: AsyncAbsurd) -> None:
         # `begin_step` leaves the claim as it was, so a step that starts late in the claim window
         # extends it first instead of waiting a heartbeat interval for its first heartbeat.
