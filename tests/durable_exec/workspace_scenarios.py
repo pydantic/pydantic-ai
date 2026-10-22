@@ -25,9 +25,9 @@ from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.durable_exec._workspace import DurableWorkspace
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
+    HoldKey,
     KeyPress,
     ReadOnlyWorkspace,
-    Wait,
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
@@ -276,7 +276,7 @@ async def binary(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dic
             await _error_of(workspace.stat('sub/gone.txt')),
             await _error_of(workspace.remove('missing.txt')),
             await _error_of(workspace.run('echo hi')),
-            await _error_of(workspace.act(Wait())),
+            await _error_of(workspace.act(HoldKey(keys=('shift',), seconds=1))),
         ],
     }
 

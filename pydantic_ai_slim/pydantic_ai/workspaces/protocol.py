@@ -249,7 +249,8 @@ class SupportsComputerUse(Protocol):
         Raise [`UnsupportedComputerActionError`][pydantic_ai.workspaces.UnsupportedComputerActionError] for an
         action kind the backend doesn't know: new kinds can be added to
         [`ComputerAction`][pydantic_ai.workspaces.ComputerAction] without changing this protocol.
-        A [`Screenshot`][pydantic_ai.workspaces.Screenshot] action does nothing; callers take the screenshot.
+        A [`Screenshot`][pydantic_ai.workspaces.Screenshot] action does nothing, since callers take the
+        screenshot, and [`Wait`][pydantic_ai.workspaces.Wait] only waits; neither may be refused.
         """
         ...
 

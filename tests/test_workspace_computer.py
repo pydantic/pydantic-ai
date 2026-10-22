@@ -91,6 +91,8 @@ class ScriptedCommands:
         (KeyPress(keys=('ctrl', 's')), ['xdotool', 'key', '--repeat', '1', '--', 'ctrl+s']),
         (KeyPress(keys=('Return',), repeat=3), ['xdotool', 'key', '--repeat', '3', '--', 'Return']),
         (KeyPress(keys=('PageDown', 'F5', 'ArrowUp')), ['xdotool', 'key', '--repeat', '1', '--', 'Next+F5+Up']),
+        (KeyPress(keys=('KP_Enter',)), ['xdotool', 'key', '--repeat', '1', '--', 'KP_Enter']),
+        (KeyPress(keys=('shift', 'XF86AudioMute')), ['xdotool', 'key', '--repeat', '1', '--', 'shift+XF86AudioMute']),
         (HoldKey(keys=('shift',), seconds=0.5), ['xdotool', 'keydown', 'shift', 'sleep', '0.5', 'keyup', 'shift']),
     ],
 )
@@ -172,6 +174,9 @@ def test_actions_normalize_key_names_and_validate_from_json() -> None:
         {'kind': 'click', 'count': 4},
         {'kind': 'drag', 'path': [[1, 2]]},
         {'kind': 'key_press', 'keys': []},
+        {'kind': 'click', 'x': 10},
+        {'kind': 'scroll', 'y': 10, 'dy': 1},
+        {'kind': 'scroll', 'x': 1, 'y': 2},
         {'kind': 'teleport'},
     ]
     for invalid in invalid_actions:

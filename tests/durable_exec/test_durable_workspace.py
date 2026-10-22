@@ -48,11 +48,11 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     FileEntry,
+    HoldKey,
     KeyPress,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     UnsupportedComputerActionError,
-    Wait,
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
@@ -584,8 +584,8 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
     assert await workspace.display_size() == (1280, 800)
     assert await workspace.screenshot() == FAKE_SCREENSHOT
     await workspace.act(KeyPress(keys=('ctrl', 's')))
-    with pytest.raises(UnsupportedComputerActionError, match="cannot perform 'wait'"):
-        await workspace.act(Wait())
+    with pytest.raises(UnsupportedComputerActionError, match="cannot perform 'hold_key'"):
+        await workspace.act(HoldKey(keys=('shift',), seconds=1))
     assert provider.actions == [KeyPress(keys=('ctrl', 's'))]
     assert _workspace_units(durability) == snapshot(
         [

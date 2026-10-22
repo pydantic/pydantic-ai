@@ -1,9 +1,11 @@
 """The actions a [`SupportsComputerUse`][pydantic_ai.workspaces.SupportsComputerUse] backend performs on a display.
 
 Coordinates are display pixels with the origin at the top left. A click or scroll without coordinates happens
-at the current pointer position. Key names are normalized on construction to one lowercase vocabulary
-(`ctrl`, `shift`, `alt`, `super`, `enter`, `escape`, `tab`, `backspace`, `delete`, `up`, `pageup`, `f1`, `a`,
-...), so a backend reads one spelling whichever model produced the action.
+at the current pointer position. Common key names are normalized on construction to one lowercase spelling
+(`ctrl`, `shift`, `alt`, `super`, `enter`, `escape`, `tab`, `backspace`, `delete`, `insert`, `home`, `end`,
+`pageup`, `pagedown`, `up`, `down`, `left`, `right`, `space`, `f1` to `f24`, and single characters), so a backend
+reads one spelling whichever model produced the action. Other names, such as the X keysym `KP_Enter`, are kept
+as written.
 """
 
 from __future__ import annotations as _annotations
@@ -59,8 +61,49 @@ _KEY_ALIASES = {
 }
 
 
+_KEY_NAMES = frozenset(
+    {
+        'ctrl',
+        'shift',
+        'alt',
+        'super',
+        'enter',
+        'escape',
+        'tab',
+        'backspace',
+        'delete',
+        'insert',
+        'home',
+        'end',
+        'pageup',
+        'pagedown',
+        'up',
+        'down',
+        'left',
+        'right',
+        'space',
+        *(f'f{n}' for n in range(1, 25)),
+    }
+)
+
+
+def _normalize_key(key: str) -> str:
+    lower = key.lower()
+    if lower in _KEY_ALIASES:
+        return _KEY_ALIASES[lower]
+    if lower in _KEY_NAMES or len(key) == 1:
+        return lower
+    # Anything else may be a case-sensitive keysym, such as `KP_Enter` or `XF86AudioMute`.
+    return key
+
+
 def _normalize_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(_KEY_ALIASES.get(key.lower(), key.lower()) for key in keys)
+    return tuple(_normalize_key(key) for key in keys)
+
+
+def _check_position(x: int | None, y: int | None) -> None:
+    if (x is None) != (y is None):
+        raise ValueError('give both `x` and `y`, or neither to act at the pointer')
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -77,13 +120,17 @@ class Click(_Keyed):
     """Click a mouse button, optionally moving the pointer first."""
 
     x: int | None = None
-    """Horizontal position; `None` with `y` clicks where the pointer is."""
+    """Horizontal position; with `y` `None` too, clicks where the pointer is."""
     y: int | None = None
-    """Vertical position; `None` with `x` clicks where the pointer is."""
+    """Vertical position; with `x` `None` too, clicks where the pointer is."""
     button: MouseButton = 'left'
     count: Annotated[int, Field(ge=1, le=3)] = 1
     """1 for a click, 2 for a double click, 3 for a triple click."""
     kind: Literal['click'] = 'click'
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        _check_position(self.x, self.y)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -122,7 +169,10 @@ class MouseUp:
 
 @dataclass(frozen=True, kw_only=True)
 class Scroll(_Keyed):
-    """Turn the scroll wheel, optionally moving the pointer first."""
+    """Turn the scroll wheel, optionally moving the pointer first.
+
+    Amounts are wheel clicks, not pixels: one click scrolls about three lines in most applications.
+    """
 
     x: int | None = None
     y: int | None = None
@@ -131,6 +181,12 @@ class Scroll(_Keyed):
     dy: int = 0
     """Wheel clicks down; negative scrolls up."""
     kind: Literal['scroll'] = 'scroll'
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        _check_position(self.x, self.y)
+        if not self.dx and not self.dy:
+            raise ValueError('give a non-zero `dx` or `dy`')
 
 
 @dataclass(frozen=True, kw_only=True)

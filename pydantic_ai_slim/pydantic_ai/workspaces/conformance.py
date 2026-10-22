@@ -606,12 +606,13 @@ class WorkspaceBackendSuite:
             TypeText(text='a'),
             KeyPress(keys=('backspace',), repeat=1),
             HoldKey(keys=('shift',), seconds=0.1),
-            Wait(seconds=0),
-            Screenshot(),
         ]
         for action in actions:
             with suppress(UnsupportedComputerActionError):
                 await computer.act(action)
+        # Every backend can do these two: a screenshot is taken by the caller, and waiting needs no display.
+        await computer.act(Wait(seconds=0))
+        await computer.act(Screenshot())
 
     async def test_an_unknown_action_kind_is_refused(self, backend: WorkspaceBackend) -> None:
         computer = _computer(backend)
