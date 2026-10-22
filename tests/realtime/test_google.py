@@ -2686,23 +2686,22 @@ def test_speech_config_voice_and_language() -> None:
     assert speech.multi_speaker_voice_config is None
 
 
+# Plain dicts: the parametrize list is built at import, where `google-genai` may not be installed.
 @pytest.mark.parametrize(
     'settings',
     [
-        GoogleRealtimeModelSettings(
-            google_voice='Puck', google_multi_speaker={'voices': {'Joe': 'Puck', 'Jane': 'Kore'}}
-        ),
-        GoogleRealtimeModelSettings(google_multi_speaker={}),
+        {'google_voice': 'Puck', 'google_multi_speaker': {'voices': {'Joe': 'Puck', 'Jane': 'Kore'}}},
+        {'google_multi_speaker': {}},
     ],
 )
-async def test_connect_rejects_deprecated_multi_speaker_before_dialing(settings: GoogleRealtimeModelSettings) -> None:
+async def test_connect_rejects_deprecated_multi_speaker_before_dialing(settings: dict[str, Any]) -> None:
     """No Live model supports multi-speaker voices, so the session is refused before dialing."""
     captured: dict[str, Any] = {}
     model = GoogleRealtimeModel(
         'gemini-3.8-live', provider=GoogleProvider(client=_fake_client(_RecordingSession(), captured))
     )
     with pytest.raises(UserError, match='`google_multi_speaker` is deprecated and not supported by any Gemini Live'):
-        async with _connect(model, 'x', model_settings=settings):
+        async with _connect(model, 'x', model_settings=cast(GoogleRealtimeModelSettings, settings)):
             pass  # pragma: no cover
     assert captured == {}
 
