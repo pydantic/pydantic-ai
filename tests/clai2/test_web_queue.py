@@ -25,7 +25,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, QueuedInput
 from pydantic_clai2.plugins.process_plugins import LiveRuntime
 from pydantic_clai2.runtime.image_codec import decode_images
-from pydantic_clai2.runtime.session_runtime import create_shell
+from pydantic_clai2.runtime.session_runtime import Inbox, create_shell
 from tests.clai2.test_live_prompt import editor
 from tests.clai2.test_web import HEADER, TOKEN, WIRE, MakeWeb, encoded, make_web, png, receive_until
 
@@ -269,3 +269,21 @@ def test_a_live_session_counts_the_queue_its_prompt_holds() -> None:
     assert session.queued == len(session.queue) == 2
     # Without a prompt, the count still comes from `queued`.
     assert LiveRuntime(live_id='y', host=host, running=lambda: True, queued=lambda: 3).queued == 3
+
+
+async def test_the_former_inbox_still_reads_input_in_order() -> None:
+    """`Inbox`, which `PromptInbox` replaced, keeps working for code that imports it."""
+    inbox = Inbox()
+    inbox.put('first')
+    inbox.put('second')
+    assert [await inbox.get(), await inbox.get()] == ['first', 'second']
+    async with anyio.create_task_group() as tg:
+        received: list[str] = []
+
+        async def read() -> None:
+            received.append(await inbox.get())
+
+        tg.start_soon(read)
+        await anyio.sleep(0)
+        inbox.put('later')
+    assert received == ['later']

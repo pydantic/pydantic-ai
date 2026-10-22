@@ -2,6 +2,7 @@
 
 import asyncio
 import math
+from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
@@ -588,6 +589,28 @@ class _ConversationFooter:
             self.shown = event.conversation_id
             self.status.clear_conversation()
         await self.fire(event)
+
+
+class Inbox:
+    """Input waiting for a session's read loop, readable so the images its markers name are kept.
+
+    `SessionRuntime` now queues through `PromptInbox`, whose entries can be edited and removed;
+    this class stays so code that imports it keeps working.
+    """
+
+    def __init__(self) -> None:
+        self.texts = deque[str]()
+        self._arrived = asyncio.Event()
+
+    def put(self, text: str) -> None:
+        self.texts.append(text)
+        self._arrived.set()
+
+    async def get(self) -> str:
+        while not self.texts:
+            self._arrived.clear()
+            await self._arrived.wait()
+        return self.texts.popleft()
 
 
 @dataclass(kw_only=True)
