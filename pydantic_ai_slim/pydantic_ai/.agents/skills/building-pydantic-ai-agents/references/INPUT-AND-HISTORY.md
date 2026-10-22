@@ -56,15 +56,16 @@ Important distinctions:
 
 ### Continue OpenAI Responses on a WebSocket
 
-Install `pydantic-ai-slim[openai-responses-websocket]` before using `OpenAIResponsesModel.connect()`.
-Pass the yielded model to `Agent(...)`, `run(model=...)`, or a model-selection capability.
-Keep the connection open for every run that borrows it.
-On `api.openai.com`, parallel requests share one connection, each on its own `stream_id` lane.
-Any other host runs them one at a time, including xAI, Azure `/openai/v1` or a proxy reached through `OpenAIProvider`, unless the model's profile sets `openai_responses_supports_websocket_stream_id=True`.
-The connection doesn't reconnect and OpenAI closes it after 60 minutes, so open a new one before then in a long-lived process.
-Retain complete message history when switching to HTTP or another socket. Cached response IDs can be connection-local.
-Do not use a connected model in a durable workflow or flow; open it inside an activity instead.
-Use [OpenAI Responses WebSockets](https://pydantic.dev/docs/ai/models/openai/#responses-websockets) for configuration and ownership details.
+Install `pydantic-ai-slim[openai-responses-websocket]`, then set `model_settings={'openai_transport': 'websocket'}` on the model, agent or run.
+Other models ignore the setting, so code that takes a model string doesn't change.
+Each run opens a socket on its first request and closes it at the end; wrap back-to-back runs, or an app's lifetime, in `async with agent:` or `async with model:` to keep one socket.
+Socket requests default `openai_previous_response_id` to `'auto'`, so tool round trips send only their new input. A single-request run pays the handshake for nothing.
+Runs on one model instance share its socket: on `api.openai.com` each concurrent request gets its own `stream_id` lane; other hosts run one at a time unless the profile sets `openai_responses_supports_websocket_stream_id=True`.
+These requests use HTTP without a warning: a direct `model.request()` outside a run or `async with`, another event loop, durable execution units, background or resumed requests, no free lane, and headers that differ from the handshake's. The `pydantic_ai.transport='websocket'` span attribute marks socket requests.
+Azure, the `openai-chatgpt` and `openai-codex` providers, `OpenAICodexModel`, a missing extra and non-asyncio backends warn and use HTTP.
+A closed or failed socket, or one nearing OpenAI's 60-minute limit, is replaced on the next request; a failure mid-request raises `ModelConnectionError`, so `FallbackModel` works.
+A response stored server-side (the default) continues from any socket or HTTP; with `openai_store=False`, keep the full message history, since only the socket that created it can continue from it.
+Use [OpenAI Responses WebSockets](https://pydantic.dev/docs/ai/models/openai/#responses-websockets) for the full list of fallbacks and limits.
 
 ## Correlate Runs with `run_id` and `conversation_id`
 
