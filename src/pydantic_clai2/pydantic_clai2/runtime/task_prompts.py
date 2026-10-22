@@ -44,7 +44,7 @@ def delegate_tool(ctx: RunContext[object]) -> str | None:
 class TaskPrompt(AbstractCapability[object]):
     """Scripts a run's model requests: resume `task_id` on `agent_name` with `text`, then end the run.
 
-    No model is asked. When the delegate tool refuses, its reason is kept as `refused`.
+    No model is asked. When the delegate call does not succeed, its result is kept as `refused`.
     """
 
     agent_name: str
@@ -62,7 +62,8 @@ class TaskPrompt(AbstractCapability[object]):
     def _respond(self, ctx: RunContext[object], request: ModelRequest) -> ModelResponse:
         for part in request.parts:
             if isinstance(part, ToolReturnPart):
-                if part.outcome == 'retried':
+                # Retried, failed, denied or interrupted, the call resumed nothing.
+                if part.outcome != 'success':
                     self.refused = str(part.content)
                 return ModelResponse(parts=[TextPart('done')])
         tool = delegate_tool(ctx)

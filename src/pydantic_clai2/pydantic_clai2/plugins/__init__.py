@@ -478,8 +478,8 @@ class TaskCatalog(Protocol):
         agent hears no report, and no turn waits for it, so it cannot be backgrounded. Each change arrives
         as `on_task_event`, as for any task. Prompting a task the user stopped lets it resume. Raises
         `ValueError` for blank text, a task that is running, starting from a prompt, or cannot resume, or one
-        the agent can no longer delegate to, and `RuntimeError` on a CLAI that cannot run it; the task stays
-        as it was then.
+        the agent can no longer delegate to or whose delegate call fails or is denied, and `RuntimeError` on a
+        CLAI that cannot run it; the task stays as it was then.
         """
         ...
 

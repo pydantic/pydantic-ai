@@ -2699,7 +2699,8 @@ prompt the keyboard does:
   once the task runs, its progress arriving as `on_task_event`. Nothing of it reaches the
   conversation or the agent, and no turn waits for it, so `background` refuses it. It raises
   `ValueError` for blank `TEXT`, for a task that is running, starting from a prompt, or cannot
-  resume, such as an `Explore` or `Plan` one, and for one its agent no longer delegates to, and
+  resume, such as an `Explore` or `Plan` one, and for one its agent no longer delegates to or
+  whose delegate call fails or is denied, and
   `RuntimeError` when this CLAI cannot prompt a task on its own; the task stays as it was.
   `steer(ID, TEXT)` sends a running task a message, which it reads at its next model request,
   and returns `False` once it has finished, when `prompt` or `resume` is the way to go on. An ID

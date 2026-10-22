@@ -5,12 +5,13 @@ import gc
 import io
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import anyio
 import pytest
 from rich.console import Console
 
+from pydantic_ai import RunContext, SkipModelRequest
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -20,9 +21,10 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.subagents import DelegationEndEvent, DelegationStartEvent, DelegationTask, DelegationTaskEvent
 from pydantic_clai2._app import create_stock_agent
@@ -31,6 +33,7 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart, TaskEvent, TaskInfo
 from pydantic_clai2.runtime.session_runtime import create_shell
+from pydantic_clai2.runtime.task_prompts import TaskPrompt
 from pydantic_clai2.runtime.tasks import Tasks, resume_prompt
 from pydantic_clai2.ui.rendering.status import Status
 from tests.clai2.test_tasks import task
@@ -508,6 +511,30 @@ async def test_a_prompt_whose_task_another_run_started_still_reports_the_close(m
     release.set()
     with pytest.raises(RuntimeError, match='closed before the task could start'):
         await caller
+
+
+@pytest.mark.parametrize(
+    ('outcome', 'refused'),
+    [('success', None), ('retried', 'no'), ('failed', 'no'), ('denied', 'no'), ('interrupted', 'no')],
+)
+async def test_a_task_prompt_reads_any_unsuccessful_delegate_return_as_a_refusal(
+    outcome: Literal['success', 'retried', 'failed', 'denied', 'interrupted'], refused: str | None
+) -> None:
+    """A delegate call that failed, was denied or was interrupted resumed nothing, as a retried one did not."""
+    script = TaskPrompt(agent_name='worker', task_id='t1', text='hello')
+    returned = ToolReturnPart(tool_name='delegate_task', content='no', tool_call_id='c1', outcome=outcome)
+    request_context = ModelRequestContext(
+        model=TestModel(),
+        messages=[ModelRequest(parts=[returned])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    ctx = RunContext[object](deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
+    never: asyncio.Future[ModelResponse] = asyncio.get_running_loop().create_future()
+    with pytest.raises(SkipModelRequest) as skipped:
+        await script.wrap_model_request(ctx, request_context=request_context, handler=lambda request_context: never)
+    assert skipped.value.response.parts == [TextPart('done')]
+    assert script.refused == refused
 
 
 async def test_a_task_starting_from_a_prompt_takes_no_second_one() -> None:
