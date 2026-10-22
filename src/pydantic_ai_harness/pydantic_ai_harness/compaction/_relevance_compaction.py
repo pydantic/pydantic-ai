@@ -37,7 +37,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import collect_pinned, is_pinned
@@ -245,7 +245,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
     id: str | None = 'relevance_compaction'
     """Stable identity for durable operations; two on one agent merge into one."""
 
-    _focus: str | None = field(default=None, repr=False)
+    _focus: str | None = field(default=None, init=False, repr=False, compare=False)
     """Set by `with_focus` for `compact_now(..., focus=...)`; shown to the judge with the task."""
 
     _judge_agent: Agent[None, _StepRelevance] = field(init=False, repr=False, compare=False)
@@ -290,7 +290,9 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
     def with_focus(self, focus: str) -> RelevanceCompaction[AgentDepsT]:
         """Return a copy whose judge, and summarizer if any, give particular weight to `focus`."""
         summarizer = None if self.summarizer is None else self.summarizer.with_focus(focus)
-        return replace(self, summarizer=summarizer, _focus=focus)
+        focused = replace(self, summarizer=summarizer)
+        focused._focus = focus
+        return focused
 
     async def before_model_request(
         self,
@@ -535,7 +537,12 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             try:
                 async with gate:
                     result = await self._judge_agent.run(
-                        _judge_prompt(task, context, steps[index]), conversation_id=ctx.conversation_id, usage=usage
+                        _judge_prompt(task, context, steps[index]),
+                        conversation_id=ctx.conversation_id,
+                        usage=usage,
+                        # The run's own limits are checked around the whole set; without this, the shared
+                        # usage would hit `Agent.run`'s default 50-request limit on a long history.
+                        usage_limits=UsageLimits(request_limit=None),
                     )
             except Exception as exc:
                 # Stop the other requests and raise this error itself, not an exception group around it.

@@ -413,7 +413,8 @@ next please
             capabilities=[RelevanceCompaction(_Judge().model, max_tokens=1_000, keep_tokens=10)],
         )
 
-        with pytest.raises(UsageLimitExceeded, match='total_tokens_limit'):
+        # Only the judge's 10 + 2 tokens are counted when it raises: the agent's model was never called.
+        with pytest.raises(UsageLimitExceeded, match=r'total_tokens_limit of 5 \(total_tokens=12\)'):
             await agent.run(
                 'go',
                 message_history=_history('aaaaaaa ', 'bbbbbbb ')[:-1],
@@ -475,6 +476,18 @@ next please
         )
 
         assert usage == RunUsage(requests=1, input_tokens=30, output_tokens=6)
+
+    async def test_judges_more_steps_than_a_run_allows_requests(self) -> None:
+        judge = _Judge()
+        compaction = RelevanceCompaction(judge.model, max_tokens=100, keep_tokens=1)
+        usage = RunUsage()
+
+        await compact_now(
+            compaction, _history(*(f'step{n} ' for n in range(60)), size=1), model=TestModel(), usage=usage
+        )
+
+        assert len(judge.prompts) == 60
+        assert usage.requests == 1
 
     async def test_judge_respects_the_request_limit(self) -> None:
         judge = _Judge()
