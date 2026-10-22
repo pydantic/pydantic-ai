@@ -403,10 +403,10 @@ and has no shell. All take `credentials=` (keys, or a function returning them) a
 | `GCSFilesystem(url, ...)` | `gs://bucket/folder/` |
 | `AzureFilesystem(url, *, account=None, ...)` | `https://account.blob.core.windows.net/container/folder/` |
 
-Pass one as `agent.run(..., workspace=s3)` to make the bucket the whole workspace.
-`Mount(path, filesystem, *, read_only=False, description=None, shell=False)` (`pydantic_ai.workspaces`) shows one as
-a folder; `LocalWorkspace` takes `mounts=[...]`, or a function of the run context that returns them (one folder per
-customer from `deps`).
+Pass one as `agent.run(..., workspace=s3)` to make the bucket the whole workspace, or `ReadOnlyWorkspace(s3)`.
+`Mount(path, filesystem, *, read_only=False, description=None, commands=False)` (`pydantic_ai.workspaces`) shows one
+as a folder inside the working directory (`path` is relative); `LocalWorkspace` takes
+`mounts=[...]`, or a function of the run context that returns them (one folder per customer from `deps`).
 
 - Durable runs rebuild the workspace from capabilities, so mount the bucket on `LocalWorkspace` there.
 

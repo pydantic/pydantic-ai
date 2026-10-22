@@ -40,7 +40,7 @@ async def main():
     print(result.output)
 ```
 
-The file tools read `2026-10-01.csv` from `s3://acme-data/exports/2026-10-01.csv`. Pass `workspace=ReadOnlyWorkspace(Workspace(exports))` (both from `pydantic_ai.workspaces`) to refuse changes.
+The file tools read `2026-10-01.csv` from `s3://acme-data/exports/2026-10-01.csv`. Pass `workspace=ReadOnlyWorkspace(exports)` (from `pydantic_ai.workspaces`) to refuse changes.
 
 ## As a folder
 

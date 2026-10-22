@@ -22,6 +22,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from email.utils import formatdate
 from typing import Any, NoReturn, TypeAlias
+from urllib.parse import urlencode
 
 import httpx
 import pytest
@@ -86,18 +87,28 @@ def create_azure_container() -> None:
         unavailable(f'no reachable Azure Blob server at {AZURE_ENDPOINT}: {error}')
 
 
+def azure_sas() -> Any:
+    """A SAS token for the test container that expires, the kind a sandbox is handed for Azure."""
+    # A service SAS, as Azure documents it for versions from 2020-12-06:
+    # https://learn.microsoft.com/en-us/rest/api/storageservices/create-service-sas
+    expires_at = datetime.now(UTC) + timedelta(minutes=15)
+    expiry, version, permissions = expires_at.strftime('%Y-%m-%dT%H:%M:%SZ'), '2021-08-06', 'racwdl'
+    resource = f'/blob/{AZURE_ACCOUNT}/{BUCKET}'
+    to_sign = '\n'.join([permissions, '', expiry, resource, '', '', '', version, 'c', '', '', '', '', '', '', ''])
+    signature = base64.b64encode(hmac.new(base64.b64decode(AZURE_KEY), to_sign.encode(), hashlib.sha256).digest())
+    token = urlencode({'sv': version, 'sr': 'c', 'sp': permissions, 'se': expiry, 'sig': signature.decode()})
+    return {'sas_token': token, 'expires_at': expires_at}
+
+
 def s3_bucket(folder: str, credentials: Any = s3_keys) -> S3Filesystem:
     """An `S3Filesystem` for `<bucket>/<folder>` on the S3 server."""
     return S3Filesystem(f's3://{folder}', endpoint=S3_ENDPOINT, region='us-east-1', credentials=credentials)
 
 
-def azure_bucket(folder: str, credentials: Any = None) -> AzureFilesystem:
+def azure_bucket(folder: str, credentials: Any = azure_sas, **settings: Any) -> AzureFilesystem:
     """An `AzureFilesystem` for `<container>/<folder>` on the Azure server."""
     return AzureFilesystem(
-        f'az://{folder}',
-        endpoint=AZURE_ENDPOINT,
-        account=AZURE_ACCOUNT,
-        credentials=credentials or {'access_key': AZURE_KEY, 'expires_at': None},
+        f'az://{folder}', endpoint=AZURE_ENDPOINT, account=AZURE_ACCOUNT, credentials=credentials, **settings
     )
 
 

@@ -299,10 +299,11 @@ agent = Agent(
 )
 ```
 
-File tools reach `data/` on every workspace, and the model is told that commands don't see it. With
-`Mount('data', exports, shell=True)`, a sandbox that supports it mounts the filesystem, so commands and file tools
-see the same files. A workspace that can't, such as `LocalWorkspace` or a filesystem with no shell, refuses
-`shell=True` when the run starts and says why. Under [durable execution](#durable-execution), a run rebuilds its
+The path is a folder inside the working directory. File tools reach `data/` on every workspace, and the model is told
+that commands don't see it. With `Mount('data', exports, commands=True)`, a sandbox that supports it mounts the
+filesystem, so commands and file tools see the same files. A workspace that can't, such as `LocalWorkspace` or a
+filesystem, refuses `commands=True` before the run starts and says why. For a read-only filesystem as the whole
+workspace, pass `ReadOnlyWorkspace(exports)`. Under [durable execution](#durable-execution), a run rebuilds its
 workspace from the agent's capabilities, so mount the filesystem on one of those.
 
 ## Choosing a run's workspace
@@ -505,7 +506,7 @@ raises `WorkspaceUnavailableError` until it exists, so create each user's direct
 - With a `ref` you recognize, return a backend that attaches to it. Return `None` for any other.
   Ref ids can come from stored or untrusted history: validate them before using them as paths or identifiers.
 - To apply a policy, return a `Workspace` around the backend, such as
-  `ReadOnlyWorkspace(Workspace(backend))`.
+  `ReadOnlyWorkspace(backend)`.
 - Don't do I/O or keep state in `get_workspace`: it can be called more than once per run. Connect on
   the backend's first operation.
 - A capability that supplies a workspace can't use `defer_loading=True`: the workspace is chosen when
@@ -545,9 +546,9 @@ A backend is the object that talks to one environment; `Workspace` wraps it to g
 and `ctx.workspace.run` raises `UserError`. Shell-derived reads require regular files (not FIFOs or devices). They transfer large files and directory listings in bounded chunks, but shell-derived file operations are slower than native provider file APIs. Local and shell-derived file operations refuse to remove the workspace root or an ancestor, and local writes do not recreate a removed workspace directory. `LocalWorkspace` continues only in a ref naming its configured directory exactly as written, so a ref spelled through a symlink is declined.
 With both, they must reach the same environment. A filesystem-only backend whose storage can hold
 symlinks should also implement `SupportsRealpath`; see [Resolving symlinks](#resolving-symlinks).
-To let commands see [mounts](#mounting-filesystems) with `shell=True`, implement
+To let commands see [mounts](#mounting-filesystems) with `commands=True`, implement
 [`SupportsMounts`][pydantic_ai.workspaces.SupportsMounts]: `check_mount` refuses, without I/O, a mount the backend
-can't provide, and `ensure_mounts` puts the whole set in place before the first command of each run.
+can't provide, and `ensure_mounts` puts the whole set in place before the workspace's first operation.
 
 ### Resolving symlinks
 

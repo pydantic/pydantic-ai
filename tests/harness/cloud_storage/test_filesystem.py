@@ -3,11 +3,14 @@ on real servers."""
 
 from __future__ import annotations
 
-from typing import Any
+from datetime import datetime
+from typing import Any, cast
 
 import pytest
 
 pytest.importorskip('obstore')
+
+from obstore.store import AzureStore, GCSStore, S3Store
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
@@ -72,14 +75,33 @@ def test_each_class_takes_its_own_clouds_urls(make: Any, error: str) -> None:
         make()
 
 
-def test_each_cloud_gets_its_own_settings() -> None:
-    assert S3Filesystem('s3://a', endpoint='http://s3', region='auto')._config() == {  # pyright: ignore[reportPrivateUsage]
-        'endpoint': 'http://s3',
-        'region': 'auto',
-    }
-    assert GCSFilesystem('gs://a', endpoint='http://gcs')._config() == {'base_url': 'http://gcs'}  # pyright: ignore[reportPrivateUsage]
-    assert AzureFilesystem('az://c', account='acct')._config() == {'account_name': 'acct'}  # pyright: ignore[reportPrivateUsage]
-    assert AzureFilesystem('https://acct.blob.core.windows.net/c')._config() == {}  # pyright: ignore[reportPrivateUsage]
+def _prefix(filesystem: S3Filesystem | GCSFilesystem | AzureFilesystem) -> str | None:
+    """The folder obstore was given."""
+    store = filesystem._store  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(store, S3Store | GCSStore | AzureStore)
+    return store.prefix
+
+
+def test_file_tools_and_mounts_read_the_url_the_same_way() -> None:
+    # The folder in the URL is decoded once.
+    s3 = S3Filesystem('s3://b/my%20folder/', endpoint='http://s3', region='auto')
+    assert _prefix(s3) == 'my folder'
+    azure = AzureFilesystem('https://acct.blob.core.windows.net/c/my%20f/')
+    assert _prefix(azure) == 'my f'
+    assert _prefix(GCSFilesystem('gs://b/x', endpoint='http://gcs')) == 'x'
+
+
+@pytest.mark.parametrize('url', ['s3://b//x/', 's3://b/a/../x', 's3://b/./x', 's3:///x'])
+def test_the_folder_is_a_plain_path(url: str) -> None:
+    with pytest.raises(ValueError, match='a bucket and a plain folder path'):
+        S3Filesystem(url)
+
+
+@pytest.mark.parametrize('expires_at', [datetime(2030, 1, 1), '2030-01-01'])
+def test_keys_expire_at_a_datetime_with_a_time_zone(expires_at: Any) -> None:
+    keys = {'access_key_id': 'a', 'secret_access_key': 's', 'token': None, 'expires_at': expires_at}
+    with pytest.raises(ValueError, match='`expires_at` must be a datetime with a time zone'):
+        S3Filesystem('s3://b', credentials=cast(Any, keys))
 
 
 async def test_a_bucket_is_a_whole_workspace_without_a_shell() -> None:
