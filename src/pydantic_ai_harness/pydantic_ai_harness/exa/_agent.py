@@ -394,12 +394,13 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         if not owned:
             return None
         calls: dict[str, ToolReturn[str] | ModelRetry] = {}
-        # Runs a failed wait left to the model to follow up from its retry prompt, which a cancelled run never sends.
+        # Runs returned to the model as a retry, which may still be running for it to follow up on.
         retried: list[str] = []
         for index, (tool_call_id, run_id) in enumerate(owned):
             try:
                 result = await self._resolve_run(run_id)
-            except anyio.get_cancelled_exc_class():
+            except BaseException:
+                # Cancelled, or failed with an error the model can't fix, which ends the agent run.
                 await self._cancel_runs(ctx, [*retried, *(run_id for _, run_id in owned[index:])])
                 raise
             if isinstance(result, RetryRequest):
@@ -410,7 +411,7 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         return DeferredToolResults(calls=calls)
 
     async def _cancel_runs(self, ctx: RunContext[AgentDepsT], run_ids: list[str]) -> None:
-        """Cancel the runs a cancelled agent run was still waiting for, as nothing is left to read their results.
+        """Cancel the runs an agent run that was cancelled or failed while waiting leaves, as nothing will read their results.
 
         Under durable execution the engine may resume the wait, for example on another worker after a
         restart, so there the runs are left running.
