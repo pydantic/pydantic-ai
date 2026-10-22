@@ -173,11 +173,10 @@ class RealtimeModelSettings(TypedDict, total=False):
     (e.g. Gemini's `google_thinking_config`), which takes precedence.
 
     Supported by: OpenAI `gpt-realtime-2*` models (also on Azure), reasoning chat models like `gpt-5`
-    on Azure AI Voice Live, Gemini Live models other than Vertex AI's half-cascade `gemini-live-2.5-flash`
-    and `gemini-3.8-live` (not its `gemini-3.8-live-extended-thinking` variant, which always thinks), xAI's
-    reasoning Grok Voice models
-    (`grok-voice-latest` and the `grok-voice-think-*` family), and OpenAI GPT-Live, where it sets the
-    reasoning effort of the delegated backend model if that model reasons, unless
+    on Azure AI Voice Live, the Gemini Live models except Vertex AI's `gemini-live-2.5-flash` and
+    `gemini-3.8-live` (its `gemini-3.8-live-extended-thinking` variant always thinks), xAI's reasoning Grok
+    Voice models (`grok-voice-latest` and the `grok-voice-think-*` family), and OpenAI GPT-Live, where it
+    sets the reasoning effort of the delegated backend model if that model reasons, unless
     `openai_live_delegation` sets its own `reasoning_effort`.
     """
 
