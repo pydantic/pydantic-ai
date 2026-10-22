@@ -706,9 +706,9 @@ user: look at this and this
 tool reader returned: file body
 retry (reader): try again
 retry (output): Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-&lt;retry_feedback&gt;
+<retry_feedback>
 bad output
-&lt;/retry_feedback&gt;
+</retry_feedback>
 retry (reader): legacy try again
 
 Fix the errors and try again.
