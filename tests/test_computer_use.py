@@ -332,7 +332,7 @@ async def test_a_fallback_model_runs_the_tool_in_pixels() -> None:
 
 async def test_a_model_selected_later_without_image_input_is_refused_before_its_request() -> None:
     text_only = FunctionModel(
-        lambda messages, info: ModelResponse(parts=[TextPart('done')]),  # pragma: no cover
+        lambda messages, info: ModelResponse(parts=[TextPart('done')]),
         model_name='text-only',
         profile=ModelProfile(supports_image_input=False),
     )
