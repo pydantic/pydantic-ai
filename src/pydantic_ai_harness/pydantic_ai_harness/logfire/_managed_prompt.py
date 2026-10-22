@@ -12,6 +12,7 @@ import logfire
 from logfire.variables import Variable
 
 from pydantic_ai import TemplateStr
+from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_default
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Instrumentation
 from pydantic_ai.tools import AgentDepsT, RunContext
 
@@ -28,6 +29,8 @@ if TYPE_CHECKING:
 # is reserved for these system-managed prompts.
 _PROMPT_VARIABLE_PREFIX = 'prompt__'
 
+_ID_PREFIX = 'managed-prompt'
+
 
 def _new_resolved_var() -> ContextVar[ResolvedVariable[str] | None]:
     # `None` means nothing has been resolved for the active run.
@@ -38,11 +41,12 @@ def _new_resolved_var() -> ContextVar[ResolvedVariable[str] | None]:
 class ManagedPrompt(AbstractCapability[AgentDepsT]):
     """Back an agent's instructions with a Logfire-managed prompt.
 
-    **Prompt-cache trade-off:** the resolved value lands in the system instructions block, so any
-    Logfire-side change to the prompt (new version rollout, label flip, A/B targeting) invalidates
-    the provider's prompt cache for the affected runs. Pin a `label` (e.g. `'production'`) for the
-    cache-stable path; treat percentage rollouts and per-user targeting as opt-in cache cost. See
-    the README's "Prompt-cache trade-off" section for the full picture.
+    **Prompt-cache trade-off:** the resolved value lands in the system instructions block, so each
+    distinct value (a new version, a label flip, an A/B arm) starts new conversations on its own
+    cached prefix. A conversation already under way keeps its prefix: a changed value is appended to
+    its history as a replacement instead. Pin a `label` (e.g. `'production'`) for the cache-stable
+    path; treat percentage rollouts and per-user targeting as opt-in cache cost. See the README's
+    "Prompt-cache trade-off" section for the full picture.
 
     Pass the managed prompt name and a default value and the capability declares the backing
     [managed variable](https://logfire.pydantic.dev/docs/reference/advanced/managed-variables/)
@@ -80,7 +84,10 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
     of the agent run.
 
     Declaring the same name more than once is fine -- each `ManagedPrompt` constructs its own
-    backing variable, so sharing a prompt across several agents just works. Pass an existing
+    backing variable, so sharing a prompt across several agents just works. Within one agent, the
+    capability's `id` is derived from the prompt name (`managed-prompt-support_agent` above), so two
+    prompts with different names each get their own instruction block, and two with the same name
+    raise `UserError` when the agent is built. Pass `id=` to override the derived one. Pass an existing
     [`logfire.variables.Variable`][logfire.variables.Variable] as `name` instead of a prompt name
     when you want to use a variable you defined yourself (for example a `template_var`, or one
     registered for [`variables_push`][logfire.Logfire.variables_push]).
@@ -127,15 +134,19 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
     """Per-run resolution, isolated across concurrent runs via the context variable."""
 
     def __post_init__(self) -> None:
+        self._variable = self._build_variable()
+        if self.id is None:
+            self.id = f'{_ID_PREFIX}-{self._variable.name.removeprefix(_PROMPT_VARIABLE_PREFIX)}'
+
+    def _build_variable(self) -> Variable[str]:
         if not isinstance(self.name, str):
             if self.logfire_instance is not None:
                 warnings.warn(
                     '`logfire_instance` is ignored when `name` is a `Variable`; '
                     'the variable already carries its own Logfire instance.',
-                    stacklevel=2,
+                    stacklevel=3,
                 )
-            self._variable = self.name
-            return
+            return self.name
 
         if self.default is None:
             raise TypeError('`default` is required when `name` is a prompt name rather than a `Variable`.')
@@ -147,7 +158,7 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
             warnings.warn(
                 f'The {_PROMPT_VARIABLE_PREFIX!r} prefix is added automatically; '
                 f'pass the bare prompt name rather than {name!r}.',
-                stacklevel=2,
+                stacklevel=3,
             )
             name = name[len(_PROMPT_VARIABLE_PREFIX) :]
 
@@ -162,7 +173,7 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
         # same name is idempotent: `logfire.var` registers in a per-instance registry and raises
         # on a duplicate name, which would break sharing one prompt across agents.
         instance = self.logfire_instance if self.logfire_instance is not None else logfire.DEFAULT_LOGFIRE_INSTANCE
-        self._variable = Variable(variable_name, type=str, default=self.default, logfire_instance=instance)
+        return Variable(variable_name, type=str, default=self.default, logfire_instance=instance)
 
     @property
     def resolved(self) -> ResolvedVariable[str] | None:
@@ -190,6 +201,12 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
             return resolved.value
 
         return instructions
+
+    def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        # The prompt is resolved once per run, so a new version published between runs of a conversation is
+        # appended as a change (a diff, when that's shorter) rather than rewriting the cached prompt. The text
+        # is the operator's own prompt, from Logfire or the code default.
+        return append_on_change_by_default(super()._collect_instructions(), key=_ID_PREFIX)
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         """Resolve the prompt once and keep its baggage active for the duration of the run."""

@@ -671,7 +671,8 @@ async def test_mcp_url_derived_identity_is_withheld_from_realtime_request_config
     ).session() as session:
         _ = [event async for event in session]
 
-    assert capability.id is not None and 'SENTINEL-mcp-path-token' in capability.id
+    # The id is derived from the hostname alone, so the path's token never reaches it.
+    assert capability.id == 'mcp.example.test'
     spans = {span.name: span for span in exporter.get_finished_spans()}
     for name in ('invoke_agent agent', 'chat gpt-realtime'):
         attributes = spans[name].attributes
@@ -684,7 +685,7 @@ async def test_mcp_url_derived_identity_is_withheld_from_realtime_request_config
 
 @pytest.mark.parametrize('include_content', [True, False])
 def test_realtime_chat_and_session_mask_url_derived_native_names(include_content: bool) -> None:
-    identity = 'mcp.example.test-SENTINEL-path-token'
+    identity = 'mcp.example.test'
     settings, exporter = _settings(include_content=include_content)
     instrumentation = SessionInstrumentation(
         settings,
@@ -1376,6 +1377,12 @@ async def test_session_span_includes_resolved_run_attributes() -> None:
         # session span renders it as an object.
         'model_request_parameters': {'type': 'object'},
     }
+    # Each response's `chat` span reports the session's instructions, like a classic run's.
+    chat = next(s for s in exporter.get_finished_spans() if s.name.startswith('chat'))
+    assert chat.attributes is not None
+    assert json.loads(str(chat.attributes['gen_ai.system_instructions'])) == [
+        {'type': 'text', 'content': 'Keep answers concise.'}
+    ]
 
 
 async def test_session_span_marks_seeded_history_boundary() -> None:

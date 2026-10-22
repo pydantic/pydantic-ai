@@ -264,6 +264,63 @@ Instructions can also use [template strings](../agent-spec.md#template-strings) 
 
 Instructions from a capability with an [`id`][pydantic_ai.capabilities.AbstractCapability.id] reach the model as their own [instruction parts](../agent.md#instruction-parts), identified by `'capability:<capability id>'` — literal and computed alike, so an application that overrides that key controls everything the capability tells the model. To make one part addressable on its own, name it with [`@capability.instructions(name=...)`][pydantic_ai.capabilities.Capability.instructions], which keys it as `'capability:<capability id>:<name>'`. A capability without an `id` has no key for either.
 
+### Instructions that change during a conversation
+
+When a capability's instructions change partway through a conversation, we recommend having the changes [appended](../agent.md#appending-instruction-changes) to the history instead of rewriting the instruction prefix: the prefix, and the conversation cached behind it, stays the same, at the cost of the block's complete new text being added to the history for each change. This needs the capability to have an `id`, and the text must come from state you control: [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
+
+For text that changes between runs, return an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with `on_change='append'` from `get_instructions()`. It's read when the agent is built and reused, except in a run where [`for_run`](#per-run-state-isolation) returns a replacement, which is read again. So a capability that `for_run` rebuilds from the run's dependencies can change it from one run to the next:
+
+```python {title="capability_instruction_changes.py"}
+from dataclasses import dataclass
+from typing import Literal
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import InstructionDeltaPart, InstructionPart, ModelRequest
+from pydantic_ai.models.test import TestModel
+
+Language = Literal['English', 'Spanish', 'French']  # (1)!
+
+
+@dataclass
+class User:
+    language: Language
+
+
+@dataclass
+class PreferredLanguage(AbstractCapability[User]):
+    """Tells the agent which language to reply in."""
+
+    language: Language = 'English'
+
+    async def for_run(self, ctx: RunContext[User]) -> 'PreferredLanguage':
+        return PreferredLanguage(id=self.id, language=ctx.deps.language)
+
+    def get_instructions(self) -> InstructionPart:
+        return InstructionPart(f'Reply in {self.language}.', name='language', on_change='append')
+
+
+agent = Agent(TestModel(), deps_type=User, capabilities=[PreferredLanguage(id='language')])
+first = agent.run_sync('Hello!', deps=User('English'))
+second = agent.run_sync('¡Hola!', deps=User('Spanish'), message_history=first.all_messages())
+print(
+    [
+        part.content
+        for message in second.new_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, InstructionDeltaPart)
+    ]
+)
+#> ['Reply in Spanish.']
+```
+
+1. Only one of a fixed set of values reaches the instructions, never free-form text: see [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
+
+_(This example is complete, it can be run "as is")_
+
+For text that changes during a run, such as state a tool updates, return a callable from `get_instructions()` that returns `InstructionPart(..., name=..., on_change='append')`, as in the [current page example](../agent.md#appending-instruction-changes), or build the capability on [`Capability`][pydantic_ai.capabilities.Capability] and register the function with [`@capability.instructions(name=..., on_change='append')`][pydantic_ai.capabilities.Capability.instructions].
+
 ## Providing model settings
 
 [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] returns [model settings](../agent.md#model-run-settings) as a dict or a callable for per-step settings.
@@ -332,7 +389,7 @@ class AdaptiveModel(AbstractCapability[Deps]):
 agent = Agent(deps_type=Deps, capabilities=[AdaptiveModel()])
 ```
 
-[`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] is a synchronous configuration method, but the [`ModelSelector`][pydantic_ai.capabilities.ModelSelector] it returns may be synchronous or asynchronous. [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext] is separate from [`RunContext`][pydantic_ai.tools.RunContext] because a complete run context requires the model currently being selected. It includes dependencies, the request step, the run's prompt, the messages the selected model will be sent (ending with the request being routed), and usage. Keep `get_model()` itself cheap; perform I/O in an async selector.
+[`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] is a synchronous configuration method, but the [`ModelSelector`][pydantic_ai.capabilities.ModelSelector] it returns may be synchronous or asynchronous. [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext] is separate from [`RunContext`][pydantic_ai.tools.RunContext] because a complete run context requires the model currently being selected. It includes dependencies, the request step, the run's prompt, the messages the selected model will be sent (ending with the request being routed), usage, the run's output retry count and budget, and its usage limits, deadline, `run_id` and `conversation_id`. Keep `get_model()` itself cheap; perform I/O in an async selector.
 
 A model or model ID returned directly from `get_model()` is resolved once per run. A selector returned from `get_model()` is evaluated before every logical model request step.
 
@@ -410,7 +467,7 @@ Dynamic selection is not currently supported by durable execution capabilities. 
 | [`get_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_toolset] | [`AgentToolset`][pydantic_ai.toolsets.AgentToolset] `| None` | A [toolset](../toolsets.md) to register (or a callable for [dynamic toolsets](../toolsets.md#dynamically-building-a-toolset)) |
 | [`get_native_tools()`][pydantic_ai.capabilities.AbstractCapability.get_native_tools] | `Sequence[`[`AgentNativeTool`][pydantic_ai.tools.AgentNativeTool]`]` | [Native tools](../native-tools.md) to register (including callables) |
 | [`get_wrapper_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] | [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] `| None` | [Wrap the agent's assembled toolset](#toolset-wrapping) |
-| [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`AgentInstructions`][pydantic_ai.agent.AgentInstructions] `| None` | [Instructions](../agent.md#instructions) (static strings, [template strings](../agent-spec.md#template-strings), or callables) |
+| [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`AgentInstructions`][pydantic_ai.agent.AgentInstructions] `| None` | [Instructions](../agent.md#instructions) (static strings, [`InstructionPart`][pydantic_ai.messages.InstructionPart]s, [template strings](../agent-spec.md#template-strings), or callables) |
 | [`get_model_settings()`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] | [`AgentModelSettings`][pydantic_ai.agent.AgentModelSettings] `| None` | [Model settings](../agent.md#model-run-settings) dict, or a callable for per-step settings |
 | [`get_workspace()`][pydantic_ai.capabilities.AbstractCapability.get_workspace] | [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] `| None` | The run's [workspace](../workspace.md#supplying-a-workspace-from-a-capability): a backend for `ref` (fresh when `ref` is `None`), or `None` for a `ref` you don't recognize. Synchronous, no I/O. With several workspace capabilities, the first that returns one wins |
 | [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] | [`AgentModel`][pydantic_ai.capabilities.AgentModel] `| None` | Static or per-step [model selection](#selecting-the-model) |
@@ -630,7 +687,7 @@ From `before_model_request`, where a change goes decides two things: whether the
 |---|---|---|
 | Steer the model with a message it sees now and that stays in the conversation | [`ctx.enqueue(part)`][pydantic_ai.tools.RunContext.enqueue] | It goes into the request being prepared and into the message history, as a [`ModelRequest`][pydantic_ai.messages.ModelRequest] of its own, so every later request sends it too. |
 | Remind the model of something true only for this request | `ctx.enqueue(SystemPromptPart(..., scope='request'))` | A [request-scoped prompt](../message-history.md#request-scoped-system-prompts): it goes into this request and into history. Anthropic sends it as a turn-scoped system message (`clear_at`) and stops showing it to the model once its request has been answered; elsewhere it's sent with its own request only. |
-| Keep state the model should track, like a todo list or notes | [Instructions](#providing-instructions), with a callable for values that change | Rendered fresh for every request. A change re-sends everything after the instructions uncached, so this suits state that changes rarely. |
+| Keep state the model should track, like a todo list or notes | [Instructions](#providing-instructions) with [`on_change='append'`](#instructions-that-change-during-a-conversation) | Rendered fresh for every request. A change is appended to the history as a replacement, so the cached prefix survives it. With the default `on_change='rewrite'`, a change re-sends everything after the instructions uncached. |
 | Change only what this request sends: trim, filter, redact | Assign a new list to `request_context.messages` | Request-only: history keeps the original. The list is new, but the messages and parts in it are the ones history holds, so build replacements instead of mutating them in place, or history changes too. |
 | Rewrite the history, as compaction does | Replace the contents of [`ctx.messages`][pydantic_ai.tools.RunContext.messages] (`ctx.messages[:] = ...`), and assign `request_context.messages` too if this request should be sent the result | Persistent: later requests start from the rewritten history. |
 

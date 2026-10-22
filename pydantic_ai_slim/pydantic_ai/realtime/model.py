@@ -510,6 +510,8 @@ KnownRealtimeModelName = TypeAliasType(
         'azure:gpt-realtime',
         'xai:grok-voice-latest',
         'xai:grok-voice-think-fast-2.0',
+        'elevenlabs:eleven_realtime_v1_max',
+        'elevenlabs:eleven_realtime_v1_mini',
         'google:gemini-2.5-flash-native-audio-latest',
         'google:gemini-3.1-flash-live-preview',
         'google:gemini-3.8-live',
@@ -524,7 +526,7 @@ def infer_realtime_model(
 ) -> RealtimeModel:
     """Infer a realtime model from a `provider:model` identifier.
 
-    The provider is one of `openai`, `azure`, `xai`, `google` (the Gemini Developer API),
+    The provider is one of `openai`, `azure`, `xai`, `elevenlabs`, `google` (the Gemini Developer API),
     `google-cloud` (Vertex AI), or `elevenlabs-agents` (whose "model name" is an agent id, e.g.
     `elevenlabs-agents:agent_0101...`) — e.g. `openai:gpt-realtime` — or a
     [Pydantic AI Gateway](../gateway.md) route (`gateway/openai:gpt-realtime`,
@@ -591,6 +593,10 @@ def infer_realtime_model(
         from .xai import XaiRealtimeModel
 
         return XaiRealtimeModel(model_name, provider=resolved_provider)
+    if model_kind == 'elevenlabs':
+        from .elevenlabs import ElevenLabsRealtimeModel
+
+        return ElevenLabsRealtimeModel(model_name, provider=resolved_provider)
     if model_kind == 'elevenlabs-agents':
         from .elevenlabs_agents import ElevenLabsAgentsRealtimeModel
 
@@ -607,6 +613,6 @@ def infer_realtime_model(
         return GoogleRealtimeModel(model_name, provider=resolved_provider)
     raise UserError(
         f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, `azure`, '
-        '`xai`, `google`, `google-cloud`, and `elevenlabs-agents`, or `gateway/openai` / `gateway/google` to '
-        'route OpenAI or Gemini Live realtime through the Pydantic AI Gateway.'
+        '`xai`, `elevenlabs`, `google`, `google-cloud`, and `elevenlabs-agents`, or `gateway/openai` / '
+        '`gateway/google` to route OpenAI or Gemini Live realtime through the Pydantic AI Gateway.'
     )

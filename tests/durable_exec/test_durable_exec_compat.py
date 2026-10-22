@@ -602,6 +602,7 @@ def test_call_tool_result_json_payload_goldens(value: CallToolResult, expected: 
                     'unless_native': None,
                     'with_native': None,
                     'tool_kind': None,
+                    'unless_tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
                     'toolset_id': None,
