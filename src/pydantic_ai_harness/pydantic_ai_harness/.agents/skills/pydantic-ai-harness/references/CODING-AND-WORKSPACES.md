@@ -169,6 +169,11 @@ as under Coder.
 from its leading bytes, not its extension), and a text description (size, media type, and for other
 binary files the first 64 bytes in hex) for any other binary file; text files come back as a string.
 
+`read_file` has the tool kind `READ_FILE_KIND` (`file_system.read_file`). `ToolOutputLimits`'
+`read_tool_result`, `Memory`'s `read_memory` and `RepoContext`'s inventory tool step aside for it when
+the files they read are in the run's workspace. Keep `FileSystem` under its own names: a renamed
+`FileSystem` tool can't be called yet (pydantic/pydantic-ai#10927).
+
 Parameters: `root_dir` (default the working directory; must be the working directory or an **ancestor**
 of it, so `FileSystem(root_dir='data')` under `LocalWorkspace('.')` raises `UserError`: attach
 `LocalWorkspace('./data')` instead; `'/'` disables containment), `allowed_patterns` /
@@ -388,7 +393,7 @@ Python up to 3.14.
   `['--memory', '2g']`, `['--volume', f'{project}:/workspace']` to work on a host directory.
 - A missing `working_dir` is created as the container's user: with `--user`, use a mount or
   `working_dir=None`.
-- New containers get `--pids-limit 2048`; a `--pids-limit` in `docker_args` replaces it (`-1` for none).
+- New containers get `--pids-limit 2048`; a `--pids-limit` in `docker_args` replaces it (`-1` removes it).
 - With Docker, a background child holding stdout/stderr open keeps `run()` waiting: redirect it.
   With Podman, `run()` returns when the command exits.
 
@@ -457,8 +462,10 @@ every activity reattaches to that environment.
 ## RepoContext
 
 Loads `CLAUDE.md`/`AGENTS.md` into instructions at run start (stable within a run; a change between
-runs of a conversation is appended rather than rewritten) and exposes
-`inventory_agent_context()` (locates `.claude`/`.agents`/`.codex`/`.grok` skills, agents, hooks).
+runs of a conversation is appended rather than rewritten). With `expose_inventory_tool=True` it
+exposes `inventory_agent_context()` (locates `.claude`/`.agents`/`.codex`/`.grok` skills, agents,
+hooks), which is left out when `FileSystem` is on the agent and its asset roots are inside the working
+directory (the defaults are; `unless_tool_kind=READ_FILE_KIND`).
 
 ```python
 from pydantic_ai_harness import RepoContext

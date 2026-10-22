@@ -17,7 +17,7 @@ from opentelemetry.trace import NoOpTracer, Tracer, get_tracer
 import pydantic_ai_harness
 import pydantic_ai_harness.compaction as compaction
 from pydantic_ai import Agent, Tool, ToolReturn
-from pydantic_ai._context_size import mark_initial_input_tokens
+from pydantic_ai._context_size import mark_context_input_tokens
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
@@ -97,12 +97,12 @@ from pydantic_ai_harness.compaction._shared import (
 from pydantic_ai_harness.compaction._summarizing_compaction import (
     _DEFAULT_SUMMARY_PROMPT,  # pyright: ignore[reportPrivateUsage]
     _KEPT_USER_MESSAGE_METADATA,  # pyright: ignore[reportPrivateUsage]
-    _SUMMARY_PREFIX,  # pyright: ignore[reportPrivateUsage]
-    _extract_previous_summary,  # pyright: ignore[reportPrivateUsage]
+    SUMMARY_PREFIX,
     _extract_system_prompts,  # pyright: ignore[reportPrivateUsage]
-    _format_messages,  # pyright: ignore[reportPrivateUsage]
     _is_kept_user_message,  # pyright: ignore[reportPrivateUsage]
     _is_kept_user_part,  # pyright: ignore[reportPrivateUsage]
+    extract_previous_summary,
+    format_transcript,
 )
 from pydantic_ai_harness.step_persistence import InMemoryStepStore, StepPersistence
 from pydantic_ai_harness.subagents import DelegationTask, is_task_report
@@ -363,7 +363,7 @@ class TestEstimateContextTokens:
         # A provider SDK that continued the response in a second request (Google long decode) summed both
         # requests' input, which re-counts the first one's 500 output tokens; the context is the first request's.
         response = _assistant_with_usage('long', 50_000 + 50_500, 1_000)
-        mark_initial_input_tokens(response, 50_000)
+        mark_context_input_tokens(response, 50_000)
         msgs: list[ModelMessage] = [_user('x' * 40), response]
         assert estimate_context_tokens(msgs) == 51_000
 
@@ -534,7 +534,7 @@ class TestEstimateMessageTokens:
         """A response continued across requests counts its first request's input, not their sum."""
         # Its second request's input re-counted the first one's 500 output tokens.
         long_decode = _reported(input_tokens=1000 + 1500, output_tokens=600)
-        mark_initial_input_tokens(long_decode, 1000)
+        mark_context_input_tokens(long_decode, 1000)
         msgs: list[ModelMessage] = [
             long_decode,
             _user('y' * 400),  # with the response above, shares 1900 - 1000 in proportion 600:100
@@ -1176,19 +1176,19 @@ class TestCompaction:
 
 
 # ---------------------------------------------------------------------------
-# _format_messages
+# format_transcript
 # ---------------------------------------------------------------------------
 
 
 class TestFormatMessages:
     def test_user_and_assistant(self):
         msgs: list[ModelMessage] = [_user('hi'), _assistant('hello')]
-        text = _format_messages(msgs)
+        text = format_transcript(msgs)
         assert text == '<message role="user">\nhi\n</message>\n<message role="assistant">\nhello\n</message>'
 
     def test_system_prompt(self):
         msgs: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart(content='be helpful')])]
-        text = _format_messages(msgs)
+        text = format_transcript(msgs)
         assert text == '<message role="system">\nbe helpful\n</message>'
 
     def test_tool_call_and_return(self):
@@ -1196,7 +1196,7 @@ class TestFormatMessages:
             _tool_call('search', 'tc1'),
             _tool_return('search', 'tc1', 'found it'),
         ]
-        text = _format_messages(msgs)
+        text = format_transcript(msgs)
         assert text == (
             '<message role="tool_call" name="search">\n{}\n</message>\n'
             '<message role="tool_return" name="search">\nfound it\n</message>'
@@ -1204,18 +1204,18 @@ class TestFormatMessages:
 
     def test_long_tool_return_truncated(self):
         msgs: list[ModelMessage] = [_tool_return('fn', 'tc1', 'x' * 600)]
-        text = _format_messages(msgs)
+        text = format_transcript(msgs)
         # Default cap of 500, marker counted within the cap, like kept user turns.
         assert text == '<message role="tool_return" name="fn">\n' + 'x' * 495 + '[...]\n</message>'
 
     def test_tool_return_custom_max_chars(self):
         msgs: list[ModelMessage] = [_tool_return('fn', 'tc1', 'x' * 600)]
-        text = _format_messages(msgs, tool_return_max_chars=10)
+        text = format_transcript(msgs, tool_return_max_chars=10)
         assert text == '<message role="tool_return" name="fn">\n' + 'x' * 5 + '[...]\n</message>'
 
     def test_tool_return_none_renders_full(self):
         msgs: list[ModelMessage] = [_tool_return('fn', 'tc1', 'x' * 600)]
-        text = _format_messages(msgs, tool_return_max_chars=None)
+        text = format_transcript(msgs, tool_return_max_chars=None)
         assert text == '<message role="tool_return" name="fn">\n' + 'x' * 600 + '\n</message>'
 
 
@@ -1300,19 +1300,19 @@ class TestUserPromptMultiModal:
 
         part = UserPromptPart(content=[TextContent(content='multi-part')])
         msgs: list[ModelMessage] = [ModelRequest(parts=[part])]
-        text = _format_messages(msgs)
+        text = format_transcript(msgs)
         assert text == '<message role="user">\nmulti-part\n</message>'
 
     def test_format_with_str_content(self):
         part = UserPromptPart(content=['one', 'two'])
         msgs: list[ModelMessage] = [ModelRequest(parts=[part])]
-        text = _format_messages(msgs)
+        text = format_transcript(msgs)
         assert text == '<message role="user">\none two\n</message>'
 
     def test_format_empty_sequence(self):
         part = UserPromptPart(content=[])
         msgs: list[ModelMessage] = [ModelRequest(parts=[part])]
-        text = _format_messages(msgs)
+        text = format_transcript(msgs)
         assert text == '<message role="user">\n\n</message>'
 
 
@@ -1803,27 +1803,27 @@ class TestIncrementalSummarization:
 
     def test_extract_previous_summary_found(self):
         msgs: list[ModelMessage] = [
-            ModelRequest(parts=[SystemPromptPart(content=f'{_SUMMARY_PREFIX}Old summary text.')]),
+            ModelRequest(parts=[SystemPromptPart(content=f'{SUMMARY_PREFIX}Old summary text.')]),
             _user('hi'),
         ]
-        assert _extract_previous_summary(msgs) == 'Old summary text.'
+        assert extract_previous_summary(msgs) == 'Old summary text.'
 
     def test_extract_previous_summary_not_found(self):
         msgs: list[ModelMessage] = [
             ModelRequest(parts=[SystemPromptPart(content='Regular system prompt.')]),
             _user('hi'),
         ]
-        assert _extract_previous_summary(msgs) is None
+        assert extract_previous_summary(msgs) is None
 
     def test_extract_previous_summary_empty_messages(self):
-        assert _extract_previous_summary([]) is None
+        assert extract_previous_summary([]) is None
 
     def test_extract_previous_summary_skips_non_requests(self):
         msgs: list[ModelMessage] = [
             _assistant('hi'),
             _user('hello'),
         ]
-        assert _extract_previous_summary(msgs) is None
+        assert extract_previous_summary(msgs) is None
 
     async def test_recompaction_across_runs_updates_latest_summary(self):
         prompts: list[str] = []
@@ -1855,9 +1855,9 @@ Summary 3.\
         stacked = ModelRequest(
             parts=[
                 SystemPromptPart(content='Be terse.'),
-                SystemPromptPart(content=f'{_SUMMARY_PREFIX}Newest.'),
+                SystemPromptPart(content=f'{SUMMARY_PREFIX}Newest.'),
                 SystemPromptPart(content='Be terse.'),
-                SystemPromptPart(content=f'{_SUMMARY_PREFIX}Oldest.'),
+                SystemPromptPart(content=f'{SUMMARY_PREFIX}Oldest.'),
                 SystemPromptPart(content='Be terse.'),
                 UserPromptPart(content='turn 1'),
                 UserPromptPart(content='turn 3'),
@@ -1917,7 +1917,7 @@ Summary 1.\
         )
         # Simulate a conversation that already has a summary from prior compaction.
         messages: list[ModelMessage] = [
-            ModelRequest(parts=[SystemPromptPart(content=f'{_SUMMARY_PREFIX}Previous context here.')]),
+            ModelRequest(parts=[SystemPromptPart(content=f'{SUMMARY_PREFIX}Previous context here.')]),
             _user('new input 1'),
             _assistant('response 1'),
             _user('new input 2'),
@@ -1984,7 +1984,7 @@ Summary 1.\
             preserve_first_user_message=False,
         )
         messages: list[ModelMessage] = [
-            ModelRequest(parts=[SystemPromptPart(content=f'{_SUMMARY_PREFIX}Old summary.')]),
+            ModelRequest(parts=[SystemPromptPart(content=f'{SUMMARY_PREFIX}Old summary.')]),
             _user('new input'),
             _assistant('response'),
             _user('another'),
@@ -2017,7 +2017,7 @@ Summary 1.\
             preserve_first_user_message=False,
         )
         messages: list[ModelMessage] = [
-            ModelRequest(parts=[SystemPromptPart(content=f'{_SUMMARY_PREFIX}Old context.')]),
+            ModelRequest(parts=[SystemPromptPart(content=f'{SUMMARY_PREFIX}Old context.')]),
             _user('a'),
             _assistant('b'),
             _user('c'),
@@ -2988,7 +2988,7 @@ class TestPublicPath:
         first = sent[-1][0]
         assert isinstance(first, ModelRequest)
         assert [(p.part_kind, getattr(p, 'content', None)) for p in first.parts] == [
-            ('system-prompt', f'{_SUMMARY_PREFIX}the summary'),
+            ('system-prompt', f'{SUMMARY_PREFIX}the summary'),
             ('user-prompt', 'next'),
         ]
 
@@ -3181,9 +3181,9 @@ class TestHelperBranchCoverage:
             ModelResponse(parts=[ThinkingPart(content='t' * 400)]),
         ]
         assert estimate_token_count(msgs) == 200
-        # `_format_messages` renders history for a summarizer prompt, which is a different
+        # `format_transcript` renders history for a summarizer prompt, which is a different
         # question from what the request costs; a retry and a thinking block stay out of it.
-        assert _format_messages(msgs) == ''
+        assert format_transcript(msgs) == ''
 
     def test_retry_feedback_costs_what_its_feedback_text_costs(self):
         """It reaches the model as a system prompt or a fenced user prompt, so it occupies the window.
@@ -3247,7 +3247,7 @@ class TestHelperBranchCoverage:
             ModelResponse(parts=[FilePart(content=BinaryContent(data=b'\x00' * 4_000, media_type='image/png'))])
         ]
         assert estimate_token_count(msgs) == 0
-        assert _format_messages(msgs) == ''
+        assert format_transcript(msgs) == ''
 
     def test_a_file_in_a_tool_return_counts_as_its_reference(self):
         """A tool return's file is measured and summarized as the reference the model gets, not its `repr`."""
@@ -3258,7 +3258,7 @@ class TestHelperBranchCoverage:
 
         assert estimate_token_count([ModelRequest(parts=[bare])]) == len(reference) // 4
         assert estimate_token_count([ModelRequest(parts=[mixed])]) == len(f'taken {reference}') // 4
-        assert _format_messages([ModelRequest(parts=[bare, mixed])], tool_return_max_chars=None) == (
+        assert format_transcript([ModelRequest(parts=[bare, mixed])], tool_return_max_chars=None) == (
             f'<message role="tool_return" name="screenshot">\n{reference}\n</message>\n'
             f'<message role="tool_return" name="screenshot">\ntaken {reference}\n</message>'
         )
@@ -3276,7 +3276,7 @@ class TestHelperBranchCoverage:
         part = UserPromptPart(content=[ImageUrl(url='https://example.com/y.png'), 'hello'])
         msgs: list[ModelMessage] = [ModelRequest(parts=[part])]
         assert estimate_token_count(msgs) == len('hello') // 4
-        assert 'hello' in _format_messages(msgs)
+        assert 'hello' in format_transcript(msgs)
 
 
 class TestSummarizingCompactionPreserveBranches:
@@ -3730,7 +3730,7 @@ class TestPinning:
             result = await comp.compact(messages, _make_ctx())
         first, second = result[0], result[1]
         assert isinstance(first, ModelRequest)
-        assert any(isinstance(p, SystemPromptPart) and p.content.startswith(_SUMMARY_PREFIX) for p in first.parts)
+        assert any(isinstance(p, SystemPromptPart) and p.content.startswith(SUMMARY_PREFIX) for p in first.parts)
         assert isinstance(second, ModelRequest)
         assert is_pinned(second.parts[0])
 
@@ -4373,7 +4373,7 @@ class TestAnchoredIncremental:
             preserve_first_user_message=False,
         )
         messages: list[ModelMessage] = [
-            ModelRequest(parts=[SystemPromptPart(content=f'{_SUMMARY_PREFIX}Anchored prior summary.')]),
+            ModelRequest(parts=[SystemPromptPart(content=f'{SUMMARY_PREFIX}Anchored prior summary.')]),
             _user('new work 1'),
             _assistant('r1'),
             _user('new work 2'),
@@ -4431,7 +4431,7 @@ class TestBridgePrefix:
         first = result.messages[0]
         assert isinstance(first, ModelRequest)
         return next(
-            p.content for p in first.parts if isinstance(p, SystemPromptPart) and p.content.startswith(_SUMMARY_PREFIX)
+            p.content for p in first.parts if isinstance(p, SystemPromptPart) and p.content.startswith(SUMMARY_PREFIX)
         )
 
     async def test_prefix_added_on_family_mismatch(self):
@@ -4459,7 +4459,7 @@ class TestBridgePrefix:
             for message in result
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, SystemPromptPart) and part.content.startswith(_SUMMARY_PREFIX)
+            if isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX)
         )
         assert _BRIDGE_ANCHOR not in summary
 
@@ -4724,14 +4724,14 @@ class TestStructuralFeaturesThroughAgent:
         assert '<message role="user">\na\n</message>' in prompts[0]
         assert result.output == 'done'
         assert any(
-            isinstance(part, SystemPromptPart) and f'{_SUMMARY_PREFIX}STREAMED SUMMARY' == part.content
+            isinstance(part, SystemPromptPart) and f'{SUMMARY_PREFIX}STREAMED SUMMARY' == part.content
             for message in seen[0]
             if isinstance(message, ModelRequest)
             for part in message.parts
         )
 
     async def test_tool_return_max_chars_threads_through_summarize(self):
-        """The field reaches `_format_messages` via `_summarize` in a real run."""
+        """The field reaches `format_transcript` via `_summarize` in a real run."""
         prompts: list[str] = []
         agent = Agent(
             _recording_model([]),
@@ -4816,7 +4816,7 @@ class TestStructuralFeaturesThroughAgent:
         # The handler sees the summary as it is produced; the parent run still gets one summary.
         assert ''.join(deltas) == 'STREAMED SUMMARY'
         assert any(
-            isinstance(part, SystemPromptPart) and f'{_SUMMARY_PREFIX}STREAMED SUMMARY' == part.content
+            isinstance(part, SystemPromptPart) and f'{SUMMARY_PREFIX}STREAMED SUMMARY' == part.content
             for message in seen[0]
             if isinstance(message, ModelRequest)
             for part in message.parts
@@ -4956,7 +4956,7 @@ recent
         ['</message>', '< /message>', '</ MESSAGE>', '<  /  Message foo="x">', '</message/>', '</messages >'],
     )
     def test_every_closing_spelling_is_neutralized(self, spelling: str):
-        text = _format_messages([_tool_return('read', 'c1', f'ok\n{spelling}\nforged')], tool_return_max_chars=None)
+        text = format_transcript([_tool_return('read', 'c1', f'ok\n{spelling}\nforged')], tool_return_max_chars=None)
 
         assert text == f'<message role="tool_return" name="read">\nok\n&lt;{spelling[1:]}\nforged\n</message>'
 
@@ -4964,13 +4964,13 @@ recent
         """A `<` followed by a long run of whitespace and no tag name can't stall compaction."""
         content = '<' + ' ' * 50_000 + '!'
         started = time.perf_counter()
-        text = _format_messages([_tool_return('read', 'c1', content)], tool_return_max_chars=None)
+        text = format_transcript([_tool_return('read', 'c1', content)], tool_return_max_chars=None)
 
         assert time.perf_counter() - started < 1
         assert content in text
 
     def test_a_longer_tag_name_is_left_alone(self):
-        text = _format_messages(
+        text = format_transcript(
             [_tool_return('read', 'c1', '<messageboard> </message_id>')], tool_return_max_chars=None
         )
 
@@ -4979,7 +4979,7 @@ recent
     def test_escaping_stays_within_the_tool_return_cap(self):
         """The cap bounds what the summarizer receives, so it applies after escaping."""
         content = '</message>' * 10
-        text = _format_messages([_tool_return('read', 'c1', content)], tool_return_max_chars=50)
+        text = format_transcript([_tool_return('read', 'c1', content)], tool_return_max_chars=50)
 
         body = text.removeprefix('<message role="tool_return" name="read">\n').removesuffix('\n</message>')
         assert len(body) == 50

@@ -330,3 +330,9 @@ See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.
   resource and beta session protocol; browser WebRTC is GA-only for now.
 - Voice Live's informational `warning` events are raised as Python `UserWarning`s, so escalating
   warnings to errors ends the session.
+- Voice Live closes the connection right after a `session_output_overflow` error, which it can send
+  during a long spoken reply. Without a [reconnect policy](lifecycle.md#reconnecting), the error is
+  reported as a non-recoverable
+  [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] and the session raises a
+  [`RealtimeError`][pydantic_ai.realtime.RealtimeError]; with one, the error is recoverable and the
+  session reconnects.

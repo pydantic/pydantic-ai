@@ -1927,7 +1927,7 @@ class TestTelemetryAndComposition:
             captured.append(_latest_memory_context(messages))
             return ModelResponse(parts=[TextPart('done')])
 
-        agent = Agent(FunctionModel(model), capabilities=[Memory(store=store, max_tokens=200)])
+        agent = Agent(FunctionModel(model), capabilities=[Memory(store=store, max_tokens=195)])
         agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=False)
         await agent.run('go')
 

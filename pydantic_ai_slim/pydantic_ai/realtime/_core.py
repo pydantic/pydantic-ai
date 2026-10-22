@@ -169,8 +169,9 @@ class ToolCallRefused:
 class Interrupted:
     """The caller interrupted the response being spoken, having heard `played_ms` of it.
 
-    `cuts` are the output items the session truncated on the provider, by item id, each with how much of its
-    audio was heard: a response that already ended is recorded as cut off there too.
+    `cuts` are the output items the barge-in cut off, by item id, each with how much of its audio was heard
+    (truncated on the provider too when the model supports output truncation): a response that already ended is
+    recorded as cut off there too.
     """
 
     played_ms: int | None
@@ -301,10 +302,17 @@ class ToolRoundsOver:
 
 @dataclass(frozen=True)
 class ExchangeOver:
-    """A response ended, and with it everything the model owed: what `wait_for_reply()` waits for is over."""
+    """The exchange is over: what `wait_for_reply()` waits for is over.
+
+    Either a response ended with nothing more owed, or the exchange was abandoned with no response left to end it (see
+    `ExchangeAbandoned`).
+    """
 
     interrupted: bool
-    """Whether the response that ended it was cut off (the user barged in, or the caller interrupted it)."""
+    """Whether the response that ended it was cut off (the user barged in, or the caller interrupted it).
+
+    `False` for an exchange that was abandoned.
+    """
 
 
 Effect: TypeAlias = (
@@ -542,6 +550,8 @@ class SessionCore:
         self._effects: list[Effect] = []
         self._exchange_ending: bool | None = None
         """A response ended in the frame being applied, and whether it was cut off (see `end_frame`)."""
+        self._exchange_under_way = False
+        """A response started since the last `ExchangeOver`: the exchange it is part of is still to end."""
         self._unrounded: dict[str, list[str]] = {}
         """The calls of each recorded response that no `ToolRoundsOver` named yet, while it has any (when tracking)."""
         self._pruned_calls: set[str] = set()
@@ -660,8 +670,7 @@ class SessionCore:
             for item_id, heard_ms in command.cuts:
                 self._cut_recorded_item(item_id, _Cut(heard_ms=heard_ms))
         elif isinstance(command, ExchangeAbandoned):
-            self._abandoned.update((token.kind, token.key) for token in self.wait_tokens())
-            self._epoch += 1
+            self._abandon_exchange()
         elif isinstance(command, TranscriptOverdue):
             self._end_transcriptions([command.turn_id])
         elif isinstance(command, ResponseOverdue):
@@ -737,6 +746,7 @@ class SessionCore:
             if self._obligations.get(input_id) == 'pending':
                 self._obligations[input_id] = 'answered'
                 self._answered_by[input_id] = event.response_id
+        self._exchange_under_way = True
         self._effects.append(ResponseOpened(event.response_id))
 
     def _revise_answers(self, event: AnswersRevised) -> None:
@@ -1086,7 +1096,30 @@ class SessionCore:
             return
         self._exchange_ending = None
         if not self.wait_tokens():
-            self._effects.append(ExchangeOver(interrupted=interrupted))
+            self._exchange_over(interrupted=interrupted)
+
+    def _exchange_over(self, *, interrupted: bool) -> None:
+        self._exchange_under_way = False
+        self._effects.append(ExchangeOver(interrupted=interrupted))
+
+    def _abandon_exchange(self) -> None:
+        """Stop waiting for what is owed (see `ExchangeAbandoned`), ending the exchange under way if nothing else will.
+
+        A response still under way, or one that ended in the frame being applied, ends it as it ends (see `end_frame`),
+        as nothing owed before now holds it open. Otherwise no response is coming to end it: the result of a tool that
+        raised doesn't go out, so the model never answers it.
+        """
+        owed = self.wait_tokens()
+        self._abandoned.update((token.kind, token.key) for token in owed)
+        self._epoch += 1
+        if (
+            (owed or self._exchange_under_way)
+            and self._receiving
+            and not self._closed
+            and not self.response_under_way()
+            and self._exchange_ending is None
+        ):
+            self._exchange_over(interrupted=False)
 
     def _record_response(self, response: _Response, event: ResponseEnded) -> ModelResponse | None:
         """Record a response that ended, returning what history records for it, if anything."""
