@@ -3718,6 +3718,22 @@ class TestDynamicCatalog:
         assert CodeModeToolset(wrapped=_build_function_toolset(add)).id is None
         assert CodeModeToolset(wrapped=_build_function_toolset(add), dynamic_catalog=True).id == '<code_mode>'
 
+    async def test_catalog_key_leaves_a_users_code_mode_toolset_alone(self) -> None:
+        """A toolset the user named `code_mode` keeps its instructions next to the catalog, without a duplicate-id error."""
+        instruction_parts: list[InstructionPart] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instruction_parts.extend(info.model_request_parameters.instruction_parts or ())
+            return ModelResponse(parts=[TextPart('done')])
+
+        mine = FunctionToolset[object]([Tool(add)], id='code_mode', instructions='Mine.')
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model_fn), toolsets=[mine], capabilities=[CodeMode[object](dynamic_catalog=True)]
+        )
+        await agent.run('Hi')
+
+        assert [str(p.id) for p in instruction_parts] == ['toolset:code_mode', 'toolset:<code_mode>:catalog']
+
     async def test_empty_catalog_is_an_empty_append_block(self) -> None:
         """No sandboxed tools yet: the catalog block is still returned, empty, so its first content can be appended."""
         toolset = CodeModeToolset(wrapped=_build_function_toolset(), tool_selector='all', dynamic_catalog=True)
