@@ -2168,6 +2168,29 @@ async def test_rejected_usage_survives_a_stopped_run(stop: str) -> None:
     assert exc_info.value.usage == snapshot(RunUsage(input_tokens=1000, output_tokens=500))
 
 
+async def test_rejected_usage_survives_an_error_fallback_on_does_not_cover() -> None:
+    """A rejected response's usage still counts when a later model raises an error that ends the run."""
+
+    def rejected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(input_tokens=1000, output_tokens=500))
+
+    def uncovered_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ValueError('not a fallback error')
+
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'primary'
+
+    model = FallbackModel(
+        FunctionModel(rejected, model_name='primary'),
+        FunctionModel(uncovered_error, model_name='backup'),
+        fallback_on=reject_primary,
+    )
+    usage = RunUsage()
+    with pytest.raises(ValueError, match='not a fallback error'):
+        await Agent(model).run('test', usage=usage)
+    assert usage == snapshot(RunUsage(input_tokens=1000, output_tokens=500))
+
+
 async def test_rejected_usage_is_not_counted_twice_before_a_continuation() -> None:
     """The limit checked before a suspended response is continued counts a rejected response's usage once."""
     backup_calls = 0
