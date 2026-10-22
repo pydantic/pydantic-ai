@@ -154,7 +154,7 @@ class TestSmartSearch:
             return ModelResponse(parts=[TextPart('relevant, I think')])  # no `Relevance`: not retried
 
         agent = search_agent(tmp_path, FunctionModel(malformed))
-        result = await agent.run('find it', model=calls_smart_file_search(), usage_limits=UsageLimits(request_limit=3))
+        result = await agent.run('find it', model=calls_smart_search(), usage_limits=UsageLimits(request_limit=3))
         [part] = tool_returns(result.all_messages())
         assert 'UnexpectedModelBehavior' in str(part.content)
         assert len(judge_requests) == 1 and result.output == 'done'
