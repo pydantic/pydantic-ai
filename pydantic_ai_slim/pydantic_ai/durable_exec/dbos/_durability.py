@@ -18,9 +18,8 @@ from pydantic_ai.durable_exec._base import BaseDurabilityCapability, conversatio
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import ToolsetKind
 from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
-from pydantic_ai.durable_exec._utils import StreamedActivityResult
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse
-from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters
+from pydantic_ai.messages import AgentStreamEvent
+from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 
@@ -266,19 +265,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     def _toolset_in_durable_context(self) -> bool:
         # DBOS steps degrade to inline calls outside a workflow, preserving the wrapper-era lifecycle.
         return True
-
-    async def _load_streamed_activity_result(
-        self, result: object, model_request_parameters: ModelRequestParameters
-    ) -> StreamedActivityResult:
-        if isinstance(result, ModelResponse):
-            # Legacy-history-only: `DBOSAgent` recorded a bare response for stream steps.
-            stream = CompletedStreamedResponse(
-                result,
-                model_request_parameters=model_request_parameters,
-                replay_events=True,
-            )
-            return StreamedActivityResult(response=result, events=[event async for event in stream])
-        return cast(StreamedActivityResult, result)
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         if self._in_legacy_workflow.get():

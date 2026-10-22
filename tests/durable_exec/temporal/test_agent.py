@@ -125,7 +125,7 @@ try:
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
-    from pydantic_ai.durable_exec._utils import StreamedActivityResult
+    from pydantic_ai.durable_exec._utils import StreamedActivityResult, StreamedModelRequestResult
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         PydanticAIWorkflow,
@@ -137,7 +137,6 @@ try:
     )
     from pydantic_ai.durable_exec.temporal._durability import (
         _CancelParams,  # pyright: ignore[reportPrivateUsage]
-        _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._function_toolset import (
         TemporalFunctionToolset,
@@ -4364,15 +4363,15 @@ def test_temporal_durability_without_handler_does_not_wrap_event_stream() -> Non
 async def test_stream_activity_payload_decodes_both_recorded_shapes() -> None:
     """The stream-activity result union decodes both recorded wire shapes unambiguously.
 
-    A `TemporalDurability` history (v2.14+) records a `StreamedActivityResult`; a legacy
-    `TemporalAgent` history recorded the bare `ModelResponse`. Replay of either kind of
-    in-flight workflow decodes the recorded payload through `_StreamedActivityPayload`.
+    `TemporalDurability` histories from v2.14 to v2.59 record a `StreamedActivityResult`; newer
+    ones, like legacy `TemporalAgent` histories, record the bare `ModelResponse`. Replay of any
+    in-flight workflow decodes the recorded payload through `StreamedModelRequestResult`.
     """
     response = {'parts': [{'content': 'streamed', 'part_kind': 'text'}], 'kind': 'response'}
     event = {'index': 0, 'part': {'content': 'streamed', 'part_kind': 'text'}, 'event_kind': 'part_start'}
     payloads = await pydantic_data_converter.encode([{'response': response, 'events': [event]}, response])
 
-    hints = [_StreamedActivityPayload, _StreamedActivityPayload]
+    hints = [StreamedModelRequestResult, StreamedModelRequestResult]
     current_shape, legacy_shape = await pydantic_data_converter.decode(payloads, hints)  # pyright: ignore[reportArgumentType]
 
     assert isinstance(current_shape, StreamedActivityResult)
@@ -4392,19 +4391,22 @@ _buffered_stream_agent = Agent(
 @workflow.defn
 class BufferedStreamDurableAgentWorkflow:
     @workflow.run
-    async def run(self) -> tuple[list[str], str, list[str]]:
+    async def run(self) -> tuple[list[str], str, list[str], list[str]]:
         async with _buffered_stream_agent.run_stream('Hello') as stream:
             chunks = [chunk async for chunk in stream.stream_text(debounce_by=None)]
             output = await stream.get_output()
 
         async with _buffered_stream_agent.run_stream_events('Hello') as event_stream:
             events = [event async for event in event_stream]
-        deltas = [
-            event.delta.content_delta
-            for event in events
-            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta)
+        model_event_kinds = [
+            type(event).__name__ for event in events if isinstance(event, (PartStartEvent, PartDeltaEvent))
         ]
-        return chunks, output, deltas
+        text_parts = [
+            event.part.content
+            for event in events
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart)
+        ]
+        return chunks, output, text_parts, model_event_kinds
 
 
 async def test_temporal_durability_buffers_caller_streams(client: Client) -> None:
@@ -4420,7 +4422,7 @@ async def test_temporal_durability_buffers_caller_streams(client: Client) -> Non
             task_queue=TASK_QUEUE,
         )
 
-    assert result == (['hello ', 'hello world'], 'hello world', ['hello ', 'world'])
+    assert result == (['hello world'], 'hello world', ['hello world'], ['PartStartEvent'])
 
 
 _workflow_cancel_agent = Agent(

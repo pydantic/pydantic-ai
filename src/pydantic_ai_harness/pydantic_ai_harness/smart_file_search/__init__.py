@@ -1,0 +1,17 @@
+"""Plain-English code search: find code by what it does, judged by any Pydantic AI model."""
+
+from pydantic_ai_harness.smart_file_search._capability import SmartFileSearch
+from pydantic_ai_harness.smart_file_search._search import (
+    SmartFileSearchCoverage,
+    SmartFileSearchMatch,
+    SmartFileSearchResult,
+)
+from pydantic_ai_harness.smart_file_search._toolset import SmartFileSearchToolset
+
+__all__ = [
+    'SmartFileSearch',
+    'SmartFileSearchCoverage',
+    'SmartFileSearchMatch',
+    'SmartFileSearchResult',
+    'SmartFileSearchToolset',
+]
