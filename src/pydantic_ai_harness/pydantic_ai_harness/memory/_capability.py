@@ -25,13 +25,18 @@ from pydantic_ai_harness.memory._sqlite import SqliteMemoryStore
 from pydantic_ai_harness.memory._store import MemoryFile, MemoryStore, encode_metadata, validate_store_path
 from pydantic_ai_harness.memory._toolset import (
     MAIN_FILENAME,
+    MEMORY_DATA_PREFIX,
+    MEMORY_DATA_SUFFIX,
     MemoryDeleteResult,
     MemorySearchResponse,
     MemoryToolOperations,
     MemoryToolset,
     MemoryWriteResult,
+    file_reader,
+    read_call,
     require_metadata_store,
     run_as_operation,
+    snapshot_content_budget,
 )
 
 _DEFAULT_GUIDANCE = (
@@ -41,14 +46,12 @@ _DEFAULT_GUIDANCE = (
     'bullet lines, and put longer or evolving topics in separate files referenced from '
     'MEMORY.md. When you learn something a future session will need, store it proactively with '
     '`write_memory` (append by default; pass `old_text` to correct or remove). Read a listed '
-    'file with `read_memory` when it looks relevant, or use `search_memory` to find relevant '
+    'file when it looks relevant, or use `search_memory` to find relevant '
     'files. Keep memory curated -- update instead of duplicating, delete what turns out wrong. '
     'Never claim something was remembered or saved unless you actually called `write_memory` '
     'in this turn.'
 )
 
-_MEMORY_DATA_PREFIX = '<memory>\n'
-_MEMORY_DATA_SUFFIX = '\n</memory>'
 # The slash is inside the optional group so the two `\s*` never compete for one run of spaces.
 _MEMORY_TAG_RE = re.compile(r'<(?=(?:\s*/)?\s*memory\b)', re.IGNORECASE)
 """The `<` of a `<memory>` or `</memory>` tag in stored content, which could otherwise close the block early."""
@@ -63,9 +66,11 @@ class Memory(AbstractCapability[AgentDepsT]):
     """Persistent agent memory across sessions.
 
     `MEMORY.md` is injected as user-role context and longer topic files are
-    available through `read_memory` and `search_memory`. Automatic snapshot
-    loading is journaled by durability engines that support capability
-    operations.
+    available through `read_memory` and `search_memory`. When a `FileStore`
+    keeps the files in the run's workspace, `read_memory` steps aside for
+    `FileSystem`'s `read_file`, and the injected snapshot gives the directory.
+    Automatic snapshot loading is journaled by durability engines that support
+    capability operations.
     """
 
     store: MemoryStore = field(default_factory=InMemoryStore)
@@ -233,7 +238,9 @@ class Memory(AbstractCapability[AgentDepsT]):
 
         Stored memory is added separately as user-role context by
         `before_model_request` so model-written content is not placed in the
-        instruction channel.
+        instruction channel. The guidance is the same in every run, so it stays
+        static and inside the cached prefix; when `read_file` reads the files in
+        place of `read_memory`, the injected snapshot says where they are.
         """
         return self._render_guidance()
 
@@ -297,11 +304,10 @@ class Memory(AbstractCapability[AgentDepsT]):
             main_content = '' if main is None else _MEMORY_TAG_RE.sub('&lt;', main.content)
             rendered = ''
             guidance = self._render_guidance()
-            content_budget = (
-                self.max_tokens * 4 - len(guidance or '') - len(_MEMORY_DATA_PREFIX) - len(_MEMORY_DATA_SUFFIX)
-            )
+            content_budget = snapshot_content_budget(self.max_tokens, guidance)
             has_memory = bool(main_content or subfiles or files_truncated)
             if content_budget > 0 and has_memory:
+                reader = file_reader(ctx, store, scope)
                 rendered = render_memory_prompt(
                     main_content,
                     subfiles,
@@ -311,8 +317,10 @@ class Memory(AbstractCapability[AgentDepsT]):
                     max_tokens=max(1, content_budget // 4),
                     main_truncated=main is not None and main.truncated,
                     files_truncated=files_truncated,
+                    read_main=read_call(reader, MAIN_FILENAME),
+                    location=None if reader is None else reader[1],
                 )[:content_budget]
-                rendered = f'{_MEMORY_DATA_PREFIX}{rendered}{_MEMORY_DATA_SUFFIX}'
+                rendered = f'{MEMORY_DATA_PREFIX}{rendered}{MEMORY_DATA_SUFFIX}'
                 part = UserPromptPart([TextContent(rendered, metadata=marker)])
                 index = _snapshot_index(ctx.messages, request_context.messages)
                 target = request_context.messages[index]
