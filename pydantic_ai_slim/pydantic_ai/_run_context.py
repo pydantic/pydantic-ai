@@ -558,9 +558,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
         Computed as the latest response's reported input tokens (including cached tokens) plus output
         tokens over the active model's
-        [`context_window`][pydantic_ai.models.AbstractModel.context_window]. For a response a provider
-        merged from several requests (Google long decode), whose usage sums their input tokens, the
-        input is the first request's. This estimates how full
+        [`context_window`][pydantic_ai.models.AbstractModel.context_window]. For a response whose usage
+        sums several model requests, the input is the one that measures the context: the first request's
+        of a Google long decode, and the last sampling pass's of an Anthropic response that reported its
+        passes, such as a server-side tool loop or a compaction. This estimates how full
         the next request may be; history processing and newly added content can change its actual
         size, and the value can exceed `1.0` when the last response came from a model with a larger
         window. Useful to trigger history compaction, e.g. in a

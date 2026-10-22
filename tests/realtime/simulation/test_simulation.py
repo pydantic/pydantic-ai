@@ -146,16 +146,28 @@ def test_a_response_taken_for_ours_before_the_server_echoed_settles_nothing_twic
     run_clean(OpenAISimulation(openai=OpenAIOptions(transcription=False)), scenario)
 
 
-def test_raising_tool_ends_the_exchange() -> None:
-    """A tool that raises ends the session, and nothing is left waiting (OR8, #8765)."""
+@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai', 'elevenlabs'])
+def test_raising_tool_ends_the_exchange(dialect: Dialect) -> None:
+    """A tool that raises ends the exchange, and nothing is left waiting (OR8, #8765).
+
+    The turn ends with it: its failure doesn't go out, so no reply is coming to end it, and the turn completes as
+    the tool raises, once. A reply asked for afterwards completes a turn of its own.
+    """
 
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()
         sim.call_tool()
         sim.finish()
+        assert sim.turn_completes == []
         sim.finish_tool(outcome='error')
+        sim.settle()
+        assert len(sim.turn_completes) == 1
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.settle()
+        assert len(sim.turn_completes) == 2
 
-    run_clean(OpenAISimulation(), scenario)
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect)), scenario)
 
 
 def test_pruned_tool_round_leaves_the_server_conversation_and_stays_in_history() -> None:
@@ -347,6 +359,23 @@ def test_turn_heard_before_a_cancelled_reply_ended_is_filed_after_it() -> None:
         sim.settle()
 
     run_clean(OpenAISimulation(), scenario)
+
+
+def test_gemini_raising_tool_completes_the_turn_once() -> None:
+    """A tool that raises ends the turn once on Gemini Live too, and a reply asked for afterwards completes its own."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.call_tools()
+        sim.finish_tool(outcome='error')
+        sim.settle()
+        assert len(sim.turn_completes) == 1
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.settle()
+        assert len(sim.turn_completes) == 2
+
+    run_clean(GeminiSimulation(), scenario)
 
 
 def test_gemini_tool_batch_answer_lost_to_a_drop_is_settled() -> None:
@@ -1320,6 +1349,29 @@ def test_live_call_that_raises_is_answered_with_its_failure() -> None:
     run_clean(sim, scenario)
     # The round's results continued the delegation: the backend answered twice.
     assert len(sim.server.truth.usage_read) == 2
+
+
+def test_live_wait_for_reply_waits_for_the_answer_to_a_failed_call() -> None:
+    """A tool that raised still gets its failure sent on GPT-Live, so the exchange goes on to the answer.
+
+    `wait_for_reply()` waits for the reply that answers the failure, as it does for a result that succeeded, rather
+    than returning as the tool raises, with the answer then coming as a reply nobody asked for.
+    """
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.send_text()
+        sim.delegate()
+        sim.backend_call()
+        sim.backend_finish()
+        waiter = sim.wait_for_reply()
+        sim.finish_tool(outcome='error')
+        assert waiter.returned is None
+        sim.settle()
+        assert waiter.returned is not None
+
+    sim = LiveSimulation()
+    run_clean(sim, scenario)
+    assert sim.exchanges_abandoned_at == []
 
 
 def test_live_call_that_raises_after_its_siblings_answered_is_answered_with_its_failure() -> None:
@@ -2968,6 +3020,26 @@ def test_elevenlabs_agents_barge_in_on_a_finished_reply(voiced: bool) -> None:
         sim.barge_in()
         sim.user_says()
         sim.settle()
+
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
+
+
+@pytest.mark.parametrize('calls_ended', [False, True], ids=['reply-under-way', 'reply-ended'])
+def test_elevenlabs_agents_raising_tool_completes_the_turn_once(calls_ended: bool) -> None:
+    """A client tool that raises ends the turn once, whether or not the reply that called it had ended by then.
+
+    A reply still under way ends the turn as it ends; once the calls have ended it (after a quiet stretch), nothing
+    else will, so the turn completes as the tool raises.
+    """
+
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.call_tool()
+        if calls_ended:
+            sim.advance_time(2.0)
+        sim.finish_tool(outcome='error')
+        sim.settle()
+        assert len(sim.turn_completes) == 1
 
     run_clean(ElevenLabsAgentsSimulation(), scenario)
 

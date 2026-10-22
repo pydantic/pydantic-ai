@@ -1,5 +1,5 @@
-# gh-aw-metadata: {"schema_version":"v4","frontmatter_hash":"13f7035b91c3e59c6cb230f034b5943d6ca47abeddc9ab8b5dc7cb2c29a2bfd9","body_hash":"376a0588d884365f92a8d430178f0d3ed892277f367a73c83bd446dda0b06dc8","compiler_version":"v0.86.2","strict":true,"agent_id":"claude","agent_model":"${{ vars.GH_AW_MODEL }}","detection_agent_id":"claude","detection_agent_model":"${{ vars.GH_AW_MODEL }}","engine_versions":{"claude":"2.1.227"}}
-# gh-aw-manifest: {"version":1,"secrets":["COPILOT_GITHUB_TOKEN","GH_AW_GITHUB_MCP_SERVER_TOKEN","GH_AW_GITHUB_TOKEN","GITHUB_TOKEN","LOGFIRE_READ_EXTERNAL_VARIABLES","LOGFIRE_TOKEN","LOGFIRE_URL","ZAI_API_KEY"],"actions":[{"repo":"actions/checkout","sha":"3d3c42e5aac5ba805825da76410c181273ba90b1","version":"v7.0.1"},{"repo":"actions/checkout","sha":"de0fac2e4500dabe0009e67214ff5f5447ce83dd","version":"de0fac2e4500dabe0009e67214ff5f5447ce83dd"},{"repo":"actions/download-artifact","sha":"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c","version":"v8.0.1"},{"repo":"actions/github-script","sha":"3a2844b7e9c422d3c10d287c895573f7108da1b3","version":"v9.0.0"},{"repo":"actions/setup-node","sha":"820762786026740c76f36085b0efc47a31fe5020","version":"v7.0.0"},{"repo":"actions/setup-python","sha":"5fda3b95a4ea91299a34e894583c3862153e4b97","version":"v7.0.0"},{"repo":"actions/upload-artifact","sha":"043fb46d1a93c77aae656e7c1c64a875d1fc6a0a","version":"v7.0.1"},{"repo":"astral-sh/setup-uv","sha":"c771a70e6277c0a99b617c7a806ffedaca235ff9","version":"v9.0.0"},{"repo":"github/gh-aw-actions/setup","sha":"6aab9e5b5c91c615506061f09bedd81a23babe3c","version":"v0.86.2"}],"containers":[{"image":"ghcr.io/github/gh-aw-firewall/agent:0.27.44","digest":"sha256:0d727725c737b58c7bdf51f640cffb928385ec46517e0917c7f1a02f1bada8b4","pinned_image":"ghcr.io/github/gh-aw-firewall/agent:0.27.44@sha256:0d727725c737b58c7bdf51f640cffb928385ec46517e0917c7f1a02f1bada8b4"},{"image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.27.44","digest":"sha256:b50fbadba138f6e9aba94aca09711335c489bb3b15861220cb66f6092e042dc7","pinned_image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.27.44@sha256:b50fbadba138f6e9aba94aca09711335c489bb3b15861220cb66f6092e042dc7"},{"image":"ghcr.io/github/gh-aw-firewall/cli-proxy:0.27.44","digest":"sha256:c064d15974f7c933ec7d3f7b4038f4fd203547b3154bdc821afd379144887eff","pinned_image":"ghcr.io/github/gh-aw-firewall/cli-proxy:0.27.44@sha256:c064d15974f7c933ec7d3f7b4038f4fd203547b3154bdc821afd379144887eff"},{"image":"ghcr.io/github/gh-aw-firewall/squid:0.27.44","digest":"sha256:83e48bbe12c634be8c228a576832fe45f66c529ac3659db92bddbcf2eeb6d627","pinned_image":"ghcr.io/github/gh-aw-firewall/squid:0.27.44@sha256:83e48bbe12c634be8c228a576832fe45f66c529ac3659db92bddbcf2eeb6d627"},{"image":"ghcr.io/github/gh-aw-mcpg:v0.4.9","digest":"sha256:e5a1569aeaf41820fa7bdee3e94468cae448133cdbf00119ad24f5b74db1ab9f","pinned_image":"ghcr.io/github/gh-aw-mcpg:v0.4.9@sha256:e5a1569aeaf41820fa7bdee3e94468cae448133cdbf00119ad24f5b74db1ab9f"},{"image":"ghcr.io/github/gh-aw-node","digest":"sha256:0d9f1fb5fd6610c0ac1f5194a38e45a8a1e81f8a390d5142d8e4e6f26a4b3196","pinned_image":"ghcr.io/github/gh-aw-node@sha256:0d9f1fb5fd6610c0ac1f5194a38e45a8a1e81f8a390d5142d8e4e6f26a4b3196"},{"image":"ghcr.io/github/github-mcp-server:v1.9.0","digest":"sha256:881b53d6f75f69bdbc1b5b10fc2f1361717c19054143b3a8529fb5c32061a50e","pinned_image":"ghcr.io/github/github-mcp-server:v1.9.0@sha256:881b53d6f75f69bdbc1b5b10fc2f1361717c19054143b3a8529fb5c32061a50e"}]}
+# gh-aw-metadata: {"schema_version":"v4","frontmatter_hash":"fd8fef41c2fe6b98aa4d83577612afbbbc857a2f9ec0c1b874e002f82d3b2f43","body_hash":"2bb280a4055c468f9f3428153be99d5dcfb9184ed271740281802292338237dd","compiler_version":"v0.86.2","strict":true,"agent_id":"claude","agent_model":"${{ vars.GH_AW_MODEL }}","detection_agent_id":"claude","detection_agent_model":"${{ vars.GH_AW_MODEL }}","engine_versions":{"claude":"2.1.227"}}
+# gh-aw-manifest: {"version":1,"secrets":["COPILOT_GITHUB_TOKEN","GH_AW_GITHUB_MCP_SERVER_TOKEN","GH_AW_GITHUB_TOKEN","GITHUB_TOKEN","LOGFIRE_READ_EXTERNAL_VARIABLES","LOGFIRE_TOKEN","LOGFIRE_URL","ZAI_API_KEY"],"actions":[{"repo":"actions/checkout","sha":"3d3c42e5aac5ba805825da76410c181273ba90b1","version":"v7.0.1"},{"repo":"actions/checkout","sha":"de0fac2e4500dabe0009e67214ff5f5447ce83dd","version":"de0fac2e4500dabe0009e67214ff5f5447ce83dd"},{"repo":"actions/download-artifact","sha":"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c","version":"v8.0.1"},{"repo":"actions/github-script","sha":"3a2844b7e9c422d3c10d287c895573f7108da1b3","version":"v9.0.0"},{"repo":"actions/setup-node","sha":"820762786026740c76f36085b0efc47a31fe5020","version":"v7.0.0"},{"repo":"actions/setup-python","sha":"5fda3b95a4ea91299a34e894583c3862153e4b97","version":"v7.0.0"},{"repo":"actions/upload-artifact","sha":"043fb46d1a93c77aae656e7c1c64a875d1fc6a0a","version":"v7.0.1"},{"repo":"astral-sh/setup-uv","sha":"c771a70e6277c0a99b617c7a806ffedaca235ff9","version":"v9.0.0"},{"repo":"github/gh-aw-actions/setup","sha":"6aab9e5b5c91c615506061f09bedd81a23babe3c","version":"v0.86.2"}],"containers":[{"image":"ghcr.io/github/gh-aw-firewall/agent:0.27.44","digest":"sha256:0d727725c737b58c7bdf51f640cffb928385ec46517e0917c7f1a02f1bada8b4","pinned_image":"ghcr.io/github/gh-aw-firewall/agent:0.27.44@sha256:0d727725c737b58c7bdf51f640cffb928385ec46517e0917c7f1a02f1bada8b4"},{"image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.27.44","digest":"sha256:b50fbadba138f6e9aba94aca09711335c489bb3b15861220cb66f6092e042dc7","pinned_image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.27.44@sha256:b50fbadba138f6e9aba94aca09711335c489bb3b15861220cb66f6092e042dc7"},{"image":"ghcr.io/github/gh-aw-firewall/cli-proxy:0.27.44","digest":"sha256:c064d15974f7c933ec7d3f7b4038f4fd203547b3154bdc821afd379144887eff","pinned_image":"ghcr.io/github/gh-aw-firewall/cli-proxy:0.27.44@sha256:c064d15974f7c933ec7d3f7b4038f4fd203547b3154bdc821afd379144887eff"},{"image":"ghcr.io/github/gh-aw-firewall/squid:0.27.44","digest":"sha256:83e48bbe12c634be8c228a576832fe45f66c529ac3659db92bddbcf2eeb6d627","pinned_image":"ghcr.io/github/gh-aw-firewall/squid:0.27.44@sha256:83e48bbe12c634be8c228a576832fe45f66c529ac3659db92bddbcf2eeb6d627"},{"image":"ghcr.io/github/gh-aw-mcpg:v0.4.9","digest":"sha256:e5a1569aeaf41820fa7bdee3e94468cae448133cdbf00119ad24f5b74db1ab9f","pinned_image":"ghcr.io/github/gh-aw-mcpg:v0.4.9@sha256:e5a1569aeaf41820fa7bdee3e94468cae448133cdbf00119ad24f5b74db1ab9f"},{"image":"ghcr.io/github/gh-aw-node","digest":"sha256:0d9f1fb5fd6610c0ac1f5194a38e45a8a1e81f8a390d5142d8e4e6f26a4b3196","pinned_image":"ghcr.io/github/gh-aw-node@sha256:0d9f1fb5fd6610c0ac1f5194a38e45a8a1e81f8a390d5142d8e4e6f26a4b3196"},{"image":"ghcr.io/github/github-mcp-server:v1.9.0","digest":"sha256:881b53d6f75f69bdbc1b5b10fc2f1361717c19054143b3a8529fb5c32061a50e","pinned_image":"ghcr.io/github/github-mcp-server:v1.9.0@sha256:881b53d6f75f69bdbc1b5b10fc2f1361717c19054143b3a8529fb5c32061a50e"}],"has_pull_request":true}
 # This file was automatically generated by gh-aw (v0.86.2). DO NOT EDIT. To debug this workflow, load the skill at https://github.com/github/gh-aw/blob/main/debug.md
 #
 #    ___                   _   _
@@ -23,12 +23,11 @@
 #
 # For more information: https://github.github.com/gh-aw/introduction/overview/
 #
-# AI-driven PR review on the Pydantic AI gh-aw shim, triggered once CI succeeds on the PR's current head: inline comments + a single review verdict. Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs.
+# AI-driven PR review on the Pydantic AI gh-aw shim, triggered once the PR's current head has passed CI and is approved, labeled `final-review`, or dispatched: inline comments + a single review verdict. Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs.
 #
 # Resolved workflow manifest:
 #   Imports:
 #     - shared/checkout.md
-#     - shared/engine-zai.md
 #     - shared/network-vendor-domains.md
 #     - shared/otel-logfire.md
 #     - shared/pre-agent-steps.md
@@ -77,6 +76,12 @@ name: "CI Review"
 on:
   # bots: # Bots processed as bot check in pre-activation job
   # - pydantic-docs # Bots processed as bot check in pre-activation job
+  pull_request:
+    types:
+      - labeled
+  pull_request_review:
+    types:
+      - submitted
   # roles: # Roles processed as role check in pre-activation job
   # - admin # Roles processed as role check in pre-activation job
   # - maintainer # Roles processed as role check in pre-activation job
@@ -102,8 +107,9 @@ on:
 permissions: {}
 
 concurrency:
-  cancel-in-progress: true
-  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.ref }}-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref || github.ref }}-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}${{ ((github.event_name == 'pull_request' && github.event.label.name != 'final-review') || (github.event_name == 'pull_request_review' && github.event.review.state != 'approved')) && format('-{0}', github.run_id) || '' }}
+  queue: max
 
 run-name: "CI Review"
 
@@ -124,9 +130,11 @@ jobs:
       - provider_health
     # zizmor: ignore[dangerous-triggers] - workflow_run trigger is secured with role and fork validation
     if: >
-      (needs.pre_activation.outputs.activated == 'true' && (needs.provider_health.outputs.ready == 'true' &&
-      (needs.eligibility.outputs.eligible == 'true'))) && (github.event_name != 'workflow_run' || github.event.workflow_run.repository.id == github.repository_id &&
-      (!(github.event.workflow_run.repository.fork)))
+      (needs.pre_activation.outputs.activated == 'true' && (((needs.provider_health.outputs.ready == 'true' &&
+      (needs.eligibility.outputs.eligible == 'true')) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.id == github.repository_id)) &&
+      ((github.event_name != 'pull_request' && github.event_name != 'pull_request_review') || github.event.pull_request.stack == null ||
+      github.event.pull_request.stack.position == github.event.pull_request.stack.size))) && (github.event_name != 'workflow_run' ||
+      github.event.workflow_run.repository.id == github.repository_id && (!(github.event.workflow_run.repository.fork)))
     runs-on: ubuntu-slim
     permissions:
       actions: read
@@ -134,6 +142,7 @@ jobs:
     env:
       GH_AW_RUNTIME_FEATURES: ${{ vars.GH_AW_RUNTIME_FEATURES }}
     outputs:
+      body: ${{ steps.sanitized.outputs.body }}
       comment_id: ""
       comment_repo: ""
       engine_id: ${{ steps.generate_aw_info.outputs.engine_id }}
@@ -144,6 +153,8 @@ jobs:
       setup-span-id: ${{ steps.setup.outputs.span-id }}
       setup-trace-id: ${{ steps.setup.outputs.trace-id }}
       stale_lock_file_failed: ${{ steps.check-lock-file.outputs.stale_lock_file_failed == 'true' }}
+      text: ${{ steps.sanitized.outputs.text }}
+      title: ${{ steps.sanitized.outputs.title }}
     steps:
       - name: Setup Scripts
         id: setup
@@ -237,6 +248,18 @@ jobs:
             setupGlobals(core, github, context, exec, io, getOctokit);
             const { main } = require('${{ runner.temp }}/gh-aw/actions/check_version_updates.cjs');
             await main();
+      - name: Compute current body text
+        id: sanitized
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          GH_AW_ALLOWED_BOTS: "pydantic-docs"
+          GH_AW_ALLOWED_DOMAINS: "*.githubusercontent.com,*.google.com,*.googleapis.com,*.gvt1.com,*.pythonhosted.org,ai-sdk.dev,ai.azure.com,ai.google.dev,ai.pydantic.dev,amazonaws.com,anaconda.org,anthropic.com,api-docs.deepseek.com,api.anthropic.com,api.cerebras.ai,api.cohere.com,api.deepseek.com,api.fireworks.ai,api.github.com,api.groq.com,api.mistral.ai,api.openai.com,api.perplexity.ai,api.sambanova.ai,api.snapcraft.io,api.studio.nebius.com,api.together.xyz,api.x.ai,api.z.ai,archive.ubuntu.com,aws.amazon.com,azure.archive.ubuntu.com,binstar.org,bootstrap.pypa.io,boto3.amazonaws.com,cdn.playwright.dev,cerebras.ai,cloud.cerebras.ai,cloud.sambanova.ai,codeload.github.com,cohere.com,conda.anaconda.org,conda.binstar.org,console.anthropic.com,console.groq.com,console.mistral.ai,console.x.ai,crl.geotrust.com,crl.globalsign.com,crl.identrust.com,crl.sectigo.com,crl.thawte.com,crl.usertrust.com,crl.verisign.com,crl3.digicert.com,crl4.digicert.com,crls.ssl.com,dashboard.cohere.com,dashscope-intl.aliyuncs.com,dashscope.aliyuncs.com,deepseek.com,developers.openai.com,docs.ag-ui.com,docs.anthropic.com,docs.aws.amazon.com,docs.github.com,docs.perplexity.ai,docs.sambanova.ai,docs.x.ai,endpoints.ai.cloud.ovh.net,files.pythonhosted.org,fireworks.ai,ghcr.io,github-cloud.githubusercontent.com,github-cloud.s3.amazonaws.com,github.blog,github.com,github.githubassets.com,groq.com,hf.co,host.docker.internal,huggingface.co,inference-docs.cerebras.ai,json-schema.org,json.schemastore.org,keyserver.ubuntu.com,learn.microsoft.com,lfs.github.com,logfire-api.pydantic.dev,logfire-api.pydantic.info,logfire-eu.pydantic.dev,logfire-eu.pydantic.info,logfire-us.pydantic.dev,logfire-us.pydantic.info,mistral.ai,models.github.ai,objects.githubusercontent.com,ocsp.digicert.com,ocsp.geotrust.com,ocsp.globalsign.com,ocsp.identrust.com,ocsp.sectigo.com,ocsp.ssl.com,ocsp.thawte.com,ocsp.usertrust.com,ocsp.verisign.com,ollama.com,openrouter.ai,ovh.com,packagecloud.io,packages.cloud.google.com,packages.microsoft.com,patch-diff.githubusercontent.com,patchdiff.githubusercontent.com,pip.pypa.io,platform.claude.com,platform.moonshot.ai,platform.openai.com,playwright.download.prss.microsoft.com,ppa.launchpad.net,pydantic.dev,pypi.org,pypi.python.org,raw.githubusercontent.com,registry.npmjs.org,repo.anaconda.com,repo.continuum.io,s.symcb.com,s.symcd.com,security.ubuntu.com,sentry.io,statsig.anthropic.com,studio.nebius.com,ts-crl.ws.symantec.com,ts-ocsp.ws.symantec.com,vercel.com,www.alibabacloud.com,www.googleapis.com,www.together.ai,x.ai"
+        with:
+          script: |
+            const { setupGlobals } = require('${{ runner.temp }}/gh-aw/actions/setup_globals.cjs');
+            setupGlobals(core, github, context, exec, io, getOctokit);
+            const { main } = require('${{ runner.temp }}/gh-aw/actions/compute_text.cjs');
+            await main();
       - name: Log runtime features
         if: ${{ contains(toJSON(vars), '"GH_AW_RUNTIME_FEATURES":') }}
         run: bash "${RUNNER_TEMP}/gh-aw/actions/log_runtime_features_summary.sh"
@@ -246,7 +269,7 @@ jobs:
           GH_AW_ACTIONS_DIR: ${{ runner.temp }}/gh-aw/actions
           GH_AW_PROMPT: ${{ runner.temp }}/gh-aw/aw-prompts/prompt.txt
           GH_AW_SAFE_OUTPUTS: ${{ runner.temp }}/gh-aw/safeoutputs/outputs.jsonl
-          GH_AW_PROMPT_CONFIG: "{\"items\":[{\"content_env\":\"GH_AW_PROMPT_CONTENT_0000\"},{\"file\":\"xpia.md\"},{\"file\":\"temp_folder_prompt.md\"},{\"file\":\"markdown.md\"},{\"file\":\"safe_outputs_prompt.md\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0001\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0002\"},{\"file\":\"mcp_cli_tools_prompt.md\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0003\"},{\"file\":\"cli_proxy_with_safeoutputs_prompt.md\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0004\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0005\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0006\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0007\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0008\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0009\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0010\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0011\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0012\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0013\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0014\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0015\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0016\"}]}"
+          GH_AW_PROMPT_CONFIG: "{\"items\":[{\"content_env\":\"GH_AW_PROMPT_CONTENT_0000\"},{\"file\":\"xpia.md\"},{\"file\":\"temp_folder_prompt.md\"},{\"file\":\"markdown.md\"},{\"file\":\"safe_outputs_prompt.md\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0001\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0002\"},{\"file\":\"mcp_cli_tools_prompt.md\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0003\"},{\"file\":\"cli_proxy_with_safeoutputs_prompt.md\"},{\"file\":\"pr_context_prompt.md\",\"condition_env\":\"GH_AW_INCLUDE_PR_CONTEXT\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0004\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0005\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0006\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0007\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0008\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0009\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0010\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0011\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0012\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0013\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0014\"},{\"content_env\":\"GH_AW_PROMPT_CONTENT_0015\"}]}"
           GH_AW_EXPR_1A3A194A: ${{ github.event.discussion.number || (fromJSON(github.event.inputs.aw_context || github.event.client_payload.aw_context || '{}').item_type == 'discussion' && fromJSON(github.event.inputs.aw_context || github.event.client_payload.aw_context || '{}').item_number) }}
           GH_AW_EXPR_463A214A: ${{ github.event.pull_request.number || (fromJSON(github.event.inputs.aw_context || github.event.client_payload.aw_context || '{}').item_type == 'pull_request' && fromJSON(github.event.inputs.aw_context || github.event.client_payload.aw_context || '{}').item_number) }}
           GH_AW_EXPR_802A9F6A: ${{ github.event.issue.number || (fromJSON(github.event.inputs.aw_context || github.event.client_payload.aw_context || '{}').item_type == 'issue' && fromJSON(github.event.inputs.aw_context || github.event.client_payload.aw_context || '{}').item_number) }}
@@ -255,6 +278,7 @@ jobs:
           GH_AW_GITHUB_REPOSITORY: ${{ github.repository }}
           GH_AW_GITHUB_RUN_ID: ${{ github.run_id }}
           GH_AW_GITHUB_WORKSPACE: ${{ github.workspace }}
+          GH_AW_INCLUDE_PR_CONTEXT: ${{ (github.event_name == 'issue_comment' && github.event.issue.pull_request != null) || github.event_name == 'pull_request_review_comment' || github.event_name == 'pull_request_review' }}
           GH_AW_NEEDS_ELIGIBILITY_OUTPUTS_BASE_REF: ${{ needs.eligibility.outputs.base_ref }}
           GH_AW_NEEDS_ELIGIBILITY_OUTPUTS_HEAD_REF: ${{ needs.eligibility.outputs.head_ref }}
           GH_AW_NEEDS_ELIGIBILITY_OUTPUTS_HEAD_SHA: ${{ needs.eligibility.outputs.head_sha }}
@@ -273,11 +297,10 @@ jobs:
           GH_AW_PROMPT_CONTENT_0009: "{{#runtime-import .github/workflows/shared/rigor.md}}\n"
           GH_AW_PROMPT_CONTENT_0010: "{{#runtime-import .github/workflows/shared/review-context.md}}\n"
           GH_AW_PROMPT_CONTENT_0011: "{{#runtime-import .github/workflows/shared/checkout.md}}\n"
-          GH_AW_PROMPT_CONTENT_0012: "{{#runtime-import .github/workflows/shared/engine-zai.md}}\n"
-          GH_AW_PROMPT_CONTENT_0013: "{{#runtime-import .github/workflows/shared/provider-health.md}}\n"
-          GH_AW_PROMPT_CONTENT_0014: "{{#runtime-import .github/workflows/shared/pre-steps.md}}\n"
-          GH_AW_PROMPT_CONTENT_0015: "{{#runtime-import .github/workflows/shared/pre-agent-steps.md}}\n"
-          GH_AW_PROMPT_CONTENT_0016: "{{#runtime-import .github/workflows/pydantic-ai-pr-review.md}}\n"
+          GH_AW_PROMPT_CONTENT_0012: "{{#runtime-import .github/workflows/shared/provider-health.md}}\n"
+          GH_AW_PROMPT_CONTENT_0013: "{{#runtime-import .github/workflows/shared/pre-steps.md}}\n"
+          GH_AW_PROMPT_CONTENT_0014: "{{#runtime-import .github/workflows/shared/pre-agent-steps.md}}\n"
+          GH_AW_PROMPT_CONTENT_0015: "{{#runtime-import .github/workflows/pydantic-ai-pr-review.md}}\n"
         with:
           script: |
             const { setupGlobals } = require(process.env.GH_AW_ACTIONS_DIR + '/setup_globals.cjs');
@@ -313,6 +336,7 @@ jobs:
           GH_AW_GITHUB_REPOSITORY: ${{ github.repository }}
           GH_AW_GITHUB_RUN_ID: ${{ github.run_id }}
           GH_AW_GITHUB_WORKSPACE: ${{ github.workspace }}
+          GH_AW_INCLUDE_PR_CONTEXT: ${{ (github.event_name == 'issue_comment' && github.event.issue.pull_request != null) || github.event_name == 'pull_request_review_comment' || github.event_name == 'pull_request_review' }}
           GH_AW_MCP_CLI_SERVERS_LIST: '- `safeoutputs` — run `safeoutputs --help` to see available tools'
           GH_AW_NEEDS_ELIGIBILITY_OUTPUTS_BASE_REF: ${{ needs.eligibility.outputs.base_ref }}
           GH_AW_NEEDS_ELIGIBILITY_OUTPUTS_HEAD_REF: ${{ needs.eligibility.outputs.head_ref }}
@@ -340,6 +364,7 @@ jobs:
                 GH_AW_GITHUB_REPOSITORY: process.env.GH_AW_GITHUB_REPOSITORY,
                 GH_AW_GITHUB_RUN_ID: process.env.GH_AW_GITHUB_RUN_ID,
                 GH_AW_GITHUB_WORKSPACE: process.env.GH_AW_GITHUB_WORKSPACE,
+                GH_AW_INCLUDE_PR_CONTEXT: process.env.GH_AW_INCLUDE_PR_CONTEXT,
                 GH_AW_MCP_CLI_SERVERS_LIST: process.env.GH_AW_MCP_CLI_SERVERS_LIST,
                 GH_AW_NEEDS_ELIGIBILITY_OUTPUTS_BASE_REF: process.env.GH_AW_NEEDS_ELIGIBILITY_OUTPUTS_BASE_REF,
                 GH_AW_NEEDS_ELIGIBILITY_OUTPUTS_HEAD_REF: process.env.GH_AW_NEEDS_ELIGIBILITY_OUTPUTS_HEAD_REF,
@@ -389,7 +414,11 @@ jobs:
       - eligibility
       - fetch_dynamic_prompt
       - provider_health
-    if: needs.provider_health.outputs.ready == 'true' && (needs.eligibility.outputs.eligible == 'true')
+    if: >
+      ((needs.provider_health.outputs.ready == 'true' && (needs.eligibility.outputs.eligible == 'true')) &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.id == github.repository_id)) &&
+      ((github.event_name != 'pull_request' && github.event_name != 'pull_request_review') || github.event.pull_request.stack == null ||
+      github.event.pull_request.stack.position == github.event.pull_request.stack.size)
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -1446,7 +1475,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           WORKFLOW_NAME: "CI Review"
-          WORKFLOW_DESCRIPTION: "AI-driven PR review on the Pydantic AI gh-aw shim, triggered once CI succeeds on the PR's current head: inline comments + a single review verdict. Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
+          WORKFLOW_DESCRIPTION: "AI-driven PR review on the Pydantic AI gh-aw shim, triggered once the PR's current head has passed CI and is approved, labeled `final-review`, or dispatched: inline comments + a single review verdict. Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
           HAS_PATCH: ${{ needs.agent.outputs.has_patch }}
           GH_AW_DETECTION_CONTINUE_ON_ERROR: "true"
         with:
@@ -1652,11 +1681,14 @@ jobs:
           # The commit this run is deciding about, once it is known to be one this
           # reviewer is responsible for. Left empty — and the step below then
           # no-ops — for the skips where a marker would claim a reviewer that was
-          # never going to run: a CI run that is not a PR run or did not pass, and
-          # a fork, which `douwebot` covers instead. A fork head is not unmarkable
-          # (it resolves in this repository through `refs/pull/<n>/head`, so the
-          # check run would post and show); it is deliberately unmarked.
+          # never going to run: a CI run that is not a PR run or did not pass, a
+          # review or label that is not a request, and a fork, which `douwebot`
+          # covers instead. A fork head is not unmarkable (it resolves in this
+          # repository through `refs/pull/<n>/head`, so the check run would post
+          # and show); it is deliberately unmarked.
           MARKER_SHA=''
+          # Set when the event asks for a review outright, so no approval is needed.
+          EXPLICIT_REQUEST=''
 
           skip() {
             echo "eligible=false" >> "$GITHUB_OUTPUT"
@@ -1667,15 +1699,36 @@ jobs:
           }
 
           # --- Resolve the PR -------------------------------------------------
-          # `workflow_run` carries no `github.event.pull_request`, so the PR, its
-          # current head and its refs are resolved here and handed to every later
-          # step and to the agent's safe outputs as explicit values.
+          # `workflow_run` and `workflow_dispatch` carry no
+          # `github.event.pull_request`, so the PR, its current head and its refs
+          # are resolved here and handed to every later step and to the agent's
+          # safe outputs as explicit values.
           if [ "$EVENT_NAME" = 'workflow_dispatch' ]; then
             CONTEXT_JSON="${AW_CONTEXT:-}"
             [ -n "$CONTEXT_JSON" ] || CONTEXT_JSON='{}'
             PR_NUMBER=$(printf '%s' "$CONTEXT_JSON" | jq -r 'select(.item_type == "pull_request") | .item_number // empty')
             [ -n "$PR_NUMBER" ] || skip 'workflow_dispatch without a pull_request in aw_context'
             # A manual dispatch is an explicit ask to review whatever is on the PR now.
+            TRIGGER_SHA=''
+            EXPLICIT_REQUEST=true
+          elif [ "$EVENT_NAME" = 'pull_request_review' ] || [ "$EVENT_NAME" = 'pull_request' ]; then
+            # `pull_request` is the `labeled` event, which fires for every label.
+            # Neither event's head is checked here: the approval gate below requires
+            # an approval of the current head, and a label asks for a review of
+            # whatever is on the PR now.
+            if [ "$EVENT_NAME" = 'pull_request_review' ]; then
+              [ "$REVIEW_STATE" = 'approved' ] || skip "a ${REVIEW_STATE} review is not a review request"
+              # `.permission`, not `.role_name`: it maps `maintain` and custom roles
+              # onto their base level. An unreadable permission is not a request.
+              REVIEWER_PERMISSION=$(gh api "repos/${REPO}/collaborators/${REVIEWER}/permission" --jq .permission 2>/dev/null || true)
+              [ "$REVIEWER_PERMISSION" = 'admin' ] || [ "$REVIEWER_PERMISSION" = 'write' ] \
+                || skip "an approval from ${REVIEWER} (${REVIEWER_PERMISSION:-no} access) is not a review request"
+            else
+              [ "$LABEL_NAME" = 'final-review' ] || skip "label ${LABEL_NAME} is not a review request"
+              EXPLICIT_REQUEST=true
+            fi
+            [ "$EVENT_HEAD_REPO" = "$REPO" ] || skip "PR head is on ${EVENT_HEAD_REPO}, not ${REPO}"
+            PR_NUMBER="$EVENT_PR_NUMBER"
             TRIGGER_SHA=''
           else
             [ "$RUN_EVENT" = 'pull_request' ] || skip "triggering CI run was a ${RUN_EVENT} run, not a pull_request run"
@@ -1729,9 +1782,9 @@ jobs:
           [ "$(printf '%s' "$PR_JSON" | jq -r '.isCrossRepository')" = 'false' ] \
             || skip "PR #${PR_NUMBER} is from a fork"
 
-          # A manual dispatch has no triggering CI run, so the PR's current head is
-          # the commit it is deciding about — set only past the fork gate, so a
-          # dispatch on a fork PR skips as silently as the `workflow_run` path does.
+          # Only `workflow_run` has a triggering CI run; every other request decides
+          # about the PR's current head — set only past the fork gate, so a request
+          # on a fork PR skips as silently as the `workflow_run` path does.
           [ -n "$MARKER_SHA" ] || MARKER_SHA="$HEAD_SHA"
 
           # --- Current-head authority ----------------------------------------
@@ -1742,10 +1795,37 @@ jobs:
             skip "CI ran on ${TRIGGER_SHA}, but PR #${PR_NUMBER} has since moved to ${HEAD_SHA}"
           fi
 
+          REVIEWS=$(gh api --paginate --slurp "repos/${REPO}/pulls/${PR_NUMBER}/reviews" | jq 'add // []')
+
+          # --- An approval of the current head --------------------------------
+          # Unless a label or dispatch asked outright, the request is an approval
+          # of this exact head from a user with write access or higher. Only each
+          # user's latest verdict counts, so a later request for changes or a
+          # dismissal withdraws an approval. Bot reviews, this reviewer's own
+          # `APPROVE` included, never count.
+          if [ -z "$EXPLICIT_REQUEST" ]; then
+            APPROVERS=$(printf '%s' "$REVIEWS" | jq -r --arg sha "$HEAD_SHA" '
+              [ .[] | select(.user.type == "User" and (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) ]
+              | group_by(.user.login) | map(last)
+              | .[] | select(.state == "APPROVED" and .commit_id == $sha) | .user.login')
+            APPROVED_BY=''
+            for login in $APPROVERS; do
+              # `.permission`, not `.role_name`: it maps `maintain` and custom roles
+              # onto their base level. An unreadable permission does not count.
+              permission=$(gh api "repos/${REPO}/collaborators/${login}/permission" --jq .permission 2>/dev/null || true)
+              if [ "$permission" = 'admin' ] || [ "$permission" = 'write' ]; then
+                APPROVED_BY="$login"
+                break
+              fi
+            done
+            [ -n "$APPROVED_BY" ] || skip "${HEAD_SHA} has no approval from a user with write access"
+          fi
+
           # --- Required checks -------------------------------------------------
-          # Note: this is currently vacuous — `main` has no checks marked required,
-          # so the list comes back empty. It is here so that marking a check
-          # required starts gating reviews on it without another workflow change.
+          # `check`, which aggregates `CI`, is required on `main`, so every request
+          # skips here until `CI` has passed on the head. An approval is checked
+          # again by the `workflow_run` of the `CI` run that passes; a label or
+          # dispatch must be repeated.
           FAILING=$(printf '%s' "$PR_JSON" | jq -r '
             [ .commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]
               | select(.isRequired)
@@ -1760,13 +1840,12 @@ jobs:
             || skip "PR #${PR_NUMBER} already has changes requested"
 
           # --- Deduplicate reruns ----------------------------------------------
-          # A rerun of the same CI run re-fires this workflow. Match our own marker,
-          # not the bot account: every gh-aw reviewer here posts as
-          # `github-actions[bot]`, so an actor match would let a UI Security Review
-          # on this head suppress this review entirely.
-          ALREADY=$(gh api --paginate --slurp "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
-            | jq --arg sha "$HEAD_SHA" --arg marker "$REVIEW_MARKER" \
-              '[add[] | select(.commit_id == $sha and ((.body // "") | contains($marker)))] | length')
+          # A rerun of the same CI run, a second approval or a repeated label
+          # re-fires this workflow. Match our own marker, not the bot account: every
+          # gh-aw reviewer here posts as `github-actions[bot]`, so an actor match
+          # would let a UI Security Review on this head suppress this review entirely.
+          ALREADY=$(printf '%s' "$REVIEWS" | jq --arg sha "$HEAD_SHA" --arg marker "$REVIEW_MARKER" \
+            '[.[] | select(.commit_id == $sha and ((.body // "") | contains($marker)))] | length')
           [ "$ALREADY" -eq 0 ] || skip "already reviewed ${HEAD_SHA}"
 
           {
@@ -1780,10 +1859,15 @@ jobs:
           echo "Reviewing PR #${PR_NUMBER} at ${HEAD_SHA}" >> "$GITHUB_STEP_SUMMARY"
         env:
           AW_CONTEXT: ${{ github.event.inputs.aw_context }}
+          EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           EVENT_NAME: ${{ github.event_name }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           GH_TOKEN: ${{ github.token }}
+          LABEL_NAME: ${{ github.event.label.name }}
           REPO: ${{ github.repository }}
+          REVIEWER: ${{ github.event.review.user.login }}
           REVIEW_MARKER: "<!-- gh-aw-workflow-call-id: ${{ github.repository }}/pydantic-ai-pr-review -->"
+          REVIEW_STATE: ${{ github.event.review.state }}
           RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           RUN_EVENT: ${{ github.event.workflow_run.event }}
           RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}

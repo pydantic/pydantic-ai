@@ -59,8 +59,8 @@ from pydantic_ai_harness import (
     Advisor,
     BackgroundTools,
     Coder,
-    Memory,
     Planning,
+    RelevanceCompaction,
     Researcher,
     SpendLimits,
     SSHWorkspace,
@@ -75,7 +75,8 @@ from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from pydantic_ai_harness.system_reminders import Reminder
+from pydantic_ai_harness.subagents import AgentOverride
+from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
 
 
 async def _decline(request: AskUserRequest) -> AskUserResponse:
@@ -162,10 +163,6 @@ def _check_skills(merged: Any) -> None:
     assert [source.directories for source in merged._sources] == [('first',), ('second',)]
 
 
-def _check_memory(merged: Any) -> None:
-    assert merged.heading == 'Second'
-
-
 def _check_planning(merged: Any) -> None:
     assert merged.inject is False
 
@@ -180,6 +177,10 @@ def _check_step_persistence(merged: Any) -> None:
 
 def _check_summarizing(merged: Any) -> None:
     assert merged.keep_messages == 7
+
+
+def _check_relevance(merged: Any) -> None:
+    assert merged.keep_tokens == 7
 
 
 def _check_system_reminders(merged: Any) -> None:
@@ -215,10 +216,9 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda: (Skills[Any]('first'), Skills[Any]('second')),
         _check_skills,
     ),
-    'Memory': Combines(
-        'one memory configuration per agent; its toolset registers fixed tool names',
-        lambda: (Memory[Any](heading='First'), Memory[Any](heading='Second')),
-        _check_memory,
+    'Memory': Narrows(
+        'one notebook per id, and its store and namespace are a tenant boundary; two that differ need their own ids',
+        lambda cls: (cls(namespace='first'), cls(namespace='second')),
     ),
     'Planning': Combines(
         'one plan per agent; `PlanningToolset` registers fixed tool names',
@@ -234,6 +234,14 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one run identity per agent',
         lambda: (StepPersistence[Any](agent_name='first'), StepPersistence[Any](agent_name='second')),
         _check_step_persistence,
+    ),
+    'RelevanceCompaction': Combines(
+        'two would each judge every step, the second judging what the first already compacted',
+        lambda: (
+            RelevanceCompaction[Any](TestModel(), max_tokens=50, keep_tokens=3),
+            RelevanceCompaction[Any](TestModel(), max_tokens=50, keep_tokens=7),
+        ),
+        _check_relevance,
     ),
     'SummarizingCompaction': Combines(
         'two would each make a model call, the second summarizing the first summary',
@@ -657,6 +665,26 @@ async def test_two_of_a_colliding_capability_still_raise(name: str, anyio_backen
         # would take the other value, re-enabling it in *either* order -- so an explicit disable
         # never survived. Composing only the roster is what makes that impossible.
         pytest.param('agent_folders', {'agent_folders': None}, {'agent_folders': 'agents'}, id='agent_folders'),
+        pytest.param(
+            'agent_overrides',
+            {'agent_overrides': {'alpha': AgentOverride(model=TestModel(settings={'temperature': 0.0}))}},
+            {'agent_overrides': {'alpha': AgentOverride(model=TestModel(settings={'temperature': 1.0}))}},
+            id='agent_overrides_model_settings',
+        ),
+        pytest.param(
+            'shared_capabilities',
+            {
+                'shared_capabilities': [
+                    SummarizingCompaction(model=TestModel(settings={'temperature': 0.0}), max_messages=10)
+                ]
+            },
+            {
+                'shared_capabilities': [
+                    SummarizingCompaction(model=TestModel(settings={'temperature': 1.0}), max_messages=10)
+                ]
+            },
+            id='shared_capabilities_model_settings',
+        ),
     ],
 )
 def test_sub_agents_compose_the_roster_and_nothing_else(
@@ -674,6 +702,22 @@ def test_sub_agents_compose_the_roster_and_nothing_else(
 
     with pytest.raises(UserError, match=f'disagree on {field_name!r}'):
         SubAgents.combine([first, second])
+
+
+def test_system_reminders_keep_two_llm_reminders_whose_models_differ_only_in_settings() -> None:
+    """Reminders asking two differently configured models are two reminders, so both keep firing.
+
+    Not a VCR test: `combine` makes no request.
+    """
+    first = LLMReminder[Any](model=TestModel(settings={'temperature': 0.0}))
+    second = LLMReminder[Any](model=TestModel(settings={'temperature': 1.0}))
+
+    merged = SystemReminders.combine(
+        [SystemReminders[Any](dynamic_reminders=[first]), SystemReminders[Any](dynamic_reminders=[second])]
+    )
+
+    assert isinstance(merged, SystemReminders)
+    assert list(merged.dynamic_reminders) == [first, second]
 
 
 def _child(name: str) -> Agent[Any, str]:

@@ -60,7 +60,7 @@ if TYPE_CHECKING:
 # Token estimation
 # ---------------------------------------------------------------------------
 
-_CHARS_PER_TOKEN = 4
+CHARS_PER_TOKEN = 4
 """Rough approximation: ~4 characters per token on average."""
 
 _COMPACTION_RECLAIM: ContextVar[tuple[str | None, int, int] | None] = ContextVar(
@@ -246,14 +246,14 @@ def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = Non
     """
     if tokenizer is not None:
         return tokenizer(text)
-    return len(text) // _CHARS_PER_TOKEN
+    return len(text) // CHARS_PER_TOKEN
 
 
 def _count_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
     """Token count of text segments: per segment with *tokenizer*, otherwise the heuristic over their total."""
     if tokenizer is not None:
         return sum(tokenizer(s) for s in segments)
-    return sum(len(s) for s in segments) // _CHARS_PER_TOKEN
+    return sum(len(s) for s in segments) // CHARS_PER_TOKEN
 
 
 def estimate_token_count(
@@ -282,9 +282,10 @@ def estimate_context_tokens(
     `input_tokens` measured everything the provider was actually sent for that request --
     instructions, tool definitions, and every prior message -- and its `output_tokens` measured
     the response's own parts, so their sum is ground truth for the history up to and including
-    that response. A response a provider SDK continued across several requests (Google long
-    decode) sums their usage, re-counting earlier output as input, so it anchors on the first
-    request's input tokens instead. Only the messages after the anchor are estimated with the character
+    that response. A response whose usage sums several model requests re-counts the context of each,
+    so it anchors on the input tokens of the one that measures the context instead: the first
+    request of a Google long decode, the last sampling pass of an Anthropic response that reported
+    its passes. Only the messages after the anchor are estimated with the character
     heuristic (or *tokenizer*), without re-counting instructions, which the anchor already
     covers; when the instructions changed since the anchor, the estimate swaps the old set for
     the new one rather than adding the new set on top. Tool schemas named by availability
@@ -340,9 +341,11 @@ def estimate_message_tokens(
     earlier one is exactly what the earlier response and the requests after it added, so those
     messages share that difference in proportion to their estimates. Where the history did not grow
     between two such responses, as across a compaction, the difference measures nothing and the
-    estimates stand; so do messages before the first such response and after the last. A response a
-    provider continued across several requests enters the difference with its first request's input
-    tokens, since its summed `input_tokens` re-count the earlier requests' output.
+    estimates stand; so do messages before the first such response and after the last. A response
+    whose usage sums several model requests enters the difference with its input tokens as
+    `context_input_tokens` reads them, since its summed `input_tokens` re-count each request's context.
+    An Anthropic last pass also read that response's own earlier passes, so the difference credits
+    them to the messages before it, which the response then counts again: the tail measures high.
 
     Instructions are left out: they are sent with every request, not carried by any one message.
     """
@@ -368,13 +371,13 @@ def estimate_message_tokens(
 def _estimate_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
     if tokenizer is not None:
         return sum(tokenizer(s) for s in segments)
-    return sum(len(s) for s in segments) // _CHARS_PER_TOKEN
+    return sum(len(s) for s in segments) // CHARS_PER_TOKEN
 
 
 def _reported_input_tokens(message: ModelMessage) -> int:
     """The provider-reported input tokens of a response, or 0 for a request or a response without usage.
 
-    For a response a provider continued across several requests, the first request's input tokens.
+    For a response whose usage sums several model requests, as `context_input_tokens` reads it.
     """
     return context_input_tokens(message) if isinstance(message, ModelResponse) else 0
 
@@ -911,7 +914,12 @@ class _ToolPair:
 
 
 def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
-    """Return matched tool-call / tool-return pairs in return-appearance order."""
+    """Return matched tool-call / tool-return pairs in return-appearance order.
+
+    A retried return (`outcome='retried'`) isn't a result: it tells the model to make the call again. It
+    is left out, so it is never cleared before the model sees the correction, doesn't count toward
+    `ClearToolResults.keep_pairs`, and doesn't supersede an earlier successful read.
+    """
     calls: dict[str, ToolCallPart] = {}
     for msg in messages:
         if isinstance(msg, ModelResponse):
@@ -924,7 +932,7 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
     for msg in messages:
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
-                if isinstance(part, ToolReturnPart) and part.tool_call_id in calls:
+                if isinstance(part, ToolReturnPart) and part.outcome != 'retried' and part.tool_call_id in calls:
                     call = calls[part.tool_call_id]
                     pairs.append(_ToolPair(part.tool_call_id, call.tool_name, call, order))
                     order += 1
@@ -935,7 +943,7 @@ CLEARED_TOOL_RESULT_METADATA = 'pydantic-ai-harness.compaction.cleared-tool-resu
 """Model-invisible `ToolReturnPart.metadata` key marking a result compaction has cleared."""
 
 
-def _cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | None:
+def cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | None:
     """*part* with its content replaced by *placeholder*, or `None` if it can't be cleared.
 
     A plain `ToolReturnPart` can always be cleared. Of the typed subclasses, only `FileSystem`'s
@@ -968,7 +976,7 @@ def is_cleared_return(part: ToolReturnPart, placeholder: str) -> bool:
     """Whether a compaction using *placeholder* cleared *part*.
 
     The content must be *placeholder*, so another strategy's clears, which use their own placeholder,
-    don't count. A typed result must also carry the mark `_cleared_return` leaves in its metadata, as
+    don't count. A typed result must also carry the mark `cleared_return` leaves in its metadata, as
     its content is the tool's output and may equal the placeholder by coincidence. A plain
     `ToolReturnPart` counts without the mark: histories cleared before the mark existed only ever
     cleared plain parts.
@@ -999,7 +1007,7 @@ def rebuild_with_cleared(
             changed = False
             for part in msg.parts:
                 cleared = (
-                    _cleared_return(part, placeholder)
+                    cleared_return(part, placeholder)
                     if isinstance(part, ToolReturnPart)
                     and part.tool_call_id in clear_return_ids
                     and str(part.content) != placeholder

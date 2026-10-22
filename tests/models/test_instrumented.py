@@ -43,9 +43,11 @@ from pydantic_ai._instrumentation import MessageJsonCache, has_stale_message_jso
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai.messages import InstructionBaselinePart, InstructionPart
 from pydantic_ai.models import Model, ModelProfile, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
@@ -979,6 +981,31 @@ def test_messages_to_otel_message_parts_tool_availability_delta(include_content:
         [{'type': 'text', 'content': 'Tool availability changed: +lookup_exchange_rate'}]
     )
     assert user_message['role'] == 'user'
+
+
+def test_messages_to_otel_messages_leave_out_instruction_baselines():
+    """A baseline is bookkeeping the model never sees, so it adds no message to the trace, empty or otherwise.
+
+    The instructions it records are reported with the request itself.
+    """
+    agent = Agent(TestModel(), instructions=InstructionPart('Be brief.', name='style', on_change='append'))
+    messages = agent.run_sync('Hello').all_messages()
+    request = messages[0]
+    assert isinstance(request, ModelRequest)
+    assert any(isinstance(part, InstructionBaselinePart) for part in request.parts)
+    otel_messages = InstrumentationSettings(include_content=True).messages_to_otel_messages(messages)
+    assert [message['role'] for message in otel_messages] == ['user', 'assistant']
+
+    # Asked directly, as a caller rendering parts one by one would, it contributes nothing either.
+    assert InstructionBaselinePart(instructions=[]).otel_message_parts(InstrumentationSettings()) == []
+
+    # Nor does one split the parts around it into two messages.
+    split = ModelRequest(
+        parts=[UserPromptPart(content='One.'), InstructionBaselinePart(instructions=[]), UserPromptPart(content='Two.')]
+    )
+    assert InstrumentationSettings(include_content=True).messages_to_otel_messages([split]) == snapshot(
+        [{'role': 'user', 'parts': [{'type': 'text', 'content': 'One.'}, {'type': 'text', 'content': 'Two.'}]}]
+    )
 
 
 def test_messages_to_otel_messages_request_roles_v6():
