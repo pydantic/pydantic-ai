@@ -1486,7 +1486,10 @@ class TestTakesCtx:
         with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
             assert takes_ctx(guard) is True
 
-    @pytest.mark.parametrize('annotation', [Any, object])
+    @pytest.mark.parametrize(
+        'annotation',
+        [Any, object, Annotated[Any, 'meta'], Annotated[object, 'meta'], Annotated[Annotated[Any, 'a'], 'b']],
+    )
     def test_a_first_parameter_that_fits_either_keeps_the_context_with_a_warning(self, annotation: object):
         def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
 

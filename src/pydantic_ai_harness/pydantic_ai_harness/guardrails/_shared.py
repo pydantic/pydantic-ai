@@ -183,6 +183,8 @@ def takes_ctx(func: Callable[..., object]) -> bool:
     if positional[1].default is inspect.Parameter.empty:
         return True
     annotation = _resolve(func, positional[0].annotation)
+    while get_origin(annotation) is Annotated:
+        annotation = get_args(annotation)[0]
     either = annotation is inspect.Parameter.empty or annotation is Any or annotation is object
     if either or (isinstance(annotation, str) and not _names_run_context(annotation)):
         warnings.warn(
