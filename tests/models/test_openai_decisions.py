@@ -261,6 +261,7 @@ async def test_decision_response_does_not_end_a_responses_chain(allow_model_requ
         )
 
     assert bodies[0]['previous_response_id'] == 'resp_1'
+    assert bodies[0]['prompt_cache_options'] == {'comparison_response_id': 'resp_1'}
     assert bodies[0]['input'] == snapshot(
         [
             {'role': 'user', 'content': 'Is that harmful?'},
