@@ -412,6 +412,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'CodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
     'BrowserUse': Collides('its toolset registers its browser tools under fixed names'),
+    'SmartFileSearch': Collides(
+        'its toolset registers `smart_file_search` under a fixed name, and its judge `model` decides which '
+        'provider receives the source, so merging two could send it somewhere neither chose'
+    ),
     'PlaywrightBrowser': Narrows(
         'one browser per id, and its egress settings are an access boundary',
         lambda cls: (cls(), cls(allowed_domains=['example.com'])),
