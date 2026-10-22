@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import struct
+import zlib
 from typing import Any
 
 import pytest
@@ -22,7 +25,12 @@ with try_import() as imports_successful:
     from openai.types import responses as resp
     from openai.types.responses.response import Conversation
 
-    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings, _map_computer_action  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.openai import (
+        _BLANK_SCREENSHOT,  # pyright: ignore[reportPrivateUsage]
+        OpenAIResponsesModel,
+        OpenAIResponsesModelSettings,
+        _map_computer_action,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.profiles.openai import openai_model_profile
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -265,6 +273,18 @@ async def test_a_screenshot_left_out_of_the_request_is_explained(allow_model_req
     )
     assert last['input'][newest]['output']['image_url'].startswith('data:image/png;base64,iVBOR')
     assert newest == len(last['input']) - 1
+
+
+def test_the_blank_screenshot_is_a_valid_png() -> None:
+    # OpenAI rejects an image whose chunk checksums don't match, failing the whole request.
+    data = base64.b64decode(_BLANK_SCREENSHOT.split(',', 1)[1])
+    position, chunk = 8, b''
+    while position < len(data):
+        (length,) = struct.unpack('>I', data[position : position + 4])
+        chunk = data[position + 4 : position + 8 + length]
+        assert struct.unpack('>I', data[position + 8 + length : position + 12 + length])[0] == zlib.crc32(chunk)
+        position += 12 + length
+    assert chunk == b'IEND'
 
 
 async def test_a_refused_action_is_explained_after_its_screenshot(allow_model_requests: None) -> None:
