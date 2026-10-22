@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 import warnings
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import fields, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -878,6 +878,7 @@ def test_builtin_tool_call_part_has_content_empty(args: dict[str, object] | str 
 
 
 def test_citation_message_history_round_trip() -> None:
+    """Citations survive a dump and load of message history, and dump to the documented wire format."""
     messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
@@ -941,24 +942,27 @@ def test_citation_message_history_round_trip() -> None:
 
 
 def test_text_part_delta_appends_citations() -> None:
-    citation = Citation(sources=[DocumentCitationSource(document_id='file-123', title='report.pdf')])
+    first = Citation(sources=[WebCitationSource(url='https://example.com/paris')])
+    second = Citation(sources=[DocumentCitationSource(document_id='file-123', title='report.pdf')])
 
-    part = TextPartDelta(content_delta='', citations_delta=[citation]).apply(TextPart('Answer'))
+    part = TextPartDelta(content_delta='', citations_delta=[second]).apply(TextPart('Answer', citations=[first]))
 
-    assert part == TextPart('Answer', citations=[citation])
+    assert part == TextPart('Answer', citations=[first, second])
 
 
-def test_citation_invariants() -> None:
-    with pytest.raises(ValueError, match='0 <= start < end'):
-        ContentCitationAnchor(start=-1, end=0)
-    with pytest.raises(ValueError, match='0 <= start < end'):
-        MarkerCitationAnchor(start=2, end=1)
-    with pytest.raises(ValueError, match='0 <= start < end'):
-        ContentCitationAnchor(start=1, end=1)
-    with pytest.raises(ValueError, match='at least one source'):
-        Citation(sources=[])
-    with pytest.raises(ValueError, match='at least one source field'):
-        DocumentCitationSource()
+@pytest.mark.parametrize(
+    'build, match',
+    [
+        pytest.param(lambda: ContentCitationAnchor(start=-1, end=0), '0 <= start < end', id='negative-start'),
+        pytest.param(lambda: MarkerCitationAnchor(start=2, end=1), '0 <= start < end', id='end-before-start'),
+        pytest.param(lambda: ContentCitationAnchor(start=1, end=1), '0 <= start < end', id='empty-range'),
+        pytest.param(lambda: Citation(sources=[]), 'at least one source', id='no-sources'),
+        pytest.param(lambda: DocumentCitationSource(), 'at least one source field', id='empty-document-source'),
+    ],
+)
+def test_citation_invariants(build: Callable[[], object], match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        build()
 
 
 def test_file_part_serialization_roundtrip():

@@ -668,6 +668,7 @@ async def test_web_citations(
     xai_provider: XaiProvider | None,
     request: pytest.FixtureRequest,
 ) -> None:
+    """Web search and fetch answers carry web citations with their source domains, excerpt counts and anchored text."""
     if not WEB_PROVIDER_AVAILABLE[case.provider]():
         pytest.skip(f'{case.provider} dependencies not installed')
 
@@ -829,6 +830,7 @@ async def test_document_citations(
     anthropic_api_key: str,
     document_content: BinaryContent,
 ) -> None:
+    """Answers about a text or PDF document carry document citations with the cited excerpt and its anchor."""
     available = anthropic_available if case.provider == 'anthropic' else bedrock_available
     if not available():
         pytest.skip(f'{case.provider} dependencies not installed')

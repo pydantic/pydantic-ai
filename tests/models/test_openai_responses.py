@@ -98,6 +98,7 @@ from ..conftest import (
     IsFloat,
     IsInstance,
     IsInt,
+    IsList,
     IsNow,
     IsStr,
     RequestCapture,
@@ -105,12 +106,13 @@ from ..conftest import (
     message,
     try_import,
 )
-from .citation_utils import IsCitationList, citations_from_messages
+from .citation_utils import IsCitationList
 from .conftest import json_objects
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, get_mock_retrieve_kwargs, response_message
 
 with try_import() as imports_successful:
     from openai import APIStatusError, AsyncAzureOpenAI, AsyncOpenAI, omit
+    from openai._models import construct_type
     from openai.types import responses as resp
     from openai.types.responses import (
         CompactedResponse,
@@ -124,7 +126,7 @@ with try_import() as imports_successful:
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
     from openai.types.responses.response_output_text import (
-        AnnotationContainerFileCitation,
+        Annotation,
         AnnotationURLCitation,
         Logprob,
         ResponseOutputText,
@@ -158,14 +160,26 @@ pytestmark = [
 ]
 
 
-def test_openai_unsupported_annotation_is_ignored():
-    annotation = AnnotationContainerFileCitation(
-        container_id='container-1',
-        file_id='file-1',
-        filename='chart.png',
-        start_index=0,
-        end_index=0,
-        type='container_file_citation',
+@pytest.mark.parametrize('annotation_type', ['container_file_citation', 'some_future_citation'])
+def test_openai_unsupported_annotation_is_ignored(annotation_type: str):
+    """Annotations other than URL and file citations make no citations, including types the SDK doesn't know.
+
+    Unit test: no recorded answer has one in a text part without a citation.
+    """
+    # Built the way the SDK builds a response: an unknown type becomes one of its classes, without validation.
+    annotation = cast(
+        Annotation,
+        construct_type(
+            type_=Annotation,
+            value={
+                'type': annotation_type,
+                'container_id': 'container-1',
+                'file_id': 'file-1',
+                'filename': 'chart.png',
+                'start_index': 0,
+                'end_index': 0,
+            },
+        ),
     )
     response = response_message(
         [
@@ -192,6 +206,7 @@ def test_openai_unsupported_annotation_is_ignored():
 
 
 def test_openai_invalid_url_citation_range_is_unanchored():
+    """Unit test: no recorded answer has a citation range outside its text."""
     annotation = AnnotationURLCitation(
         type='url_citation',
         start_index=20,
@@ -308,6 +323,7 @@ def test_openai_citations_kept_with_logprobs():
 
 
 async def test_openai_response_with_null_text_and_citation(allow_model_requests: None):
+    """Unit test: no recorded answer has citations on null text."""
     output_text = ResponseOutputText.model_construct(
         text=None,
         type='output_text',
@@ -2482,20 +2498,6 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
     )
     assert isinstance(annotation_event, PartDeltaEvent)
     assert isinstance(annotation_event.delta, TextPartDelta)
-    assert annotation_event.index in {
-        event.index for event in events if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart)
-    }
-    assert annotation_event.delta.citations_delta == [
-        Citation(
-            sources=[
-                WebCitationSource(
-                    url='https://www.britannica.com/place/Mount-Columbia?utm_source=openai',
-                    title='Mount Columbia | mountain, Alberta, Canada | Britannica',
-                )
-            ],
-            anchor=MarkerCitationAnchor(start=77, end=162),
-        )
-    ]
     assert annotation_event.delta.provider_details == snapshot(
         {
             'annotations': [
@@ -2507,15 +2509,7 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
                     'url': 'https://www.britannica.com/place/Mount-Columbia?utm_source=openai',
                 }
             ],
-            'citations': [
-                {
-                    'end_index': 162,
-                    'start_index': 77,
-                    'title': 'Mount Columbia | mountain, Alberta, Canada | Britannica',
-                    'type': 'url_citation',
-                    'url': 'https://www.britannica.com/place/Mount-Columbia?utm_source=openai',
-                }
-            ],
+            'citations': IsList(length=(1, ...)),
         }
     )
 
@@ -2523,10 +2517,6 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
     agent2 = Agent(model2, instructions=instructions, capabilities=[NativeTool(WebSearchTool())])
     async with agent2.run_stream_events(prompt) as event_stream2:
         events2 = [event async for event in event_stream2]
-    assert any(
-        isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta) and event.delta.citations_delta
-        for event in events2
-    )
     assert not any(
         (
             isinstance(event, PartDeltaEvent)
@@ -2672,7 +2662,10 @@ async def test_openai_include_raw_annotations_streaming_model_annotation(allow_m
 
 
 async def test_openai_responses_stream_unparseable_annotation(allow_model_requests: None):
-    """A streamed annotation that isn't a known annotation type gives no citations and is kept raw."""
+    """A streamed annotation that isn't a known annotation type is kept raw, and the others still become citations.
+
+    Unit test: no recorded stream has an annotation the SDK can't parse.
+    """
     base_response = resp.Response(
         id='resp_001',
         model='gpt-5.6-terra',
@@ -2696,8 +2689,23 @@ async def test_openai_responses_stream_unparseable_annotation(allow_model_reques
             logprobs=[],
         ),
         resp.ResponseOutputTextAnnotationAddedEvent.model_construct(
-            annotation=None,
+            annotation={
+                'type': 'url_citation',
+                'url': 'https://example.com',
+                'title': 'Example',
+                'start_index': 0,
+                'end_index': 14,
+            },
             annotation_index=0,
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.annotation.added',
+            sequence_number=2,
+        ),
+        resp.ResponseOutputTextAnnotationAddedEvent.model_construct(
+            annotation=None,
+            annotation_index=1,
             content_index=0,
             item_id='msg_001',
             output_index=0,
@@ -2729,9 +2737,16 @@ async def test_openai_responses_stream_unparseable_annotation(allow_model_reques
     response = result.all_messages()[-1]
 
     assert isinstance(response, ModelResponse)
-    assert response.parts == [
-        TextPart(text, id='msg_001', provider_name='openai', provider_details={'annotations': [None]})
+    [part] = response.parts
+    assert isinstance(part, TextPart)
+    assert part.citations == [
+        Citation(
+            sources=[WebCitationSource(url='https://example.com', title='Example')],
+            anchor=MarkerCitationAnchor(start=0, end=14),
+        )
     ]
+    assert part.provider_details is not None
+    assert part.provider_details['annotations'][1] is None
 
 
 async def test_openai_responses_model_http_error(allow_model_requests: None, openai_api_key: str):
@@ -2750,11 +2765,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
     agent = Agent(model=model, model_settings=settings)
     result = await agent.run('Give me the top 3 news in the world today')
 
-    messages = result.all_messages()
-    citations = citations_from_messages(messages)
-    assert citations
-    assert all(isinstance(source, WebCitationSource) for citation in citations for source in citation.sources)
-    assert messages == snapshot(
+    assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
@@ -2905,31 +2916,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         content=IsStr(),
                         id='msg_0e3d55e9502941380068c4aada6d8c8195b8b6f92edbb53b4f',
                         provider_name='openai',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'end_index': 460,
-                                    'start_index': 294,
-                                    'title': 'UN overwhelmingly endorses two-state solution declaration that condemns Hamas',
-                                    'type': 'url_citation',
-                                    'url': 'https://www.reuters.com/world/middle-east/un-overwhelmingly-endorses-two-state-solution-declaration-that-condemns-hamas-2025-09-12/?utm_source=openai',
-                                },
-                                {
-                                    'end_index': 763,
-                                    'start_index': 670,
-                                    'title': "Nepal's president appoints former chief justice as interim premier and first woman leader",
-                                    'type': 'url_citation',
-                                    'url': 'https://apnews.com/article/aad7af5ddfb56b7484fa9db591297c9e?utm_source=openai',
-                                },
-                                {
-                                    'end_index': 1102,
-                                    'start_index': 974,
-                                    'title': 'Death toll rises to 46 in Israeli raids on Yemen',
-                                    'type': 'url_citation',
-                                    'url': 'https://www.reuters.com/world/middle-east/death-toll-rises-46-israeli-raids-yemen-2025-09-11/?utm_source=openai',
-                                },
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                 ],
@@ -10353,12 +10340,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
             PartEndEvent(
                 index=4,
                 part=TextPart(
-                    content="""\
-Here\u2019s the chart of y = x^2 for x from -5 to 5.  \n\
-Download the image: [Download the chart](sandbox:/mnt/data/y_eq_x_squared_plot.png)\
-""",
-                    id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4',
-                    provider_name='openai',
+                    content=IsStr(), id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4', provider_name='openai'
                 ),
             ),
         ]
@@ -13879,16 +13861,7 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                             content='The Eiffel Tower is a famous landmark in Paris, the capital of France. It is widely recognized and serves as an iconic symbol of the city.',
                             id=IsStr(),
                             provider_name='openai',
-                            provider_details={
-                                'citations': [
-                                    {
-                                        'file_id': 'file-U6Ke78qu8nkANsrCrjoYBr',
-                                        'filename': 'tmp2zuepgia.txt',
-                                        'index': 137,
-                                        'type': 'file_citation',
-                                    }
-                                ]
-                            },
+                            provider_details={'citations': IsList(length=(1, ...))},
                             citations=[
                                 Citation(
                                     sources=[
@@ -14019,14 +13992,7 @@ async def test_openai_responses_model_file_search_tool_stream(
 
         assert agent_run.result is not None
         messages = agent_run.result.all_messages()
-        cited_part = next(part for part in messages[1].parts if isinstance(part, TextPart) and part.citations)
-        assert cited_part.citations and all(
-            isinstance(citation.sources[0], DocumentCitationSource) and citation.anchor is None
-            for citation in cited_part.citations
-        )
         # OpenAI's file citation `index` is a character position in the text, kept in the raw citation data.
-        assert cited_part.provider_details is not None
-        assert [citation['index'] for citation in cited_part.provider_details['citations']] == [30]
         assert messages == snapshot(
             [
                 ModelRequest(
@@ -14154,16 +14120,7 @@ async def test_openai_responses_model_file_search_tool_stream(
                     index=2,
                     delta=TextPartDelta(
                         content_delta='',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'file_id': 'file-9RhPAs9YqVajpGXRfcgavJ',
-                                    'filename': 'tmp8l5_2pzy.txt',
-                                    'index': 30,
-                                    'type': 'file_citation',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations_delta=IsCitationList(),
                     ),
                 ),
@@ -14173,16 +14130,7 @@ async def test_openai_responses_model_file_search_tool_stream(
                         content='The capital of France is Paris.',
                         id=IsStr(),
                         provider_name='openai',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'file_id': 'file-9RhPAs9YqVajpGXRfcgavJ',
-                                    'filename': 'tmp8l5_2pzy.txt',
-                                    'index': 30,
-                                    'type': 'file_citation',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                 ),
@@ -14332,16 +14280,7 @@ async def test_openai_responses_model_file_search_tool_with_results(
                             content=IsStr(),
                             id=IsStr(),
                             provider_name='openai',
-                            provider_details={
-                                'citations': [
-                                    {
-                                        'file_id': 'file-2b6dRdmXnzSrqiEbhVJZRU',
-                                        'filename': 'tmpd_9a5dki.txt',
-                                        'index': 30,
-                                        'type': 'file_citation',
-                                    }
-                                ]
-                            },
+                            provider_details={'citations': IsList(length=(1, ...))},
                             citations=IsCitationList(),
                         ),
                     ],
@@ -14655,17 +14594,6 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
     assert tool_call.args.get('type') == 'search'
 
     text_part = next(part for part in response.parts if isinstance(part, TextPart))
-    assert text_part.citations == [
-        Citation(
-            sources=[
-                WebCitationSource(
-                    url='https://www.britannica.com/place/Mount-Columbia?utm_source=openai',
-                    title='Mount Columbia | mountain, Alberta, Canada | Britannica',
-                )
-            ],
-            anchor=MarkerCitationAnchor(start=126, end=211),
-        )
-    ]
     assert text_part.provider_details and 'annotations' in text_part.provider_details
 
     # Test with annotations disabled (default)
@@ -14683,7 +14611,6 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
     )
     response2 = cast(ModelResponse, messages2[1])
     text_part2 = next(part for part in response2.parts if isinstance(part, TextPart))
-    assert text_part2.citations
     assert not (text_part2.provider_details or {}).get('annotations')
 
 

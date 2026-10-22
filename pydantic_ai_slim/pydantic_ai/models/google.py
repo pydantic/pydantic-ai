@@ -2148,16 +2148,16 @@ def _character_index(text: str, byte_index: int) -> int | None:
 
 
 def _grounding_support_part_index(parts: Sequence[Part], segment: Segment) -> int | None:
-    if segment.part_index is not None and 0 <= segment.part_index < len(parts):
-        part = parts[segment.part_index]
-        if segment.text is None or (part.text and segment.text in part.text):
-            return segment.part_index
+    # Grounding supports the answer, so thought parts are never cited.
+    text_parts = {index: part.text for index, part in enumerate(parts) if part.text and not part.thought}
+    if (index := segment.part_index) is not None and index in text_parts:
+        if segment.text is None or segment.text in text_parts[index]:
+            return index
     if segment.text is not None:
-        candidates = [index for index, part in enumerate(parts) if part.text and segment.text in part.text]
+        candidates = [index for index, text in text_parts.items() if segment.text in text]
         if len(candidates) == 1:
             return candidates[0]
-    text_parts = [index for index, part in enumerate(parts) if part.text]
-    return text_parts[0] if len(text_parts) == 1 else None
+    return next(iter(text_parts)) if len(text_parts) == 1 else None
 
 
 def _map_citation_source(chunk: GroundingChunk) -> CitationSource | None:

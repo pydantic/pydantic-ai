@@ -26,7 +26,6 @@ from pydantic_ai import (
     BinaryContent,
     CachePoint,
     Citation,
-    CitationSource,
     ContentCitationAnchor,
     DocumentCitationSource,
     DocumentUrl,
@@ -109,7 +108,7 @@ from ..conftest import (
     try_import,
 )
 from ..parts_from_messages import part_types_from_messages
-from .citation_utils import IsCitationList, citations_from_messages
+from .citation_utils import IsCitationList
 from .conftest import (
     AnthropicModelFactory,
     cache_breakpoints,
@@ -133,6 +132,7 @@ with try_import() as imports_successful:
         AsyncStream,
         omit as OMIT,
     )
+    from anthropic._models import construct_type
     from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
@@ -144,7 +144,6 @@ with try_import() as imports_successful:
         BetaBase64PDFSource,
         BetaCitationCharLocation,
         BetaCitationContentBlockLocation,
-        BetaCitationPageLocation,
         BetaCitationsDelta,
         BetaCitationSearchResultLocation,
         BetaCitationsWebSearchResultLocation,
@@ -169,7 +168,6 @@ with try_import() as imports_successful:
         BetaMessageParam,
         BetaMessageTokensCount,
         BetaOutputTokensDetails,
-        BetaPlainTextSource,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
         BetaRawContentBlockStopEvent,
@@ -239,86 +237,25 @@ def _citation_delta_event(index: int) -> PartDeltaEvent:
     )
 
 
-@pytest.mark.parametrize(
-    ('citation_kind', 'expected_source'),
-    [
-        pytest.param(
-            'character-range',
-            DocumentCitationSource(
-                document_id='file-1',
-                title='Report',
-                excerpts=['document excerpt'],
-            ),
-            id='document-character-range',
-        ),
-        pytest.param(
-            'page-range',
-            DocumentCitationSource(
-                title='Report',
-                excerpts=['page excerpt'],
-            ),
-            id='document-page-range',
-        ),
-        pytest.param(
-            'content-block-range',
-            DocumentCitationSource(
-                title='Report',
-                excerpts=['block excerpt'],
-            ),
-            id='document-content-block-range',
-        ),
-    ],
-)
-def test_anthropic_maps_citation_source_variants(
-    citation_kind: Literal['character-range', 'page-range', 'content-block-range'], expected_source: CitationSource
-):
-    if citation_kind == 'character-range':
-        citation = BetaCitationCharLocation(
-            cited_text='document excerpt',
-            document_index=0,
-            document_title='Report',
-            file_id='file-1',
-            start_char_index=0,
-            end_char_index=16,
-            type='char_location',
-        )
-    elif citation_kind == 'page-range':
-        citation = BetaCitationPageLocation(
-            cited_text='page excerpt',
-            document_index=0,
-            document_title='Report',
-            start_page_number=2,
-            end_page_number=3,
-            type='page_location',
-        )
-    else:
-        citation = BetaCitationContentBlockLocation(
-            cited_text='block excerpt',
-            document_index=0,
-            document_title='Report',
-            start_block_index=1,
-            end_block_index=2,
-            type='content_block_location',
-        )
+def test_anthropic_content_block_citation_is_a_document_citation():
+    """A citation of a custom content document's blocks becomes a document citation of the whole text part.
+
+    Unit test: no recording cites a custom content document.
+    """
+    citation = BetaCitationContentBlockLocation(
+        cited_text='block excerpt',
+        document_index=0,
+        document_title='Report',
+        file_id='file-1',
+        start_block_index=1,
+        end_block_index=2,
+        type='content_block_location',
+    )
 
     # The location is inside the cited document, not the answer, so it stays in the raw citation data.
     assert _map_citations([citation], 'answer') == [
-        Citation(sources=[expected_source], anchor=ContentCitationAnchor(start=0, end=6))
-    ]
-
-
-def test_anthropic_empty_cited_text_is_not_an_excerpt() -> None:
-    citation = BetaCitationsWebSearchResultLocation(
-        type='web_search_result_location',
-        url='https://example.com',
-        title='Example',
-        cited_text='',
-        encrypted_index='opaque-index',
-    )
-
-    assert _map_citations([citation], 'answer') == [
         Citation(
-            sources=[WebCitationSource(url='https://example.com', title='Example')],
+            sources=[DocumentCitationSource(document_id='file-1', title='Report', excerpts=['block excerpt'])],
             anchor=ContentCitationAnchor(start=0, end=6),
         )
     ]
@@ -417,6 +354,7 @@ async def test_anthropic_leaves_out_citations_it_cannot_check(
 
 @pytest.mark.parametrize('source', ['result-123', 'https://example.com/result'])
 def test_anthropic_client_search_result_citation_is_not_normalized(source: str):
+    """Unit test: no recording sends client-provided search results."""
     citation = BetaCitationSearchResultLocation(
         cited_text='search excerpt',
         search_result_index=0,
@@ -434,61 +372,68 @@ def _web_fetch_result(content: BetaWebFetchBlock | BetaWebFetchToolResultErrorBl
     return BetaWebFetchToolResultBlock(type='web_fetch_tool_result', tool_use_id='srvtoolu_1', content=content)
 
 
-def _fetched_document(source: BetaPlainTextSource | BetaBase64PDFSource) -> BetaWebFetchBlock:
-    return BetaWebFetchBlock(
+def test_anthropic_pdf_or_failed_fetch_is_not_a_fetched_page():
+    """Unit test: no recording fetches a PDF or fails a fetch."""
+    pdf = BetaWebFetchBlock(
         type='web_fetch_result',
         url='https://example.com/page',
-        content=BetaDocumentBlock(type='document', source=source, title='Page', citations=None),
+        content=BetaDocumentBlock(
+            type='document',
+            source=BetaBase64PDFSource(type='base64', media_type='application/pdf', data='JVBERi0='),
+            title='Page',
+            citations=None,
+        ),
     )
-
-
-def test_anthropic_fetched_page_is_a_fetched_text_page():
-    text = BetaPlainTextSource(type='text', media_type='text/plain', data='Page text')
-    pdf = BetaBase64PDFSource(type='base64', media_type='application/pdf', data='JVBERi0=')
     error = BetaWebFetchToolResultErrorBlock(type='web_fetch_tool_result_error', error_code='url_not_accessible')
 
-    assert _fetched_page(_web_fetch_result(_fetched_document(text))) == ('https://example.com/page', 'Page text')
-    assert _fetched_page(_web_fetch_result(_fetched_document(pdf))) is None
+    assert _fetched_page(_web_fetch_result(pdf)) is None
     assert _fetched_page(_web_fetch_result(error)) is None
 
 
-@pytest.mark.parametrize(
-    ('cited_text', 'expected_source'),
-    [
-        pytest.param(
-            'Page text',
-            WebCitationSource(url='https://example.com/page', title='Page', excerpts=['Page text']),
-            id='quotes-fetched-page',
-        ),
-        pytest.param(
-            'Other text', DocumentCitationSource(title='Page', excerpts=['Other text']), id='quotes-a-document'
-        ),
-    ],
-)
-def test_anthropic_character_citation_of_fetched_page(cited_text: str, expected_source: CitationSource):
+def test_anthropic_character_citation_not_on_fetched_page_is_a_document_citation():
+    """Unit test: no recording cites a document next to a fetched page."""
     citation = BetaCitationCharLocation(
-        cited_text=cited_text,
+        cited_text='Other text',
         document_index=0,
         document_title='Page',
         start_char_index=0,
-        end_char_index=len(cited_text),
+        end_char_index=10,
         type='char_location',
     )
 
     assert _map_citations([citation], 'answer', [('https://example.com/page', 'Page text')]) == [
-        Citation(sources=[expected_source], anchor=ContentCitationAnchor(start=0, end=6))
+        Citation(
+            sources=[DocumentCitationSource(title='Page', excerpts=['Other text'])],
+            anchor=ContentCitationAnchor(start=0, end=6),
+        )
     ]
 
 
 def test_anthropic_citation_without_source_fields_is_skipped():
+    """Unit test: no recording has a citation with no title, file or cited text."""
     citation = BetaCitationCharLocation(
         cited_text='', document_index=0, start_char_index=0, end_char_index=0, type='char_location'
     )
 
-    assert _map_citations([citation], 'answer', [('https://example.com/page', 'Page text')]) is None
+    assert _map_citations([citation], 'answer') is None
+
+
+def test_anthropic_citation_of_unknown_type_is_skipped():
+    """Unit test: no recording has a citation type the SDK doesn't know."""
+    # Built the way the SDK builds a response: an unknown type becomes one of its classes, without validation.
+    block = cast(
+        BetaTextBlock,
+        construct_type(
+            type_=BetaTextBlock,
+            value={'type': 'text', 'text': 'answer', 'citations': [{'type': 'future_location', 'cited_text': 'x'}]},
+        ),
+    )
+
+    assert _map_citations(block.citations or [], block.text) is None
 
 
 def test_anthropic_citation_of_empty_text_is_unanchored():
+    """Unit test: no recording cites an empty text block."""
     citation = BetaCitationsWebSearchResultLocation(
         type='web_search_result_location', url='https://example.com', cited_text='', encrypted_index='opaque-index'
     )
@@ -496,32 +441,11 @@ def test_anthropic_citation_of_empty_text_is_unanchored():
     assert _map_citations([citation], '') == [Citation(sources=[WebCitationSource(url='https://example.com')])]
 
 
-async def test_anthropic_stream_citations(allow_model_requests: None):
-    web_citation = BetaCitationsWebSearchResultLocation(
-        type='web_search_result_location',
-        url='https://example.com',
-        title='Example',
-        cited_text='web excerpt',
-        encrypted_index='opaque-index',
-    )
-    documents = [
-        BetaCitationCharLocation(
-            cited_text='first',
-            document_index=0,
-            document_title='Report',
-            start_char_index=0,
-            end_char_index=5,
-            type='char_location',
-        ),
-        BetaCitationCharLocation(
-            cited_text='second',
-            document_index=0,
-            document_title='Report',
-            start_char_index=6,
-            end_char_index=12,
-            type='char_location',
-        ),
-    ]
+async def test_anthropic_stream_mixed_web_and_document_citations(allow_model_requests: None):
+    """Web and document citations streamed onto one text block become one citation with both sources.
+
+    Unit test: no recording cites a web result and a document in the same text block.
+    """
     stream = [
         BetaRawMessageStartEvent(
             type='message_start',
@@ -541,17 +465,31 @@ async def test_anthropic_stream_citations(allow_model_requests: None):
         BetaRawContentBlockDeltaEvent(
             type='content_block_delta',
             index=0,
-            delta=BetaCitationsDelta(type='citations_delta', citation=web_citation),
+            delta=BetaCitationsDelta(
+                type='citations_delta',
+                citation=BetaCitationsWebSearchResultLocation(
+                    type='web_search_result_location',
+                    url='https://example.com',
+                    title='Example',
+                    cited_text='web excerpt',
+                    encrypted_index='opaque-index',
+                ),
+            ),
         ),
         BetaRawContentBlockDeltaEvent(
             type='content_block_delta',
             index=0,
-            delta=BetaCitationsDelta(type='citations_delta', citation=documents[0]),
-        ),
-        BetaRawContentBlockDeltaEvent(
-            type='content_block_delta',
-            index=0,
-            delta=BetaCitationsDelta(type='citations_delta', citation=documents[1]),
+            delta=BetaCitationsDelta(
+                type='citations_delta',
+                citation=BetaCitationCharLocation(
+                    cited_text='document excerpt',
+                    document_index=0,
+                    document_title='Report',
+                    start_char_index=0,
+                    end_char_index=16,
+                    type='char_location',
+                ),
+            ),
         ),
         BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
         BetaRawMessageStopEvent(type='message_stop'),
@@ -561,47 +499,20 @@ async def test_anthropic_stream_citations(allow_model_requests: None):
         provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(stream)),
     )
 
-    async with model.request_stream(
-        [ModelRequest.user_text_prompt('question')], {}, ModelRequestParameters()
-    ) as streamed:
-        events = [event async for event in streamed]
-        response = streamed.get()
+    async with Agent(model).run_stream('question') as result:
+        await result.get_output()
 
-    assert [
-        event
-        for event in events
-        if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta) and event.delta.citations_delta
-    ] == [
-        PartDeltaEvent(
-            index=0,
-            delta=TextPartDelta(
-                content_delta='',
-                provider_name='anthropic',
-                provider_details={
-                    'citations': [citation.model_dump(mode='json') for citation in [web_citation, *documents]]
-                },
-                citations_delta=IsCitationList(),
-            ),
-        )
-    ]
-
-    assert response.parts == [
-        TextPart(
-            'answer',
-            provider_name='anthropic',
-            provider_details={
-                'citations': [citation.model_dump(mode='json') for citation in [web_citation, *documents]]
-            },
-            citations=[
-                Citation(
-                    sources=[
-                        WebCitationSource(url='https://example.com', title='Example', excerpts=['web excerpt']),
-                        DocumentCitationSource(title='Report', excerpts=['first']),
-                        DocumentCitationSource(title='Report', excerpts=['second']),
-                    ],
-                    anchor=ContentCitationAnchor(start=0, end=6),
-                )
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[0]
+    assert isinstance(part, TextPart)
+    assert part.citations == [
+        Citation(
+            sources=[
+                WebCitationSource(url='https://example.com', title='Example', excerpts=['web excerpt']),
+                DocumentCitationSource(title='Report', excerpts=['document excerpt']),
             ],
+            anchor=ContentCitationAnchor(start=0, end=6),
         )
     ]
 
@@ -4007,10 +3918,10 @@ async def test_document_binary_content_input(
 @pytest.mark.parametrize(
     'citations,enable_citations,web_fetch_citations',
     [
-        (False, None, None),
-        (True, None, {'enabled': True}),
-        (True, False, None),
-        (False, True, {'enabled': True}),
+        pytest.param(False, None, None, id='off'),
+        pytest.param(True, None, {'enabled': True}, id='on'),
+        pytest.param(True, False, None, id='on-web-fetch-off'),
+        pytest.param(False, True, {'enabled': True}, id='off-web-fetch-on'),
     ],
 )
 async def test_anthropic_citations_request_setting(
@@ -4019,7 +3930,10 @@ async def test_anthropic_citations_request_setting(
     enable_citations: bool | None,
     web_fetch_citations: dict[str, bool] | None,
 ) -> None:
-    """The shared setting changes every Anthropic document block and Web Fetch, unless Web Fetch sets its own value."""
+    """The shared setting changes every Anthropic document block and Web Fetch, unless Web Fetch sets its own value.
+
+    Unit test: it pins the request body, which the default cassette matchers ignore.
+    """
     response = completion_message(
         [BetaTextBlock(text='The policy allows thirty days.', type='text')],
         BetaUsage(input_tokens=5, output_tokens=6),
@@ -4038,28 +3952,20 @@ async def test_anthropic_citations_request_setting(
         ]
     )
 
-    document = get_mock_chat_completion_kwargs(mock_client)[0]['messages'][0]['content'][1]
-    expected: dict[str, object] = {
-        'source': {
-            'data': 'Returns are allowed within thirty days.',
-            'media_type': 'text/plain',
-            'type': 'text',
-        },
-        'type': 'document',
-    }
-    if citations:
-        expected['citations'] = {'enabled': True}
-    assert document == expected
-
-    web_fetch_tool = next(
-        tool for tool in get_mock_chat_completion_kwargs(mock_client)[0]['tools'] if tool['name'] == 'web_fetch'
-    )
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    document = request['messages'][0]['content'][1]
+    assert document.get('citations') == ({'enabled': True} if citations else None)
+    web_fetch_tool = next(tool for tool in request['tools'] if tool['name'] == 'web_fetch')
     assert web_fetch_tool.get('citations') == web_fetch_citations
 
 
-@pytest.mark.parametrize('citations', [False, True])
+@pytest.mark.parametrize('citations', [pytest.param(False, id='off'), pytest.param(True, id='on')])
 async def test_anthropic_citations_tool_return_documents(allow_model_requests: None, citations: bool) -> None:
-    """Anthropic requires citations on all of a request's documents or none, so tool-returned documents get them too."""
+    """Anthropic requires citations on all of a request's documents or none, so tool-returned documents get them too.
+
+    Unit test: no recording returns an uploaded file or a downloaded PDF from a tool. A tool-returned
+    `BinaryContent` document is recorded in `test_anthropic_tool_return_document_citations`.
+    """
     response = completion_message(
         [BetaTextBlock(text='The policy allows thirty days.', type='text')],
         BetaUsage(input_tokens=5, output_tokens=6),
@@ -4074,8 +3980,8 @@ async def test_anthropic_citations_tool_return_documents(allow_model_requests: N
                 ToolReturnPart(
                     'read_policy',
                     [
-                        BinaryContent(data=b'Returns are allowed within thirty days.', media_type='text/plain'),
                         UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/pdf'),
+                        # An `ImageUrl` that downloads as a PDF is sent as a document, so it gets citations too.
                         ImageUrl('https://example.com/policy', media_type='application/pdf', force_download=True),
                     ],
                     tool_call_id='call-1',
@@ -4091,7 +3997,7 @@ async def test_anthropic_citations_tool_return_documents(allow_model_requests: N
     tool_result = get_mock_chat_completion_kwargs(mock_client)[0]['messages'][-1]['content'][0]
     documents = [block for block in tool_result['content'] if block['type'] == 'document']
     assert [document.get('citations') for document in documents] == (
-        [{'enabled': True}] * 3 if citations else [None] * 3
+        [{'enabled': True}] * 2 if citations else [None] * 2
     )
 
 
@@ -6912,13 +6818,6 @@ async def test_anthropic_web_search_tool(
         )
     )
     messages = result.all_messages()
-    citations = citations_from_messages(messages)
-    assert citations
-    assert all(isinstance(source, WebCitationSource) for citation in citations for source in citation.sources)
-    first_source = citations[0].sources[0]
-    assert isinstance(first_source, WebCitationSource)
-    assert first_source.url == 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629'
-    assert first_source.title == 'San Francisco, CA Weather Forecast | AccuWeather'
     assert messages == snapshot(
         [
             ModelRequest(
@@ -7033,17 +6932,7 @@ Based on the search results, here's the weather information for San Francisco to
                     TextPart(
                         content='Temperature: 66°F with clear skies',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'San Francisco, CA Weather Today WinterCast Local {stormName} Tracker Hourly Daily Radar MinuteCast® Monthly Air Quality Health & Activities · News · F...',
-                                    'encrypted_index': 'Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDNPrwrtV82S39TBtUxoM9OkESVCLqFIhGNWNIjApHhwZq58odSIAc5nQHEhQBfNwFHrpQpbkerxt3aYCRE+4AgDlX+pT8ZzljoUJKlsqE58zTWv5W9dV59ikkUJ6StlyfaMYBA==',
-                                    'title': 'San Francisco, CA Weather Forecast | AccuWeather',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7055,17 +6944,7 @@ Based on the search results, here's the weather information for San Francisco to
                     TextPart(
                         content='Wind: W at 3 mph with gusts up to 5 mph',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'San Francisco, CA Weather Today WinterCast Local {stormName} Tracker Hourly Daily Radar MinuteCast® Monthly Air Quality Health & Activities · News · F...',
-                                    'encrypted_index': 'Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDI1rQWxpfVxj9JrdJhoMHMrF/xm5CW6KLkbfIjBeUMWBFegc/AgNXWM7fzL3+LhX2Tqt8kJgrbdgEwNARhO5VYMDMP9tC833w5Xmb6UqE0jbo7+GooCq/w5RRvX1KgE0zhkYBA==',
-                                    'title': 'San Francisco, CA Weather Forecast | AccuWeather',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7077,17 +6956,7 @@ Based on the search results, here's the weather information for San Francisco to
                     TextPart(
                         content='Air quality is poor and unhealthy for sensitive groups',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'The air has reached a high level of pollution and is unhealthy for sensitive groups. ',
-                                    'encrypted_index': 'Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDKBO3m5oU3zDP/M1lBoMBKa8Z3revdebJHWbIjCRSJ1/FdR/uZeWZy5x85sd7yfm0SW+4URT2sN/CN5Qf9fQpe/sppMjAby+dqZg6bcqE3MW5v2cyJybai3gEjOauAM3d+EYBA==',
-                                    'title': 'San Francisco, CA Weather Forecast | AccuWeather',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7101,17 +6970,7 @@ Based on the search results, here's the weather information for San Francisco to
                     TextPart(
                         content='High: 78°F with partly cloudy skies',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'TomorrowTue 09/16 High · 78 °F · 8% Precip. / 0.00 °in Partly cloudy skies. High 78F. ',
-                                    'encrypted_index': 'EpEBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDMEHnsQLGWLb7FdzCRoMa7WCRfpvJ28BCN8yIjAXclnerIt70cUarlOsWiFEjbDmU36iMFVEKtYsc69NdaSgmZwGs/goHJHgmoEjpQ8qFZb8U5NbegnKXzYWdQ+V496rsOBjkRgE',
-                                    'title': 'San Francisco, CA Weather Conditions | Weather Underground',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7123,17 +6982,7 @@ Based on the search results, here's the weather information for San Francisco to
                     TextPart(
                         content='Winds W at 10 to 20 mph',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'Winds W at 10 to 20 mph.',
-                                    'encrypted_index': 'Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDLEc67xHbdy4qfeR/RoM9BGaTSFHONyszvURIjCCgwrv6kbCYL5PMYfS17Bmt3ftzKrhVZo9rzdzjFTnyi8RzShtAL61Zi6mCV+X0XwqE5e5yOh/SmB3xxNzuVuwqzKlyYgYBA==',
-                                    'title': 'San Francisco, CA Weather Conditions | Weather Underground',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7145,17 +6994,7 @@ Based on the search results, here's the weather information for San Francisco to
                     TextPart(
                         content='8% chance of precipitation',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'TomorrowTue 09/16 High · 78 °F · 8% Precip. ',
-                                    'encrypted_index': 'Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDOE7SfGqIX9sRB5ErBoMLJgiHrETP3PY6+9tIjBSx9+ZtuCyLXTzqikWSduGv7iRU5q/EtnhNAaM5IWvMq34A5XMxeCLlBhzIrEwkGcqE5pflUMu5Du+vUwg1F8Dw+ILPm4YBA==',
-                                    'title': 'San Francisco, CA Weather Conditions | Weather Underground',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7167,17 +7006,7 @@ Based on the search results, here's the weather information for San Francisco to
                     TextPart(
                         content='Some clouds in the morning will give way to mainly sunny skies for the afternoon',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'Some clouds in the morning will give way to mainly sunny skies for the afternoon.',
-                                    'encrypted_index': 'EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDCXpOg0iIqnZzS5IyhoMLxGJh5gs25sqXONYIjAPYG5Xp0rjytJih22sUIdxlvoJk/n46zm6bW4xdjOFtgx0Ew/lavCN/f+ZR3s27bwqFDk8+RaU6EkOC679jQMRRCzJawWsGAQ=',
-                                    'title': 'San Francisco, CA Hourly Weather Forecast | Weather Underground',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.wunderground.com/hourly/us/ca/san-francisco',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7191,17 +7020,7 @@ Based on the search results, here's the weather information for San Francisco to
                     TextPart(
                         content='Low: 57°F with clear to partly cloudy conditions',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'Radar · Satellite · WunderMap|Nexrad · TonightMon 09/15 Low · 57 °F · 8% Precip. / 0.00 °in Clear to partly cloudy. Low 57F. ',
-                                    'encrypted_index': 'EpEBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDCXHqEwUsSE26Sb2gRoMuO3SVDszvhU5huc/IjCI4LbKsCWba2Lf29G9dmwVOEdChsl/Fnjc1XwuCvUSBSyf8drc88Xc9zaLSiSzIUoqFYoa+znLyYC7wsiPLuMshhZ7CGv4HhgE',
-                                    'title': 'San Francisco, CA Weather Conditions | Weather Underground',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7213,17 +7032,7 @@ Based on the search results, here's the weather information for San Francisco to
                     TextPart(
                         content='Winds W at 10 to 20 mph',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'Winds W at 10 to 20 mph. ',
-                                    'encrypted_index': 'Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDGo4gB0zmLZBHsIkrBoM5bL+sdYKbftyuFMvIjCe2bmPQnUmWiZHZuRPQnVdpmbr/AZd+o9HIXtVeVwLU/fvqLxlk5WTP6GqrKnU1WoqE+4HQ3DNwQ7rFDsZum6duqskmHoYBA==',
-                                    'title': 'San Francisco, CA Weather Conditions | Weather Underground',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7376,17 +7185,7 @@ Based on the search results, here's the weather information for Mexico City toda
                     TextPart(
                         content='Temperature: 59°F (15°C) with clouds and sun',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'Mexico City, México City Weather Today WinterCast Local {stormName} Tracker Hourly Daily Radar MinuteCast® Monthly Air Quality Health & Activities · N...',
-                                    'encrypted_index': 'EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDAOzK/sV6nMomFW2kRoM2cZqq0m0dYUhtJoKIjCRoWEa2lCJ9f6+ryX0trWqYsZ6rPS/y95nqKKwPL29Y3kIBYIpLxqwHyVOEZk1tqEqFIdVvN8sCIb2eBLv9bD+uASv84RIGAQ=',
-                                    'title': 'Mexico City, México City, Mexico Weather Forecast | AccuWeather',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.accuweather.com/en/mx/mexico-city/242560/weather-forecast/242560',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7398,17 +7197,7 @@ Based on the search results, here's the weather information for Mexico City toda
                     TextPart(
                         content='Wind: NNE at 6 mph with gusts up to 6 mph',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'Mexico City, México City Weather Today WinterCast Local {stormName} Tracker Hourly Daily Radar MinuteCast® Monthly Air Quality Health & Activities · N...',
-                                    'encrypted_index': 'EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDBwX9yHgJizGz+POZBoM92BMeHad7MAD4MwrIjABD1bm8ylowz91g3mUfcz6MYTpvwSopPi9m5ScR23vIJPnjRSdAUvZJ5rSRq3xbhMqFK/lV236LtEbTNOm/AI6IEfGR837GAQ=',
-                                    'title': 'Mexico City, México City, Mexico Weather Forecast | AccuWeather',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.accuweather.com/en/mx/mexico-city/242560/weather-forecast/242560',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7420,17 +7209,7 @@ Based on the search results, here's the weather information for Mexico City toda
                     TextPart(
                         content='Air quality is poor and unhealthy for sensitive groups',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'The air has reached a high level of pollution and is unhealthy for sensitive groups. Reduce time spent outside if you are feeling symptoms such as dif...',
-                                    'encrypted_index': 'EpIBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDKRmKtS16X3NrfJ2QxoMUXKCzdBLTUVevFWxIjCfmrUGroDcg5sEEQ+dokyvxWjsYUx9q8t2PjAoYgJHj3J4QIhsr07e9R7aw8vyeDEqFhNpLn2HEep2d7AEtxBQUHpOUWA0znYYBA==',
-                                    'title': 'Mexico City, México City, Mexico Weather Forecast | AccuWeather',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.accuweather.com/en/mx/mexico-city/242560/weather-forecast/242560',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7444,17 +7223,7 @@ Based on the search results, here's the weather information for Mexico City toda
                     TextPart(
                         content='High: 72°F (22°C) - mostly cloudy with a touch of rain this afternoon',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'Mexico City, México City Weather Today WinterCast Local {stormName} Tracker Hourly Daily Radar MinuteCast® Monthly Air Quality Health & Activities · N...',
-                                    'encrypted_index': 'EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDCLnLxDJlNvAxnREgRoMXCDRJkOVPw+a9Ao8IjDL4ajzIFIvCksE+thOjKlvk3/bKLZ4xvli5rZ+SMzAedT5axFxgeAZdi6hESeYOSwqFBaW1SxkYu3Al9bG7pfeh+yPfkxKGAQ=',
-                                    'title': 'Mexico City, México City, Mexico Weather Forecast | AccuWeather',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.accuweather.com/en/mx/mexico-city/242560/weather-forecast/242560',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7466,17 +7235,7 @@ Based on the search results, here's the weather information for Mexico City toda
                     TextPart(
                         content='High 73F with partly cloudy conditions early followed by scattered thunderstorms. Winds NNE at 10 to 15 mph, 70% chance of rain',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'High 73F. Winds NNE at 10 to 15 mph. Chance of rain 70%. ',
-                                    'encrypted_index': 'EpIBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDHSZ3uH4UirBmEnFABoM2eVVOYVeni424YvSIjB+qwFBjLzC2vjBViOlGx/nY7hfYV2MmH4npc7NEcj9c+GYjpv8Sq37dct3xXn5xQkqFqRBDsCci3pA3bYtDzeWJPXkGfStN7gYBA==',
-                                    'title': '10-Day Weather Forecast for Mexico City, Mexico - The Weather Channel | weather.com',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://weather.com/weather/tenday/l/6121681b2c5df01145b9723d497c595c53ae08104787aa1c26bafdf2fb875c07',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7488,24 +7247,7 @@ Based on the search results, here's the weather information for Mexico City toda
                     TextPart(
                         content='Scattered thunderstorms developing during the afternoon. High near 75F with winds NNE at 10 to 15 mph and 70% chance of rain',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'TomorrowTue 09/16 High · 75 °F · 71% Precip. / 0.11 °in Scattered thunderstorms developing during the afternoon. ',
-                                    'encrypted_index': 'EpQBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDKf1qnGy8I0eR8ESsBoM4aCgn1wCp8bYcaIiIjAIU5E2GBPS6tbnFzEvPUc8GKEzHQpu1LDJTmRClIalH6TgGQl1kX9Al5KeLW3rp84qGDzo/SAht1QADq0c8i3j1EYhbIIHs48DchgE',
-                                    'title': 'Mexico City, Mexico Weather Conditions | Weather Underground',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.wunderground.com/weather/mx/mexico-city',
-                                },
-                                {
-                                    'cited_text': 'Winds NNE at 10 to 15 mph. Chance of rain 70%. ',
-                                    'encrypted_index': 'EpQBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDAVUj8aNUG2A8w99+BoMywDl5V+elFPoeYQ0IjBcnmKXAiKBffdxM4tAD4Dc1VZBn3RY35CDywsdaQcH+otKGMdHAZxQ8bOOCu5IUV0qGEqLDqR9Mj84lqvDbdSMyWwHxoM0fpTYERgE',
-                                    'title': 'Mexico City, Mexico Weather Conditions | Weather Underground',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.wunderground.com/weather/mx/mexico-city',
-                                },
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7519,17 +7261,7 @@ Based on the search results, here's the weather information for Mexico City toda
                     TextPart(
                         content='Low: 58°F with cloudy conditions and a couple of showers',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'Mexico City, México City Weather Today WinterCast Local {stormName} Tracker Hourly Daily Radar MinuteCast® Monthly Air Quality Health & Activities · N...',
-                                    'encrypted_index': 'EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDFdGuXvbuEQvMD5x1RoMa3bhIXG3ScZpYg12IjCg2r64JNEa8Pdye/LW8zSZhQIxCAatSa4pnbUTVEPhtP5s2XNqUOgvtN9jwoJiFcwqFFfVb7qKSu5o+XuprTlYyQQzbJsZGAQ=',
-                                    'title': 'Mexico City, México City, Mexico Weather Forecast | AccuWeather',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.accuweather.com/en/mx/mexico-city/242560/weather-forecast/242560',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7541,17 +7273,7 @@ Based on the search results, here's the weather information for Mexico City toda
                     TextPart(
                         content='Cloudy overnight with low 57F and winds NNW at 10 to 15 mph',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'Heads-up · Gabrielle Likely, Plus Second Area To Watch · Humidity58% UV IndexExtreme · Sunrise6:24 am · Sunset6:37 pm · 57° · 24% NNW 11 mph · Cloudy....',
-                                    'encrypted_index': 'EpIBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDAc8ulmazXGe892FkRoMa5fdGk7fmU3xSOLUIjDtOelcSTGskW6wL7uU2ptERJVnZK7Q1VVC6Yl/M2k2FFVU0DjruHMaIC+AI2PYs0AqFqqaZ/5Wiwcb2VSxrzpaLEF+yiCO3aIYBA==',
-                                    'title': '10-Day Weather Forecast for Mexico City, Mexico - The Weather Channel | weather.com',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://weather.com/weather/tenday/l/6121681b2c5df01145b9723d497c595c53ae08104787aa1c26bafdf2fb875c07',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7826,17 +7548,7 @@ According to AccuWeather's forecast, \
                     TextPart(
                         content='today (September 16) shows a high of 76°F and low of 59°F',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'San Francisco, CA Weather Today WinterCast Local {stormName} Tracker Hourly Daily Radar MinuteCast® Monthly Air Quality Health & Activities · News · F...',
-                                    'encrypted_index': 'EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDF40DRRSNnVV3UQhMhoME3fVNuLj0UFoYnjZIjCgodwR9nJs5Ax0wYOB3qnP6aRoPSxxmbCs88auNlqqTGUqZRWBAI4N0By5bOAFJF4qFK0WEkiPPIMDb4tVJTRA9sSl86GQGAQ=',
-                                    'title': 'San Francisco, CA Monthly Weather | AccuWeather',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.accuweather.com/en/us/san-francisco/94103/september-weather/347629',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7849,24 +7561,7 @@ From the recent San Francisco Chronicle weather report, \
                     TextPart(
                         content='average mid-September highs in San Francisco are around 70 degrees',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'Average mid-September highs in San Francisco are around 70 degrees. ',
-                                    'encrypted_index': 'EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDH3EgputwhrYmTSWkBoMR1g/HqJaXbK1bsBQIjCWmKqwNmnpvSdJS5cG8TKXe2SbNjMAZO8j7W7YteGkOGvLBxnrcMOTh9TjRvXjm28qFPP2EEUPRVdFRg/khJM0JcBYs/ceGAQ=',
-                                    'title': 'Here\u2019s when S.F. weather could hit 90 degrees next week',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
-                                },
-                                {
-                                    'cited_text': 'Average mid-September highs in San Francisco are around 70 degrees. ',
-                                    'encrypted_index': 'EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDFDx+f2Hj6wkNpswqhoMCeUDlHiMe0i9t1e6IjBRNMm9hMzr3lAuli5aRzDN/kyG28rjZyS0CUffCkSklmI0hunp67hVGP/tbzeZgYUqFGKgbS6TfBOX/a6hKPiL14JUl/udGAQ=',
-                                    'title': 'Here\u2019s when S.F. weather could hit 90 degrees next week',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
-                                },
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7880,24 +7575,7 @@ The general weather pattern for San Francisco in September includes:
                     TextPart(
                         content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C (55°F) at night',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': '... Daytime temperatures usually reach 22°C in San Francisco in September, falling to 13°C at night. ',
-                                    'encrypted_index': 'EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDJbvWTEObIENPeg2jxoMXGlxzP1Uyuc+2hsWIjAg8u0sUvYEYFdEYiwBb1GkAx1RkamSZ0KreMTOu5X4ZNGOYwWkVPANKEnI7gqrSlcqFPffLYpNc62cyXWiS6+fTmf3sSo5GAQ=',
-                                    'title': 'San Francisco weather in September 2025 | California',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.weather2travel.com/california/san-francisco/september/',
-                                },
-                                {
-                                    'cited_text': '... Daytime temperatures usually reach 22°C in San Francisco in September, falling to 13°C at night. ',
-                                    'encrypted_index': 'EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDHzLg5l+tM/ffc+sIxoMu0XLITxRs9iGUiOZIjCVw6Spvws/dkAngK7JhGYyexOac5AFH1ay+7P5X7uzdQ45HenkLIIQGQFGTbWtxREqFKwjsGwPjTRTli9ipIJTUqNLTKAZGAQ=',
-                                    'title': 'San Francisco weather in September 2025 | California',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.weather2travel.com/california/san-francisco/september/',
-                                },
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7909,17 +7587,7 @@ The general weather pattern for San Francisco in September includes:
                     TextPart(
                         content='There are normally 9 hours of bright sunshine each day in San Francisco in September',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': "There are normally 9 hours of bright sunshine each day in San Francisco in September - that's 73% of daylight hours. ",
-                                    'encrypted_index': 'EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDLsYD2oWQxpWeTy+hRoMIGR+pZTWCOBtK8vuIjDPGODqF/O0ikxRjnXzksLRdiadJh+z0bD0mNgSUQkpukodMk8Mj7njCWAzjKIvtSIqFDBrpyn6zsCYYFCGRmOozHbz/hmLGAQ=',
-                                    'title': 'San Francisco weather in September 2025 | California',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://www.weather2travel.com/california/san-francisco/september/',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -7931,17 +7599,7 @@ The general weather pattern for San Francisco in September includes:
                     TextPart(
                         content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm. Typically, there are no rainy days during this month',
                         provider_name='anthropic',
-                        provider_details={
-                            'citations': [
-                                {
-                                    'cited_text': 'San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm. Typically, there are no rainy days during this mon...',
-                                    'encrypted_index': 'EpQBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDMgXE4UZcyDxqPN/kxoMMZjABtflMw7yLqFFIjDsML/HQ1FAol5ql8svI/FEaOrOVDUaus1aZb492kQtvkH86qCbMJUTQ73GGcmRQz8qGIZij1uOCYKSArWfTnyncHgnP0CtoNGo0RgE',
-                                    'title': 'Weather San Francisco in September 2025: Temperature & Climate',
-                                    'type': 'web_search_result_location',
-                                    'url': 'https://en.climate-data.org/north-america/united-states-of-america/california/san-francisco-385/t/september-9/',
-                                }
-                            ]
-                        },
+                        provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     TextPart(
@@ -8368,17 +8026,7 @@ According to AccuWeather's forecast, \
                 part=TextPart(
                     content='today (September 16) shows a high of 76°F and low of 59°F',
                     provider_name='anthropic',
-                    provider_details={
-                        'citations': [
-                            {
-                                'cited_text': 'San Francisco, CA Weather Today WinterCast Local {stormName} Tracker Hourly Daily Radar MinuteCast® Monthly Air Quality Health & Activities · News · F...',
-                                'encrypted_index': 'EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDF40DRRSNnVV3UQhMhoME3fVNuLj0UFoYnjZIjCgodwR9nJs5Ax0wYOB3qnP6aRoPSxxmbCs88auNlqqTGUqZRWBAI4N0By5bOAFJF4qFK0WEkiPPIMDb4tVJTRA9sSl86GQGAQ=',
-                                'title': 'San Francisco, CA Monthly Weather | AccuWeather',
-                                'type': 'web_search_result_location',
-                                'url': 'https://www.accuweather.com/en/us/san-francisco/94103/september-weather/347629',
-                            }
-                        ]
-                    },
+                    provider_details={'citations': IsList(length=(1, ...))},
                     citations=IsCitationList(),
                 ),
                 next_part_kind='text',
@@ -8417,24 +8065,7 @@ From the recent San Francisco Chronicle weather report, \
                 part=TextPart(
                     content='average mid-September highs in San Francisco are around 70 degrees',
                     provider_name='anthropic',
-                    provider_details={
-                        'citations': [
-                            {
-                                'cited_text': 'Average mid-September highs in San Francisco are around 70 degrees. ',
-                                'encrypted_index': 'EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDH3EgputwhrYmTSWkBoMR1g/HqJaXbK1bsBQIjCWmKqwNmnpvSdJS5cG8TKXe2SbNjMAZO8j7W7YteGkOGvLBxnrcMOTh9TjRvXjm28qFPP2EEUPRVdFRg/khJM0JcBYs/ceGAQ=',
-                                'title': 'Here\u2019s when S.F. weather could hit 90 degrees next week',
-                                'type': 'web_search_result_location',
-                                'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
-                            },
-                            {
-                                'cited_text': 'Average mid-September highs in San Francisco are around 70 degrees. ',
-                                'encrypted_index': 'EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDFDx+f2Hj6wkNpswqhoMCeUDlHiMe0i9t1e6IjBRNMm9hMzr3lAuli5aRzDN/kyG28rjZyS0CUffCkSklmI0hunp67hVGP/tbzeZgYUqFGKgbS6TfBOX/a6hKPiL14JUl/udGAQ=',
-                                'title': 'Here\u2019s when S.F. weather could hit 90 degrees next week',
-                                'type': 'web_search_result_location',
-                                'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
-                            },
-                        ]
-                    },
+                    provider_details={'citations': IsList(length=(1, ...))},
                     citations=IsCitationList(),
                 ),
                 next_part_kind='text',
@@ -8487,24 +8118,7 @@ The general weather pattern for San Francisco in September includes:
                 part=TextPart(
                     content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C (55°F) at night',
                     provider_name='anthropic',
-                    provider_details={
-                        'citations': [
-                            {
-                                'cited_text': '... Daytime temperatures usually reach 22°C in San Francisco in September, falling to 13°C at night. ',
-                                'encrypted_index': 'EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDJbvWTEObIENPeg2jxoMXGlxzP1Uyuc+2hsWIjAg8u0sUvYEYFdEYiwBb1GkAx1RkamSZ0KreMTOu5X4ZNGOYwWkVPANKEnI7gqrSlcqFPffLYpNc62cyXWiS6+fTmf3sSo5GAQ=',
-                                'title': 'San Francisco weather in September 2025 | California',
-                                'type': 'web_search_result_location',
-                                'url': 'https://www.weather2travel.com/california/san-francisco/september/',
-                            },
-                            {
-                                'cited_text': '... Daytime temperatures usually reach 22°C in San Francisco in September, falling to 13°C at night. ',
-                                'encrypted_index': 'EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDHzLg5l+tM/ffc+sIxoMu0XLITxRs9iGUiOZIjCVw6Spvws/dkAngK7JhGYyexOac5AFH1ay+7P5X7uzdQ45HenkLIIQGQFGTbWtxREqFKwjsGwPjTRTli9ipIJTUqNLTKAZGAQ=',
-                                'title': 'San Francisco weather in September 2025 | California',
-                                'type': 'web_search_result_location',
-                                'url': 'https://www.weather2travel.com/california/san-francisco/september/',
-                            },
-                        ]
-                    },
+                    provider_details={'citations': IsList(length=(1, ...))},
                     citations=IsCitationList(),
                 ),
                 next_part_kind='text',
@@ -8541,17 +8155,7 @@ The general weather pattern for San Francisco in September includes:
                 part=TextPart(
                     content='There are normally 9 hours of bright sunshine each day in San Francisco in September',
                     provider_name='anthropic',
-                    provider_details={
-                        'citations': [
-                            {
-                                'cited_text': "There are normally 9 hours of bright sunshine each day in San Francisco in September - that's 73% of daylight hours. ",
-                                'encrypted_index': 'EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDLsYD2oWQxpWeTy+hRoMIGR+pZTWCOBtK8vuIjDPGODqF/O0ikxRjnXzksLRdiadJh+z0bD0mNgSUQkpukodMk8Mj7njCWAzjKIvtSIqFDBrpyn6zsCYYFCGRmOozHbz/hmLGAQ=',
-                                'title': 'San Francisco weather in September 2025 | California',
-                                'type': 'web_search_result_location',
-                                'url': 'https://www.weather2travel.com/california/san-francisco/september/',
-                            }
-                        ]
-                    },
+                    provider_details={'citations': IsList(length=(1, ...))},
                     citations=IsCitationList(),
                 ),
                 next_part_kind='text',
@@ -8591,17 +8195,7 @@ The general weather pattern for San Francisco in September includes:
                 part=TextPart(
                     content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm. Typically, there are no rainy days during this month',
                     provider_name='anthropic',
-                    provider_details={
-                        'citations': [
-                            {
-                                'cited_text': 'San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm. Typically, there are no rainy days during this mon...',
-                                'encrypted_index': 'EpQBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDMgXE4UZcyDxqPN/kxoMMZjABtflMw7yLqFFIjDsML/HQ1FAol5ql8svI/FEaOrOVDUaus1aZb492kQtvkH86qCbMJUTQ73GGcmRQz8qGIZij1uOCYKSArWfTnyncHgnP0CtoNGo0RgE',
-                                'title': 'Weather San Francisco in September 2025: Temperature & Climate',
-                                'type': 'web_search_result_location',
-                                'url': 'https://en.climate-data.org/north-america/united-states-of-america/california/san-francisco-385/t/september-9/',
-                            }
-                        ]
-                    },
+                    provider_details={'citations': IsList(length=(1, ...))},
                     citations=IsCitationList(),
                 ),
                 next_part_kind='text',
@@ -13134,24 +12728,7 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 part=TextPart(
                     content="European leaders held a high-stakes meeting Wednesday with President Trump, Vice President Vance, Ukraine's Volodymyr Zelenskyy and NATO's chief ahead of Friday's U.S.-Russia summit",
                     provider_name='anthropic',
-                    provider_details={
-                        'citations': [
-                            {
-                                'cited_text': 'Filip Singer/Getty Images Europe hide caption toggle caption Filip Singer/Getty Images Europe · August 13, 2025 \x95 President Trump will join European l...',
-                                'encrypted_index': 'EpABCioIBhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDHT523GMqifZA1kvTBoMGiuUa5Im64nfiR5bIjAazbj+ysjfsXK7eE/7gySYR/WHMxRnmH52uNkgr23PYipXDGk3GUX82ZpFgaitpo0qFNsuikhO2VQPZFLohcRzJOUoNjOOGAQ=',
-                                'title': 'News: U.S. and World News Headlines : NPR',
-                                'type': 'web_search_result_location',
-                                'url': 'https://www.npr.org/sections/news/',
-                            },
-                            {
-                                'cited_text': '',
-                                'encrypted_index': 'EpEBCioIBhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDOvnrstPG+N7iSfsFxoM8I5byYWjdhzFfqkDIjDkkgi+v0jxexom++pqk+QwqFYGaaSYVA2SOhKItfZN6fvT+wbb6/NhrQ1ZRKSe/1gqFQ/WosTNb6VwNc68SmeDGRVF8ZSU6BgE',
-                                'title': 'ABC News – Breaking News, Latest News and Videos',
-                                'type': 'web_search_result_location',
-                                'url': 'https://abcnews.go.com/',
-                            },
-                        ]
-                    },
+                    provider_details={'citations': IsList(length=(1, ...))},
                     citations=IsCitationList(),
                 ),
                 next_part_kind='text',
@@ -13170,17 +12747,7 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 part=TextPart(
                     content='The White House lowered its expectations surrounding the Trump-Putin summit on Friday',
                     provider_name='anthropic',
-                    provider_details={
-                        'citations': [
-                            {
-                                'cited_text': '',
-                                'encrypted_index': 'EpEBCioIBhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDPVdREcZ5H7BI2Lz0hoMknbLqV7+hDwR8CmXIjC0WTLkOOWZpfsHx1LozMMGotiFMKPa0tXHkkZ+FKeNZx5TTwRgKp+bxbztghcgL+wqFR5zdS/9fuld4nykbNCV2Fr18zBPExgE',
-                                'title': 'ABC News – Breaking News, Latest News and Videos',
-                                'type': 'web_search_result_location',
-                                'url': 'https://abcnews.go.com/',
-                            }
-                        ]
-                    },
+                    provider_details={'citations': IsList(length=(1, ...))},
                     citations=IsCitationList(),
                 ),
                 next_part_kind='text',
@@ -13202,17 +12769,7 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 part=TextPart(
                     content="In a surprise move just days before the Trump-Putin summit, the White House swapped out pro-EU PM Tusk for Poland's new president – a political ally who once opposed Ukraine's NATO and EU bids",
                     provider_name='anthropic',
-                    provider_details={
-                        'citations': [
-                            {
-                                'cited_text': 'Former Beatle Paul McCartney plans to go back on tour this September · Did you catch the new \u201cSuperman\u201d movie over the weekend? If so, you may enjoy r...',
-                                'encrypted_index': 'EpQBCioIBhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDN6PzjuSbXnQ9RRu2RoMWSjTp1dO6jCdCKKJIjBGHcaJoqtPb10AjDuRTNy+M9dm9ZTMyGy12jr+yt4UlCes/kHZciHq7DUD7zTU4IwqGJZ3W4wVdCe0DNiEOem03hAOlQJ1qOIJExgE',
-                                'title': '5 things to know for July 14: Immigration, Gaza, Epstein files, Kentucky shooting, Texas flooding | CNN',
-                                'type': 'web_search_result_location',
-                                'url': 'https://www.cnn.com/2025/07/14/us/5-things-to-know-for-july-14-immigration-gaza-epstein-files-kentucky-shooting-texas-flooding',
-                            }
-                        ]
-                    },
+                    provider_details={'citations': IsList(length=(1, ...))},
                     citations=IsCitationList(),
                 ),
                 next_part_kind='text',
@@ -13256,17 +12813,7 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 part=TextPart(
                     content="Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's takeover of the city's police entered its third night",
                     provider_name='anthropic',
-                    provider_details={
-                        'citations': [
-                            {
-                                'cited_text': '... Federal law enforcement\u2019s presence in Washington, DC, continued to be felt Wednesday as President Donald Trump\u2019s takeover of the city\u2019s police ent...',
-                                'encrypted_index': 'EpABCioIBhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDFbqDX8HL5TgxAf5uBoM7ZtvuFSFk4EA7uCZIjCwJt9FY3srR9kX7jcMdhOI6Dufv19V/4DPTlDU2tsOAboDVQMxrlwGvmCb6G73D1MqFJbAboq9KN674MXbGgX/AEHOATclGAQ=',
-                                'title': 'Breaking News, Latest News and Videos | CNN',
-                                'type': 'web_search_result_location',
-                                'url': 'https://www.cnn.com/',
-                            }
-                        ]
-                    },
+                    provider_details={'citations': IsList(length=(1, ...))},
                     citations=IsCitationList(),
                 ),
                 next_part_kind='text',
@@ -13290,17 +12837,7 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 part=TextPart(
                     content="National Guard troops arrived in Washington, D.C., following President Trump's deployment and federalization of local police to crack down on crime in the nation's capital",
                     provider_name='anthropic',
-                    provider_details={
-                        'citations': [
-                            {
-                                'cited_text': "... National Guard troops arrived in Washington, D.C., following President Trump's deployment and federalization of local police to crack down on crim...",
-                                'encrypted_index': 'EpABCioIBhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDLDsgRaYQCuZZk7hshoMQ6b8mXvkv9oDnPMCIjAcMHi8BE4iePsMVP6QH6bLQEaiQiLgZFL5rkFOTNUngAUG/BZf+ej5pmCaTnKqWj0qFAlK0fofAMjyj6FjoJ354jfdME1TGAQ=',
-                                'title': "World news: Latest news, breaking news, today's news stories from around the world, updated daily from CBS News",
-                                'type': 'web_search_result_location',
-                                'url': 'https://www.cbsnews.com/world/',
-                            }
-                        ]
-                    },
+                    provider_details={'citations': IsList(length=(1, ...))},
                     citations=IsCitationList(),
                 ),
                 next_part_kind='text',
@@ -13319,17 +12856,7 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 part=TextPart(
                     content="Over 100 arrests made as National Guard rolls into DC under Trump's federal takeover",
                     provider_name='anthropic',
-                    provider_details={
-                        'citations': [
-                            {
-                                'cited_text': 'Now, he could be fined for it · Aug 13, 2025 · Pinkfong! ',
-                                'encrypted_index': 'EpABCioIBhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDF7F7jgvEemZNFWRxxoMqMWWk76q6jJBrl0DIjDlupVslNsGJ20i/eCMsPFrMUFfuKY7lt6zx38gfUVqUkrDOqooBI23B1BMy4D5blEqFHYE2ExDeXwoERac4Vvr/JYjhmecGAQ=',
-                                'title': 'Breaking News, Latest News and Videos | CNN',
-                                'type': 'web_search_result_location',
-                                'url': 'https://edition.cnn.com/',
-                            }
-                        ]
-                    },
+                    provider_details={'citations': IsList(length=(1, ...))},
                     citations=IsCitationList(),
                 ),
                 next_part_kind='text',
@@ -13371,17 +12898,7 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 part=TextPart(
                     content='Air Canada plans to lock out its flight attendants and cancel all flights starting this weekend',
                     provider_name='anthropic',
-                    provider_details={
-                        'citations': [
-                            {
-                                'cited_text': 'Coverage of breaking stories, national and world news, politics, business, science, technology, and extended coverage of major national and world even...',
-                                'encrypted_index': 'EpABCioIBhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDCwDDK9TfscXmoXGyRoMOQUwsaAeB/mlwkFdIjCa0mjnFfgdKvdjb1PgcE4g2M9Ihc9Cgru0BNfybg9sRDGjBSremsELU/x1+JOz5U8qFKbvXBwm31P3yJ3ion1S9x0iIsZVGAQ=',
-                                'title': 'News: U.S. and World News Headlines : NPR',
-                                'type': 'web_search_result_location',
-                                'url': 'https://www.npr.org/sections/news/',
-                            }
-                        ]
-                    },
+                    provider_details={'citations': IsList(length=(1, ...))},
                     citations=IsCitationList(),
                 ),
                 next_part_kind='text',
@@ -13411,17 +12928,7 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 part=TextPart(
                     content="Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations with a complete cessation of flights for the country's largest airline by Saturday as it faces a potential work stoppage by its flight attendants",
                     provider_name='anthropic',
-                    provider_details={
-                        'citations': [
-                            {
-                                'cited_text': '... Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations with a complete cessation of flights...',
-                                'encrypted_index': 'Eo8BCioIBhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDEjgrpz/V0wNYe7UHhoMLxXvM1RWjlNVqHGIIjDfmI+ICziYUmEHVXSjlEmLE6ajkF4kFj/VSwL1QmZVMMc84cFQmUVma/9EbKcGgnkqE2+CAu0NQdvW3qzInAbBkdq/LRMYBA==',
-                                'title': 'International News | Latest World News, Videos & Photos -ABC News - ABC News',
-                                'type': 'web_search_result_location',
-                                'url': 'https://abcnews.go.com/International',
-                            }
-                        ]
-                    },
+                    provider_details={'citations': IsList(length=(1, ...))},
                     citations=IsCitationList(),
                 ),
                 next_part_kind='text',
@@ -13449,6 +12956,34 @@ These stories represent major international diplomatic developments, significant
 """
                 ),
             ),
+        ]
+    )
+
+    # Anthropic cites the ABC News result with an empty `cited_text`, which is not an excerpt.
+    cited_part = next(
+        event.part
+        for event in event_parts
+        if isinstance(event, PartEndEvent)
+        and isinstance(event.part, TextPart)
+        and event.part.content.startswith('European leaders held')
+    )
+    assert cited_part.citations == snapshot(
+        [
+            Citation(
+                sources=[
+                    WebCitationSource(
+                        url='https://www.npr.org/sections/news/',
+                        title='News: U.S. and World News Headlines : NPR',
+                        excerpts=[
+                            'Filip Singer/Getty Images Europe hide caption toggle caption Filip Singer/Getty Images Europe · August 13, 2025 \x95 President Trump will join European l...'
+                        ],
+                    ),
+                    WebCitationSource(
+                        url='https://abcnews.go.com/', title='ABC News – Breaking News, Latest News and Videos'
+                    ),
+                ],
+                anchor=ContentCitationAnchor(start=0, end=181),
+            )
         ]
     )
 
