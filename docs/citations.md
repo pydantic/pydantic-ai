@@ -46,7 +46,8 @@ A [`Citation`][pydantic_ai.messages.Citation] has:
       Some providers, such as Anthropic, cite whole text parts, so the anchor covers the whole part.
     - A [`MarkerCitationAnchor`][pydantic_ai.messages.MarkerCitationAnchor] covers a marker the model wrote, such as
       `[1]` or a link.
-    - `None` means the provider didn't say where in the text the citation belongs.
+    - `None` means the provider didn't say which text the citation is about. OpenAI file citations, for example, only
+      give a position, which is kept in the part's `provider_details['citations']`.
 
 ```python {title="render_citations.py"}
 from pydantic_ai import (
@@ -126,8 +127,10 @@ TextPart(
 
 - Citations are only on text parts. If your output comes from a [tool call](output.md#output-modes), as structured
   output does by default, the output itself has no citations.
-- When streaming, Google and OpenAI Chat send citations at the end of the response, sometimes after a text part has
-  finished. Read citations from the final response.
+- With [structured output](output.md), `Citations()` doesn't turn on document and web fetch citations on Anthropic:
+  the model would write its citation markup into your output.
+- When streaming, citations can arrive after their text: at the end of each text part on Anthropic, and at the end of
+  the response on Google and OpenAI Chat. Read citations from the final response.
 - Citation URLs, titles and excerpts come from outside sources, so treat them as untrusted. Excerpts can also contain
   private content from your documents, so choose whether to log them or show them to users.
 - Anything else the provider returned about a citation, such as Google's confidence scores, is kept as the provider
@@ -137,7 +140,7 @@ TextPart(
 
 | Provider | Citations | How to turn them on | Notes |
 | --- | --- | --- | --- |
-| [Anthropic](https://platform.claude.com/docs/en/build-with-claude/citations) | Web search, web fetch and documents | Web search: always. Web fetch and documents, including documents returned by tools: `Citations()`. [`WebFetchTool(enable_citations=True)`][pydantic_ai.native_tools.WebFetchTool.enable_citations] turns them on for web fetch only | Anchors cover whole text parts. A fetched PDF is a document source. Anthropic doesn't allow document citations with [`NativeOutput`][pydantic_ai.output.NativeOutput]. Citations of search results you provide yourself aren't included |
-| [Google Gemini API](https://ai.google.dev/gemini-api/docs/google-search) | Google Search, file search and web fetch | Turn on the tool | |
-| [Google Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/grounding/overview) | Google Search | Turn on the tool | |
+| [Anthropic](https://platform.claude.com/docs/en/build-with-claude/citations) | Web search, web fetch and documents | Web search: always. Web fetch and documents, including documents returned by tools: `Citations()`. [`WebFetchTool(enable_citations=True)`][pydantic_ai.native_tools.WebFetchTool.enable_citations] turns them on for web fetch only | Anchors cover whole text parts. A fetched PDF is a document source. Citations of search results you provide yourself aren't included |
+| [Google Gemini API](https://ai.google.dev/gemini-api/docs/google-search) | Google Search, file search and web fetch | Turn on the tool | Google Search URLs are Google redirect links, and titles are often just the site's domain |
+| [Google Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/grounding/overview) | Google Search | Turn on the tool | Same as the Gemini API |
 | [OpenAI Chat and Responses](https://platform.openai.com/docs/guides/tools-web-search) | Web pages, and files on Responses | Turn on web search, or file search for files | Other annotation types, such as `container_file_citation`, are only available with [`openai_include_raw_annotations`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_include_raw_annotations] |
