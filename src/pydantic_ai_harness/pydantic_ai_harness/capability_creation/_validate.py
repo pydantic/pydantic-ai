@@ -86,8 +86,14 @@ def _check_model_settings_return(value: object) -> None:
         )
 
 
-def _load_module(path: Path) -> ModuleType:
-    """Execute `path` as a fresh module.
+def _module_name(path: Path) -> str:
+    """The `sys.modules` key for `path`, derived from its resolved path so a reload replaces its entry."""
+    resolved = str(path.resolve())
+    return f'_authored_capability_{path.stem}_{hashlib.sha256(resolved.encode()).hexdigest()[:12]}'
+
+
+def _load_module(path: Path, name: str) -> ModuleType:
+    """Execute `path` as a fresh module registered under `name`.
 
     The source is compiled directly instead of through the import system, so no
     bytecode cache is read or written: re-authoring under the same name always
@@ -96,26 +102,14 @@ def _load_module(path: Path) -> ModuleType:
 
     The module is registered in `sys.modules` because `dataclasses` and Pydantic look
     up a class's module there to resolve string annotations (as under
-    `from __future__ import annotations`), during the class body and later. The key
-    is derived from the file's resolved path, so reloading a file replaces its entry
-    instead of adding one. A module whose body raises is removed again, restoring
-    any earlier entry, as the import system does for a failed import.
+    `from __future__ import annotations`), during the class body and later. The
+    caller undoes the registration if the load fails.
     """
-    resolved = str(path.resolve())
-    name = f'_authored_capability_{path.stem}_{hashlib.sha256(resolved.encode()).hexdigest()[:12]}'
     module = ModuleType(name)
-    module.__file__ = resolved
+    module.__file__ = str(path.resolve())
     code = compile(path.read_bytes(), str(path), 'exec', dont_inherit=True)
-    previous = sys.modules.get(name)
     sys.modules[name] = module
-    try:
-        exec(code, module.__dict__)
-    except BaseException:
-        if previous is None:
-            del sys.modules[name]
-        else:
-            sys.modules[name] = previous
-        raise
+    exec(code, module.__dict__)
     return module
 
 
@@ -155,10 +149,17 @@ def load_capability_instance(path: Path) -> AbstractCapability[object]:
 
     Returns an `AbstractCapability[object]`; `AgentDepsT` is contravariant, so the
     instance is accepted by any agent's `capabilities=` parameter.
+
+    The module stays in `sys.modules` under a key derived from `path`, so loading
+    the file again replaces its entry. A load that fails at any step, the checks
+    included, puts back the entry it replaced, or removes its own, as the import
+    system does for a failed import.
     """
+    name = _module_name(path)
     with _LOAD_LOCK:
+        previous = sys.modules.get(name)
         try:
-            module = _load_module(path)
+            module = _load_module(path, name)
             cls = _find_capability_class(module)
             instance = cls()
             _check_instruction_items(normalize_instructions(instance.get_instructions()))
@@ -166,9 +167,13 @@ def load_capability_instance(path: Path) -> AbstractCapability[object]:
             _check_native_tool_items(instance.get_native_tools())
             _check_model_settings_return(instance.get_model_settings())
             cls.get_serialization_name()
-        except (CapabilityValidationError, KeyboardInterrupt):
-            raise
         except BaseException as exc:
+            if previous is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = previous
+            if isinstance(exc, (CapabilityValidationError, KeyboardInterrupt)):
+                raise
             raise CapabilityValidationError(f'{type(exc).__name__}: {exc}') from exc
     return instance
 
