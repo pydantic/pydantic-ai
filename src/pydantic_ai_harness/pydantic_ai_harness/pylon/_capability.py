@@ -73,7 +73,8 @@ class Pylon(AbstractCapability[AgentDepsT]):
     auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
         default=None, repr=False
     )
-    """A Pylon access token, `'oauth'` to sign in through the browser locally, or a sync or async function of the run context that returns a token.
+    """A Pylon access token, `'oauth'` to sign in through the browser locally, or a sync or async function
+    of the run context that returns a token.
 
     Unset, it uses `PYLON_ACCESS_TOKEN`. A function never does: if it returns `None` or `''`, that run has no Pylon tools.
     """

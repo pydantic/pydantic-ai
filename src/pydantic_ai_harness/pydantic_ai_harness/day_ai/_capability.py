@@ -70,8 +70,8 @@ class DayAI(AbstractCapability[AgentDepsT]):
     auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
         default=None, repr=False
     )
-    """A Day AI access token, `'oauth'` to sign in through the browser locally, or a sync or async function of the run context
-    that returns a token.
+    """A Day AI access token, `'oauth'` to sign in through the browser locally, or a sync or async function
+    of the run context that returns a token.
 
     Unset, it uses `DAY_AI_ACCESS_TOKEN`. A function never does: if it returns `None` or `''`, that run has no
     Day AI tools.

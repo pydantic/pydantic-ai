@@ -54,7 +54,8 @@ class LogfireMCP(AbstractCapability[AgentDepsT]):
     auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
         default=None, repr=False
     )
-    """A Logfire API key, `'oauth'` to sign in through the browser locally, or a sync or async function of the run context that returns a key.
+    """A Logfire API key, `'oauth'` to sign in through the browser locally, or a sync or async function
+    of the run context that returns a key.
 
     Unset, it uses `LOGFIRE_API_KEY`. A function never does: if it returns `None` or `''`, that run has no Logfire tools.
     """
