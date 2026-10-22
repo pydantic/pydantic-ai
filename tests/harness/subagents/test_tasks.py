@@ -411,7 +411,8 @@ async def test_report_reaches_a_realtime_session_and_keeps_its_metadata() -> Non
         owner.records[record.id] = record
         async with Agent().realtime(_OneReplyModel(connection)).session() as session:
             with owner.receiving(conversation_id='c', parent_id=None, enqueue=session.enqueue):
-                _ = [event async for event in session]
+                with anyio.fail_after(WAIT):
+                    _ = [event async for event in session]
     report = record.report()
     assert not isinstance(report.content, str)
     (text,) = report.content

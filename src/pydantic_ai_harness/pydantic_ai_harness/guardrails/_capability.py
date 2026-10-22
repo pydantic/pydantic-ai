@@ -113,9 +113,10 @@ def _extract_prompt(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessage
         if completion is not None:
             return completion.content
         return ctx.prompt if isinstance(ctx.prompt, str) else str(ctx.prompt)
-    # Only without a prompt of the run's own: a `SubAgents` task report that the framework enqueued rides the
-    # user channel but is a child agent's output, not the prompt. The run's prompt is always guarded, whatever
-    # metadata it carries, since a caller can put any metadata on it.
+    # Only without a prompt of the run's own. `ctx.prompt` is always guarded, whatever metadata it carries,
+    # including a prompt taken from a request that ends `message_history`. Earlier history is trusted as the
+    # caller's own (untrusted client history goes through a UI adapter first), so a part there that carries a
+    # `SubAgents` task report's metadata is taken for one: a child agent's output, not the prompt.
     for message in reversed(messages):
         for part in reversed(message.parts):
             if isinstance(part, UserPromptPart) and not is_task_report(part):
