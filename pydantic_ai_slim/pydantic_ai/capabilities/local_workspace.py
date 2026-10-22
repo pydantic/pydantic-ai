@@ -50,7 +50,7 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
 
     mounts: Sequence[Mount] | Callable[[RunContext[AgentDepsT]], Sequence[Mount]] = ()
     """[Filesystems to show as folders](../workspace.md#mounting-filesystems), such as a bucket, or a function of the
-    run that picks them. File tools reach them; commands on the host don't, so `shell=True` is refused."""
+    run that picks them. File tools reach them; commands on the host don't, so `commands=True` is refused."""
 
     id: str | None = 'local_workspace'
     """Fixed, so a later `LocalWorkspace` replaces an earlier one whole; pass distinct ids to keep both."""
@@ -88,5 +88,5 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
             # A ref from history never redirects host access away from the configured backend.
             return None
         mounts = self.mounts(ctx) if callable(self.mounts) else self.mounts
-        workspace = Workspace(backend, mounts=mounts)
+        workspace = Workspace(backend, mounts=mounts) if mounts else backend
         return ReadOnlyWorkspace(workspace) if self.read_only else workspace
