@@ -1024,7 +1024,7 @@ A later <context> element with the same id replaces the earlier one and stays in
             if composition == 'dynamic-no-id'
             else build()
         )
-        agent = Agent(FunctionModel(model_fn), toolsets=[toolset])
+        agent = Agent(FunctionModel(model_fn), deps_type=type(None), toolsets=[toolset])
 
         history: list[ModelMessage] = []
         deltas: list[tuple[str, str | None]] = []
