@@ -10,21 +10,23 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Sequence
+from contextlib import suppress
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Required, cast
+from typing import Required, cast
 
-from openai import AsyncOpenAI, Omit
+from openai import APIError, AsyncOpenAI, Omit
 from openai.types import Batch as OpenAIBatch, responses
 from pydantic import BaseModel, JsonValue, TypeAdapter
 from pydantic_core import to_json
 from typing_extensions import TypedDict
 
 from .._utils import is_str_dict
-from ..exceptions import ModelHTTPError, UserError
+from ..exceptions import UserError
 from ..messages import ModelResponse
 from . import check_allow_model_requests, get_user_agent
 from ._batch_codec import (
     batch_priced,
+    check_batch_bytes,
     credential_hash,
     prepare_decode,
     refuse_http_client_auth,
@@ -33,11 +35,16 @@ from ._batch_codec import (
     unrun_error,
 )
 from .batch import Batch, BatchRequest, BatchResult, BatchResultStatus, BatchStatus, EncodedBatchRequest
-
-if TYPE_CHECKING:
-    from .openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+from .openai import (
+    OpenAIResponsesModel,
+    OpenAIResponsesModelSettings,
+    _status_error,  # pyright: ignore[reportPrivateUsage]
+)
 
 _ENDPOINT = '/v1/responses'
+
+MAX_BATCH_BYTES = 200_000_000
+"""The most bytes OpenAI accepts in a batch's input file."""
 
 _STATUSES: dict[str, BatchStatus] = {
     'validating': 'in_progress',
@@ -124,19 +131,38 @@ async def batch_encode(model: OpenAIResponsesModel, request: BatchRequest) -> En
     body = {key: value for key, value in body.items() if not isinstance(value, Omit)}
     if body.get('stream') or body.get('background'):
         raise UserError('The OpenAI Batch API does not support `stream` or `background`.')
-    return EncodedBatchRequest(custom_id=request.custom_id, group=group, body=to_json(body).decode())
+    encoded = EncodedBatchRequest(custom_id=request.custom_id, group=group, body=to_json(body).decode())
+    check_batch_bytes([encoded], request_size, MAX_BATCH_BYTES, 'OpenAI')
+    return encoded
+
+
+def request_size(request: EncodedBatchRequest) -> int:
+    """The bytes `request` adds to a batch's input file: its line and the newline that separates it from the next."""
+    return len(_input_line(request)) + 1
+
+
+def _input_line(request: EncodedBatchRequest) -> bytes:
+    # The body is this provider's own `batch_encode` output, so it's embedded as is.
+    return b''.join(
+        (
+            b'{"custom_id":',
+            to_json(request.custom_id),
+            b',"method":"POST","url":"',
+            _ENDPOINT.encode(),
+            b'","body":',
+            request.body.encode(),
+            b'}',
+        )
+    )
 
 
 async def batch_create(model: OpenAIResponsesModel, requests: Sequence[EncodedBatchRequest]) -> Batch:
     check_allow_model_requests()
     group = shared_group(requests, 'OpenAI', 'client configurations or models')
     _validate_batch_group(model, group)
+    check_batch_bytes(requests, request_size, MAX_BATCH_BYTES, 'OpenAI')
     client = _batch_client(model).with_options(max_retries=0)
-    lines = (
-        # The body is this provider's own `batch_encode` output.
-        to_json({'custom_id': request.custom_id, 'method': 'POST', 'url': _ENDPOINT, 'body': json.loads(request.body)})
-        for request in requests
-    )
+    lines = (_input_line(request) for request in requests)
     headers = {'User-Agent': get_user_agent()}
     file = await client.files.create(file=('batch.jsonl', b'\n'.join(lines)), purpose='batch', extra_headers=headers)
     batch = await client.batches.create(
@@ -165,11 +191,16 @@ async def batch_results(model: OpenAIResponsesModel, batch: Batch) -> list[Batch
             for line in (await client.files.content(file_id)).text.splitlines():
                 result = _to_result(_OutputLine.model_validate_json(line))
                 results[result.custom_id] = result
-    if details['status'] != 'completed':
+    if details['status'] == 'completed':
+        # Every request ran, so the input file isn't needed again; OpenAI would otherwise keep it for 30 days.
+        with suppress(APIError):
+            await client.files.delete(details['input_file_id'])
+    else:
         # The output and error files have no line for a request the batch didn't run, so the input file lists them.
-        for line in (await client.files.content(details['input_file_id'])).text.splitlines():
+        lines = (await client.files.content(details['input_file_id'])).text.splitlines()
+        for line_number, line in enumerate(lines, start=1):
             if (custom_id := _InputLine.model_validate_json(line).custom_id) not in results:
-                results[custom_id] = _unrun_result(details, custom_id)
+                results[custom_id] = _unrun_result(details, custom_id, line_number)
     return list(results.values())
 
 
@@ -192,8 +223,24 @@ def batch_decode(model: OpenAIResponsesModel, result: BatchResult, request: Batc
         return batch_priced(model_response)
     if result.status == 'errored':
         assert result.body is not None
-        error = _LineResponse.model_validate_json(result.body)
-        raise ModelHTTPError(status_code=error.status_code, model_name=model.model_name, body=error.body)
+        line = _LineResponse.model_validate_json(result.body)
+        # The body of an HTTP error wraps the error object, which the SDK unwraps into the error it raises.
+        body: JsonValue = line.body.get('error', line.body) if is_str_dict(line.body) else line.body
+        error: JsonValue = body
+        if is_str_dict(body) and isinstance(errors := body.get('errors'), list) and errors:
+            # The batch failed validation, and the first error stands for the request, as the SDK's would.
+            error = cast(list[JsonValue], errors)[0]
+        error = error if is_str_dict(error) else {}
+        code, error_type, message = error.get('code'), error.get('type'), error.get('message')
+        raise _status_error(
+            model.model_name,
+            model._provider.model_id_namespace,  # pyright: ignore[reportPrivateUsage]
+            status_code=line.status_code,
+            body=body,
+            code=str(code) if code is not None else None,
+            error_type=error_type if isinstance(error_type, str) else None,
+            message=message if isinstance(message, str) else None,
+        )
     raise unrun_error(model.model_name, result)
 
 
@@ -209,10 +256,15 @@ def _to_result(line: _OutputLine) -> BatchResult:
     return BatchResult(custom_id=line.custom_id, status='errored', body=body.model_dump_json())
 
 
-def _unrun_result(details: _BatchDetails, custom_id: str) -> BatchResult:
+def _unrun_result(details: _BatchDetails, custom_id: str, line_number: int) -> BatchResult:
     if details['status'] == 'failed':
-        # The input file failed validation, so the batch ran none of its requests.
-        body = _LineResponse(status_code=400, body={'errors': details.get('errors', [])})
+        # The input file failed validation, so the batch ran none of its requests. A request gets the errors of its
+        # own line and those of no line; when they're all about other lines, it gets them all, which name them.
+        errors = details.get('errors', [])
+        own: list[JsonValue] = [
+            error for error in errors if not is_str_dict(error) or error.get('line') in (line_number, None)
+        ]
+        body = _LineResponse(status_code=400, body={'errors': own or errors})
         return BatchResult(custom_id=custom_id, status='errored', body=body.model_dump_json())
     return BatchResult(custom_id=custom_id, status='expired' if details['status'] == 'expired' else 'canceled')
 
@@ -230,7 +282,8 @@ def _to_batch(model: OpenAIResponsesModel, batch: OpenAIBatch, group: str, reque
         model_name=model.model_name,
         provider_name=model.system,
         group=group,
-        status=_STATUSES[batch.status],
+        # A status added after this was written is one the batch hasn't ended in, as the known ending ones are listed.
+        status=_STATUSES.get(batch.status, 'in_progress'),
         created_at=datetime.fromtimestamp(batch.created_at, tz=UTC),
         # A batch counts its requests once it has validated its input file.
         request_count=(batch.request_counts and batch.request_counts.total) or request_count,

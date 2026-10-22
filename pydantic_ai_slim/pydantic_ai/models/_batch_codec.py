@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from pydantic_core import to_json
@@ -36,6 +36,15 @@ def shared_group(requests: Sequence[EncodedBatchRequest], provider: str, causes:
     if any(request.group != group for request in requests):
         raise UserError(f'Requests in one {provider} batch must share a `group`; these came from different {causes}.')
     return group
+
+
+def check_batch_bytes(
+    requests: Sequence[EncodedBatchRequest], size: Callable[[EncodedBatchRequest], int], limit: int, provider: str
+) -> None:
+    """Refuse `requests` that take more than the `limit` bytes of a batch, before anything is sent."""
+    if (total := sum(size(request) for request in requests)) > limit:
+        subject = 'This request takes' if len(requests) == 1 else 'These requests take'
+        raise UserError(f'{subject} {total:,} bytes, more than the {limit:,} bytes a {provider} batch can hold.')
 
 
 def require_ended(batch: Batch) -> None:

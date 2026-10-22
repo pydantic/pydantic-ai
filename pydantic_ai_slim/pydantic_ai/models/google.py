@@ -433,31 +433,47 @@ def _map_api_error(
         return _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout)
     if (status_code := e.code) >= 400:
         headers = dict(e.response.headers) if e.response is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-        details = e.details  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        suggested_model_id = None
-        if _utils.is_str_dict(details) and _utils.is_str_dict(error := details.get('error')):
-            message = error.get('message')
-            if (
-                error.get('status') == 'NOT_FOUND'
-                and isinstance(message, str)
-                and message.startswith(f'models/{model_name} is not found ')
-            ):
-                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-        status = e.status if isinstance(e.status, str) else None
-        category = _model_errors.google_status_category(status, e.message)
         # An error chunk inside a stream comes with the stream's own 200 response; its `code` is the error's status.
         response_status = getattr(e.response, 'status_code', None)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-        return ModelHTTPError.for_category(
-            category or _model_errors.http_status_category(status_code, e.message),
+        return _http_error(
+            model_name,
+            model_id_namespace,
             status_code=status_code,
-            model_name=model_name,
+            status=e.status if isinstance(e.status, str) else None,
+            message=e.message,
             body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
             headers=headers,
-            suggested_model_id=suggested_model_id,
-            provider_error_code=status,
             in_stream=isinstance(response_status, int) and response_status < 400,
         )
     return ModelAPIError(model_name=model_name, message=str(e))
+
+
+def _http_error(
+    model_name: str,
+    model_id_namespace: str,
+    *,
+    status_code: int,
+    status: str | None,
+    message: str | None,
+    body: object,
+    headers: dict[str, str] | None = None,
+    in_stream: bool = False,
+) -> ModelHTTPError:
+    """The error for a Gemini API error response with `body`, which a batch also reports for a failed request."""
+    suggested_model_id = None
+    if status == 'NOT_FOUND' and isinstance(message, str) and message.startswith(f'models/{model_name} is not found '):
+        suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+    category = _model_errors.google_status_category(status, message)
+    return ModelHTTPError.for_category(
+        category or _model_errors.http_status_category(status_code, message),
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
+        headers=headers,
+        suggested_model_id=suggested_model_id,
+        provider_error_code=status,
+        in_stream=in_stream,
+    )
 
 
 @contextmanager
@@ -749,8 +765,14 @@ class GoogleModel(Model[Client]):
         # Google Cloud runs batch prediction jobs from Cloud Storage or BigQuery rather than the Gemini API's files.
         if self._is_google_cloud:
             return None
-        # The Gemini API limits a batch's input file to 2 GB rather than its number of requests.
-        return 100_000
+        return _batch_module().MAX_BATCH_REQUESTS
+
+    @property
+    def batch_max_bytes(self) -> int | None:
+        return None if self._is_google_cloud else _batch_module().MAX_BATCH_BYTES
+
+    def batch_request_size(self, request: EncodedBatchRequest) -> int:
+        return _batch_module().request_size(request)
 
     async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
         return await _batch_module().batch_encode(self, request)
