@@ -334,10 +334,14 @@ def test_open_and_close_tag_render_a_registered_tag() -> None:
     assert close_tag(task_output) == '</task_output>'
 
 
+def _wrap_body(tag: RegisteredTag) -> str:
+    return wrap(tag, 'body')
+
+
 @pytest.mark.parametrize(
     'render',
     [
-        pytest.param(lambda tag: wrap(tag, 'body'), id='wrap'),
+        pytest.param(_wrap_body, id='wrap'),
         pytest.param(open_tag, id='open_tag'),
         pytest.param(close_tag, id='close_tag'),
     ],
