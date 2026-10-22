@@ -556,6 +556,10 @@ class Instrumentation(AbstractCapability[Any]):
         `pydantic_ai.tool.failure_stage: 'validation'` to distinguish it from execution
         failures.
 
+        The span also carries the retry the failure becomes, as the `pydantic_ai.tool.retry.*`
+        attributes: its cause, and its attempt against the tool's budget unless that budget is
+        exhausted, in which case the run ends instead and only the cause is recorded.
+
         With content capture enabled, the span records the retried tool result built from
         the error. That is the exact result the model receives when the agent loop handles
         the failure; raw-mode callers (e.g. sandboxed dispatch via
@@ -575,6 +579,8 @@ class Instrumentation(AbstractCapability[Any]):
             record_exception=False,
             set_status_on_exception=False,
         ) as span:
+            # Like any retry, recorded whether or not content is captured: why and which attempt, never what.
+            _record_retry(span, names, error, ctx)
             if self.settings.include_content and span.is_recording():
                 retry = build_retried_tool_return(
                     error, tool_name=call.tool_name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind

@@ -111,6 +111,8 @@ print(WebSearchTool in profile.get('supported_native_tools', frozenset()))
 #> True
 ```
 
+The profile also says which kinds of file the model accepts: [`supports_image_input`][pydantic_ai.profiles.ModelProfile.supports_image_input], [`supports_document_input`][pydantic_ai.profiles.ModelProfile.supports_document_input] (narrowed to particular document types by [`supported_document_media_types`][pydantic_ai.profiles.ModelProfile.supported_document_media_types]), [`supports_audio_file_input`][pydantic_ai.profiles.ModelProfile.supports_audio_file_input] and [`supports_video_input`][pydantic_ai.profiles.ModelProfile.supports_video_input]. Each model class turns off what its API can't take, whatever the profile says: [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel], for example, reads neither audio nor video, and only PDF and plain-text documents. A file a tool returns that the model can't take is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance).
+
 `model.profile` is usually the fully *resolved* profile: keys from [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] are merged with the provider's defaults, so `profile.get('supports_tools')` returns a value. If you supply `profile=` as a callable (or otherwise have a partial profile dict), pass the default as the fallback, `profile.get('supports_tools', DEFAULT_PROFILE['supports_tools'])` (after importing `DEFAULT_PROFILE`), to tolerate missing keys.
 Individual model adapters expose their resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] is different: it has no single profile because its candidate models may have different capabilities. Inspect the profile of each model in `fallback_model.models` instead. Don't confuse profiles with [Capabilities](../capabilities/overview.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
 
@@ -744,6 +746,54 @@ Pydantic AI is a Python agent framework for building production-grade LLM applic
 ```
 
 Response handlers receive the [`ModelResponse`][pydantic_ai.messages.ModelResponse] returned by the model and should return `True` to trigger fallback to the next model, or `False` to accept the response.
+
+#### Rejecting Responses Without Actionable Output
+
+Without a handler, an empty or thinking-only response is re-prompted on the same model, up to the output retry limit (see the note above). A response handler can send it to the backup model instead, by rejecting a successful response that contains no text or tool call. This predicate is for a text-output agent; if your output type accepts other response parts, include those parts in the predicate. Include [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] in the handler list so API errors still fall back; see [Combining Handlers](#combining-handlers).
+
+```python {title="fallback_on_empty_response.py"}
+from pydantic_ai import (
+    Agent,
+    ModelAPIError,
+    ModelMessage,
+    ModelResponse,
+    NativeToolCallPart,
+    TextPart,
+    ToolCallPart,
+)
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def empty(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('')])
+
+
+def answer(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('The capital of France is Paris.')])
+
+
+def has_no_actionable_output(response: ModelResponse) -> bool:
+    return not any(
+        (isinstance(part, TextPart) and part.has_content())
+        or isinstance(part, (ToolCallPart, NativeToolCallPart))
+        for part in response.parts
+    )
+
+
+agent = Agent(
+    # These deterministic models simulate an empty primary response and a backup answer.
+    FallbackModel(
+        FunctionModel(empty, model_name='primary'),
+        FunctionModel(answer, model_name='backup'),
+        fallback_on=[ModelAPIError, has_no_actionable_output],
+    ),
+    output_type=str,
+)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
 
 #### Combining Handlers
 

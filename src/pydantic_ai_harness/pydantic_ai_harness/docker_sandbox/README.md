@@ -95,7 +95,7 @@ sandbox = DockerSandbox(
 
 The mount is the only part of your machine's files the commands can change; the network is a separate setting. For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`, since Docker refuses a second `--network` next to `--network none`. `docker_args` can't change the container's name, its `ai.pydantic.workspace=true` label or its entrypoint. Set the directory commands start in with `working_dir`.
 
-A new container gets `--pids-limit 2048`, so a runaway fork loop can't use up the process table of the machine (or VM) running Docker. A command that hits it fails with `Cannot fork` or `Resource temporarily unavailable`; pass your own `--pids-limit` in `docker_args` to change it, or `-1` for no limit.
+A new container gets `--pids-limit 2048`, so a runaway fork loop can't use up the process table of the machine (or VM) running Docker. A command that hits it fails with `Cannot fork` or `Resource temporarily unavailable`; pass your own `--pids-limit` in `docker_args` to change it, or `-1` to remove it.
 
 ## Reattach later
 

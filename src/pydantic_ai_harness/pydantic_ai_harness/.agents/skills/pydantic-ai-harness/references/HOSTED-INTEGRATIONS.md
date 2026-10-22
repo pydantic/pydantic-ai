@@ -11,7 +11,7 @@ listed here, use core `MCP` (see the end of this page).
 
 | Class | Import from | Extra | Credential (`auth` or env var) | Notable options |
 |---|---|---|---|---|
-| `GitHub` | `pydantic_ai_harness.github` | `github` | `GITHUB_TOKEN` (PAT or GitHub App user token) | `toolsets`, `lockdown`, `url` (GHE Cloud, `https://` only), server-side `read_only` plus annotation filter |
+| `GitHub` | `pydantic_ai_harness.github` | `github` | `GITHUB_TOKEN` (PAT or GitHub App user token) | `toolsets`, `lockdown`, `url` (GHE Cloud, `https://`; `http://` is deprecated), server-side `read_only` plus annotation filter |
 | `Linear` | `pydantic_ai_harness.linear` | `linear` | `LINEAR_ACCESS_TOKEN` (API key or OAuth token), `'oauth'` | `read_only` uses Linear's read-only endpoint |
 | `Notion` | `pydantic_ai_harness.notion` | `notion` | `NOTION_ACCESS_TOKEN` (OAuth token only), `'oauth'` | `read_only` |
 | `Slack` | `pydantic_ai_harness.slack` | `slack` | `SLACK_USER_TOKEN` (`xoxp-` user token, not `xoxb-`) | `read_only` |
@@ -166,11 +166,12 @@ Add `ToolOutputLimits` to cap large tool results.
 
 **GitHub.** `toolsets=['repos', 'issues', 'actions']` picks GitHub's tool groups (`None` keeps the
 server's defaults, which include write tools). `toolsets=[]` raises, and so does an entry containing a
-comma. `url` targets GitHub Enterprise Cloud (`GITHUB_MCP_URL` is the default) and must be `https://`.
-`lockdown=True` sends `X-MCP-Lockdown`, which withholds public-repository content written by users
-without push access (best-effort, not a security boundary; other tools can still return it). `'oauth'`
-raises: GitHub has no automatic OAuth client registration. The capability does not limit which
-repositories are reachable; the token's permissions do.
+comma. `url` targets GitHub Enterprise Cloud (`GITHUB_MCP_URL` is the default) and must be `https://`
+(`http://` warns with `HarnessDeprecationWarning`). `lockdown=True` sends `X-MCP-Lockdown`, which
+withholds public-repository content written by users without push access (best-effort, not a security
+boundary; other tools can still return it). `'oauth'` raises: GitHub has no automatic OAuth client
+registration. The capability does not limit which repositories are reachable; the token's permissions
+do.
 
 **GoogleWorkspace.** `services` is the first positional argument: one of, or a list of, `'gmail'`,
 `'drive'`, `'docs'`, `'sheets'`, `'slides'`, `'calendar'`, `'chat'`, `'people'`. Each service is its own MCP
