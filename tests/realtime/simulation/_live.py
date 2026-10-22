@@ -232,7 +232,7 @@ class LiveServer:
             triggers, self.triggers = self.triggers, []
             self.speaking = self.truth.new_response(trigger='auto', answers=triggers)
         elif self.inline:
-            # The reply goes on past the text placed in it: it speaks to it here.
+            # The reply goes on past the text it took up: it speaks to it here.
             self.truth.answer(self.speaking, self.inline)
             self.inline = []
         return self.speaking
@@ -244,7 +244,7 @@ class LiveServer:
         return not self.delegations and (last_voice is None or self._now() - last_voice >= TURN_SILENCE_MS / 1000)
 
     def _inline_unanswered(self) -> None:
-        """The reply ended without saying anything past the text placed in it: the next reply answers it."""
+        """The reply ended without saying anything past the text it took up: the next reply answers it."""
         self.triggers.extend(self.inline)
         self.inline.clear()
 

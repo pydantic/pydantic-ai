@@ -260,7 +260,8 @@ length, or give long material to the backend as a tool result instead.
 [`enqueue()`](tools.md#enqueuing-prompts) delivers text the same way once the model is idle, except that
 [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s on their own aren't the user's words: Live
 hears them as context as they are, and the backend gets them as a developer message, so the model doesn't
-later tell the caller they said it. The
+later tell the caller they said it. Enqueued together with user text, they go out with it as the user's turn,
+so enqueue a system prompt on its own when the caller mustn't be credited with it. The
 [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] it produces marks when the text
 was sent, not when the model took it in. Live speaks to text in the reply it is giving, if it is giving one, rather
 than in a reply of its own: text sent while the model is speaking is answered by that reply once it says anything more,
@@ -372,7 +373,7 @@ model = OpenAILiveModel('gpt-live-1', settings=settings)
 | `openai_live_delegation` | The backend the session delegates to. [`OpenAILiveResponsesDelegation`][pydantic_ai.realtime.openai_live.OpenAILiveResponsesDelegation] carries `model`, extra `instructions`, `reasoning_effort`, `reasoning_summary`, `verbosity`, `max_output_tokens`, `parallel_tool_calls`, and `service_tier`. `reasoning_effort` and `parallel_tool_calls` default to the shared `thinking` and `parallel_tool_calls` settings |
 | `openai_live_turn_silence_ms` | How long the model must stay quiet before the [turn boundary](#the-turn-boundary-is-inferred) is reported. Defaults to 2000 |
 | `openai_live_store` | Whether OpenAI retains the session, which lets it be forked or downloaded later and a dropped connection [reconnect](#gpt-live-feature-support-and-limitations) with the conversation intact. Defaults to `False` |
-| `openai_live_idle_audio` | Stream silence while `send_audio()` is quiet, so text lands without a microphone. Live bills silence like speech. Defaults to `False` |
+| `openai_live_idle_audio` | Stream silence while `send_audio()` is quiet, so Live speaks without a microphone (its timeline only advances with audio). Live bills silence like speech. Defaults to `False` |
 | `openai_live_data_channel` | Which events a [WebRTC](#browser-webrtc) browser may send and receive over its data channel. Defaults to none, since the sideband runs the session |
 
 Voice, audio format, and the starting instructions are fixed for the life of the session, which is

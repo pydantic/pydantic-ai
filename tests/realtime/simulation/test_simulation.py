@@ -1762,7 +1762,7 @@ def test_live_image_sent_for_a_response_is_answered_by_its_delegation() -> None:
 
 
 def test_live_text_sent_while_a_reply_goes_on_is_answered_by_it() -> None:
-    """Text placed on the timeline mid-reply is answered by that reply, which goes on to speak to it (seen live)."""
+    """Text sent mid-reply, which Live takes up there, is answered by that reply, which goes on to speak to it (seen live)."""
 
     def scenario(sim: LiveSimulation) -> None:
         sim.send_text()

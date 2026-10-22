@@ -427,8 +427,8 @@ class OpenAILiveModelSettings(RealtimeModelSettings, total=False):
     openai_live_idle_audio: bool
     """Whether to stream silence to Live while the application sends no audio. Defaults to `False`.
 
-    Live's timeline only advances while it receives audio, so text sent to a session with no microphone
-    streaming waits until audio flows again. With this on, the session streams silence in real time
+    Live only speaks while its timeline advances, which takes audio: without it, a typed turn still runs the
+    backend (and its tools), but nothing is said until audio flows again. With this on, the session streams silence in real time
     whenever `send_audio()` has been quiet for a moment, and stops as soon as the application sends
     audio again, so a text-only session works. Live bills the audio it receives by the second, silence
     included, so this bills the whole time the session is open."""
@@ -664,8 +664,8 @@ class _LiveLifecycle(InferredLifecycle):
         super().__init__()
         self.turn_taken = False
         """The provider message being mapped has the model take the turn (see `_open_response()`)."""
-        self._placed_text: list[InputId] = []
-        """Text placed on Live's timeline while the reply under way goes on, which its next output answers."""
+        self._taken_up_text: list[InputId] = []
+        """Text Live took up while the reply under way goes on, which its next output answers."""
         self._round_reported = False
         """The backend response that asked for the open response's tool calls reported its usage: it is over, and a
         call that comes now is a continuation's."""
@@ -713,19 +713,19 @@ class _LiveLifecycle(InferredLifecycle):
         """The delegated backend that asked for these calls gave up: no reply will answer their results."""
         self._pending.append(ToolCallsAbandoned(tool_call_ids=tuple(call_ids)))
 
-    def text_placed(self, input_id: InputId) -> None:
+    def text_taken_up(self, input_id: InputId) -> None:
         """Live took up a text input, opening the delegation that answers it where the conversation now is."""
         if self._open is not None and input_id in self._unanswered:
-            self._placed_text.append(input_id)
+            self._taken_up_text.append(input_id)
 
     def _output(self, event: RealtimeCodecEvent, before: list[LifecycleEvent], after: list[LifecycleEvent]) -> None:
         if isinstance(event, ToolCall) and self._round_reported and self._open is not None:
             # A continuation's call, made with the results of the open response's: a response of its own.
             self._end(before, status='completed', finish_reason='tool_call')
         super()._output(event, before, after)
-        if (response_id := self._open) is not None and (claimed := tuple(self._placed_text)):
+        if (response_id := self._open) is not None and (claimed := tuple(self._taken_up_text)):
             # The reply goes on past the text: Live speaks to it here, not in a reply of its own.
-            self._placed_text.clear()
+            self._taken_up_text.clear()
             self._unanswered = [input_id for input_id in self._unanswered if input_id not in claimed]
             before.append(AnswersRevised(response_id=response_id, claimed=claimed))
 
@@ -738,7 +738,7 @@ class _LiveLifecycle(InferredLifecycle):
         provider_details: dict[str, Any] | None = None,
     ) -> None:
         # Text the reply never spoke past is the next reply's to answer.
-        self._placed_text.clear()
+        self._taken_up_text.clear()
         self._round_reported = False
         super()._end(events, status=status, finish_reason=finish_reason, provider_details=provider_details)
 
@@ -1594,7 +1594,7 @@ class OpenAILiveConnection(RealtimeConnection):
             and (input_index := self._unacknowledged_text.pop(event.client_event_id, None)) is not None
         ):
             # The delegation a text turn's `response.create` asked for: Live speaks to the text from here on.
-            self._lifecycle.text_placed(input_index)
+            self._lifecycle.text_taken_up(input_index)
         return self._open_response()
 
     def _map_response_event(self, nested: dict[str, Any], *, delegation_id: str | None) -> list[RealtimeCodecEvent]:
