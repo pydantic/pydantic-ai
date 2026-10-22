@@ -4,8 +4,8 @@
 .uv: ## Check that uv is installed
 	@uv --version || echo 'Please install uv: https://docs.astral.sh/uv/getting-started/installation/'
 
-# `install`, `install-all-python` and `sync` reinstall `griffelib`: `griffe` 1.x installs over its `griffe/` files,
-# so syncing `griffe` 1.x away deletes them, and uv does not notice they are missing.
+# `install`, `install-all-python` and `sync` reinstall `griffelib`: `griffe` 1.x installs over `griffelib`'s `griffe/`
+# files, so syncing `griffe` 1.x away deletes them, and uv does not notice they are missing.
 .PHONY: install
 install: .uv ## Install the package, dependencies, and pre-commit for local development
 	uv sync --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --reinstall-package griffelib
