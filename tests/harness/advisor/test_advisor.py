@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
@@ -499,15 +500,22 @@ class TestAdvisor:
 
         assert advisor_settings == [ModelSettings(max_tokens=2048)]
 
-    def test_combined_advisor_keeps_the_subclass(self) -> None:
+    async def test_combined_advisor_keeps_the_subclass(self) -> None:
+        @dataclass(init=False)
         class _CustomAdvisor(Advisor[None]):
-            pass
+            tag: str
 
-        merged = _CustomAdvisor.combine([_CustomAdvisor('test', max_tokens=2048), _CustomAdvisor('test', max_uses=2)])
+            def __init__(self, tag: str, *, max_tokens: int | None = None, max_uses: int | None = None) -> None:
+                super().__init__('test', max_tokens=max_tokens, max_uses=max_uses)
+                self.tag = tag
 
+        merged = _CustomAdvisor.combine([_CustomAdvisor('team', max_tokens=2048), _CustomAdvisor('team', max_uses=2)])
         assert isinstance(merged, _CustomAdvisor)
-        assert merged.max_tokens == 2048
-        assert merged.max_uses == 2
+        per_run = await merged.for_run(RunContext(deps=None, model=TestModel(), usage=RunUsage()))
+
+        for advisor in (merged, per_run):
+            assert isinstance(advisor, _CustomAdvisor)
+            assert (advisor.tag, advisor.max_tokens, advisor.max_uses) == ('team', 2048, 2)
 
     async def test_merged_openrouter_native_advisor_ignores_max_uses_with_a_warning(self) -> None:
         seen: list[ModelRequestParameters] = []
@@ -516,7 +524,7 @@ class TestAdvisor:
             seen.append(info.model_request_parameters)
             return ModelResponse(parts=[TextPart('done')])
 
-        with pytest.warns(HarnessDeprecationWarning, match=r'`max_uses=2`, .* is ignored'):
+        with pytest.warns(HarnessDeprecationWarning, match=r'`max_uses=2`, .* is ignored') as warned:
             agent = Agent(
                 _ProviderFunctionModel('openrouter', executor, supports_advisor=True),
                 capabilities=[
@@ -527,14 +535,16 @@ class TestAdvisor:
 
         await agent.run('Review this plan.')
 
+        assert warned[0].filename == __file__
         assert seen[0].native_tools == [AdvisorTool(model='anthropic/claude-opus-4.8')]
 
     async def test_rebuilt_advisor_keeps_fields_set_after_construction(self) -> None:
+        earlier = Advisor[None]('test', max_uses=2)
+        earlier.description = 'Ask the senior engineer.'
         later = Advisor[None]('test')
-        later.description = 'Ask the senior engineer.'
         later.defer_loading = True
 
-        merged = Advisor[None].combine([Advisor[None]('test', max_uses=2), later])
+        merged = Advisor[None].combine([earlier, later])
         assert isinstance(merged, Advisor)
         per_run = await merged.for_run(RunContext(deps=None, model=TestModel(), usage=RunUsage()))
 

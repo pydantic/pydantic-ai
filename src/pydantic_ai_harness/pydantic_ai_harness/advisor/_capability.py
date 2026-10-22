@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -112,6 +113,28 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         caching: Literal['5m', '1h'] | None = None,
         forward_history: bool = False,
     ) -> None:
+        self._configure(
+            model,
+            mode=mode,
+            output_type=output_type,
+            max_uses=max_uses,
+            max_tokens=max_tokens,
+            caching=caching,
+            forward_history=forward_history,
+        )
+
+    def _configure(
+        self,
+        model: ModelSelection,
+        *,
+        mode: Literal['auto', 'native', 'local'],
+        output_type: OutputSpec[object],
+        max_uses: int | None,
+        max_tokens: int | None,
+        caching: Literal['5m', '1h'] | None,
+        forward_history: bool,
+    ) -> None:
+        """Validate the options and build the native factory and local tool from them."""
         if mode not in {'auto', 'native', 'local'}:
             raise ValueError("Advisor.mode must be 'auto', 'native', or 'local'")
         if max_uses is not None and max_uses < 1:
@@ -213,11 +236,12 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             # No single `Advisor` accepts this, but merging used to send the native tool without
             # `max_uses`; keep doing that rather than make an agent that used to build raise.
             warnings.warn(
-                f"Merged `Advisor` capabilities combine mode='native' on OpenRouter with `max_uses={max_uses}`, "
+                f"Merged `Advisor` capabilities combine `mode='native'` on OpenRouter with `max_uses={max_uses}`, "
                 "which OpenRouter's native advisor does not support, so `max_uses` is ignored. "
-                "This will raise `ValueError` in a future release: remove `max_uses`, or use mode='auto'.",
+                "This will raise `ValueError` in a future release: remove `max_uses`, or use `mode='auto'`.",
                 HarnessDeprecationWarning,
-                stacklevel=2,
+                # Past `_combine_duplicate_capabilities` and `Agent.__init__`, to the user's `Agent(...)`.
+                stacklevel=4,
             )
             max_uses = None
         return merged._rebuilt(max_uses=max_uses)
@@ -229,7 +253,13 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         return self._rebuilt(max_uses=self.max_uses)
 
     def _rebuilt(self, *, max_uses: int | None) -> Self:
-        rebuilt = type(self)(
+        """Copy this capability and rebuild its native factory and local tool from its fields.
+
+        Only `Advisor`'s own configuration runs, so a subclass keeps its type and fields without its
+        `__init__` being called with arguments it may not take.
+        """
+        rebuilt = copy.copy(self)
+        rebuilt._configure(
             self.model,
             mode=self.mode,
             output_type=self.output_type,
@@ -238,7 +268,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             caching=self.caching,
             forward_history=self.forward_history,
         )
-        # `__init__` does not take the inherited capability fields, which callers may set afterwards.
+        # `_configure` resets the inherited capability fields, which callers may set afterwards.
         rebuilt.id = self.id
         rebuilt.description = self.description
         rebuilt.defer_loading = self.defer_loading
