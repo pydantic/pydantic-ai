@@ -113,6 +113,60 @@ def openai_compatible_category(
     return http_status_category(status_code, message) if status_code is not None else None
 
 
+_GOOGLE_CONTEXT_WINDOW_MESSAGES = ('input token count', 'number of tokens allowed')
+"""Gemini reports a context window overflow as `INVALID_ARGUMENT`, identifiable only by its message.
+
+The full message is `The input token count (N) exceeds the maximum number of tokens allowed (M)`; the file-upload
+variant drops the leading clause.
+"""
+
+
+def google_status_category(status: str | None, message: object) -> HTTPErrorCategory | None:
+    """The error category for a Google API error status, like `RESOURCE_EXHAUSTED`.
+
+    Gemini sends `RESOURCE_EXHAUSTED` for both rate limits and exhausted quota, with the same message, so it's
+    always a rate limit.
+    """
+    match status:
+        case 'RESOURCE_EXHAUSTED':
+            return ModelRateLimitError
+        case 'UNAVAILABLE':
+            # Like `The model is overloaded. Please try again later.`
+            return ModelOverloadedError if says_overloaded(message) else ModelUnavailableError
+        case 'INTERNAL':
+            return ModelServerError
+        case 'INVALID_ARGUMENT' if isinstance(message, str) and any(
+            m in message.lower() for m in _GOOGLE_CONTEXT_WINDOW_MESSAGES
+        ):
+            return ModelContextWindowExceededError
+        case _:
+            return None
+
+
+_BEDROCK_CONTEXT_WINDOW_MESSAGES = ('input is too long', 'input tokens exceeded', 'prompt is too long')
+"""Bedrock reports a context window overflow as a `ValidationException`, identifiable only by its message."""
+
+
+def bedrock_code_category(code: str | None, message: object) -> HTTPErrorCategory | None:
+    """The error category for a Bedrock error code, which is capitalized in an HTTP error and not in a stream."""
+    match code and code.lower():
+        case 'throttlingexception':
+            return ModelRateLimitError
+        case 'servicequotaexceededexception':
+            return ModelQuotaExceededError
+        case 'modelstreamerrorexception':
+            # The model failed while streaming its response; Bedrock says to retry the request.
+            return ModelServerError
+        case 'serviceunavailableexception' | 'modelnotreadyexception':
+            return ModelOverloadedError if says_overloaded(message) else ModelUnavailableError
+        case 'validationexception' if isinstance(message, str) and any(
+            m in message.lower() for m in _BEDROCK_CONTEXT_WINDOW_MESSAGES
+        ):
+            return ModelContextWindowExceededError
+        case _:
+            return None
+
+
 def stream_error(model_name: str, message: str, body: object) -> ModelAPIError:
     """Map an error object sent inside a 200 stream by an OpenAI-compatible API, classified by its `code` or `type`.
 

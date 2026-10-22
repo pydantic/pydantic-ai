@@ -97,7 +97,7 @@ def load_provider_metadata(provider_metadata: ProviderMetadata | None) -> dict[s
 
 def dump_provider_metadata(
     wrapper_key: str | None = PROVIDER_METADATA_KEY,
-    **kwargs: ProviderDetailsDelta | ForceDownloadMode | str | None,
+    **kwargs: ProviderDetailsDelta | ForceDownloadMode | str | list[Any] | None,
 ) -> dict[str, Any] | None:
     """Dump provider metadata from keyword arguments.
 
