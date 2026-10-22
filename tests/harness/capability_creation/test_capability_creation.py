@@ -533,11 +533,12 @@ class TestCapabilityStore:
         assert store.list_all() == [record]
         assert (tmp_path / 'bad.py').read_text(encoding='utf-8') == SYNTAX_ERROR_CODE
 
-    def test_reauthor_replaces_stale_source(self, tmp_path: Path) -> None:
-        # Re-authoring the same name must serve the new source, not cached bytecode.
+    @pytest.mark.parametrize('name', ['marker', 'previous'])
+    def test_reauthor_replaces_stale_source(self, tmp_path: Path, name: str) -> None:
+        # Re-authoring the same name must serve the new source, not cached bytecode, whatever the name.
         store = CapabilityStore(tmp_path)
-        store.write('marker', _marker_code('Foo', 'V1'))
-        record = store.write('marker', _marker_code('Bar', 'V2'))
+        store.write(name, _marker_code('Foo', 'V1'))
+        record = store.write(name, _marker_code('Bar', 'V2'))
         assert record.class_name == 'Bar'
         active = store.load_active()
         assert len(active) == 1
@@ -707,13 +708,14 @@ class TestCapabilityStore:
         assert leftovers == []
         assert not (tmp_path / 'second.py').exists()  # a new source goes with the entry that was not saved
 
+    @pytest.mark.parametrize('name', ['marker', 'previous'])
     def test_failed_manifest_save_keeps_the_previous_source(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
     ) -> None:
         # The source and its manifest entry change together, so a failed save leaves both as they were.
         store = CapabilityStore(tmp_path)
-        good = store.write('marker', _marker_code('Foo', 'V1'))
-        store.write('marker', NO_SUBCLASS_CODE)
+        good = store.write(name, _marker_code('Foo', 'V1'))
+        store.write(name, NO_SUBCLASS_CODE)
         files = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
         real_replace = os.replace
 
@@ -724,7 +726,7 @@ class TestCapabilityStore:
 
         monkeypatch.setattr(os, 'replace', _boom)
         with pytest.raises(OSError, match='replace failed'):
-            store.write('marker', _marker_code('Bar', 'V2'))
+            store.write(name, _marker_code('Bar', 'V2'))
         assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == files
         assert store.list_all() == [good]
         assert [capability.get_instructions() for capability in store.load_active()] == ['V1']
