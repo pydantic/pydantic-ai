@@ -87,7 +87,7 @@ _(This example is complete, it can be run "as is" — after filling in the two a
 which depend on your audio stack)_
 
 Capture and play at the sample rates the model expects — they're reported by the model's profile
-and can differ between input and output (see [Provider support](#provider-support) below). The
+and can differ between input and output (see the [audio wire contract](audio.md#audio-wire-contract)). The
 [voice assistant example](../examples/realtime-voice.md) fills the placeholders in with
 [`listentome`](https://github.com/Kludex/listentome) for a runnable microphone-and-speaker loop; the
 [text-to-audio example](../examples/realtime-text-to-audio.md) skips audio input entirely by
@@ -150,7 +150,7 @@ and quirks:
 | Provider | Audio output | Image input | Text output | [Browser WebRTC](deployment.md#browser-webrtc-server-sideband) | Async tool calls | [Thinking](../capabilities/thinking.md) | State-restoring reconnect |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | [OpenAI](openai.md) | ✓ | ✓ (GPT-Live: [backend only](openai.md#images-go-to-the-backend)) | ✓ (GPT-Live: ✗) | ✓ | ✓ | `gpt-realtime-2*` models; GPT-Live's [backend](openai.md#reasoning) | Replays local history (GPT-Live: as text, or forks a stored session) |
-| [Azure OpenAI](azure.md) | ✓ | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*`, and `gpt-5`-class models on Voice Live | Replays local history |
+| [Azure OpenAI](azure.md) | ✓ | ✓ | ✓ | ✓ (not on [Voice Live](azure.md#azure-ai-voice-live)) | ✓ | `gpt-realtime-2*`, and `gpt-5`-class models on Voice Live | Replays local history |
 | [Google Gemini](gemini.md) | ✓ | ✓ | Vertex `gemini-live-2.5-flash` only | ✗ | [Opt-in](tools.md#concurrent-tool-execution) on native-audio and `gemini-3.8-live`; always on for extended thinking | Native-audio and most 3.x models | ✓, with a `reconnect` policy |
 | [xAI](xai.md) | ✓ | ✗ | ✗ | ✗ | ✓ | `grok-voice-latest` and `-think-` models | Replays local history |
 | [ElevenLabs](elevenlabs.md) | ✓ | ✗ | Agents only (toggle-gated) | ✗ | ✗ | ✗ | Eleven Realtime: replays local history (Agents: ✗) |
@@ -200,13 +200,17 @@ Voices and detailed controls are provider-specific — `openai_voice`, `google_v
 the provider pages.
 
 The agent's regular `model_settings` and capability `get_model_settings()` contributions do not
-configure realtime sessions. Unsupported shared settings are ignored, matching request-response
-models, with one deliberate exception:
+configure realtime sessions. A shared setting the provider has no per-session control for is
+ignored, matching request-response models; a setting whose intent the provider would visibly violate,
+such as a [`tool_choice`][pydantic_ai.realtime.RealtimeModelSettings.tool_choice] that forces a tool
+call, raises a `UserError` before connecting instead. The provider pages cover each provider's
+own cases. For example:
 
 !!! note "Asking for text on a speech-only model fails fast"
     `output_modality='text'` on a model whose profile reports `supports_text_output=False`
-    (GPT-Live, Gemini Live, xAI, and Eleven Realtime) raises a `UserError` before connecting: silently answering with
-    speech would be worse than not starting.
+    (GPT-Live, Gemini Live other than Vertex `gemini-live-2.5-flash`, xAI, and Eleven Realtime)
+    raises a `UserError` before connecting: silently answering with speech would be worse than not
+    starting.
 
 ## Relationship to standard agent runs
 
