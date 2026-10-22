@@ -44,7 +44,6 @@ from pydantic_ai import (
     RunUsage,
     SystemPromptPart,
     TextPart,
-    TextPartDelta,
     Tool,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -2359,15 +2358,19 @@ _process_durable_agent = Agent(
 @workflow.defn
 class ProcessStreamDurableAgentWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> tuple[str, list[bool], list[str]]:
+    async def run(self, prompt: str) -> tuple[str, list[bool], list[str], list[str]]:
         result = await _process_durable_agent.run(prompt)
-        text_chunks: list[str] = []
-        for event in _process_events_collected:
-            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
-                text_chunks.append(event.part.content)
-            elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
-                text_chunks.append(event.delta.content_delta)
-        return result.output, _process_model_events_in_activity, text_chunks
+        model_event_kinds = [
+            type(event).__name__
+            for event in _process_events_collected
+            if isinstance(event, (PartStartEvent, PartDeltaEvent))
+        ]
+        text_parts = [
+            event.part.content
+            for event in _process_events_collected
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart)
+        ]
+        return result.output, _process_model_events_in_activity, text_parts, model_event_kinds
 
 
 def test_durability_tool_metadata_disables_activity():
@@ -2549,7 +2552,7 @@ async def test_durability_process_event_stream_fires_workflow_side(client: Clien
         workflows=[ProcessStreamDurableAgentWorkflow],
         plugins=[AgentPlugin(_process_durable_agent)],
     ):
-        output, model_events_in_activity, text_chunks = await client.execute_workflow(
+        output, model_events_in_activity, text_parts, model_event_kinds = await client.execute_workflow(
             ProcessStreamDurableAgentWorkflow.run,
             args=['Hello'],
             id=ProcessStreamDurableAgentWorkflow.__name__,
@@ -2559,7 +2562,8 @@ async def test_durability_process_event_stream_fires_workflow_side(client: Clien
         assert model_events_in_activity
         assert not any(model_events_in_activity)
 
-    assert text_chunks == ['Streamed response']
+    assert text_parts == ['Streamed response']
+    assert model_event_kinds == ['PartStartEvent']
 
 
 # --- Capability events emitted workflow-side reach the handler activity ---

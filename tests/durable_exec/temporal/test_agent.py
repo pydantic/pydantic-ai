@@ -4353,20 +4353,22 @@ _buffered_stream_agent = Agent(
 @workflow.defn
 class BufferedStreamDurableAgentWorkflow:
     @workflow.run
-    async def run(self) -> tuple[list[str], str, list[str]]:
+    async def run(self) -> tuple[list[str], str, list[str], list[str]]:
         async with _buffered_stream_agent.run_stream('Hello') as stream:
             chunks = [chunk async for chunk in stream.stream_text(debounce_by=None)]
             output = await stream.get_output()
 
         async with _buffered_stream_agent.run_stream_events('Hello') as event_stream:
             events = [event async for event in event_stream]
-        text_chunks: list[str] = []
-        for event in events:
-            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
-                text_chunks.append(event.part.content)
-            elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
-                text_chunks.append(event.delta.content_delta)
-        return chunks, output, text_chunks
+        model_event_kinds = [
+            type(event).__name__ for event in events if isinstance(event, (PartStartEvent, PartDeltaEvent))
+        ]
+        text_parts = [
+            event.part.content
+            for event in events
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart)
+        ]
+        return chunks, output, text_parts, model_event_kinds
 
 
 async def test_temporal_durability_buffers_caller_streams(client: Client) -> None:
@@ -4382,7 +4384,7 @@ async def test_temporal_durability_buffers_caller_streams(client: Client) -> Non
             task_queue=TASK_QUEUE,
         )
 
-    assert result == (['hello world'], 'hello world', ['hello world'])
+    assert result == (['hello world'], 'hello world', ['hello world'], ['PartStartEvent'])
 
 
 _workflow_cancel_agent = Agent(
