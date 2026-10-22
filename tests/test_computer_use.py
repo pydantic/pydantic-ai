@@ -96,7 +96,7 @@ async def test_a_failed_action_stops_the_rest_and_still_returns_a_screenshot() -
     assert provider.actions == [Click(x=1, y=1)]
     (tool_return,) = _returns(result.all_messages())
     assert tool_return.content == [
-        "Action 2 of 3 (hold_key) failed: the fake display cannot perform 'hold_key' The 1 action after it did not "
+        "Action 2 of 3 (hold_key) failed: the fake display cannot perform 'hold_key'. The 1 action after it did not "
         'run. Screenshot attached (1280x800).',
         SCREENSHOT,
     ]

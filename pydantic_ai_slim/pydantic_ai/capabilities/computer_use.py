@@ -185,7 +185,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             summary = [f'Ran {_plural(len(actions), "action")}.']
         else:
             result['error'] = error
-            summary = [f'Action {performed + 1} of {len(actions)} ({actions[performed].type}) failed: {error}']
+            ending = '' if error.endswith(('.', '!', '?')) else '.'
+            summary = [f'Action {performed + 1} of {len(actions)} ({actions[performed].type}) failed: {error}{ending}']
             if skipped := len(actions) - performed - 1:
                 summary.append(f'The {_plural(skipped, "action")} after it did not run.')
 
