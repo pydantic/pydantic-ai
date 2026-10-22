@@ -189,8 +189,11 @@ def _call(name: str, arguments: list[object]) -> object:
 
 
 def _lookup(context: Mapping[str, object], path: str) -> object:
-    value: object = context
-    for part in path.split('.'):
+    root, *parts = path.split('.')
+    # An unmodeled context would read as empty, and a guard reading it would pass without checking anything.
+    assert root in context, f'{path} reads a context these tests do not model'
+    value: object = context[root]
+    for part in parts:
         mapping = _maybe_mapping(value)
         if mapping is None:
             return None
@@ -232,12 +235,14 @@ def _matches(leg: Leg, pattern: Mapping[str, object]) -> bool:
     return True
 
 
+def _context(event_name: str, route: str) -> dict[str, object]:
+    """The `github` and `needs` contexts a test job's expressions see for an event on a route."""
+    return {'github': {'event_name': event_name}, 'needs': {'classify': {'outputs': ROUTES[route]}}}
+
+
 def _expand(job_name: str, event_name: str, route: str = 'full') -> list[Leg]:
     """The legs of a job's matrix, following GitHub's product, then `exclude`, then `include` order."""
-    context: dict[str, object] = {
-        'github': {'event_name': event_name},
-        'needs': {'classify': {'outputs': ROUTES[route]}},
-    }
+    context = _context(event_name, route)
     matrix = _mapping(_mapping(_job(job_name)['strategy'])['matrix'])
     excludes = [_mapping(entry) for entry in _list(matrix.pop('exclude', []))]
     includes = [_mapping(entry) for entry in _values(matrix.pop('include', []), context)]
@@ -275,9 +280,9 @@ def _identity(leg: Leg) -> str:
     )
 
 
-def _lane_values(job_name: str, leg: Leg) -> dict[str, str]:
+def _lane_values(job_name: str, leg: Leg, route: str) -> dict[str, str]:
     env = _mapping(_job(job_name).get('env', {}))
-    context = {'matrix': leg, 'github': {'event_name': 'merge_group'}}
+    context = {**_context('merge_group', route), 'matrix': leg}
     return {name: _text(_render(env[name], context)) for name in LANE_VARS if name in env}
 
 
@@ -309,7 +314,9 @@ def test_pull_requests_run_a_subset_of_the_full_matrix(job_name: str, route: str
 def test_pull_requests_keep_every_leg_that_carries_a_check(job_name: str, route: str):
     reduced = {_identity(leg) for leg in _expand(job_name, 'pull_request', route)}
     for leg in _expand(job_name, 'merge_group', route):
-        lanes = {name: value for name, value in _lane_values(job_name, leg).items() if value not in ('', 'false')}
+        lanes = {
+            name: value for name, value in _lane_values(job_name, leg, route).items() if value not in ('', 'false')
+        }
         if lanes:
             assert _identity(leg) in reduced, f'{job_name} {leg} sets {lanes} but a pull request skips it'
 
@@ -348,5 +355,5 @@ def test_pull_requests_keep_every_leg_a_coverage_or_report_step_runs_on(job_name
         condition = re.sub(r'^\s*\$\{\{(.*)\}\}\s*$', r'\1', condition, flags=re.DOTALL)
         condition = re.sub(r'^\s*!cancelled\(\)\s*&&', '', condition)
         for leg in _expand(job_name, 'merge_group', route):
-            if _truthy(_Expression(condition, {'matrix': leg}).evaluate()):
+            if _truthy(_Expression(condition, {**_context('merge_group', route), 'matrix': leg}).evaluate()):
                 assert _identity(leg) in reduced, f'{job_name}: {step.get("name")!r} runs on {leg}, which a PR skips'
