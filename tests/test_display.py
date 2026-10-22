@@ -268,11 +268,18 @@ def test_render_banner_leaves_out_a_tool_count_the_caller_could_not_take(render:
 
 
 @pytest.mark.parametrize(
-    ('logfire_cli_available', 'logfire_destination'),
-    [(True, 'uvx logfire-cli wizard --task pydantic-ai'), (False, 'https://pydantic.dev/ai-setup.md')],
+    ('logfire_cli_available', 'logfire_destination', 'expected_urls'),
+    [
+        (True, 'uvx logfire-cli wizard --task pydantic-ai', ['https://pydantic.dev/docs/ai/logfire/#otel']),
+        (
+            False,
+            'https://pydantic.dev/ai-setup.md',
+            ['https://pydantic.dev/ai-setup.md', 'https://pydantic.dev/docs/ai/logfire/#otel'],
+        ),
+    ],
 )
 def test_the_observability_links_and_command_each_survive_on_one_line(
-    render: Callable[..., str], logfire_cli_available: bool, logfire_destination: str
+    render: Callable[..., str], logfire_cli_available: bool, logfire_destination: str, expected_urls: list[str]
 ):
     """The command must stay pasteable and the URL clickable at every supported width."""
     lines = _display._observability_lines(  # pyright: ignore[reportPrivateUsage]
@@ -280,6 +287,7 @@ def test_the_observability_links_and_command_each_survive_on_one_line(
     )
     urls = [word for line in lines for word in line.split() if word.startswith('http')]
 
+    assert urls == expected_urls
     assert max(map(len, lines)) <= _MIN_TEXT_WIDTH
     # Whole, on one line, at every width the banner lays itself out for — which is the whole job of
     # a floor under the text column measured from the copy rather than written down beside it.
