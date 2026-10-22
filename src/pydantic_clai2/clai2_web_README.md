@@ -41,6 +41,16 @@ from a terminal, a session saved in another directory, since the terminal works 
 Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts the shown session's turn and no
 other, Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
 
+While a turn runs, the composer works as the terminal's prompt does. Enter queues your message for
+after the turn. Alt+Enter (Option+Enter on a Mac), or the bolt button beside Send, steers the running
+turn instead: its model reads the message at its next request, and the transcript shows it then.
+Commands are never steered, a message with images attached is queued as Enter queues it, and a
+message typed while no turn runs is just sent. Alt+Enter with nothing typed steers the oldest queued
+message. Everything waiting is listed above the composer,
+whether you queued it here, in another browser, or in the terminal: edit a message in place (Enter
+saves, Esc cancels), steer it now, or remove it before it runs. A message that runs while you edit it
+is queued again as a new follow-up when you save, as in the terminal.
+
 The browser can make the agent run commands, so the server listens on 127.0.0.1 only and
 every request must carry a token that is new each launch, though kept across `/update`; the printed link contains it. Keep
 the link private. The `web` plugin starts disabled; `/web` works once it is enabled with
@@ -295,7 +305,7 @@ the sessions it shows over its one WebSocket.
 Sessions are named by their conversation ID, the `id` the sidebar lists.
 
 - **Per-session messages** (`item`, `delta`, and the other item messages, `turn_start`, `turn_end`,
-  `status`, `question`, `question_closed`, `notice`, `title`, `task`, `task_event`) carry `"session": "<conversation id>"` and go only to the
+  `status`, `question`, `question_closed`, `notice`, `title`, `task`, `task_event`, `queue`) carry `"session": "<conversation id>"` and go only to the
   connections watching that session. A `snapshot` names its session in `session.id`.
 - **Global messages** (`sessions`, `plugins`, `settings`, `theme`, `update`, `orchestrator`, `live`,
   and the settings menus' `dialog`, `dialog_shown`, and `dialog_closed`) go to every connection and
@@ -312,6 +322,10 @@ Sessions are named by their conversation ID, the `id` the sidebar lists.
   when another session becomes the default. A watched session is never closed for being idle.
 - When a live session switches conversation (`/new` or `/resume` typed in it), its watchers get a
   `snapshot` for the new ID, and `live` changes.
+- `queue` lists the input waiting for a session's running turn or command, oldest first, whenever it
+  changes, from the page or the terminal: `{"type": "queue", "queue": [{"id": "…", "text": "…", "kind":
+  "prompt" | "command" | "shell"}]}`. Only a `prompt` can steer. A `snapshot` carries the same list as
+  `queue`. Steering shows as a `user` item once the run's model receives it.
 
 Routes for one live session, `{id}` its conversation ID; each answers 404 when it is not live:
 
@@ -321,6 +335,10 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 | `GET /api/sessions/{id}/images/{image_id}` | an image of a prompt in its transcript, by an ID its `user` item lists in `images` (the SHA-256 of the bytes); 404 for one it does not hold |
 | `POST /api/sessions/{id}/input` | enter a prompt or `/command`, body `{"text": "…"}`, as `/api/input` |
 | `POST /api/sessions/{id}/interrupt` | interrupt its turn only |
+| `POST /api/sessions/{id}/steer` | Alt+Enter: send a prompt to its running turn, body `{"text": "…"}`; answers `{"steered": true, "menu": null}`, or, when nothing takes it (no turn runs, or a `/command`), enters it as `/input` does and answers `{"steered": false, "menu": …}` |
+| `PUT /api/sessions/{id}/queue/{input_id}` | rewrite a queued input in place, body `{"text": "…"}`; 404 once it ran or was removed |
+| `DELETE /api/sessions/{id}/queue/{input_id}` | remove a queued input; 404 once it ran or was removed |
+| `POST /api/sessions/{id}/queue/{input_id}/steer` | send a queued prompt to the running turn, taking it out of the queue; answers `{"steered": false}` and leaves it queued when nothing takes it |
 | `GET /api/sessions/{id}/complete?text=…` | Tab completions |
 | `POST /api/sessions/{id}/model` | select a model, body `{"name": "…"}` |
 | `POST /api/sessions/{id}/switch` | turn a `/set` switch on or off, body `{"key": "…", "on": true}`, as `/api/switch` |
@@ -343,8 +361,8 @@ choosing a model in session B's `/model` menu switches B alone, and B's `/effort
 CLAI shares, such as `display.*`, still reach every session, as typing `/set` does. Plugin menus
 (`/api/plugins/…`) and dialogs belong to the page.
 
-The unprefixed routes (`/api/state`, `/api/images/…`, `/api/input`, `/api/interrupt`, `/api/complete`, `/api/model`,
-`/api/switch`, `/api/dialogs/…`, `/api/commands/…`) and a `/ws` without `watch` keep working on the
+The unprefixed routes (`/api/state`, `/api/images/…`, `/api/input`, `/api/steer`, `/api/queue/…`, `/api/interrupt`,
+`/api/complete`, `/api/model`, `/api/switch`, `/api/dialogs/…`, `/api/commands/…`) and a `/ws` without `watch` keep working on the
 default session: the one this page last opened or started while it stays live, else the most recently opened.
 `/api/questions/…` answers any live session's question by its ID, as before. `web/client.py` and the
 orchestrators of other CLAI versions use them.
