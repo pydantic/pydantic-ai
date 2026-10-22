@@ -102,6 +102,9 @@ class _CommandOutput(Generic[AgentDepsT]):
             self.offset = 0
             self.decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
             chunk = await self._read()
+            if await self._clears() != clears:
+                # Another clear began during that read too: start again at the next poll.
+                return False
         self.offset += len(chunk)
         self.emitted += len(chunk)
         if chunk:

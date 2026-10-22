@@ -52,14 +52,17 @@ publish() {{
 }}
 watch_logs() {{
   trap __harness_watch_stopped=1 TERM
+  __harness_notice="[Log exceeded max_log_bytes=$1; earlier output was cleared.]"
   while [ -z "$__harness_watch_stopped" ] && kill -0 "$$" 2> /dev/null; do
     {{ sleep "$2" 2> /dev/null || sleep 1; }} &
     wait $!
     for log in "$out" "$err"; do
-      if [ -z "$__harness_watch_stopped" ] && [ $(( $(wc -c < "$log" 2> /dev/null) + 0 )) -gt "$1" ]; then
+      __harness_size=$(( $(wc -c < "$log" 2> /dev/null) + 0 ))
+      [ "$__harness_size" -gt $(( ${{#__harness_notice}} + 1 )) ] || continue
+      if [ -z "$__harness_watch_stopped" ] && [ "$__harness_size" -gt "$1" ]; then
         printf x >> "$dir/log_clears"
         : > "$log"
-        printf '[Log exceeded max_log_bytes=%s; earlier output was cleared.]\\n' "$1" >> "$log"
+        printf '%s\\n' "$__harness_notice" >> "$log"
         printf x >> "$dir/log_clears"
       fi
     done
@@ -96,8 +99,9 @@ With a log limit, a watcher checks each log every `_LOG_CHECK_INTERVAL` seconds 
 leaving a notice. It appends a byte to `log_clears` before and after each clear, so a reader can tell a clear is under
 way (an odd size) or done, even once the log has grown back. The command keeps running, and a command that reads its own
 log (a glob over job logs) reaches the end of it and stops, instead of copying the log into itself until the disk is
-full. The watcher starts before `max_file_bytes` applies, since `log_clears` keeps growing, finishes a clear it has
-started when the wrapper stops it, and exits once the wrapper is gone, e.g. killed on its own.
+full. A log holding no more than the notice is left alone, so a limit below its size doesn't clear it at every check.
+The watcher starts before `max_file_bytes` applies, since `log_clears` keeps growing, finishes a clear it has started
+when the wrapper stops it, and exits once the wrapper is gone (killed on its own and reaped).
 
 The `TERM` trap lets the wrapper outlive a `SIGTERM` sent to the whole group long enough to
 publish the command's exit status; the command itself runs with default signal handling, since

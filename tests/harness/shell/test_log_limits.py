@@ -126,6 +126,34 @@ class _ClearsAroundReads(LocalWorkspaceBackend):
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
+class _ClearedAgainDuringTheReread(LocalWorkspaceBackend):
+    """Clears the log, as the watcher would, before the first read past its start and again before the read after it."""
+
+    def __init__(self, working_dir: Path) -> None:
+        super().__init__(working_dir)
+        self.markers = working_dir
+        self.clears = 0
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        assert isinstance(command, str)
+        if 'tail -c +' in command and (self.clears or 'tail -c +1 ' not in command) and self.clears < 2:
+            [job] = (self.markers / '.pydantic-ai-harness' / 'shell').iterdir()
+            (job / 'output.log').write_text(f'{NOTICE}\n')
+            with (job / 'log_clears').open('ab') as clears:
+                clears.write(b'xx')
+            self.clears += 1
+            if self.clears == 2:
+                (self.markers / 'cleared').touch()
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+
 class _ClearedWhileCounted(LocalWorkspaceBackend):
     """Clears the log, as the watcher would, at the first read from its start once the command has exited."""
 
@@ -215,6 +243,34 @@ class TestShellLogLimits:
         assert '"exit_code": 0' in output
         assert recorder.output == f'first\n{NOTICE}\nafter\n'
 
+    async def test_events_restart_after_a_clear_during_the_reread(self, tmp_path: Path) -> None:
+        # The read from the start that follows one clear lands in the log of the next: it is dropped too.
+        recorder = Recorder()
+        output = await call_tool(
+            [Shell[None](denied_commands=[], tools=['shell'], max_log_bytes=2000), recorder],
+            'shell',
+            {'command': 'echo first; until [ -e cleared ]; do sleep 0.01; done; echo after', 'timeout': 30},
+            workspace=_ClearedAgainDuringTheReread(tmp_path),
+        )
+        assert '"exit_code": 0' in output
+        assert recorder.output == f'first\n{NOTICE}\nafter\n'
+
+    async def test_a_log_holding_only_the_notice_is_left_alone(self, tmp_path: Path) -> None:
+        # The notice alone is over this log limit; clearing it again would loop at every check.
+        output = await shell(
+            tmp_path, {'command': "printf '%0100d' 0; sleep 30", 'mode': 'background'}, max_log_bytes=10
+        )
+        group = int(output.split('kill -- -', 1)[1].split('`', 1)[0])
+        clears = _handle(output, 'Output').parent / 'log_clears'
+        try:
+            with anyio.fail_after(10):
+                while not clears.exists() or clears.stat().st_size < 2:
+                    await anyio.sleep(0.01)
+            await anyio.sleep(0.3)  # several checks
+            assert clears.read_bytes() == b'xx'
+        finally:
+            os.killpg(group, signal.SIGTERM)
+
     async def test_finished_event_reports_a_clear_while_the_log_is_measured(self, tmp_path: Path) -> None:
         recorder = Recorder()
         output = await call_tool(
@@ -230,9 +286,10 @@ class TestShellLogLimits:
     async def test_logs_are_still_cleared_under_a_file_limit(self, tmp_path: Path) -> None:
         # The command fills `log_clears` up to the file limit (one `ulimit -f` block) before its output passes the
         # log limit, so the watcher's next write to it is past that limit, which applies to the command alone.
+        # Linux stops a write that starts at the limit; macOS lets it through, so only Linux catches a limited watcher.
         command = (
             "for job in .pydantic-ai-harness/shell/*/; do ( trap '' XFSZ; printf '%01100d' 0 >> \"${job}log_clears\" ) "
-            "2> /dev/null; done; : > seeded; printf '%015d' 0; sleep 30"
+            "2> /dev/null; done; : > seeded; printf '%0100d' 0; sleep 30"
         )
         toolset = Shell(max_file_bytes=20, max_log_bytes=10).get_toolset()
         async with toolset:
@@ -258,11 +315,11 @@ class TestShellLogLimits:
                 while True:
                     try:
                         os.killpg(group, 0)
-                    except ProcessLookupError:
+                    except (ProcessLookupError, PermissionError):  # macOS: only zombies left
                         break
                     await anyio.sleep(0.05)
         finally:
-            with contextlib.suppress(ProcessLookupError):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(group, signal.SIGKILL)
 
     async def test_events_end_while_clears_keep_coming(self, tmp_path: Path) -> None:
