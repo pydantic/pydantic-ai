@@ -29,6 +29,12 @@
       "fingerprint": "679024394731649b9cd4c4300679de05df481ee1512142e772055756302b9541",
       "reason": "Adds the xAI Grok 4.6 and 4.7 Bedrock ids to `LatestBedrockModelNames`; every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8639"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "5942d1f85250e036051aa785e370fb32df99305905a5995c525b7faa2d44a657",
+      "reason": "Adds `thinking_summary` to `ModelSettingName` for the new unified `ModelSettings.thinking_summary` setting; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/5652"
     }
   ]
 }
