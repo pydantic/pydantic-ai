@@ -99,7 +99,7 @@ With durable execution such as Temporal, read the credential from the run's deps
 
 ## Provider settings
 
-`toolsets=['repos', 'issues', 'actions']` picks which of GitHub's tool groups the server offers. Leave it unset to get the server's default groups. `read_only=True` asks the server for its read-only mode, and also drops any tool the server does not mark as read-only; if none are marked, the agent gets no GitHub tools and emits an `MCPReadOnlyNoToolsWarning`. Set `url` to use a GitHub Enterprise Cloud endpoint; it must be an `https://` URL.
+`toolsets=['repos', 'issues', 'actions']` picks which of GitHub's tool groups the server offers. Leave it unset to get the server's default groups. `read_only=True` asks the server for its read-only mode, and also drops any tool the server does not mark as read-only; if none are marked, the agent gets no GitHub tools and emits an `MCPReadOnlyNoToolsWarning`. Set `url` to use a GitHub Enterprise Cloud endpoint; it must be an `https://` URL. A plain `http://` URL sends the token unencrypted, so it emits a `HarnessDeprecationWarning` and will raise in a future release.
 
 The capability does not limit which repositories the agent can reach. Set that with the token's or GitHub App's permissions. To send other headers, or to use custom authentication, pass a configured `client`.
 

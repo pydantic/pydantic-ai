@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
@@ -11,6 +12,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
 from pydantic_ai_harness._mcp import credential, one_connection, read_only_toolset
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -50,7 +52,7 @@ class GitHub(AbstractCapability[AgentDepsT]):
     It cannot be combined with `auth`, `url`, or `toolsets`.
     """
     url: str = GITHUB_MCP_URL
-    """The `https://` MCP server URL, for example a GitHub Enterprise Cloud endpoint."""
+    """The `https://` MCP server URL, for example a GitHub Enterprise Cloud endpoint. `http://` is deprecated."""
     toolsets: list[str] | None = None
     """GitHub tool groups to offer, such as `'repos'`. `None` keeps the server's defaults."""
 
@@ -62,10 +64,17 @@ class GitHub(AbstractCapability[AgentDepsT]):
         ):
             raise UserError('`client` owns the connection, so it cannot be combined with `auth`, `url`, or `toolsets`.')
         parts = urlsplit(self.url)
-        if parts.scheme != 'https' or not parts.hostname:
-            # The token travels in a header, so plain `http://` would send it unencrypted, even to a loopback host
-            # when an `HTTP_PROXY` is set.
+        if parts.scheme not in ('https', 'http') or not parts.hostname:
             raise UserError(f'`url` must be an `https://` URL; got {self.url!r}. Pass `client` to connect another way.')
+        if parts.scheme == 'http':
+            # The token travels in a header, so plain `http://` sends it unencrypted, even to a loopback host when an
+            # `HTTP_PROXY` is set. It worked before, so it warns now and is to raise in a future release.
+            warnings.warn(
+                f'`GitHub(url={self.url!r})` sends the GitHub token unencrypted. Use an `https://` URL, or pass '
+                '`client` to connect another way; a plain `http://` URL will raise in a future release.',
+                HarnessDeprecationWarning,
+                stacklevel=3,
+            )
         # GitHub reads an empty toolsets header as its defaults, which include write tools.
         if self.toolsets == []:
             raise UserError('`toolsets` must name at least one tool group; use `None` for the defaults.')
