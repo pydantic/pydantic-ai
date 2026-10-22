@@ -123,7 +123,7 @@ def source_chunks(text: str, path: str) -> list[Chunk]:
 async def list_files(workspace: Workspace, root: str, glob: str | None) -> tuple[list[str], list[tuple[str, str]]]:
     """Files under `root` that ripgrep would search, relative to it, and `(path, reason)` for unreadable ones.
 
-    Honours `.gitignore`, skips hidden files and files over `MAX_FILE_BYTES`. `glob` only narrows that
+    Honors `.gitignore`, skips hidden files and files over `MAX_FILE_BYTES`. `glob` only narrows that
     listing: ripgrep's own `--glob` overrides its ignore rules, so it would let `glob='.env'` pick a hidden,
     ignored file and send its contents to the judge. The file cap applies after the glob, so a narrow glob
     can search a workspace with more than `MAX_FILES` files.

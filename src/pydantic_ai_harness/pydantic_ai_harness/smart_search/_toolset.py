@@ -109,7 +109,7 @@ class SmartSearchToolset(FunctionToolset[AgentDepsT]):
     ) -> SmartSearchResult:
         """Find code by what it DOES, described in plain English.
 
-        Use for behaviour-based discovery when you don't know the symbol names,
+        Use for behavior-based discovery when you don't know the symbol names,
         e.g. "where do we reject expired sessions?" or "retry a failed network
         request". Keep using regular grep for exact symbols, regexes and exhaustive
         reference lists -- this tool ranks, it does not enumerate.
@@ -117,11 +117,11 @@ class SmartSearchToolset(FunctionToolset[AgentDepsT]):
         A local lexical shortlist of `candidates` snippets is judged by a
         relevance model; matches come back ranked with file/line ranges and a
         short excerpt. An empty result does not prove absence. Tests are
-        labelled kind="test", not demoted.
+        labeled kind="test", not demoted.
 
         Args:
             ctx: The current agent run context.
-            query: Plain-English description of the behaviour to find.
+            query: Plain-English description of the behavior to find.
             directory: Root to search (respects .gitignore; skips hidden files).
             glob: Optional ripgrep glob to restrict files, e.g. "*.py".
             limit: Max matches to return (1-100).
