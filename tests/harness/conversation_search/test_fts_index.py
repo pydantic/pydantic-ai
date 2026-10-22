@@ -36,6 +36,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.conversation_search import ConversationSearchToolset, SearchScope, SnapshotHistorySource
+from pydantic_ai_harness.conversation_search._fts import _transaction  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, InMemoryStepStore, RunRecord, SqliteStepStore
 
 _LOGGER = 'pydantic_ai_harness.conversation_search._toolset'
@@ -550,4 +551,21 @@ class TestIndexFallback:
         assert _rows(database, 'SELECT COUNT(*) FROM runs') == [(0,)]
         conn.commit()
         assert _rows(database, 'SELECT COUNT(*) FROM conversation_search_messages') == [(1,)]
+        conn.close()
+
+    @pytest.mark.parametrize('open_transaction', [False, True])
+    def test_an_error_sqlite_rolled_back_itself_is_the_one_raised(self, tmp_path: Path, open_transaction: bool) -> None:
+        """On a full disk or an I/O error SQLite rolls the whole transaction back itself.
+
+        The rollback that follows must not replace that error with its own "no transaction is
+        active" or "no such savepoint", which would hide the cause in the fallback warning.
+        """
+        conn = sqlite3.connect(tmp_path / 'index.db', isolation_level=None)
+        if open_transaction:
+            conn.execute('BEGIN')
+        with pytest.raises(sqlite3.OperationalError, match='database or disk is full'):
+            with _transaction(conn, 'BEGIN IMMEDIATE'):
+                conn.execute('ROLLBACK')  # What SQLite does by itself on `SQLITE_FULL` or `SQLITE_IOERR`.
+                raise sqlite3.OperationalError('database or disk is full')
+        assert not conn.in_transaction
         conn.close()

@@ -115,14 +115,19 @@ def _match_expression(terms: Sequence[str]) -> str:
 
 @contextmanager
 def _transaction(conn: sqlite3.Connection, begin: str) -> Generator[None]:
-    """Run the statements inside as one transaction, or join a caller's open one through a savepoint."""
+    """Run the statements inside as one transaction, or join a caller's open one through a savepoint.
+
+    On some errors (a full disk, an I/O error) SQLite rolls the whole transaction back itself, so
+    there is nothing left to roll back, and the original error is the one raised.
+    """
     if conn.in_transaction:
         conn.execute('SAVEPOINT conversation_search')
         try:
             yield
         except BaseException:
-            conn.execute('ROLLBACK TO conversation_search')
-            conn.execute('RELEASE conversation_search')
+            if conn.in_transaction:
+                conn.execute('ROLLBACK TO conversation_search')
+                conn.execute('RELEASE conversation_search')
             raise
         conn.execute('RELEASE conversation_search')
         return
@@ -130,7 +135,8 @@ def _transaction(conn: sqlite3.Connection, begin: str) -> Generator[None]:
     try:
         yield
     except BaseException:
-        conn.execute('ROLLBACK')
+        if conn.in_transaction:
+            conn.execute('ROLLBACK')
         raise
     conn.execute('COMMIT')
 
