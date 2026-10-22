@@ -229,8 +229,9 @@ Gotchas:
   stores, custom sources, subclasses) the corpus is rebuilt on every call, so cost grows with
   in-scope history; with it, a search re-renders only runs whose `complete` snapshots changed,
   though every run record is still listed to apply the scope.
-- History a run inherits through `message_history` is indexed once, under the run that first
-  persisted it. Excerpts are clipped to 500 characters; when the matched term lies past the cutoff,
+- History a run inherits through `message_history` is indexed under the run that first
+  persisted it; a request a later run adds an instruction change to is indexed again with that
+  change, so its other parts can match twice. Excerpts are clipped to 500 characters; when the matched term lies past the cutoff,
   the excerpt shows the text around it. The `\w+` tokenizer cannot match a word inside unspaced
   CJK or Thai text.
 
