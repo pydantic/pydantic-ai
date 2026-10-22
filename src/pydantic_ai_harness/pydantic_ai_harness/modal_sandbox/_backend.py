@@ -1,6 +1,6 @@
 """A native Modal sandbox behind Pydantic AI's `WorkspaceBackend` protocol.
 
-SDK assumptions verified 2026-09-09 against Modal Python SDK 1.5.2:
+SDK assumptions verified 2026-10-20 against Modal Python SDK 1.5.5:
 
 * `.aio`, `from_id`, `poll`, `terminate`, and `detach` follow the native sandbox lifecycle:
   https://modal.com/docs/guide/sandboxes
@@ -70,9 +70,12 @@ if TYPE_CHECKING:
 __all__ = ('ModalSandboxBackend',)
 
 DEFAULT_APP_NAME = 'pydantic-ai-harness'
-# Modal's maximum sandbox lifetime (24 hours). The framework never terminates a sandbox, so a
-# conversation can continue in it for as long as Modal allows.
-DEFAULT_SANDBOX_TIMEOUT = 86_400
+# Modal's accepted range for a sandbox's lifetime, in seconds.
+MIN_SANDBOX_TIMEOUT = 10
+MAX_SANDBOX_TIMEOUT = 86_400
+# Modal's maximum (24 hours). The framework never terminates a sandbox, so a conversation can
+# continue in it for as long as Modal allows.
+DEFAULT_SANDBOX_TIMEOUT = MAX_SANDBOX_TIMEOUT
 
 _CREDENTIAL_HINT = 'Set MODAL_TOKEN_ID / MODAL_TOKEN_SECRET or run `modal token new`.'
 
@@ -158,7 +161,7 @@ def _translate(error: Exception, *, context: str, unavailable: str, path: str | 
 def _unwrap_filesystem_error(error: Exception) -> Exception:
     """The SDK failure Modal's filesystem layer replaced, or `error` itself.
 
-    Modal 1.5.2 runs each filesystem operation as an exec and re-raises what that exec raised
+    Modal 1.5.5 runs each filesystem operation as an exec and re-raises what that exec raised
     `from None`: connection and service failures as a `NotFoundError` ("the Sandbox is
     unavailable"), every other SDK failure -- rate limits and internal errors included -- as a
     generic `SandboxFilesystemError`. Classifying those replacements would turn a retryable
@@ -248,8 +251,10 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'modal'")
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
-        if type(sandbox_timeout) is not int or not 10 <= sandbox_timeout <= 86_400:
-            raise ValueError('sandbox_timeout must be an integer between 10 and 86400 seconds')
+        if type(sandbox_timeout) is not int or not MIN_SANDBOX_TIMEOUT <= sandbox_timeout <= MAX_SANDBOX_TIMEOUT:
+            raise ValueError(
+                f'sandbox_timeout must be an integer between {MIN_SANDBOX_TIMEOUT} and {MAX_SANDBOX_TIMEOUT} seconds'
+            )
         # Checked here, as `ModalSandbox` does, so a bad value fails before any app lookup or image build.
         if idle_timeout is not None and (type(idle_timeout) is not int or idle_timeout < 1):
             raise ValueError('idle_timeout must be a positive integer or None')
