@@ -7,6 +7,7 @@ import fnmatch
 import functools
 import hashlib
 import logging
+import math
 import mimetypes
 import os
 import posixpath
@@ -304,9 +305,14 @@ def _ripgrep_hidden(glob: str | None) -> list[str]:
 
     Unlike `_explicit_hidden`, a `.` or `..` component, as in `./src/*.py`, names nothing hidden.
     """
-    named = glob is not None and any(
-        (part.startswith('.') and part not in ('.', '..')) or _HIDDEN_ALTERNATIVE.search(part)
-        for part in glob.split('/')
+    # A leading `!` excludes what the glob names, so it selects nothing hidden either.
+    named = (
+        glob is not None
+        and not glob.startswith('!')
+        and any(
+            (part.startswith('.') and part not in ('.', '..')) or _HIDDEN_ALTERNATIVE.search(part)
+            for part in glob.split('/')
+        )
     )
     return ['--hidden'] if named else []
 
@@ -503,14 +509,27 @@ def _matching_lines(text: str, compiled: re.Pattern[str], rel_str: str, limit: i
 _QUANTIFIER = re.compile(r'[*+]|\{(?P<count>\d+)\}|\{(?P<low>\d*),(?P<high>\d*)\}')
 
 
-def _repeats_at(pattern: str, index: int) -> bool:
-    """Whether a quantifier that can repeat what precedes it more than once starts at `index`."""
+def _quantifier_at(pattern: str, index: int) -> tuple[int, float, int] | None:
+    """The fewest and most repetitions of a quantifier starting at `index`, and the index after it."""
     if (quantifier := _QUANTIFIER.match(pattern, index)) is None:
-        return False
+        return None
+    if quantifier[0] in '*+':
+        return int(quantifier[0] == '+'), math.inf, quantifier.end()
     if (count := quantifier['count']) is not None:
-        return int(count) > 1
+        return int(count), int(count), quantifier.end()
     high = quantifier['high']
-    return high is None or not high or int(high) > 1
+    return int(quantifier['low'] or 0), int(high) if high else math.inf, quantifier.end()
+
+
+_MAX_BOUNDED_PATHS = 1024
+"""Most ways a repeated group with bounded repetition inside may match a text before it counts as nested repetition."""
+
+
+def _power(base: float, exponent: float) -> float:
+    """`base ** exponent`, as infinity where that would overflow a float."""
+    if base > 1 and exponent * math.log(base) > 700:
+        return math.inf
+    return base**exponent
 
 
 _SCOPED_FLAGS = re.compile(r'\(\?(?P<on>[a-zA-Z]*)(?:-(?P<off>[a-zA-Z]*))?:')
@@ -544,15 +563,18 @@ def _has_nested_quantifier(pattern: str, *, verbose: bool) -> bool:
 
     That shape can make a backtracking engine such as Python's `re` take exponential or high
     polynomial time on a short line, and `re` has no timeout, so a search run in Python refuses it.
+    A group repeated a bounded number of times whose inside is bounded too, such as
+    `([0-9]{1,3}[.]){3}`, is allowed while the ways it can match stay below `_MAX_BOUNDED_PATHS`.
     This is a heuristic for the common shape: it also refuses some harmless patterns, such as
     `([a-z]+,)+x`, and misses overlapping alternatives, such as `(a|a)+`. `verbose` says whether
     the compiled pattern is verbose as a whole; a scoped `(?x:...)` group is tracked here. Where
     verbose mode applies, whitespace and comments are skipped as `re` skips them, so they cannot
     hide a quantifier from the check.
     """
-    # Each open group saves the enclosing group's `repeats` and verbose mode, restored when it closes.
-    enclosing: list[tuple[bool, bool]] = []
+    # Each open group saves the enclosing group's state and verbose mode, restored when it closes.
+    enclosing: list[tuple[bool, float, bool]] = []
     repeats = False  # whether the innermost open group repeats anything so far
+    paths = 1.0  # a bound on the ways the innermost open group can match a given text so far
     index = 0
     while (index := _skip_insignificant(pattern, index, verbose)) < len(pattern):
         char = pattern[index]
@@ -567,21 +589,32 @@ def _has_nested_quantifier(pattern: str, *, verbose: bool) -> bool:
             while index < len(pattern) and pattern[index] != ']':
                 index += 2 if pattern[index] == '\\' else 1
         elif char == '(':
-            enclosing.append((repeats, verbose))
-            repeats = False
+            enclosing.append((repeats, paths, verbose))
+            repeats, paths = False, 1.0
             if (flags := _SCOPED_FLAGS.match(pattern, index)) is not None:
                 if 'x' in flags['on']:
                     verbose = True
                 elif 'x' in (flags['off'] or ''):
                     verbose = False
+        elif char == '|':
+            paths = math.inf  # Alternatives can overlap, which this does not track.
         elif char == ')':  # the pattern compiled, and comments are skipped, so a group is open
-            outer_repeats, verbose = enclosing.pop()
+            outer_repeats, outer_paths, verbose = enclosing.pop()
             # The quantifier after `)` is read in the enclosing group's verbose mode.
-            if repeats and _repeats_at(pattern, _skip_insignificant(pattern, index + 1, verbose)):
-                return True
-            repeats = outer_repeats or repeats
-        elif _repeats_at(pattern, index):
-            repeats = True
+            quantifier = _quantifier_at(pattern, _skip_insignificant(pattern, index + 1, verbose))
+            if quantifier is not None:
+                low, high, index = quantifier
+                index -= 1
+                if repeats and high > 1 and _power(paths, high) * (high - low + 1) > _MAX_BOUNDED_PATHS:
+                    return True
+                repeats = repeats or high > 1
+                paths = _power(paths, high) * (high - low + 1)
+            repeats, paths = outer_repeats or repeats, outer_paths * paths
+        elif (quantifier := _quantifier_at(pattern, index)) is not None:
+            low, high, index = quantifier
+            index -= 1
+            repeats = repeats or high > 1
+            paths *= high - low + 1
         index += 1
     return False
 
@@ -1003,6 +1036,14 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             self._check_access(posixpath.relpath(spelling, scope.root), write=write, check_allowed=check_allowed)
         return resolved, real
 
+    def _too_large_to_read(self, path: str, size: int) -> str:
+        """What `read_file` returns for a file over `_MAX_READ_FILE_BYTES` instead of its lines."""
+        return (
+            f'[{self._path_label(path)} | {size} bytes]\n'
+            f'Too large to read: the limit is {_MAX_READ_FILE_BYTES} bytes. Find the lines you need with a '
+            'search tool, or read a byte range with a shell tool if you have one.\n'
+        )
+
     async def _read_target(self, scope: _Scope, resolved: str) -> bytes:
         """The bytes of the file a tool call names, refusing a socket the way core refuses a FIFO."""
         try:
@@ -1123,11 +1164,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if entry is None or entry.is_dir:
             return f'Path not found: {path}'
         if entry.size is not None and entry.size > _MAX_READ_FILE_BYTES:
-            return (
-                f'[{self._path_label(path)} | {entry.size} bytes]\n'
-                f'Too large to read: the limit is {_MAX_READ_FILE_BYTES} bytes. Find the lines you need with a '
-                'search tool, or read a byte range with a shell tool if you have one.\n'
-            )
+            return self._too_large_to_read(path, entry.size)
 
         # The whole file: the header reports its line count and the hash write_file and
         # edit_file verify against, and both need every byte.
@@ -1135,6 +1172,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             raw = await self._read_target(scope, resolved)
         except (FileNotFoundError, NotADirectoryError, IsADirectoryError):
             return f'Path not found: {path}'
+        # A workspace that reports no size, or a file that grew after `stat`, is only measured once read.
+        if len(raw) > _MAX_READ_FILE_BYTES:
+            return self._too_large_to_read(path, len(raw))
         content_hash = _bytes_hash(raw)
         media_type = _sniff_media_type(raw)
         if media_type is not None or _is_binary(raw):
