@@ -712,6 +712,81 @@ async def test_webrtc_sideband_runs_the_delegated_tool_round(
 
 
 @pytest.mark.vcr
+async def test_webrtc_sideband_reattaches_after_a_drop(
+    openai_live_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    realtime_recording: bool,
+) -> None:
+    """With a `reconnect` policy, a dropped sideband re-attaches to the call's session, which carried on without it.
+
+    The sideband drops while the backend waits on a tool. The session is the same one, so the tool's result
+    still goes out, on the new sideband, and the backend answers with it. Live sends the re-attached sideband
+    the last few seconds of events again, which are skipped: the history is the one a call without a drop records.
+    """
+    provider, cassette = openai_live_ws_sideband_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(
+            openai_live_turn_silence_ms=1000, reconnect={'base_delay': 0.0, 'jitter': False}
+        ),
+    )
+    agent = Agent(_BACKEND, instructions='You answer weather questions. Use the `lookup_forecast` tool.')
+    dropped = anyio.Event()
+
+    @agent.tool_plain
+    async def lookup_forecast(city: str) -> str:
+        """Look up tomorrow's forecast for a city."""
+        await dropped.wait()
+        return f'{city}: 14 degrees Celsius, light rain.'
+
+    realtime = agent.realtime(model)
+    pcm = assets_path.joinpath('weather_question_24khz.pcm').read_bytes()
+
+    @asynccontextmanager
+    async def browser() -> AsyncGenerator[_BrowserPeer]:
+        if realtime_recording:  # pragma: no cover
+            async with _speaking_browser(pcm) as peer:
+                yield peer
+            return
+        yield REAL_SDP_OFFER, _no_browser_to_connect, lambda: None
+
+    events: list[Any] = []
+    async with browser() as (offer, connect, speak):
+        answer = await realtime.answer_webrtc_offer(offer)
+        await connect(answer.sdp)
+
+        async with realtime.session(provider_session=answer.session) as session:
+            speak()
+            with anyio.fail_after(60):
+                async for event in session:  # pragma: no branch
+                    events.append(event)
+                    if isinstance(event, FunctionToolCallEvent):
+                        await cassette.disconnect()
+                    elif isinstance(event, RealtimeSessionReconnectEvent):
+                        dropped.set()
+                    elif isinstance(event, RealtimeTurnCompleteEvent) and any(
+                        isinstance(e, FunctionToolResultEvent) for e in events
+                    ):
+                        break
+
+    reconnects = [event for event in events if isinstance(event, RealtimeSessionReconnectEvent)]
+    assert reconnects == [RealtimeSessionReconnectEvent(state_restored=True)]
+    messages = session.all_messages()
+    assert [type(message).__name__ for message in messages] == snapshot(
+        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+    )
+    user_speech = [part for part in messages[0].parts if isinstance(part, SpeechPart)]
+    assert len(user_speech) == 1 and 'Amsterdam' in (user_speech[0].transcript or '')
+    assert [part.tool_name for part in messages[1].parts if isinstance(part, ToolCallPart)] == ['lookup_forecast']
+    tool_return = messages[2].parts[0]
+    assert isinstance(tool_return, ToolReturnPart) and tool_return.outcome == 'success'
+    answer_part = messages[3].parts[-1]
+    assert isinstance(answer_part, SpeechPart)
+    assert '14' in (answer_part.transcript or '') or 'fourteen' in (answer_part.transcript or '').lower()
+
+
+@pytest.mark.vcr
 async def test_webrtc_call_continues_the_bound_history(
     openai_live_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
     assets_path: Path,

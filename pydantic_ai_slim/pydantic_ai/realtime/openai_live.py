@@ -34,6 +34,7 @@ import asyncio
 import base64
 import sys
 import time
+from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from dataclasses import KW_ONLY, dataclass, field
@@ -595,6 +596,13 @@ _LiveDial = Callable[[str | None, list[dict[str, Any]]], Awaitable[tuple['Client
 Returns the new socket and the new session's id.
 """
 
+#: How many of its latest events a sideband remembers: comfortably more than the few seconds of them, audio
+#: frames included, that Live sends again to a sideband that re-attaches.
+_REPLAYED_EVENTS_REMEMBERED = 2048
+
+_LiveReattach = Callable[[], Awaitable['ClientConnection']]
+"""Attach a new sideband to the WebRTC call's Live session, which carries on while no sideband is attached."""
+
 
 @dataclass
 class _SessionEnd:
@@ -768,6 +776,7 @@ class OpenAILiveConnection(RealtimeConnection):
         forwards_output_audio: bool = True,
         session_id: str | None = None,
         dial: _LiveDial | None = None,
+        reattach: _LiveReattach | None = None,
         reconnect: ReconnectPolicy | None = None,
         forks: bool = False,
     ) -> None:
@@ -777,6 +786,11 @@ class OpenAILiveConnection(RealtimeConnection):
         # session, or else by starting a new one seeded with the history so far.
         self._session_id = session_id
         self._dial = dial
+        # A WebRTC sideband re-attaches to the call's session instead, which runs on without it.
+        self._reattach = reattach
+        # The ids of the events a sideband handled most recently, to skip those Live sends again on a re-attach.
+        self._recent_event_ids: deque[str] = deque(maxlen=_REPLAYED_EVENTS_REMEMBERED)
+        self._seen_event_ids: set[str] = set()
         self._reconnect = reconnect
         self._forks = forks
         self._message_history: Callable[[], Sequence[ModelMessage]] | None = None
@@ -853,13 +867,15 @@ class OpenAILiveConnection(RealtimeConnection):
 
     @property
     def reconnect_restores_in_flight_state(self) -> bool:
-        """Neither way of re-opening a Live session carries on what was in flight.
+        """Whether a reconnect carries on what was in flight: only a WebRTC sideband's does.
 
-        A fork has the conversation, but not the reply or the delegated work the drop cut off: it has no
-        record of the tool calls that work asked for (checked live). A replacement session has only the
-        history it was seeded with.
+        A sideband re-attaches to the same session, which ran on while it was away, so the tool calls its
+        delegated work asked for are still waiting for their results, which go out on the new sideband
+        (checked live). A fork has the conversation, but not the reply or the delegated work the drop cut
+        off: it has no record of the tool calls that work asked for (checked live). A replacement session
+        has only the history it was seeded with.
         """
-        return False
+        return self._reattach is not None
 
     @property
     def _answers_tool_calls_per_response(self) -> bool:
@@ -891,7 +907,7 @@ class OpenAILiveConnection(RealtimeConnection):
     def _can_reconnect(self) -> bool:
         return (
             not self._gave_up
-            and self._dial is not None
+            and (self._dial is not None or self._reattach is not None)
             and self._reconnect is not None
             and self._reconnects_used < self._reconnect.get('max_reconnects', DEFAULT_MAX_RECONNECTS)
         )
@@ -1184,9 +1200,9 @@ class OpenAILiveConnection(RealtimeConnection):
                     except self.transport_errors as e:
                         dropped = e
                 if dropped is not None:
-                    # Nothing under way on the dropped connection will finish, whether or not it is re-dialed.
-                    lost: RealtimeFrame = [*self._lifecycle.connection_lost()]
-                    if self._reconnect is None or self._dial is None:
+                    # A sideband has nothing to re-attach to once Live has closed the call's session.
+                    redials = self._dial is not None or (self._reattach is not None and not self._session_end.ended)
+                    if self._reconnect is None or not redials:
                         # No reconnect policy: a dropped connection is fatal. Surface it as a non-recoverable
                         # error and end the stream, as the other providers do, rather than raising the
                         # `websockets` exception. The read started above is on the dead socket.
@@ -1194,11 +1210,16 @@ class OpenAILiveConnection(RealtimeConnection):
                         error = RealtimeSessionErrorEvent(
                             message=f'OpenAI GPT-Live connection closed: {dropped}', recoverable=False
                         )
-                        yield [*lost, error]
+                        yield [*self._lifecycle.connection_lost(), error]
                         return
+                    # Nothing under way on the dropped connection will finish when a new session replaces it. A
+                    # re-attached sideband's session is the same one, which carried on meanwhile.
+                    lost: RealtimeFrame = [] if self._reattach is not None else [*self._lifecycle.connection_lost()]
                     # The read started above is on the dead socket.
                     self._cancel_read()
                     reconnected = await self._try_reconnect()
+                    if not reconnected and self._reattach is not None:
+                        lost += self._lifecycle.connection_lost()
                     lost += self._lifecycle.take_pending()
                     if not reconnected:
                         self._gave_up = True
@@ -1237,6 +1258,8 @@ class OpenAILiveConnection(RealtimeConnection):
         return True
 
     async def _attempt_reconnect(self) -> bool:
+        if self._reattach is not None:
+            return await self._attempt_reattach(self._reattach)
         assert self._dial is not None
         try:
             forked = False
@@ -1259,6 +1282,38 @@ class OpenAILiveConnection(RealtimeConnection):
         self._redial_on_close = False
         self._forget_session_state()
         return True
+
+    async def _attempt_reattach(self, reattach: _LiveReattach) -> bool:
+        """Attach a new sideband to the session the dropped one was attached to.
+
+        The session ran on without a sideband, so everything it knows, from the conversation to the tool calls
+        waiting for results, is still there. Of the events it sent in between, Live sends the new sideband
+        those of the last few seconds again (see `_seen_before`); a longer gap loses the rest.
+        """
+        try:
+            ws = await reattach()
+        except (websockets.WebSocketException, OSError, TimeoutError):
+            # A failed attach: a later attempt may still succeed, unless the call has ended in the meantime.
+            return False
+        self._ws = ws
+        self._restored = True
+        return True
+
+    def _seen_before(self, event_id: object) -> bool:
+        """Whether this sideband already handled the event with this id, and remember it if not.
+
+        A re-attached sideband is sent the session's last few seconds of events again, under their original ids
+        (checked live): those it read before the drop must not count twice.
+        """
+        if not isinstance(event_id, str):
+            return False
+        if event_id in self._seen_event_ids:
+            return True
+        if len(self._recent_event_ids) == self._recent_event_ids.maxlen:
+            self._seen_event_ids.discard(self._recent_event_ids[0])
+        self._recent_event_ids.append(event_id)
+        self._seen_event_ids.add(event_id)
+        return False
 
     async def _replay_seed(self) -> list[dict[str, Any]]:
         history: Sequence[ModelMessage] = self._message_history() if self._message_history is not None else ()
@@ -1371,6 +1426,8 @@ class OpenAILiveConnection(RealtimeConnection):
             data = _json_object_adapter.validate_json(raw)
             event_type = data.get('type')
             if not isinstance(event_type, str) or event_type not in _ACTED_ON_EVENT_TYPES:
+                return []
+            if self._reattach is not None and self._seen_before(data.get('event_id')):
                 return []
             try:
                 event = _acted_on_event_adapter.validate_python(data)
@@ -1523,7 +1580,9 @@ class OpenAILiveConnection(RealtimeConnection):
         if reason in _NORMAL_CLOSE_REASONS:
             return events
         events.extend(self._settle_open_turns(interrupted=True))
-        if reason in _RECONNECTABLE_CLOSE_REASONS and self._can_reconnect:
+        # A sideband's session is the WebRTC call's: when it ends, so has the call (the browser went away, say),
+        # and there is nothing for a new session to carry on.
+        if reason in _RECONNECTABLE_CLOSE_REASONS and self._can_reconnect and self._dial is not None:
             # Not the end of the call: the reconnect policy re-opens the session once the socket closes.
             self._redial_on_close = True
             return events
@@ -2290,15 +2349,24 @@ class OpenAILiveModel(RealtimeModel):
 
         cm: AbstractAsyncContextManager[ClientConnection] | None = None
         connection: OpenAILiveConnection | None = None
+
+        async def attach() -> ClientConnection:
+            nonlocal cm
+            if cm is not None:
+                previous, cm = cm, None
+                await previous.__aexit__(None, None, None)
+            headers = await openai_websocket_auth_headers(self.client)
+            inject_trace_context(headers)
+            opening = websockets.connect(self._sideband_url(session.session_id), additional_headers=headers)
+            ws = await opening.__aenter__()
+            cm = opening
+            return ws
+
         try:
             with map_connect_errors(self.model):
-                headers = await openai_websocket_auth_headers(self.client)
-                inject_trace_context(headers)
-                opening = websockets.connect(self._sideband_url(session.session_id), additional_headers=headers)
-                ws = await opening.__aenter__()
-                cm = opening
-                # Live replays `session.started` to every connection that attaches, with the configuration
-                # the session started with.
+                ws = await attach()
+                # Live sends a sideband that attaches the session's last few seconds of events, which on a call
+                # that has just started includes `session.started`, with the configuration it started with.
                 started_frame = await expect_event(ws, _SESSION_STARTED_EVENT, timeout=handshake_timeout)
                 try:
                     started = SessionStartedEvent.model_validate(started_frame)
@@ -2314,6 +2382,8 @@ class OpenAILiveModel(RealtimeModel):
                 provider_name=self.system,
                 provider_url=self._provider.base_url,
                 forwards_output_audio=False,
+                reattach=attach,
+                reconnect=settings.get('reconnect'),
             )
             yield connection
         finally:

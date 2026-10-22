@@ -3720,6 +3720,76 @@ async def test_a_drop_while_continuing_without_a_policy_ends_the_session() -> No
     )
 
 
+def _output_transcript(delta: str, event_id: str) -> str:
+    return json.dumps(
+        {'type': 'session.output_transcript.delta', 'delta': delta, 'start_ms': 0, 'end_ms': 1, 'event_id': event_id}
+    )
+
+
+async def test_a_reattached_sideband_skips_the_events_live_sends_again() -> None:
+    """Live sends a re-attached sideband its last few seconds of events again, under the ids they had."""
+    attached = _FakeWebSocket([_output_transcript(' again', 'e1'), _output_transcript(' there', 'e2')])
+
+    async def reattach() -> Any:
+        return attached
+
+    dropping = _DroppingWebSocket([_output_transcript('Hello', 'e1')])
+    connection = OpenAILiveConnection(dropping, reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
+    assert connection.reconnect_restores_in_flight_state
+    events = await _first_events(connection, 3)
+    assert events == [
+        OutputTranscript('Hello'),
+        RealtimeSessionReconnectEvent(state_restored=True),
+        OutputTranscript(' there'),
+    ]
+
+
+def test_a_sideband_remembers_only_its_latest_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(live_module, '_REPLAYED_EVENTS_REMEMBERED', 2)
+    connection = _connection(reattach=object())
+    seen = connection._seen_before  # pyright: ignore[reportPrivateUsage]
+    assert [seen('e1'), seen('e2'), seen('e1'), seen('e3'), seen('e1'), seen(None), seen(None)] == [
+        False,
+        False,
+        True,
+        False,
+        False,  # forgotten once `e3` came in
+        False,
+        False,  # an event without an id is never a repeat
+    ]
+
+
+async def test_a_sideband_that_cannot_reattach_ends_the_session() -> None:
+    async def reattach() -> Any:
+        raise OSError('unreachable')
+
+    dropping = _DroppingWebSocket([_output_transcript('Hello', 'e1')])
+    connection = OpenAILiveConnection(dropping, reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
+    events = await _first_events(connection, 2)
+    assert events[0] == OutputTranscript('Hello')
+    assert events[1] == snapshot(
+        RealtimeSessionErrorEvent(
+            message='OpenAI GPT-Live connection dropped; reconnect failed: no close frame received or sent',
+            recoverable=False,
+        )
+    )
+
+
+@pytest.mark.parametrize('reason', ['close_requested', 'connection_lost'])
+async def test_a_sideband_does_not_reattach_to_a_session_that_ended(reason: str) -> None:
+    """The browser hanging up ends the session (`connection_lost`): there is nothing left to attach to."""
+
+    async def reattach() -> Any:
+        raise AssertionError('re-attached to a session that ended')
+
+    dropping = _DroppingWebSocket([json.dumps(_session_closed(reason))])
+    connection = OpenAILiveConnection(dropping, reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
+    events = await _first_events(connection, 1 if reason == 'close_requested' else 2)
+    assert events[-1] == RealtimeSessionErrorEvent(
+        message='OpenAI GPT-Live connection closed: no close frame received or sent', recoverable=False
+    )
+
+
 async def test_a_spoken_turn_without_a_transcript_replays_as_a_marker() -> None:
     """The fresh Live session sees that the user spoke before the answer, not an answer out of nowhere."""
     messages = [
