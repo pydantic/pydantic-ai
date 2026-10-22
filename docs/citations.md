@@ -135,30 +135,24 @@ TextPart(
 
 ## Citations in message history
 
-[Stored message history](message-history.md#storing-and-loading-messages-to-json) keeps
-[`TextPart.citations`][pydantic_ai.messages.TextPart.citations] and the provider data in `provider_details['citations']`.
-When you send that history to the provider that produced the citations, Pydantic AI sends some of the provider's own
-citation data back with the text, so the model still knows which of its earlier statements came from which source:
+[Saved message history](message-history.md#storing-and-loading-messages-to-json) keeps every citation. When you send
+it back to the same provider, these citations go with the text, so the model knows where its earlier statements came
+from:
 
 | Provider | Citations sent back |
 | --- | --- |
 | Anthropic | Web search citations |
-| OpenAI Responses | URL and file citations, when item IDs are sent; see [`openai_send_reasoning_ids`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_send_reasoning_ids] |
+| OpenAI Responses | Web and file citations, when message IDs are sent, which is the default for reasoning models. See [`openai_send_reasoning_ids`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_send_reasoning_ids] |
 
-These citations aren't sent back, and the text they belong to is sent as plain text:
+Other citations stay on the saved messages, but their text is sent as plain text. That covers document and
+fetched-page citations, citations from other providers and APIs (such as OpenAI Chat), and history sent to a different
+provider. An OpenAI web citation is also left out if the text around its link was edited.
 
-- citations of documents and fetched pages, on Anthropic and Amazon Bedrock
-- citations from other providers, whose APIs can't receive them
-- citations from a different provider than the one the history is sent to
-- an OpenAI URL citation whose text around the link was edited
-
-Citations always stay on the stored messages, and Pydantic AI never adds a list of sources to the text.
-
-Sending citations back doesn't affect prompt caching: the same history is sent the same way on every turn.
+History that's sent back unchanged goes out the same way every turn, so prompt caching keeps working.
 
 !!! warning "The model may not see the source"
-    A follow-up such as "Tell me more about source [1]" may reach a model that sees the `[1]` marker but not its URL
-    or excerpt. If the model needs the source, include it in the new prompt or let the model retrieve it again.
+    If a user later asks about "source [1]", the model may see the `[1]` but not what it pointed to. Put the source in
+    the new prompt, or let the model look it up again.
 
 ## Provider support
 
