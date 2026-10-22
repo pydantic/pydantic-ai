@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, TypeGuard, TypeVar
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai._file_input import SendableFile, inferred_media_type, unsupported_file_input
-from pydantic_ai._utils import format_inlined_text_file, gather, is_text_like_media_type
+from pydantic_ai._utils import format_inlined_text_file, gather, is_str_dict, is_text_like_media_type
 from pydantic_ai.messages import (
     BinaryContent,
     DocumentUrl,
@@ -32,6 +32,11 @@ if TYPE_CHECKING:
 _T = TypeVar('_T')
 
 _DESCRIPTIONS_ADAPTER = TypeAdapter(dict[str, str])
+
+_FRAMEWORK_METADATA_KEY = '__pydantic_ai__'
+"""The namespace in `metadata` reserved for framework state, which the UI adapters never send to or read from a client."""
+
+_NAMESPACE_KEY = 'file_understanding'
 
 _DEFAULT_INSTRUCTIONS = (
     'Describe this file in detail, so that someone who cannot see it can answer questions about it. '
@@ -65,12 +70,14 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     A text-like document (plain text, CSV, JSON, XML, YAML) is not described but inlined as it is, the way models
     that read text files do. A provider file reference ([`UploadedFile`][pydantic_ai.messages.UploadedFile]) is left alone.
 
-    A file is described once per conversation. The description is recorded in the message history, in the
-    [`metadata`][pydantic_ai.messages.ModelRequest.metadata] of the request that holds the file (which is not
-    sent to the model), and later requests use that text instead of describing the file again. A turn that
-    continues from `message_history`, another worker serving the next turn, and a durable run replaying its
-    history all see the same description, so earlier requests keep the same content and the describer is not
-    paid for twice. A file given by URL is identified by its URL, and bytes by their content and media type.
+    A file is described once per conversation. The description is recorded in the message history, under the
+    framework's reserved `__pydantic_ai__` namespace in the [`metadata`][pydantic_ai.messages.ModelRequest.metadata]
+    of the request that holds the file (which is not sent to the model), and later requests use that text instead
+    of describing the file again. A turn that continues from `message_history`, another worker serving the next
+    turn, and a durable run replaying its history all see the same description, so earlier requests keep the same
+    content and the describer is not paid for twice. The UI adapters leave that namespace out of the history they
+    send to a client, so a conversation whose history the client holds describes the file again each turn, and a
+    new description can differ, which changes earlier requests and costs the cached prefix. A file given by URL is identified by its URL, and bytes by their content and media type.
     The downloaded text of a text document given by URL is recorded the same way, so it is not downloaded again.
 
     The distinct files a request needs described are described concurrently. Each describing call is a run of its
@@ -140,15 +147,15 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
 
     @property
     def _metadata_key(self) -> str:
-        """Where in a request's `metadata` this capability's descriptions go: one per `id`, as instructions can differ."""
-        return self.id or 'file_understanding'
+        """This capability's key in its `metadata` namespace: one per `id`, as instructions can differ."""
+        return self.id or 'default'
 
     def _recorded_descriptions(self, messages: list[ModelMessage]) -> dict[str, str]:
         """The descriptions recorded in `messages`, by file identity."""
         recorded: dict[str, str] = {}
         for message in messages:
             if isinstance(message, ModelRequest) and message.metadata:
-                recorded.update(_str_dict(message.metadata.get(self._metadata_key)))
+                recorded.update(_str_dict(_own_namespace(message.metadata).get(self._metadata_key)))
         return recorded
 
     def _record(self, history: list[ModelMessage], described: dict[str, str]) -> None:
@@ -168,8 +175,13 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         for index, new in by_index.items():
             message = history[index]
             assert isinstance(message, ModelRequest)
-            metadata = dict(message.metadata or {})
-            metadata[self._metadata_key] = {**_str_dict(metadata.get(self._metadata_key)), **new}
+            metadata = message.metadata or {}
+            framework = metadata.get(_FRAMEWORK_METADATA_KEY)
+            framework = framework if is_str_dict(framework) else {}
+            own = _own_namespace(metadata)
+            own = {**own, self._metadata_key: {**_str_dict(own.get(self._metadata_key)), **new}}
+            # Other framework keys and the application's own keys are kept as they are.
+            metadata = {**metadata, _FRAMEWORK_METADATA_KEY: {**framework, _NAMESPACE_KEY: own}}
             # A new message rather than a changed one, since the caller's `message_history` may hold this object.
             history[index] = replace(message, metadata=metadata)
 
@@ -220,6 +232,13 @@ def _file_content(messages: list[ModelMessage]) -> Iterator[object]:
                     yield from part.content
                 elif isinstance(part, ToolReturnPart) and part.files:
                     yield from part.content_items()
+
+
+def _own_namespace(metadata: dict[str, object]) -> dict[str, object]:
+    """`FileUnderstanding`'s part of the framework namespace in a request's `metadata`."""
+    framework = metadata.get(_FRAMEWORK_METADATA_KEY)
+    own = framework.get(_NAMESPACE_KEY) if is_str_dict(framework) else None
+    return own if is_str_dict(own) else {}
 
 
 def _str_dict(value: object) -> dict[str, str]:

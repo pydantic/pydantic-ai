@@ -375,7 +375,13 @@ async def test_a_file_only_in_the_request_is_recorded_on_the_latest_request():
     capability: FileUnderstanding[None] = FileUnderstanding(fallback_subagent_model=FunctionModel(describer))
     item = ImageUrl('https://example.com/cat.png')
     history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('hi')], metadata={'file_understanding': 'not descriptions', 'app': 1})
+        ModelRequest(
+            parts=[UserPromptPart('hi')],
+            metadata={
+                '__pydantic_ai__': {'file_understanding': {'file_understanding': 'not descriptions'}, 'other': 1},
+                'app': 1,
+            },
+        )
     ]
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), messages=history)
     request_context = ModelRequestContext(
@@ -391,7 +397,15 @@ async def test_a_file_only_in_the_request_is_recorded_on_the_latest_request():
     [request] = history
     assert isinstance(request, ModelRequest)
     assert request.metadata == snapshot(
-        {'file_understanding': {'url:https://example.com/cat.png': 'A description of 750ff4.'}, 'app': 1}
+        {
+            '__pydantic_ai__': {
+                'file_understanding': {
+                    'file_understanding': {'url:https://example.com/cat.png': 'A description of 750ff4.'}
+                },
+                'other': 1,
+            },
+            'app': 1,
+        }
     )
 
 
@@ -462,7 +476,13 @@ async def test_a_url_is_described_once_across_the_turns_of_a_conversation():
     request = first.all_messages()[0]
     assert isinstance(request, ModelRequest)
     assert request.metadata == snapshot(
-        {'file_understanding': {'url:https://example.com/report.pdf': 'A description of a5f6ba.'}}
+        {
+            '__pydantic_ai__': {
+                'file_understanding': {
+                    'file_understanding': {'url:https://example.com/report.pdf': 'A description of a5f6ba.'}
+                }
+            }
+        }
     )
 
 
