@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import struct
 import zlib
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from cassetter import Cassette
@@ -30,6 +30,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         _map_computer_action,  # pyright: ignore[reportPrivateUsage]
+        _map_computer_call_output,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.profiles.openai import openai_model_profile
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -258,21 +259,13 @@ async def test_the_native_tool_is_sent_and_its_call_answered_with_a_screenshot(a
     assert second['input'][-1] is output
 
 
-async def test_a_screenshot_left_out_of_the_request_is_explained(allow_model_requests: None) -> None:
-    look = {'type': 'screenshot'}
-    client = MockOpenAIResponses.create_mock([_computer_call(look), _computer_call(look), _done()])
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    capabilities = [InMemoryProvider().capability(), ComputerUse(keep_screenshots=1)]
-    await Agent(model, capabilities=capabilities).run('Look twice.')
-
-    *_, last = get_mock_responses_kwargs(client)
-    older, newest = [index for index, item in enumerate(last['input']) if item.get('type') == 'computer_call_output']
-    # The older output's image is blank, so a note says why; the newest carries the real screenshot.
-    assert last['input'][older + 1]['content'].endswith(
-        '[Older screenshot removed to save context; the latest screenshot shows the current screen.]'
-    )
-    assert last['input'][newest]['output']['image_url'].startswith('data:image/png;base64,iVBOR')
-    assert newest == len(last['input']) - 1
+def test_a_result_without_its_screenshot_gets_a_blank_image_and_a_note() -> None:
+    # As after `keep_screenshots` dropped the screenshot from this request: the output still needs an image.
+    note = '[Older screenshot removed to save context; the latest screenshot shows the current screen.]'
+    part = ToolReturnPart('computer', ['Ran 1 action.', note], tool_call_id='call_1', metadata={'performed': 1})
+    output, message = cast(list[dict[str, Any]], _map_computer_call_output(part, None, 'call_1'))
+    assert output['output']['image_url'] == _BLANK_SCREENSHOT
+    assert message == {'role': 'user', 'content': f'Ran 1 action. {note}'}
 
 
 def test_the_blank_screenshot_is_a_valid_png() -> None:
