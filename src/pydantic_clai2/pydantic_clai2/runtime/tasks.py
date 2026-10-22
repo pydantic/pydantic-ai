@@ -248,6 +248,8 @@ class Tasks:
         self._prompts: dict[str, asyncio.Task[Exception | None]] = {}
         """The runs `prompt` started, by task ID: nothing else waits for these tasks."""
         self._starting: dict[str, asyncio.Event] = {}
+        self._closes = 0
+        """How many times `stop_prompts` ran, so a prompt that was awaiting `allow_resume` meanwhile can tell."""
         self.sink: Callable[[AgentStreamEvent], Awaitable[None]] | None = None
         self.wake: Callable[[], None] | None = None
 
@@ -477,11 +479,15 @@ class Tasks:
         # It reads `finished` until its run starts it, so `allow_resume` cannot tell a second prompt meanwhile.
         if record.id in self._starting:
             raise ValueError('This task is starting from a prompt already; wait for it to run.')
-        stopped = record.user_stopped
+        stopped, closes = record.user_stopped, self._closes
         starting = self._starting[record.id] = asyncio.Event()
         try:
             # Prompting it is the user's leave to resume it, as asking the agent to is.
             await self.owner.allow_resume(record.id)
+            if self._closes != closes:
+                # `stop_prompts` ran meanwhile and could not see a run that had not started yet.
+                await self._restore_stop(record, stopped)
+                raise RuntimeError('This session closed before the task could start.')
         except BaseException:
             del self._starting[record.id]
             raise
@@ -517,8 +523,7 @@ class Tasks:
             await prompt_task(record, text)
         except Exception as error:
             if not starting.is_set():
-                record.user_stopped = stopped
-                await self.owner.save(record)
+                await self._restore_stop(record, stopped)
                 return error
             logging.getLogger(__name__).exception('Prompting task %s failed', record.id)
         finally:
@@ -529,8 +534,14 @@ class Tasks:
                 del self._prompts[record.id]
         return None
 
+    async def _restore_stop(self, record: DelegationTask, stopped: bool) -> None:
+        """Put back the stop `allow_resume` lifted for a task that never ran, keeping one the user sent since."""
+        record.user_stopped = record.user_stopped or stopped
+        await self.owner.save(record)
+
     async def stop_prompts(self) -> None:
         """Stop the runs `prompt` started, which stops their tasks, before this session closes."""
+        self._closes += 1
         runs = list(self._prompts.values())
         for run in runs:
             run.cancel()

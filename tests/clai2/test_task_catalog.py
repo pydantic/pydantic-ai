@@ -409,6 +409,59 @@ async def test_a_prompt_whose_caller_is_cancelled_still_restores_a_stop_it_never
         await ui.prompt(record.id, 'it can be prompted again')
 
 
+async def test_a_failed_prompt_keeps_a_stop_the_user_sent_while_it_started() -> None:
+    blocked, fail = asyncio.Event(), asyncio.Event()
+
+    async def prompt_task(record: DelegationTask, text: str) -> str:
+        blocked.set()
+        await fail.wait()
+        raise ValueError('no delegate tool')
+
+    ui = Tasks(
+        console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None, prompt_task=prompt_task
+    )
+    record = finished(ui)
+    caller = asyncio.create_task(ui.prompt(record.id, 'hello'))
+    await blocked.wait()
+    await ui.stop(record.id)
+    fail.set()
+    with pytest.raises(ValueError, match='no delegate tool'):
+        await caller
+    assert record.user_stopped, 'the stop the user sent after prompting is newer than the one prompting lifted'
+
+
+async def test_a_prompt_still_starting_when_the_session_closes_never_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    saving, release = asyncio.Event(), asyncio.Event()
+    prompted: list[str] = []
+
+    async def prompt_task(record: DelegationTask, text: str) -> str:
+        prompted.append(text)
+        return 'ran'
+
+    ui = Tasks(
+        console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None, prompt_task=prompt_task
+    )
+    record = finished(ui)
+    record.user_stopped = True
+    save = ui.owner.save
+
+    async def held(record: DelegationTask) -> None:
+        saving.set()
+        await release.wait()
+        await save(record)
+
+    monkeypatch.setattr(ui.owner, 'save', held)
+    caller = asyncio.create_task(ui.prompt(record.id, 'hello'))
+    await saving.wait()
+    await ui.stop_prompts()
+    release.set()
+    with pytest.raises(RuntimeError, match='closed before the task could start'):
+        await caller
+    assert record.user_stopped, "the user's stop holds when the task never ran"
+    await ui.prompt(record.id, 'again')
+    assert prompted == ['again'], 'only the prompt sent after the close ran'
+
+
 async def test_a_task_starting_from_a_prompt_takes_no_second_one() -> None:
     """It reads `finished` until its run starts it, as an agent run does after a model request."""
     gate = asyncio.Event()
