@@ -1526,6 +1526,43 @@ class TestSensitiveDataSafety:
 
         assert factory.requests[0].sensitive_data == secrets
 
+    @pytest.mark.parametrize('own_tools', [False, True])
+    async def test_a_custom_factory_gets_settings_tools_without_evaluate_beside_secrets(
+        self, kill_calls: list[BrowserSession], own_tools: bool
+    ) -> None:
+        """A custom factory that forwards `settings.tools` gets the default factory's `evaluate` removal."""
+        configured = Tools[None]() if own_tools else None
+        factory = _success_factory()
+        capability = BrowserUse[None](
+            allowed_domains=['safe.example'],
+            sensitive_data={'https://safe.example': {'x_password': 'hunter2'}},
+            agent_settings=BrowserAgentSettings(tools=configured, display_files_in_done_text=False),
+            browser_agent=factory,
+        )
+
+        await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        tools = factory.requests[0].settings.tools
+        assert isinstance(tools, Tools)
+        if configured is None:
+            assert tools.display_files_in_done_text is False
+        else:
+            assert tools is configured
+        actions = tools.registry.registry.actions  # pyright: ignore[reportUnknownMemberType]
+        # Only `evaluate`: the file actions stay a custom factory's own choice, as without secrets.
+        assert 'evaluate' not in actions
+        assert {'read_file', 'upload_file'} <= set(actions)
+
+    async def test_a_custom_factory_gets_the_configured_settings_without_secrets(
+        self, kill_calls: list[BrowserSession]
+    ) -> None:
+        factory = _success_factory()
+        capability = BrowserUse[None](agent_settings=BrowserAgentSettings(), browser_agent=factory)
+
+        await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert factory.requests[0].settings.tools is None
+
     async def test_a_directly_built_toolset_scopes_flat_secrets_to_a_domain_glob(
         self, kill_calls: list[BrowserSession]
     ) -> None:
@@ -2018,6 +2055,11 @@ class TestLocalFileNavigation:
         )
         with pytest.raises(ValueError, match='by exact hostname only'):
             await toolset.browse_web(_ctx(), 'task')
+
+    def test_an_allowlist_just_under_browser_use_s_set_threshold_is_accepted(self) -> None:
+        """49 bare hostnames normalize to 98 entries, which browser-use still matches as patterns."""
+        capability = BrowserUse[None](allowed_domains=[f'site{index}.com' for index in range(49)])
+        assert capability.allowed_domains is not None
 
     async def test_a_narrowed_scheme_glob_gets_a_path_boundary(self, kill_calls: list[BrowserSession]) -> None:
         """Narrowing `*://host` to `http`/`https` must not leave a bare prefix that matches `host.attacker.test`.
