@@ -96,7 +96,7 @@ starts, the model gets a retry.
 | `command` | `'macroscope'` | Binary name or path. Override for a non-default install location. Cannot start with `-` or contain `=`. |
 | `timeout` | `600.0` | Maximum seconds to wait for a review. |
 | `guidance` | `None` | Custom review guidance for the system prompt. `None` contributes the default validate-then-fix guidance; `''` contributes none. |
-| `id` | `None` | Toolset id for durable execution. `None` uses `'macroscope'`. |
+| `id` | `'macroscope'` | Capability and toolset id, keyword-only. See [Two of them](#two-of-them). |
 
 ## Scope and composition
 
@@ -131,3 +131,14 @@ approval for its shell and write tools.
 `Macroscope` emits no spans of its own. Core's instrumentation records each
 `run_macroscope_review` call as a tool span, and the capability makes no decision
 worth a span of its own.
+
+## Two of them
+
+`Macroscope` declares the default `id` `'macroscope'`. The `id` keys the capability's instructions, so they
+can be addressed, and lets `defer_loading=True` work without one. Two `Macroscope`s on one agent that
+share it are one review configuration stated twice: they become one when they agree, and the agent raises a
+`UserError` when it's built if they differ. To keep two, give each its own `id` and wrap them
+in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/), since both register `run_macroscope_review`.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run
+started. Two identical ones now become one, and two that differ fail when the agent is built.

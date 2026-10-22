@@ -423,6 +423,7 @@ def test_var_args():
             'metadata': None,
             'timestamp': IsStr() & IsNow(iso_string=True, tz=UTC),  # type: ignore[reportUnknownMemberType]
             'outcome': 'success',
+            'retry': None,
             'part_kind': 'tool-return',
         }
     )

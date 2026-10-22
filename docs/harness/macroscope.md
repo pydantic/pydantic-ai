@@ -92,7 +92,7 @@ Macroscope(
     command='macroscope',  # binary name or path
     timeout=600.0,         # max seconds to wait for a review
     guidance=None,         # None = default instructions, '' = none, str = custom
-    id=None,               # toolset id for durable execution; None uses 'macroscope'
+    id='macroscope',       # capability and toolset id, see Two of them
 )
 ```
 
@@ -138,6 +138,17 @@ treat them as untrusted input: run the agent in a sandbox workspace, or require
 [instrumentation](../capabilities/instrumentation.md) records each
 `run_macroscope_review` call as a tool span, and the capability makes no
 decision worth a span of its own.
+
+## Two of them
+
+`Macroscope` declares the default `id` `'macroscope'`. The `id` keys the capability's instructions, so they
+can be addressed, and lets `defer_loading=True` work without one. Two `Macroscope`s on one agent that
+share it are one review configuration stated twice: they become one when they agree, and the agent raises a
+`UserError` when it's built if they differ. To keep two, give each its own `id` and wrap them
+in [PrefixTools](../capabilities/prefix-tools.md), since both register `run_macroscope_review`.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run
+started. Two identical ones now become one, and two that differ fail when the agent is built.
 
 ## Agent spec
 

@@ -19,6 +19,9 @@ if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
 
 
+_DEFAULT_PORTS = {'http': 80, 'https': 443}
+
+
 @dataclass(init=False)
 class MCP(NativeOrLocalTool[AgentDepsT]):
     """MCP server capability.
@@ -83,7 +86,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
 
         self.url = url
         self.native = native
-        # A server's identity is its URL, so the capability takes the same derived id its toolset
+        # A server's identity is its host, so the capability takes the same derived id its toolset
         # does rather than leaving the capability anonymous and the leaf named. Without it the run
         # falls back to a positional `mcp` / `mcp_2`, which reorders when the capability list does
         # -- no use as a durable-operation name or an instruction key, and nothing a user could
@@ -91,12 +94,11 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         # carries its own connection, with no `url=` and no explicit `native=MCPServerTool(...)`).
         #
         # Not derived for a deferred capability, which keeps needing an explicit `id`. A deferred
-        # capability's id is listed for the model in the `load_capability` catalog, and the derived
-        # one carries the URL's last path segment -- a signed path or a token-in-path server would
-        # be disclosing that segment to the model. Deriving an id is for naming a durable operation,
-        # which is ours to see; putting one in the prompt is the user's call to make deliberately.
+        # capability's id is listed for the model in the `load_capability` catalog. Deriving an id is
+        # for naming a durable operation, which is ours to see; putting one in the prompt is the
+        # user's call to make deliberately.
         self.id = id if id is not None else (None if defer_loading else self._derive_id(url))
-        # Only a URL-derived id can carry a credential from the URL path. An explicit id,
+        # Marks an id derived from the URL rather than chosen by the caller. An explicit id,
         # including one supplied by an MCPServerTool, is the caller's chosen label.
         self._telemetry_url_derived_id = (
             self._derive_id(url) if id is None and url is not None and not isinstance(native, MCPServerTool) else None
@@ -128,12 +130,33 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         self.defer_loading = defer_loading
         self.__post_init__()
 
+    def _derived_id_source(self) -> str | None:
+        if self.id is None or self.id != self._telemetry_url_derived_id or self.url is None:
+            return None
+        # The server endpoint without its userinfo or fragment, which never select a server. The query
+        # is kept: it can select a tenant, so two URLs that differ only there may be two servers, and
+        # telling them apart takes an explicit `id`.
+        parsed = urlparse(self.url)
+        scheme = parsed.scheme.lower()
+        try:
+            port = parsed.port or _DEFAULT_PORTS.get(scheme)
+        except ValueError:
+            # A malformed port can't be normalized, so it's compared as written.
+            host = parsed.netloc.rpartition('@')[2].lower()
+        else:
+            host = f'{parsed.hostname}:{port}'
+        return f'{scheme}://{host}{parsed.path.rstrip("/")}?{parsed.query}'
+
     def _derive_id(self, url: str | None) -> str | None:
         """Derive a stable id for this capability from `url`.
 
-        Precedence: explicit `id` → the native `MCPServerTool`'s id → a host+slug derived from `url`.
-        Returns `None` only when there's nothing to derive from — no `id`, no native `MCPServerTool`,
-        and `url is None` (e.g. a non-URL `local=` client that carries its own connection).
+        Precedence: explicit `id` → the native `MCPServerTool`'s id → the hostname of `url`.
+        Returns `None` when there's nothing to derive from — no `id`, no native `MCPServerTool`,
+        and no hostname (e.g. a non-URL `local=` client that carries its own connection).
+
+        Only the hostname is used: a URL's path, query or userinfo can carry a credential, and the
+        id names durable operations and telemetry and can reach the model. Two servers on one host
+        therefore derive the same id, which the agent rejects with a request for an explicit `id`.
         """
         if self.id is not None:
             return self.id
@@ -143,12 +166,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             return self.native.id
         if url is None:
             return None
-        # Include hostname to avoid collisions (e.g. two /sse URLs on different hosts)
-        parsed = urlparse(url)
-        path = parsed.path.rstrip('/')
-        slug = path.split('/')[-1] if path else ''
-        host = parsed.hostname or ''
-        return f'{host}-{slug}' if slug else host or url
+        return urlparse(url).hostname or None
 
     @cached_property
     def _resolved_id(self) -> str:
