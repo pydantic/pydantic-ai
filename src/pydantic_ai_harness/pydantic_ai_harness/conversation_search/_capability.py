@@ -67,8 +67,9 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
     Search is conversation-scoped by default (see `scope`), so reaching a past run
     requires both runs to share a `conversation_id`. A run inherits the id from
     `message_history`, so threading history through follow-up runs keeps them in one
-    conversation. History a run inherits is indexed once, under the run that first
-    persisted it.
+    conversation. History a run inherits is indexed under the run that first
+    persisted it, except a request a later run adds an instruction change to, which is
+    indexed again with that change.
 
     `StepPersistence` snapshots each step boundary before the next compaction runs, so
     the union of a run's snapshots still holds messages a compaction later replaced.
