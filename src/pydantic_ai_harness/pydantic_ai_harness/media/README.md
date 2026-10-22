@@ -37,6 +37,8 @@ Every store implements the `MediaStore` protocol: `put`, `get`, `exists`, `publi
 | `MongoMediaStore(...)` | MongoDB (sha256-addressed manual chunking) | A MongoDB deployment; blobs larger than one BSON document, split so no chunk hits the 16 MiB cap |
 | `PostgresMediaStore(...)` | PostgreSQL (one `BYTEA` row per blob) | A PostgreSQL deployment; blobs up to 1 GB |
 
+`SqliteMediaStore` also accepts `connection=` instead of `database=` to share a `sqlite3.Connection`. A connection the store opens from `database=` waits up to 30 seconds for another writer before raising `database is locked`; a `connection=` keeps whatever timeout the caller set.
+
 `MongoMediaStore` needs the `mongodb` extra (which installs `pymongo>=4.17.0`) and is imported the same way (`from pydantic_ai_harness.media import MongoMediaStore`). It stores each blob as sha256-addressed chunks in a `media_chunks` collection, with a `media` manifest document per blob. The chunking bounds each BSON document, so a blob larger than MongoDB's 16 MiB document cap still stores and reads back; it does not bound memory, since `put` takes the whole payload as `bytes` and `get` reassembles every chunk into one `bytearray` (there is no streaming API). The manifest itself holds `MediaContext.metadata` inline and is not chunked, so keep per-blob metadata small. Manual chunking is used instead of GridFS: it keeps content-addressed dedup (GridFS keys files by `ObjectId` and does none) and stays fully testable in-memory.
 
 uv:
