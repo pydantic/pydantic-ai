@@ -119,6 +119,18 @@ def _question_part(record: DelegationTask, question: _Question) -> SystemPromptP
     )
 
 
+_KeyT = TypeVar('_KeyT')
+_ItemT = TypeVar('_ItemT')
+
+
+def _unregister(stacks: dict[_KeyT, list[_ItemT]], key: _KeyT, item: _ItemT) -> None:
+    """Remove `item`, by identity, from the stack under `key`, and the stack once it is empty."""
+    stack = stacks[key]
+    del stack[max(index for index, registered in enumerate(stack) if registered is item)]
+    if not stack:
+        del stacks[key]
+
+
 _ADAPTER = TypeAdapter(DelegationTask)
 _SAFE_ID = re.compile(r'[0-9a-f]{32}\Z')
 
@@ -157,14 +169,15 @@ class DelegationTasks:
         self._workers: dict[str, asyncio.Task[str]] = {}
         self._released: dict[str, asyncio.Event] = {}
         self._stopping: set[str] = set()
-        self._receivers: dict[tuple[str, str | None], Callable[[SystemPromptPart], str | None]] = {}
-        self._steering: dict[str, Callable[[str], str | None]] = {}
+        # Stacks, like `_emitters`: the latest registration receives, and each run removes only its own.
+        self._receivers: dict[tuple[str, str | None], list[Callable[[SystemPromptPart], str | None]]] = {}
+        self._steering: dict[str, list[Callable[[str], str | None]]] = {}
         self._unsteered: dict[str, list[str]] = {}
         self._queued: dict[str, tuple[str, int]] = {}
         self._save_locks: dict[str, anyio.Lock] = {}
         self._questions: dict[str, _Question] = {}
         self._queued_questions: dict[str, str] = {}
-        self._asked = asyncio.Event()
+        self._woken = asyncio.Event()
         self._stops: set[str] = set()
         self._emitters: dict[tuple[str, str | None], list[Emitter]] = {}
         self._starting: dict[str, int] = {}
@@ -234,6 +247,8 @@ class DelegationTasks:
                         parent = self.records[parent].parent_id
             yield self
         finally:
+            # Closed first, so a delegation still persisting its acceptance schedules no worker after this drain.
+            self._open = False
             with anyio.move_on_after(10, shield=True) as cleanup:
                 for worker in self._workers.values():
                     worker.cancel()
@@ -243,7 +258,6 @@ class DelegationTasks:
                         record.status, record.outcome = 'finished', 'cancelled'
                         record.finished_at = time.time()
                     await self.save(record)
-            self._open = False
             if cleanup.cancel_called:
                 raise RuntimeError('Delegation cleanup timed out; children did not release their resources')
 
@@ -330,11 +344,24 @@ class DelegationTasks:
             self.records[record.id] = record
         release = self._released[record.id] = asyncio.Event()
         # Persist acceptance before scheduling: cancellation here cannot leave an orphan worker.
-        await self.save(record)
-        if record.user_stopped or record.status != 'running':
+        try:
+            await self.save(record)
+        except BaseException:
+            # Never scheduled, so it settles here: nothing may wait for a worker it will not get.
+            record.status, record.outcome = 'finished', 'cancelled'
+            record.output, record.finished_at = 'Task stopped before execution.', time.time()
+            self._wake()
+            raise
+        if record.user_stopped or record.status != 'running' or not self._open:
+            # Stopped meanwhile, or its owner is closing: it settles without a worker.
+            if record.status == 'running':
+                record.status, record.outcome = 'finished', 'cancelled'
+                record.output, record.finished_at = 'Task stopped before execution.', time.time()
+                self._wake()
             return f'Task {record.id} was stopped before execution.'
         worker = asyncio.create_task(self._run(record, run), name=f'delegate-{record.id}')
         self._workers[record.id] = worker
+        self._wake()
         if background:
             return self._receipt(record)
         waiter = asyncio.create_task(release.wait(), name=f'delegate-wait-{record.id}')
@@ -448,6 +475,7 @@ class DelegationTasks:
                 record.status, record.outcome = 'finished', 'cancelled'
                 record.output = 'Task stopped before execution.'
                 record.finished_at = time.time()
+                self._wake()
                 await self.notify(record)
             await self.save(record)
         if cleanup.cancel_called:
@@ -487,11 +515,11 @@ class DelegationTasks:
             raise ValueError('Steering text must not be empty')
         if self.records[task_id].status != 'running':
             return False
-        enqueue = self._steering.get(task_id)
-        if enqueue is None:
+        steering = self._steering.get(task_id)
+        if steering is None:
             self._unsteered.setdefault(task_id, []).append(text)
         else:
-            enqueue(text)
+            steering[-1](text)
         return True
 
     def history(self, task_id: str) -> list[ModelMessage]:
@@ -512,9 +540,10 @@ class DelegationTasks:
 
     def queue_reports(self, *, conversation_id: str, parent_id: str | None) -> None:
         """Queue only settled direct-child reports on an active parent's native queue."""
-        receiver = self._receivers.get((conversation_id, parent_id))
-        if receiver is None:
+        receivers = self._receivers.get((conversation_id, parent_id))
+        if receivers is None:
             return
+        receiver = receivers[-1]
         for record in self.reports(conversation_id=conversation_id, parent_id=parent_id):
             identity = (record.id, record.generation)
             if identity in self._queued.values():
@@ -545,31 +574,37 @@ class DelegationTasks:
         `steer` queues a user message on a child's own run, for `DelegationTasks.steer`.
         """
         key = (conversation_id, parent_id)
-        self._receivers[key] = enqueue
+        # What this run queued, which it alone can still deliver.
+        queued: set[str] = set()
+
+        def receive(part: SystemPromptPart) -> str | None:
+            enqueue_id = enqueue(part)
+            if enqueue_id is not None:
+                queued.add(enqueue_id)
+            return enqueue_id
+
+        self._receivers.setdefault(key, []).append(receive)
         if steer is not None and parent_id is not None:
-            self._steering[parent_id] = steer
+            self._steering.setdefault(parent_id, []).append(steer)
             for text in self._unsteered.pop(parent_id, ()):
                 steer(text)
         self.queue_reports(conversation_id=conversation_id, parent_id=parent_id)
         try:
             yield
         finally:
-            self._receivers.pop(key, None)
-            if parent_id is not None:
-                self._steering.pop(parent_id, None)
+            _unregister(self._receivers, key, receive)
+            if steer is not None and parent_id is not None:
+                _unregister(self._steering, parent_id, steer)
             self._queued = {
-                enqueue_id: identity
-                for enqueue_id, identity in self._queued.items()
-                if self.records[identity[0]].parent_id != parent_id
-                or self.records[identity[0]].conversation_id != conversation_id
+                enqueue_id: identity for enqueue_id, identity in self._queued.items() if enqueue_id not in queued
             }
             # A question queued on a run that ended before delivering it is queued again on the next one.
-            for enqueue_id, task_id in tuple(self._queued_questions.items()):
-                record = self.records[task_id]
-                if record.parent_id == parent_id and record.conversation_id == conversation_id:
-                    del self._queued_questions[enqueue_id]
-                    if (question := self._questions.get(task_id)) is not None:
-                        question.queued = False
+            for enqueue_id in queued & self._queued_questions.keys():
+                task_id = self._queued_questions.pop(enqueue_id)
+                if (question := self._questions.get(task_id)) is not None:
+                    question.queued = False
+            # Another run of the same parent may still be receiving: it gets what this one could not deliver.
+            self.queue_reports(conversation_id=conversation_id, parent_id=parent_id)
 
     async def acknowledge(self, enqueue_id: str) -> None:
         """Persist delivery only after core confirms it entered message history."""
@@ -592,14 +627,20 @@ class DelegationTasks:
             running = [r.id for r in self.records.values() if r.parent_id == task_id and r.status == 'running']
             if not running or any(child in self._questions for child in running):
                 return
-            asked = asyncio.ensure_future(self._asked.wait())
+            woken = asyncio.ensure_future(self._woken.wait())
             try:
-                # Waits on the workers without cancelling them when this wait is cancelled.
-                workers = (self._workers[child] for child in running)
-                await asyncio.wait((asked, *workers), return_when=asyncio.FIRST_COMPLETED)
+                # Waits on the workers without cancelling them when this wait is cancelled. A child whose
+                # delegation still persists its acceptance has no worker yet: scheduling one wakes this wait.
+                workers = (self._workers[child] for child in running if child in self._workers)
+                await asyncio.wait((woken, *workers), return_when=asyncio.FIRST_COMPLETED)
             finally:
-                asked.cancel()
-                await asyncio.gather(asked, return_exceptions=True)
+                woken.cancel()
+                await asyncio.gather(woken, return_exceptions=True)
+
+    def _wake(self) -> None:
+        """Wake `wait_children`: a child asked a question, got its worker, or settled unscheduled."""
+        self._woken.set()
+        self._woken = asyncio.Event()
 
     def running_count(self, conversation_id: str) -> int:
         """How many children of a conversation are running, or being started by `starting`."""
@@ -672,8 +713,7 @@ class DelegationTasks:
         pending = self._questions[task_id] = _Question(
             question_id=question_id, text=question, answer=asyncio.get_running_loop().create_future()
         )
-        self._asked.set()
-        self._asked = asyncio.Event()
+        self._wake()
         self.queue_reports(conversation_id=record.conversation_id, parent_id=record.parent_id)
         try:
             try:
