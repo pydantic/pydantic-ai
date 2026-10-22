@@ -6894,7 +6894,7 @@ _SCROLL_PIXELS_PER_CLICK = 100
 """OpenAI scrolls by pixels and the `computer` tool by wheel clicks; one click scrolls about this far."""
 
 _BLANK_SCREENSHOT = (
-    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABc3UBGAAAAABJRU5ErkJggg=='
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGP4DwABAQEAsTj2FAAAAABJRU5ErkJggg=='
 )
 """A 1x1 PNG for a `computer_call_output` with no screenshot to send, since the API requires one."""
 
