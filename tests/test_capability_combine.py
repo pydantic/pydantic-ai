@@ -219,7 +219,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'ComputerUse': Combines(
         'an agent has one display: the later configuration wins, but approval and the screenshot limit survive',
-        lambda: (ComputerUse(require_approval=True, keep_screenshots=2), ComputerUse(settle_seconds=0)),
+        lambda: (
+            ComputerUse(require_approval=True, keep_screenshots=2),
+            ComputerUse(settle_seconds=0, keep_screenshots=5),
+        ),
         _check_computer_use,
     ),
     'LocalWorkspace': Combines(
