@@ -235,11 +235,12 @@ job-level group with `queue: max`. Both jobs download the same artifacts with id
 steps; change them together. Keep the group on the job: a workflow-level group queues
 every completion, and GitHub cancels new runs once 100 are pending, which drops
 reconciliations and delays the hourly recovery. A job skipped by `if:` takes no queue
-slot. GitHub does not document this; in CI Review's job-level `agent` group, the skipped
-job of [run 39817346813](https://github.com/pydantic/pydantic-ai/actions/runs/39817346813)
-resolved at once while that of [run 39813059269](https://github.com/pydantic/pydantic-ai/actions/runs/39813059269)
-waited 71 minutes. Scheduled recovery stays in the group because it can open the same
-provider incident as a completion.
+slot. GitHub does not document this. In CI Review's job-level `gh-aw-claude-CI Review`
+group, the `agent` job of [run 39817346813](https://github.com/pydantic/pydantic-ai/actions/runs/39817346813),
+skipped by its `if:`, resolved at once, while the queued `agent` job of
+[run 39813059269](https://github.com/pydantic/pydantic-ai/actions/runs/39813059269) waited
+71 minutes before it started. Scheduled recovery stays in the group because it can open
+the same provider incident as a completion.
 
 Older compiled workflows that pass `MINIMAX_API_KEY` without a `ZAI_API_KEY`
 environment entry are intentionally blocked without an operational incident.

@@ -2005,6 +2005,16 @@ def test_provider_health_monitor_serializes_only_triaged_incident_work(tmp_path:
     assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
         'provider-health-monitor-triage'
     ]
+    # Triage without the source conclusion leaves a failed run unclassified that the monitor reconciles.
+    for triage_input in (
+        '          --conclusion "$CONCLUSION"\n',
+        '          CONCLUSION: ${{ github.event.workflow_run.conclusion }}\n',
+    ):
+        assert triage_input in trusted_config
+        _write(monitor, trusted_config.replace(triage_input, '', 1))
+        assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
+            'provider-health-monitor-triage'
+        ]
 
     triage_permissions = '      contents: read\n    outputs:\n'
     assert triage_permissions in trusted_config
