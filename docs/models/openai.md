@@ -581,14 +581,14 @@ print(result.output)
 #> True
 ```
 
-It reads the same `OPENAI_API_KEY`. Its provider, [`OpenAIDecisionsProvider`][pydantic_ai.providers.openai_decisions.OpenAIDecisionsProvider], takes the same arguments as [`OpenAIProvider`](#configure-the-provider), including a [custom client](#custom-openai-client):
+It reads the same `OPENAI_API_KEY`, and takes the same [`OpenAIProvider`](#configure-the-provider) as the other OpenAI models, including a [custom client](#custom-openai-client):
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel
-from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider
+from pydantic_ai.providers.openai import OpenAIProvider
 
-model = OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIDecisionsProvider(api_key='your-api-key'))
+model = OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIProvider(api_key='your-api-key'))
 agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
 ...
 ```
