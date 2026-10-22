@@ -138,10 +138,27 @@ class TestLogfireMCP:
         with pytest.raises(UserError, match='`client` owns the connection'):
             LogfireMCP(client='https://example.com/mcp', auth=auth, url=url)
 
+    def test_client_rejects_a_falsy_auth_function(self) -> None:
+        # Only `None` and `''` are unset: a function is a credential source however it converts to `bool`.
+        class FalsyToken:
+            def __call__(self, ctx: RunContext[None]) -> str | None:
+                return 'token'  # pragma: no cover - rejected before any run
+
+            def __bool__(self) -> bool:
+                return False
+
+        with pytest.raises(UserError, match='`client` owns the connection'):
+            LogfireMCP[None](client='https://example.com/mcp', auth=FalsyToken())
+
     def test_client_accepts_empty_auth(self) -> None:
         # The `auth` table documents `''` as unset, so it does not conflict with `client`.
         capability = LogfireMCP[None](client='https://example.com/mcp', auth='')
+        assert capability.auth is None
         assert transport(capability).url == 'https://example.com/mcp'
+
+    def test_empty_and_omitted_auth_combine(self, server: FastMCP) -> None:
+        # Both mean unset, so the two describe one connection rather than disagreeing on `auth`.
+        Agent(TestModel(), capabilities=[LogfireMCP(client=server), LogfireMCP(client=server, auth='')])
 
     def test_defer_loading_needs_no_id(self, server: FastMCP) -> None:
         Agent(TestModel(), capabilities=[LogfireMCP(client=server, defer_loading=True)])

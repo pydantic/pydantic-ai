@@ -67,9 +67,12 @@ class LogfireMCP(AbstractCapability[AgentDepsT]):
     """Hosted US, hosted EU, or self-hosted MCP endpoint. The API key is sent to it as a bearer token."""
 
     def __post_init__(self) -> None:
-        # The toolset always needs an id, so normalize here and let `combine` see the id the toolset uses.
+        # The toolset always needs an id, and `''` auth means unset, so normalize both here and let
+        # `combine` compare what the connection uses.
         self.id = self.id or _ID
-        if self.client is not None and (self.auth or self.url != LOGFIRE_US_MCP_URL):
+        if self.auth == '':
+            self.auth = None
+        if self.client is not None and (self.auth is not None or self.url != LOGFIRE_US_MCP_URL):
             raise UserError(
                 '`client` owns the connection, so it cannot be combined with `auth` or a `url` other than the default.'
             )
