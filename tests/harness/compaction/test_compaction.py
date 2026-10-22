@@ -40,7 +40,6 @@ from pydantic_ai.messages import (
     PartStartEvent,
     RetryFeedbackPart,
     RetryInfo,
-    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -2183,7 +2182,7 @@ def _user_texts(messages: list[ModelMessage]) -> list[str]:
 
 
 def _orphan_free(messages: list[ModelMessage]) -> bool:
-    """True if every kept tool return or tool retry prompt has its matching tool call among *messages*."""
+    """True if every kept tool return has its matching tool call among *messages*."""
     call_ids: set[str] = set()
     return_ids: set[str] = set()
     for m in messages:
@@ -2193,10 +2192,7 @@ def _orphan_free(messages: list[ModelMessage]) -> bool:
                     call_ids.add(p.tool_call_id)
         else:
             for p in m.parts:
-                # TODO(v3): drop the legacy `RetryPromptPart` case
-                if isinstance(p, ToolReturnPart) or (
-                    isinstance(p, RetryPromptPart) and p.tool_name is not None  # pyright: ignore[reportDeprecated]
-                ):
+                if isinstance(p, ToolReturnPart):
                     return_ids.add(p.tool_call_id)
     return return_ids <= call_ids
 
