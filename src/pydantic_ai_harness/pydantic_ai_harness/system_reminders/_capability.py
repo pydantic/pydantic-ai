@@ -608,7 +608,7 @@ def _quote(tag: str, body: str, **attrs: str) -> str:
     mid-conversation system messages, the reminder is sent inside the core `<system>` wrapper, which
     quoted text must not close either. Attribute values are HTML-escaped.
     """
-    # TODO: switch to `pydantic_ai._framing.wrap()` once it lands (#10547); this matches its escaping.
+    # TODO: switch to `pydantic_ai.framing.wrap()` (#10957), which also neutralizes opening tags and other registered frames.
     closing = re.compile(rf'<(?=\s*/\s*(?:{re.escape(tag)}|system)(?=[\s/>]|$))', re.IGNORECASE)
     escaped = closing.sub('&lt;', body)
     attributes = ''.join(f' {name}="{html.escape(value)}"' for name, value in attrs.items())
