@@ -149,7 +149,10 @@ from:
 
 Other citations stay on the saved messages, but their text is sent as plain text. That covers document and
 fetched-page citations, citations from other providers and APIs (such as OpenAI Chat), and history sent to a different
-provider. An OpenAI web citation is also left out if the text around its link was edited.
+provider. A citation is also left out when its text was changed or joined with other text.
+
+If you edit the text of a saved answer, also clear that part's `citations` and its `provider_details['citations']`.
+Pydantic AI leaves out citations whose text clearly changed, but an edit that keeps the same length can go unnoticed.
 
 History that's sent back unchanged goes out the same way every turn, so prompt caching keeps working.
 
