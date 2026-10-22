@@ -12,8 +12,8 @@
 # and must only ever be read back by that same lane — reading a neighbour's board
 # is how an agent adopts work it does not drive. The lane is the host conversation
 # (`$CLAUDE_CODE_HOST_SESSION_ID` or `$CODEX_THREAD_ID`) when available. Override:
-# `$HANDOFF_LANE`. Otherwise it falls back to the tmux session, then to "unlaned"
-# (an unlaned handoff is never matched by a reader — deliberately).
+# `$HANDOFF_LANE`. Otherwise it falls back to the tmux session. With no lane at all
+# it refuses to write, as latest-handoff.sh refuses to read.
 #
 # One handoff per session: if this session already registered a handoff, the
 # second call AMENDS it (same file, same index line) instead of appending a
@@ -38,7 +38,7 @@ fi
 USAGE="Usage: $0 [--writer <name>] <one-line-summary> [body-file]
 
 The lane is \$HANDOFF_LANE, else \$CLAUDE_CODE_HOST_SESSION_ID or \$CODEX_THREAD_ID, else the
-tmux session. Export HANDOFF_LANE where none of those is set, or the handoff is unlaned."
+tmux session. Set HANDOFF_LANE where none of those is set; without a lane this refuses to write."
 case "${1:-}" in
     -h|--help)
         echo "$USAGE"
@@ -110,6 +110,16 @@ if [[ "$WRITER" == *']'* || "$WRITER" == *' · '* ]]; then
     exit 1
 fi
 
+LANE_ID="${HANDOFF_LANE:-${CLAUDE_CODE_HOST_SESSION_ID:-${CODEX_THREAD_ID:-}}}"
+if [ -z "$LANE_ID" ] && [ -n "${TMUX:-}" ]; then
+    tmux_lane="$(tmux display-message -p '#S' 2>/dev/null || true)"
+    [ -n "$tmux_lane" ] && LANE_ID="tmux-$tmux_lane"
+fi
+if [ -z "$LANE_ID" ]; then
+    echo "error: no lane identity. None of HANDOFF_LANE, CLAUDE_CODE_HOST_SESSION_ID, CODEX_THREAD_ID or a tmux session is set." >&2
+    echo "Run this again with HANDOFF_LANE=<name>, and give the successor the same value." >&2
+    exit 1
+fi
 
 mkdir -p "$HAND_DIR"
 
@@ -172,22 +182,6 @@ fi
 LEDGER="$HAND_DIR/.sessions"
 LANES="$HAND_DIR/.lanes"
 
-LANE_ID="${HANDOFF_LANE:-${CLAUDE_CODE_HOST_SESSION_ID:-${CODEX_THREAD_ID:-}}}"
-if [ -z "$LANE_ID" ] && [ -n "${TMUX:-}" ]; then
-    tmux_lane="$(tmux display-message -p '#S' 2>/dev/null || true)"
-    [ -n "$tmux_lane" ] && LANE_ID="tmux-$tmux_lane"
-fi
-[ -z "$LANE_ID" ] && LANE_ID="unlaned"
-
-print_successor_lane() {
-    if [ "$LANE_ID" = "unlaned" ]; then
-        echo "warning: no lane identity, so this handoff is unlaned and no successor will find it." >&2
-        echo "Export HANDOFF_LANE=<name> and run this again." >&2
-    else
-        echo "Successor lane: HANDOFF_LANE=$LANE_ID" >&2
-    fi
-}
-
 validate_state_id() {
     local label="$1" value="$2"
     validate_index_text "$label" "$value"
@@ -245,7 +239,7 @@ if [ -n "$SESSION_ID" ] && [ -f "$LEDGER" ]; then
         TMP_INDEX=''
         echo "Amended this session's existing handoff (one handoff per session) → $INDEX" >&2
         echo "Handoff file: $DEST" >&2
-        print_successor_lane
+        echo "Successor lane: HANDOFF_LANE=$LANE_ID" >&2
         echo "$DEST"
         exit 0
     fi
@@ -325,6 +319,6 @@ fi
 
 echo "Appended handoff index entry → $INDEX" >&2
 echo "Handoff file: $DEST" >&2
-print_successor_lane
+echo "Successor lane: HANDOFF_LANE=$LANE_ID" >&2
 # stdout: path only (for scripting)
 echo "$DEST"
