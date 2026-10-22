@@ -487,6 +487,21 @@ async def test_include_glob_with_a_slash_keeps_ignore_files_and_hidden_paths(tmp
     assert await tools.search_files('needle', include_glob='nowhere/*.py', workspace=workspace) == 'No matches found.'
 
 
+async def test_a_brace_alternative_naming_a_hidden_directory_searches_it_with_rg(tmp_path: Path) -> None:
+    (tmp_path / '.github').mkdir()
+    (tmp_path / '.github' / 'x.yml').write_text('needle\n')
+    (tmp_path / 'src').mkdir()
+    (tmp_path / 'src' / 'x.yml').write_text('needle\n')
+    tools = FileSystem[None](tools=['grep', 'list_files']).get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    workspace = LocalWorkspaceBackend(tmp_path)
+    glob = '{.github,src}/**/*.yml'
+    found = '.github/x.yml:1:needle\nsrc/x.yml:1:needle'
+    assert await tools.search_files('needle', include_glob=glob, workspace=workspace) == found
+    assert await tools.grep('needle', glob=glob, workspace=workspace) == found
+    assert await tools.list_files(glob=glob, workspace=workspace) == '.github/x.yml\nsrc/x.yml'
+
+
 async def test_a_glob_naming_a_hidden_directory_searches_it_with_rg(tmp_path: Path) -> None:
     """A hidden directory the glob names is searched, as the walker and the POSIX fallback already do."""
     (tmp_path / '.github' / 'workflows').mkdir(parents=True)
