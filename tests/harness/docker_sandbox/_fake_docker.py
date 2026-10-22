@@ -105,6 +105,16 @@ exec)
     rm -f "$state/$name.pids/$$"
     exit "$status"
     ;;
+image)
+    # `image inspect -- TAG`: an image exists once `build` made it, or a test added it.
+    [ -f "$bin/images/$3" ] || { echo "Error: No such image: $3" >&2; exit 1; }
+    ;;
+build)
+    # `build --tag TAG -- CONTEXT`: keeps the context's Dockerfile as the image.
+    [ ! -e "$bin/fail-builds" ] || { echo 'E: Unable to locate package xvfb' >&2; exit 1; }
+    mkdir -p "$bin/images"
+    cp "$4/Dockerfile" "$bin/images/$2" || exit 1
+    ;;
 rm)
     name=$4
     [ -f "$state/$name" ] || { echo "Error response from daemon: No such container: $name" >&2; exit 1; }
@@ -121,6 +131,21 @@ rm)
     ;;
 esac
 """
+
+
+_FAKE_XDOTOOL = """#!/bin/sh
+bin=$(dirname "$0")
+printf '%s %s\\n' "$DISPLAY" "$*" >> "$bin/xdotool-calls"
+[ ! -e "$bin/no-display" ] || { echo "Can't open display: $DISPLAY" >&2; exit 1; }
+[ "$1" != getdisplaygeometry ] || echo '1280 800'
+"""
+"""Stands in for `xdotool` in a container: reports a 1280x800 display unless `no-display` exists, and logs each call."""
+
+_FAKE_XVFB = """#!/bin/sh
+echo 'Fatal server error: no screens found' >&2
+exit 1
+"""
+"""Stands in for an X server in a container that cannot start one; also keeps a host's real Xvfb from starting."""
 
 
 class FakeDocker:
@@ -158,6 +183,20 @@ class FakeDocker:
     def tmp_files(self, name: str) -> list[Path]:
         return list((self.bin_dir / 'containers' / f'{name}.tmp').glob('*'))
 
+    def images(self) -> list[str]:
+        return sorted(path.name for path in (self.bin_dir / 'images').glob('*'))
+
+    @property
+    def xdotool_calls(self) -> list[str]:
+        path = self.bin_dir / 'xdotool-calls'
+        return path.read_text().splitlines() if path.exists() else []
+
+    def fail_builds(self) -> None:
+        (self.bin_dir / 'fail-builds').touch()
+
+    def remove_display(self) -> None:
+        (self.bin_dir / 'no-display').touch()
+
     def hang_stops(self, name: str) -> None:
         (self.bin_dir / 'containers' / f'{name}.hang-stop').touch()
 
@@ -171,5 +210,9 @@ def install_fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Fake
     path.chmod(0o755)
     (bin_dir / 'podman').write_text(_FAKE_DOCKER)
     (bin_dir / 'podman').chmod(0o755)
+    (bin_dir / 'xdotool').write_text(_FAKE_XDOTOOL)
+    (bin_dir / 'xdotool').chmod(0o755)
+    (bin_dir / 'Xvfb').write_text(_FAKE_XVFB)
+    (bin_dir / 'Xvfb').chmod(0o755)
     monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
     return FakeDocker(bin_dir)

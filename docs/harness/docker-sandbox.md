@@ -152,6 +152,27 @@ if __name__ == '__main__':
 
 The `finally` removes the container even when setup or the run fails. To keep it instead, store `backend.ref` and pass it as `workspace=` to reattach later. `DockerSandbox`'s settings don't apply to a backend you pass as `workspace=`; give the backend its own.
 
+## Give the agent a desktop
+
+Pass `desktop=True` for a container with a graphical display, which [`ComputerUse`](../capabilities/computer-use.md) lets the agent see and control:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ComputerUse
+from pydantic_ai_harness.docker_sandbox import DockerSandbox
+
+agent = Agent('{{ anthropic:large }}', capabilities=[DockerSandbox(desktop=True), ComputerUse()])
+
+
+async def main():
+    result = await agent.run('Open Firefox and find the current Python release on python.org.')
+    print(result.output)
+```
+
+Without an `image`, the first run on a machine builds one from `DESKTOP_DOCKERFILE`: Debian with a window manager, a terminal (`xterm`) and Firefox. Later runs reuse the image. The display is 1280x800 and starts when the agent first uses it. The agent keeps the container's shell and files too, so `Coder` and `ComputerUse` can work in the same container.
+
+A custom `image` needs Xvfb, `xdotool` and `scrot`, plus whatever applications the agent should use; `DESKTOP_DOCKERFILE` is a starting point for one.
+
 ## Clean up
 
 A run never removes its container. Remove it, with its anonymous volumes, with the ref you stored:
@@ -204,6 +225,7 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM s
 | `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `True`; `False` runs it with `--network none`. |
 | `docker_args` | Extra `docker run` arguments for a new container, such as mounts, `--memory` or `--user`; a `--pids-limit` here replaces the default of 2048. Default: `()`. |
 | `executable` | The container CLI to run, such as `'podman'`, looked up on `PATH` when the capability is created. Default: `'docker'`. |
+| `desktop` | Give the container a 1280x800 graphical display for [`ComputerUse`](../capabilities/computer-use.md). Without an `image`, builds the desktop image on first use. Default: `False`. |
 
 ## Platforms
 
@@ -218,3 +240,5 @@ The machine running the agent must be POSIX (Linux or macOS), like [`LocalWorksp
 ::: pydantic_ai_harness.docker_sandbox.DockerSandbox
 
 ::: pydantic_ai_harness.docker_sandbox.DockerSandboxBackend
+
+::: pydantic_ai_harness.docker_sandbox.DockerDesktopBackend

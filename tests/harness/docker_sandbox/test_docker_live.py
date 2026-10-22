@@ -10,11 +10,12 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 
+import anyio
 import pytest
 
-from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef, WorkspaceTimeoutError
+from pydantic_ai.workspaces import Click, KeyPress, TypeText, WorkspaceBackend, WorkspaceRef, WorkspaceTimeoutError
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
-from pydantic_ai_harness.docker_sandbox import DockerSandbox, DockerSandboxBackend
+from pydantic_ai_harness.docker_sandbox import DockerDesktopBackend, DockerSandbox, DockerSandboxBackend
 
 LIVE_IMAGE = 'python:3.13-slim'
 EXECUTABLE = os.environ.get('PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE', 'docker')
@@ -135,3 +136,36 @@ class TestLiveDocker(WorkspaceBackendSuite):
             shell=True,
         )
         assert alive.exit_code != 0
+
+
+@pytest.mark.docker_live
+class TestLiveDockerDesktop(WorkspaceBackendSuite):
+    """Runs against real containers of the desktop image, which the first test builds if this machine lacks it."""
+
+    @pytest.fixture
+    def can_detect_exit_with_inherited_output_pipes(self) -> bool:
+        return EXECUTABLE == 'podman'
+
+    @pytest.fixture
+    async def backend(self) -> AsyncIterator[WorkspaceBackend]:
+        backend = DockerDesktopBackend(executable=EXECUTABLE)
+        yield backend
+        if backend.ref is not None:
+            await _destroy(backend)
+
+    async def test_typed_text_reaches_the_focused_window(self, backend: WorkspaceBackend) -> None:
+        assert isinstance(backend, DockerDesktopBackend)
+        await backend.display_size()  # starts the display
+        await backend.run(
+            'setsid xterm -geometry 60x10+100+100 -e sh -c "cat > typed.txt" >/dev/null 2>&1 &',
+            shell=True,
+            env={'DISPLAY': ':1'},
+        )
+        await anyio.sleep(2)
+
+        await backend.act(Click(x=300, y=180))
+        await backend.act(TypeText(text='hello, desktop'))
+        await backend.act(KeyPress(keys=('enter',)))
+        await anyio.sleep(1)
+
+        assert (await backend.run(['cat', 'typed.txt'])).stdout == 'hello, desktop\n'

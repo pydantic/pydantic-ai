@@ -23,9 +23,9 @@ async def main():
     print(result.output)
 ```
 
-1. Any capability whose workspace has a display: its backend implements
-   [`SupportsComputerUse`][pydantic_ai.workspaces.SupportsComputerUse]. See
-   [Controlling a display](../workspace.md#controlling-a-display) to give a sandbox one.
+1. Any capability whose workspace has a display, such as
+   [`DockerSandbox(desktop=True)`](../harness/docker-sandbox.md#give-the-agent-a-desktop). To give your own sandbox
+   one, see [Controlling a display](../workspace.md#controlling-a-display).
 
 The agent keeps the rest of the workspace, so it can mix desktop steps with commands and file tools on the same
 machine.

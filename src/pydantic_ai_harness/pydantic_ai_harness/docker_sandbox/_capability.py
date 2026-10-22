@@ -12,6 +12,7 @@ from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace_provider import check_working_dir
 from pydantic_ai_harness.docker_sandbox._backend import (
     PROVIDER,
+    DockerDesktopBackend,
     DockerSandboxBackend,
     remove_container,
     resolve_executable,
@@ -62,6 +63,13 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     executable: str = 'docker'
     """The container CLI to run; `'podman'` works too. It is looked up on `PATH` once, when the capability is created."""
 
+    desktop: bool = False
+    """Give the container a 1280x800 graphical display, for [`ComputerUse`][pydantic_ai.capabilities.ComputerUse].
+
+    Without an `image`, the capability builds one with a desktop, a terminal and a browser on first use (once per
+    machine). A custom `image` needs Xvfb, `xdotool` and `scrot`.
+    """
+
     _executable_path: str = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -75,9 +83,8 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
 
     def backend(self, ref: WorkspaceRef) -> DockerSandboxBackend:
         """Attach lazily to an existing container by ref, starting it on first use if it is stopped."""
-        return DockerSandboxBackend(
-            ref=ref, working_dir=self.working_dir, env=self.env, executable=self._executable_path
-        )
+        backend_type = DockerDesktopBackend if self.desktop else DockerSandboxBackend
+        return backend_type(ref=ref, working_dir=self.working_dir, env=self.env, executable=self._executable_path)
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Remove a container and its anonymous volumes, whether it is running or not."""
@@ -90,6 +97,15 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
         del ctx
         if ref is not None:
             return self.backend(ref) if ref.provider == PROVIDER else None
+        if self.desktop:
+            return DockerDesktopBackend(
+                image=self.image,
+                working_dir=self.working_dir,
+                env=self.env,
+                allow_internet_access=self.allow_internet_access,
+                docker_args=self.docker_args,
+                executable=self._executable_path,
+            )
         if self.image is None:
             return None
         return DockerSandboxBackend(
