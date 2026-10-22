@@ -149,7 +149,9 @@ print(agent.run_sync('deploy').output)
 
 Key parameters:
 - `InputGuardrail(guard, parallel=False)`: `parallel=True` races the guard with the model call
-  (no added latency on pass; tokens spent if it trips late); `replace` is refused in parallel mode.
+  (no added latency on pass; tokens spent if it trips late; a request that raises or is retried
+  first still waits for the verdict); `replace` is refused in parallel mode.
+  `CodeMode` tool calls started by `eager` or `speculate` during the stream wait for its verdict.
 - `OutputGuardrail(guard)`: guard receives the output object unchanged (a Pydantic model for
   structured output, not a string). Scan its JSON:
   `lambda out: redact_secrets(out.model_dump_json()).action == 'allow'` blocks on a match; to redact,
@@ -456,11 +458,16 @@ print(agent.run_sync('Set up storage').output)
   answer) raises `ValueError` and fails the run; call `check_response(request, response)` (from
   `pydantic_ai_harness.ask_user`) first.
 - The run waits inside the tool call. `timeout=<seconds>` cancels a slow answerer; the model gets
-  `TIMED_OUT` and `AskUserAnsweredEvent` fires with `timed_out=True`.
+  `TIMED_OUT` and `AskUserAnsweredEvent` fires with `timed_out=True`. A thread cannot be cancelled:
+  wrap blocking work in `anyio.to_thread.run_sync(..., abandon_on_cancel=True)`, and read terminal
+  input with an async prompt library, not `input()` in a thread.
+- By default, parallel `ask_user_question` calls reach the answerer concurrently; serialize in the
+  answerer if the UI shows one request at a time. Custom text has no length cap, so bound client input.
 - `answerer=None` defers every call: the run ends with `DeferredToolRequests` (add it to
   `output_type`). Rebuild each request with `AskUserRequest.from_tool_call(call)`, then resume with
   `DeferredToolResults(calls={call.tool_call_id: ask_user_result(request, response)})`.
-- Observe with `AskUserRequestedEvent` / `AskUserAnsweredEvent`. Two `AskUser` on one agent
+- Observe with `AskUserRequestedEvent` / `AskUserAnsweredEvent`. An answerer that raises still
+  emits the answered event, with `failed=True`, before its error propagates. Two `AskUser` on one agent
   collide on the tool name. It has a spec name, but a spec cannot supply the `answerer` callable,
   so pass it with `capabilities=` on `Agent.from_spec`/`Agent.from_file`.
 

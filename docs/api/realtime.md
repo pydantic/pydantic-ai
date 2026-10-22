@@ -236,8 +236,8 @@ turned out not to answer to a later one, as `InferredLifecycle` does for a respo
 settles inputs sent while a response was under way that it answers after all, as GPT-Live does by speaking to text
 in the reply it is giving. Neither moves anything in history.
 
-A provider can also give up on tool calls before their results are in: Eleven Realtime does once another response
-starts, and GPT-Live when its delegated backend fails. The connection then names them in a
+A provider can also give up on tool calls before their results are in: Eleven Realtime does once it starts a reply to
+the user, and GPT-Live when its delegated backend fails. The connection then names them in a
 [`ToolCallsAbandoned`][pydantic_ai.realtime.lifecycle.ToolCallsAbandoned]: the tools keep running and their results
 are recorded, but no reply to them is waited for, so the exchange ends with the reply that is under way. Unlike a
 [`ToolCallCancelled`][pydantic_ai.realtime.codec.ToolCallCancelled], it doesn't stop them.

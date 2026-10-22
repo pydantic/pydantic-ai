@@ -5,7 +5,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Never, cast
+from typing import TYPE_CHECKING, Never
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
@@ -16,6 +16,8 @@ from pydantic_ai_harness._workspace_provider import check_integer, check_working
 from pydantic_ai_harness.modal_sandbox._backend import (
     DEFAULT_APP_NAME,
     DEFAULT_SANDBOX_TIMEOUT,
+    MAX_SANDBOX_TIMEOUT,
+    MIN_SANDBOX_TIMEOUT,
     ModalSandboxBackend,
     terminate_sandbox,
 )
@@ -131,6 +133,22 @@ def _removed_arguments_message(names: list[str]) -> str:
     )
 
 
+def _sandbox_id_ref(sandbox_id: object) -> WorkspaceRef | None:
+    """The ref the deprecated `sandbox_id=` names.
+
+    `removed_arguments` is typed `Never` to close the signature, so its values arrive here as
+    `object`, whatever the caller passed, and are checked before they become a ref.
+    """
+    if sandbox_id is None:
+        return None
+    if not isinstance(sandbox_id, str):
+        raise UserError(f'`sandbox_id` must be a string naming a Modal sandbox, got {sandbox_id!r}.')
+    if not sandbox_id:
+        # Treating it as absent would silently create and bill a new sandbox.
+        raise UserError('`sandbox_id` must name a Modal sandbox, got an empty string.')
+    return WorkspaceRef(provider='modal', id=sandbox_id)
+
+
 @dataclass(kw_only=True, init=False)
 class ModalSandbox(AbstractCapability[AgentDepsT]):
     """Supply a Modal sandbox as the run's workspace.
@@ -220,9 +238,10 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             )
         # Checked here rather than when the backend first creates a sandbox, so a bad value fails
         # where it is written instead of at the first workspace operation of some later run.
-        if type(sandbox_timeout) is not int or not 10 <= sandbox_timeout <= 86_400:
+        if type(sandbox_timeout) is not int or not MIN_SANDBOX_TIMEOUT <= sandbox_timeout <= MAX_SANDBOX_TIMEOUT:
             raise UserError(
-                f'sandbox_timeout must be an integer between 10 and 86400 seconds, got {sandbox_timeout!r}.'
+                f'sandbox_timeout must be an integer between {MIN_SANDBOX_TIMEOUT} and {MAX_SANDBOX_TIMEOUT} '
+                f'seconds, got {sandbox_timeout!r}.'
             )
         check_integer('idle_timeout', idle_timeout, optional=True)
         check_working_dir(working_dir)
@@ -238,12 +257,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         self.env = env
         self.warn_if_no_tools = warn_if_no_tools
         self._warned_no_tools = False
-        # `removed_arguments` is typed `Never` to close the signature; its values are whatever the caller passed.
-        sandbox_id = cast('str | None', removed_arguments.get('sandbox_id'))
-        if sandbox_id == '':
-            # Treating it as absent would silently create and bill a new sandbox.
-            raise UserError('`sandbox_id` must name a Modal sandbox, got an empty string.')
-        self._sandbox_id_ref = WorkspaceRef(provider='modal', id=sandbox_id) if sandbox_id is not None else None
+        self._sandbox_id_ref = _sandbox_id_ref(removed_arguments.get('sandbox_id'))
 
     def backend(self, ref: WorkspaceRef) -> ModalSandboxBackend:
         """Construct a backend for a stored Modal ref without opening the sandbox."""

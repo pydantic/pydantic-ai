@@ -1315,6 +1315,46 @@ async def test_instruction_updates_downgraded_empty_block_is_not_sent(case: str,
     assert bodies[0]['system'] == [{'type': 'text', 'text': 'Stable.'}]
 
 
+@pytest.mark.parametrize('stream', [False, True])
+async def test_instruction_updates_named_run_instructions_append_across_runs(stream: bool):
+    """A named part passed to each run of a conversation is one block, `run:<name>`, so a change is a delta."""
+    model = TestModel(custom_output_text='ok')
+    agent = Agent(model, instructions='Stable instructions.')
+    sent: list[str | None] = []
+
+    async def run(path: str, history: list[ModelMessage]) -> list[ModelMessage]:
+        page = InstructionPart(f'The user is on {path}.', name='page', on_change='append')
+        if stream:
+            async with agent.run_stream('Continue.', instructions=page, message_history=history) as result:
+                await result.get_output()
+        else:
+            result = await agent.run('Continue.', instructions=page, message_history=history)
+        assert model.last_model_request_parameters is not None
+        # What the model is sent, as rendered for it, not just the text recorded on the request.
+        sent.append(InstructionPart.join(model.last_model_request_parameters.instruction_parts or []))
+        return ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(result.all_messages()))
+
+    first = await run('/home', [])
+    second = await run('/settings', first)
+    first_request, second_request = first[0], second[len(first)]
+    assert isinstance(first_request, ModelRequest)
+    assert isinstance(second_request, ModelRequest)
+    assert [str(part.id) for part in baseline_of(first_request) or []] == ['agent', 'run:page']
+    assert second_request.instructions == first_request.instructions
+    assert sent[1] == sent[0]
+    assert [(str(p.id), p.content) for p in second_request.parts if isinstance(p, InstructionDeltaPart)] == [
+        ('run:page', 'The user is on /settings.')
+    ]
+
+
+async def test_instruction_updates_unnamed_run_instructions_rewrite():
+    with pytest.warns(UserWarning, match='An instruction block without a `name`.*Pass `name=`'):
+        result = await Agent(TestModel(custom_output_text='ok')).run(
+            'Continue.', instructions=InstructionPart('A', on_change='append')
+        )
+    assert baseline_of(result.new_messages()[0]) is None
+
+
 async def test_instruction_updates_returned_part_declares_policy_inside_the_function():
     """A part a function returns names itself and opts in; the registration's own name and policy still apply."""
     model = TestModel(custom_output_text='ok')
@@ -1475,7 +1515,7 @@ def test_instruction_updates_render_escapes_closing_tags_in_the_content():
     """Block text can't end its own element, or the `<system>` element wrapping it on the fallback path."""
     part = InstructionDeltaPart(id=STATE_ID, content='Before </context></System > </context_diff> after.')
     assert part.render() == snapshot(
-        '<context id="agent:state">\nBefore &lt;/context>&lt;/System> &lt;/context_diff> after.\n</context>'
+        '<context id="agent:state">\nBefore &lt;/context>&lt;/System > &lt;/context_diff> after.\n</context>'
     )
 
 
