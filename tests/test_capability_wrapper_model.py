@@ -12,7 +12,7 @@ import anyio
 import anyio.lowlevel
 import pytest
 
-from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext
+from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext, capture_run_messages
 from pydantic_ai.capabilities import AbstractCapability, Hooks, WrapperCapability
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -437,3 +437,34 @@ async def test_a_task_started_while_the_wrapper_is_entered_enters_the_wrapped_mo
     wrapper.leave.set()
     await wrapper.task
     assert events == ['base enter', 'enter', ('request', True), 'exit', 'base exit']
+
+
+class _SingleUseModel(_ScopedModel):
+    async def __aenter__(self) -> Self:
+        if 'enter' in self.events:
+            raise RuntimeError('Entered twice')
+        return await super().__aenter__()
+
+
+@dataclass
+class _ScopedSingleUse(AbstractCapability[Any]):
+    events: list[object]
+
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        return _SingleUseModel(model, self.events)
+
+
+async def test_a_stream_the_consumer_failed_on_is_recorded_without_entering_the_wrapper_again() -> None:
+    """Only cancelling a suspended job goes through the model that sent the request again."""
+    events: list[object] = []
+    agent = Agent(TestModel(), capabilities=[_ScopedSingleUse(events)])
+    with capture_run_messages() as messages:
+        async with agent.iter('Hello') as run:
+            with pytest.raises(ValueError, match='Consumer failed'):
+                async for node in run:  # pragma: no branch
+                    if Agent.is_model_request_node(node):
+                        async with node.stream(run.ctx) as stream:
+                            async for _ in stream:  # pragma: no branch
+                                raise ValueError('Consumer failed')
+    assert events == ['enter', ('stream', True), 'exit']
+    assert isinstance(partial := messages[-1], ModelResponse) and partial.state == 'interrupted'

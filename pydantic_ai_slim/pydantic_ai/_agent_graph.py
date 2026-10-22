@@ -6,7 +6,7 @@ import inspect
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import Context, ContextVar, copy_context
 from copy import copy, deepcopy
 from dataclasses import field, replace
@@ -1149,6 +1149,21 @@ def _keep_default_output_mode(
 # runs the whole chain inside one durable unit.
 
 
+async def _cancel_interrupted_job(request_context: ModelRequestContext, response: _messages.ModelResponse) -> None:
+    """Cancel the job of a suspended response a stream was interrupted on, through the model that sent it.
+
+    A capability's wrapper around that model was exited with the stream, so it's entered again for the cancellation,
+    as for each call it serves, shielded as graph teardown may be under cancellation. Like the cancellation itself,
+    entering it is best effort: a failure doesn't replace the error that interrupted the stream.
+    """
+    if request_context._serving_wrapper is None:  # pyright: ignore[reportPrivateUsage]
+        await cancel_suspended_job(request_context.model, response)
+        return
+    with anyio.CancelScope(shield=True), suppress(Exception):
+        async with _serving_scope(request_context):
+            await cancel_suspended_job(request_context.model, response)
+
+
 @asynccontextmanager
 async def _serving_scope(request_context: ModelRequestContext) -> AsyncGenerator[None]:
     """Enter the model a capability wrapped the request's model in for the request, if any."""
@@ -1769,21 +1784,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     # check; raising `UsageLimitExceeded` here would mask `stream_error`.
                     if agent_stream_holder:  # pragma: no branch
                         partial = agent_stream_holder[0].response
-                        # A capability's wrapper is entered again, as cancelling a suspended response goes through the
-                        # model that sent it, and shielded, as graph teardown may be under cancellation, so entering
-                        # it doesn't stop the job being cancelled and the response committed.
-                        serving_wrapper = wrap_request_context._serving_wrapper  # pyright: ignore[reportPrivateUsage]
-                        with anyio.CancelScope(shield=serving_wrapper is not None):
-                            async with _serving_scope(wrap_request_context):
-                                await self._commit_interrupted_response(
-                                    ctx,
-                                    wrap_request_context.model,
-                                    partial,
-                                    # The handler recorded the response it billed, unless `wrap_model_request`
-                                    # had already stopped it before the consumer did.
-                                    _interrupted_response or _interrupted_stream_response(stream_error, partial),
-                                    (_handler_request_context or wrap_request_context).messages,
-                                )
+                        # The handler recorded the response it billed, unless `wrap_model_request` had already
+                        # stopped it before the consumer did.
+                        recorded = _interrupted_response or _interrupted_stream_response(stream_error, partial)
+                        if partial.state == 'suspended' and recorded.state == 'interrupted':
+                            # A genuine failure rather than a walk-away: cancel the still-live job so it doesn't leak.
+                            await _cancel_interrupted_job(wrap_request_context, partial)
+                        self._commit_interrupted_response(
+                            ctx, partial, recorded, (_handler_request_context or wrap_request_context).messages
+                        )
                 else:
                     try:
                         try:
@@ -1816,9 +1825,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 await agent_stream_holder[0].aclose_events()
 
     @staticmethod
-    async def _commit_interrupted_response(
+    def _commit_interrupted_response(
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
-        model: models.Model,
         streamed: _messages.ModelResponse,
         recorded: _messages.ModelResponse,
         request_messages: Sequence[_messages.ModelMessage],
@@ -1829,9 +1837,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         `request_messages` are the messages the stream was requested with, which end in the suspended response it
         resumed, if any.
         """
-        if streamed.state == 'suspended' and recorded.state == 'interrupted':
-            # A genuine failure rather than a walk-away: cancel the still-live job so it doesn't leak.
-            await cancel_suspended_job(model, streamed)
         recorded.run_id = ctx.state.run_id
         recorded.conversation_id = ctx.state.conversation_id
         recorded.workspace_ref = ctx.deps.workspace_ref
