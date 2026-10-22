@@ -12,7 +12,7 @@ import pydantic
 import pydantic_core
 from pydantic import ValidationError
 
-from . import _usage_attribution, messages as _messages
+from . import _tool_call_reservations, _usage_attribution, messages as _messages
 from ._deferred import filter_deferred_results
 from ._output import (
     OutputSchema,
@@ -1293,6 +1293,7 @@ class ToolManager(Generic[AgentDepsT]):
             )
         except SkipToolExecution as e:
             _usage_attribution.record_tool_call(usage)
+            _tool_call_reservations.release_counted_tool_call(validated.call)
             tool_result = e.result
 
         # Only record success when wrapping is requested, mirroring the `failed_tools` gating:
@@ -1335,6 +1336,7 @@ class ToolManager(Generic[AgentDepsT]):
             raise self._wrap_error_as_retry(name, validated.call, e, attempt=attempt, max_retries=max_retries) from e
 
         _usage_attribution.record_tool_call(usage)
+        _tool_call_reservations.release_counted_tool_call(validated.call)
 
         return tool_result
 

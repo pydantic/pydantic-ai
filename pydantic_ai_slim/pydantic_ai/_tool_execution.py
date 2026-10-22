@@ -6,6 +6,7 @@ import inspect
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator, Sequence
+from contextlib import nullcontext
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Generic, Literal, assert_never, cast
 
@@ -19,6 +20,7 @@ from pydantic_graph.basenode import NodeRunEndT
 
 from . import _output, exceptions, messages as _messages, result
 from ._deferred_capabilities import LoadCapabilityCallPart
+from ._tool_call_reservations import ToolCallReservation, reserved_tool_calls
 from .exceptions import ToolFailedError, ToolRetryError
 from .tools import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDefinitionKind, ToolDenied
 
@@ -436,6 +438,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         init=False
     )
     deferred_metadata: dict[str, dict[str, Any]] = dataclasses.field(init=False)
+    # The function calls approved against `tool_calls_limit` that are still running or yet to run.
+    tool_call_reservation: ToolCallReservation | None = dataclasses.field(default=None, init=False)
 
     def __post_init__(self) -> None:
         self.final_result_was_set_externally = self.final_result is not None
@@ -509,19 +513,27 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     async def run(self) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Run the configured strategy, then apply retry-wins and resolve deferred calls."""
-        # Check tool-call usage limits up front for the full count of function-kind calls.
+        # Check tool-call usage limits up front for the full count of function-kind calls, plus the calls
+        # other runs sharing this usage (delegates, or the run that delegated to this one) have approved
+        # but not finished, then reserve this batch for them in turn.
+        usage = self.ctx.state.usage
         if self.ctx.deps.usage_limits.tool_calls_limit is not None and self.function_indices:
-            projected_usage = deepcopy(self.ctx.state.usage)
+            projected_usage = deepcopy(usage)
             # usage-attribution: a deepcopy, projected forward to check a limit before the calls run
-            projected_usage.tool_calls += len(self.function_indices)
+            projected_usage.tool_calls += reserved_tool_calls(usage) + len(self.function_indices)
             self.ctx.deps.usage_limits.check_before_tool_call(projected_usage)
+            self.tool_call_reservation = ToolCallReservation(usage, [self.tool_calls[i] for i in self.function_indices])
 
-        async for event in self._run_strategy():
-            yield event
+        try:
+            async for event in self._run_strategy():
+                yield event
 
-        self._apply_retry_wins()
-        async for event in self._finalize_deferred():
-            yield event
+            self._apply_retry_wins()
+            async for event in self._finalize_deferred():
+                yield event
+        finally:
+            if self.tool_call_reservation is not None:
+                self.tool_call_reservation.release_all()
 
     @abstractmethod
     def _run_strategy(self) -> AsyncIterator[_messages.AgentStreamEvent]:
@@ -765,7 +777,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         try:
             if tool_call_result is None or isinstance(tool_call_result, ToolApproved):
                 if validated is not None:
-                    tool_result = await self.tool_manager.execute_tool_call(validated)
+                    reservation = self.tool_call_reservation
+                    with reservation.running(call) if reservation is not None else nullcontext():
+                        tool_result = await self.tool_manager.execute_tool_call(validated)
                 else:
                     raise RuntimeError('Expected validated tool call')  # pragma: no cover
             elif isinstance(tool_call_result, ToolDenied):

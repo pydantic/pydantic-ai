@@ -15,20 +15,26 @@ from pydantic_core import to_jsonable_python
 
 from pydantic_ai import (
     Agent,
+    ApprovalRequired,
     CostCalculationFailedWarning,
     CostNotFoundWarning,
+    DeferredToolRequests,
+    DeferredToolResults,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     RetryInfo,
     RunContext,
     TextPart,
+    ToolApproved,
     ToolCallPart,
     ToolReturnPart,
     UsageLimitExceeded,
     UserPromptPart,
 )
 from pydantic_ai._genai_prices import best_effort_price, calculate_price_for_usage
+from pydantic_ai._tool_call_reservations import reserved_tool_calls
+from pydantic_ai.capabilities import HandleDeferredToolCalls
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -1161,6 +1167,187 @@ async def test_parallel_tool_calls_limit_enforced():
 
     # Only the first batch of 5 tools should have executed
     assert len(executed_tools) == 5
+
+
+def _delegating_agent(*, delegations: int, child_tool_calls: int) -> Agent[object, str]:
+    """A parent that delegates `delegations` tasks in parallel to a child run sharing its usage and limits."""
+
+    def child_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls_made = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+        if calls_made < child_tool_calls:
+            return ModelResponse(parts=[ToolCallPart('work', tool_call_id=f'work_{calls_made}')])
+        return ModelResponse(parts=[TextPart('worked')])
+
+    child = Agent(FunctionModel(child_model))
+
+    @child.tool_plain
+    async def work() -> str:
+        await asyncio.sleep(0)  # let the sibling delegates interleave
+        return 'done'
+
+    def parent_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart('delegate', tool_call_id=f'delegate_{i}') for i in range(delegations)]
+            )
+        return ModelResponse(parts=[TextPart('all delegated')])
+
+    parent = Agent(FunctionModel(parent_model))
+
+    @parent.tool
+    async def delegate(ctx: RunContext[object]) -> str:
+        result = await child.run('Work', usage=ctx.usage, usage_limits=ctx.usage_limits)
+        return result.output
+
+    return parent
+
+
+@pytest.mark.parametrize(
+    ('delegations', 'child_tool_calls', 'tool_calls_limit'),
+    [
+        pytest.param(2, 1, 4, id='parallel'),
+        pytest.param(1, 2, 3, id='sequential'),
+    ],
+)
+async def test_tool_calls_limit_is_exact_across_runs_sharing_usage(
+    delegations: int, child_tool_calls: int, tool_calls_limit: int
+) -> None:
+    """Delegate runs sharing the parent's usage count the delegating calls and each other's calls in flight."""
+    agent = _delegating_agent(delegations=delegations, child_tool_calls=child_tool_calls)
+    usage = RunUsage()
+    result = await agent.run('Delegate', usage=usage, usage_limits=UsageLimits(tool_calls_limit=tool_calls_limit))
+    assert result.output == 'all delegated'
+    assert usage.tool_calls == tool_calls_limit
+    assert reserved_tool_calls(usage) == 0
+
+    # One tool call fewer and a delegate's call is refused, where it used to be counted only after it ran.
+    agent = _delegating_agent(delegations=delegations, child_tool_calls=child_tool_calls)
+    usage = RunUsage()
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=re.escape(
+            f'The next tool call(s) would exceed the tool_calls_limit of {tool_calls_limit - 1} '
+            f'(tool_calls={tool_calls_limit}).'
+        ),
+    ):
+        await agent.run('Delegate', usage=usage, usage_limits=UsageLimits(tool_calls_limit=tool_calls_limit - 1))
+    assert usage.tool_calls < tool_calls_limit - 1
+    assert reserved_tool_calls(usage) == 0
+
+
+async def test_tool_call_counted_inside_another_keeps_its_reservation() -> None:
+    """A delegate's own counted call releases only its own reservation, not the delegating call's."""
+
+    def child_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('work', tool_call_id='work')])
+        return ModelResponse(parts=[TextPart('worked')])
+
+    child = Agent(FunctionModel(child_model))
+
+    @child.tool_plain
+    def work() -> str:
+        return 'done'
+
+    def parent_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('delegate', tool_call_id='delegate')])
+        return ModelResponse(parts=[TextPart('delegated')])
+
+    parent = Agent(FunctionModel(parent_model))
+    reserved_after_child: list[int] = []
+
+    @parent.tool
+    async def delegate(ctx: RunContext[object]) -> str:
+        # Without limits of its own, the delegate reserves nothing, but its call is still counted.
+        result = await child.run('Work', usage=ctx.usage)
+        reserved_after_child.append(reserved_tool_calls(ctx.usage))
+        return result.output
+
+    usage = RunUsage()
+    await parent.run('Delegate', usage=usage, usage_limits=UsageLimits(tool_calls_limit=2))
+    assert reserved_after_child == [1]
+    assert usage.tool_calls == 2
+    assert reserved_tool_calls(usage) == 0
+
+
+async def test_tool_call_approved_with_override_args_is_released_once_counted() -> None:
+    """An approval's `override_args` replace the call part, but its reservation is still released when it's counted."""
+
+    def child_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('work', tool_call_id='work')])
+        return ModelResponse(parts=[TextPart('worked')])
+
+    child = Agent(FunctionModel(child_model))
+
+    @child.tool_plain
+    def work() -> str:
+        return 'done'
+
+    def parent_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('quick', {'value': 'original'}, tool_call_id='quick'),
+                    ToolCallPart('delegate', tool_call_id='delegate'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    parent = Agent(FunctionModel(parent_model), output_type=[str, DeferredToolRequests])
+
+    @parent.tool_plain(requires_approval=True)
+    def quick(value: str) -> str:
+        return value
+
+    @parent.tool(requires_approval=True)
+    async def delegate(ctx: RunContext[object]) -> str:
+        while not ctx.usage.tool_calls:  # start the delegate once `quick` is counted
+            await asyncio.sleep(0)
+        result = await child.run('Work', usage=ctx.usage, usage_limits=ctx.usage_limits)
+        return result.output
+
+    first = await parent.run('Go')
+    assert isinstance(first.output, DeferredToolRequests)
+    usage = RunUsage()
+    result = await parent.run(
+        message_history=first.all_messages(),
+        deferred_tool_results=DeferredToolResults(
+            approvals={'quick': ToolApproved(override_args={'value': 'overridden'}), 'delegate': True}
+        ),
+        usage=usage,
+        usage_limits=UsageLimits(tool_calls_limit=3),
+    )
+    assert result.output == 'done'
+    assert usage.tool_calls == 3
+    assert reserved_tool_calls(usage) == 0
+
+
+async def test_tool_calls_limit_counts_call_approved_inline() -> None:
+    """A call that defers is released from the batch, and counted once it's approved inline and runs."""
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('guarded', tool_call_id='guarded')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def approve(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    agent = Agent(FunctionModel(model), capabilities=[HandleDeferredToolCalls(handler=approve)])
+
+    @agent.tool
+    def guarded(ctx: RunContext[object]) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return 'ran'
+
+    usage = RunUsage()
+    result = await agent.run('Go', usage=usage, usage_limits=UsageLimits(tool_calls_limit=1))
+    assert result.output == 'done'
+    assert usage.tool_calls == 1
+    assert reserved_tool_calls(usage) == 0
 
 
 def test_usage_unknown_provider():

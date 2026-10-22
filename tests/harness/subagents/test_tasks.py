@@ -10,6 +10,7 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai._tool_call_reservations import reserved_tool_calls
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     INTERRUPTED_TOOL_RETURN_CONTENT,
@@ -907,6 +908,95 @@ async def test_child_cost_budget_counts_from_the_spend_at_launch() -> None:
             await parent.run('go', conversation_id='root', usage=usage)
             (record,) = owner.records.values()
             assert record.outcome == 'ok'
+
+
+async def test_child_tool_call_budget_counts_from_the_calls_approved_at_launch() -> None:
+    # The parent's `tool_calls_limit` reserves its in-flight `delegate_task` call against the shared usage;
+    # that call is the parent's, so it doesn't eat into the child's own budget of two calls.
+    owner = DelegationTasks()
+    child = Agent(TestModel(custom_output_text='evidence'), deps_type=object, name='worker')
+
+    @child.tool_plain
+    def first() -> str:
+        return 'one'
+
+    @child.tool_plain
+    def second() -> str:
+        return 'two'
+
+    usage = RunUsage()
+    async with owner.opened():
+        with owner.bind():
+            parent = Agent(
+                parent_model(),
+                capabilities=[
+                    SubAgents(
+                        agents=[SubAgent(child, usage_limits=UsageLimits(tool_calls_limit=2))], agent_folders=None
+                    )
+                ],
+            )
+            await parent.run('go', conversation_id='root', usage=usage, usage_limits=UsageLimits(tool_calls_limit=3))
+            (record,) = owner.records.values()
+            assert record.outcome == 'ok'
+    assert usage.tool_calls == 3
+
+
+async def test_child_tool_call_budget_ignores_sibling_calls_approved_at_launch() -> None:
+    # Sibling calls approved alongside the delegation may still fail and never be counted, so a child's
+    # budget doesn't start from them: once they fail, the child still gets only its own one call.
+    from pydantic_ai.exceptions import ModelRetry
+
+    launched = asyncio.Event()
+    usage = RunUsage()
+
+    def parent_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('delegate_task', {'agent_name': 'worker', 'task': 'inspect'}, tool_call_id='delegate'),
+                    *(ToolCallPart('flaky', tool_call_id=f'flaky_{i}') for i in range(3)),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('parent finished')])
+
+    async def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        calls_made = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+        if not calls_made:
+            launched.set()
+            while reserved_tool_calls(usage) > 1:  # until only the delegation itself is still reserved
+                await asyncio.sleep(0)
+        if calls_made < 3:
+            yield {0: DeltaToolCall(name='work', json_args='{}', tool_call_id=f'work_{calls_made}')}
+        else:
+            yield 'worked'  # pragma: no cover - the budget stops the child first
+
+    child = Agent(FunctionModel(stream_function=child_stream), deps_type=object, name='worker')
+
+    @child.tool_plain
+    def work() -> str:
+        return 'done'
+
+    owner = DelegationTasks()
+    async with owner.opened():
+        with owner.bind():
+            parent = Agent(
+                FunctionModel(parent_fn),
+                capabilities=[
+                    SubAgents(
+                        agents=[SubAgent(child, usage_limits=UsageLimits(tool_calls_limit=1))], agent_folders=None
+                    )
+                ],
+            )
+
+            @parent.tool_plain
+            async def flaky() -> str:
+                await launched.wait()
+                raise ModelRetry('try again later')
+
+            await parent.run('go', conversation_id='root', usage=usage, usage_limits=UsageLimits(tool_calls_limit=10))
+            (record,) = owner.records.values()
+            assert record.outcome == 'budget'
+    assert usage.tool_calls == 2  # the child's one call and the delegation
 
 
 async def test_rejects_cyclic_persisted_ancestry(tmp_path: Path) -> None:

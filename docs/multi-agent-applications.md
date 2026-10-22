@@ -26,7 +26,7 @@ If you want to hand off control to another agent completely, without coming back
 
 Since agents are stateless and designed to be global, you do not need to include the agent itself in agent [dependencies](dependencies.md).
 
-You'll generally want to pass [`ctx.usage`][pydantic_ai.tools.RunContext.usage] to the [`usage`][pydantic_ai.agent.AbstractAgent.run] keyword argument of the delegate agent run so usage within that run counts towards the total usage of the parent agent run.
+You'll generally want to pass [`ctx.usage`][pydantic_ai.tools.RunContext.usage] to the [`usage`][pydantic_ai.agent.AbstractAgent.run] keyword argument of the delegate agent run so usage within that run counts towards the total usage of the parent agent run. Pass [`ctx.usage_limits`][pydantic_ai.tools.RunContext.usage_limits] to `usage_limits` as well to hold the delegate to the parent's limits. A shared [`tool_calls_limit`][pydantic_ai.usage.UsageLimits.tool_calls_limit] then counts the delegating tool call and the calls of delegates running in parallel while they're still in flight, so the runs together stay within it. A shared [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] is checked against the requests already made, so delegates running in parallel can each start a request before any of them is counted and go past it by up to their number.
 
 [Cancellation](agent.md#cancellation-and-sub-agents) is run-scoped: a delegate agent cancelling itself surfaces to the parent as a failed tool return rather than cancelling the parent, and a shared [`CancellationToken`][pydantic_ai.CancellationToken] cancels a whole tree of runs at once.
 
