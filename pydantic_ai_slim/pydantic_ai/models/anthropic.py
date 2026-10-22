@@ -4902,10 +4902,22 @@ def _given(input: dict[str, Any], key: str, default: Any) -> Any:
     return default if value is None else value
 
 
+def _point(coordinate: Any) -> dict[str, Any]:
+    """A toolset `[x, y]` coordinate as `x` and `y`, or nothing when it's absent.
+
+    Anything else goes through as `x` alone, so validation refuses it instead of the action running at the pointer.
+    """
+    if coordinate is None:
+        return {}
+    if isinstance(coordinate, list) and len(cast(list[Any], coordinate)) == 2:
+        x, y = cast(list[Any], coordinate)
+        return {'x': x, 'y': y}
+    return {'x': coordinate}
+
+
 def _map_computer_member(name: str, input: dict[str, Any]) -> dict[str, Any]:
     """One computer toolset call as a `computer` tool action; an unknown member fails validation, so the model retries."""
-    coordinate: list[int] = input.get('coordinate') or []
-    position = {'x': coordinate[0], 'y': coordinate[1]} if len(coordinate) == 2 else {}
+    position = _point(input.get('coordinate'))
     modifiers = [input['text']] if input.get('text') else []  # keys held during a click, move, scroll or drag
     if name in _COMPUTER_CLICKS:
         button, count = _COMPUTER_CLICKS[name]
@@ -4915,9 +4927,9 @@ def _map_computer_member(name: str, input: dict[str, Any]) -> dict[str, Any]:
             return {'type': 'move', **position, 'modifiers': modifiers}
         case 'left_click_drag':
             # A missing end leaves the path too short to validate, so the model is asked again.
-            start: list[int] = input.get('start_coordinate') or []
-            ends = [point for point in (start, coordinate) if len(point) == 2]
-            return {'type': 'drag', 'path': [{'x': x, 'y': y} for x, y in ends], 'modifiers': modifiers}
+            ends = [input.get('start_coordinate'), input.get('coordinate')]
+            path = [_point(point) for point in ends if point is not None]
+            return {'type': 'drag', 'path': path, 'modifiers': modifiers}
         case 'left_mouse_down':
             return {'type': 'mouse_down'}
         case 'left_mouse_up':

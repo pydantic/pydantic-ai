@@ -220,13 +220,23 @@ async def test_a_failed_call_gives_every_member_its_text(allow_model_requests: N
     ]
 
 
-async def test_an_out_of_range_member_is_refused_and_nothing_runs(allow_model_requests: None) -> None:
+@pytest.mark.parametrize(
+    'bad, message',
+    [
+        (('wait', {'duration': 30}), 'less than or equal to 10'),
+        (('left_click', {'coordinate': [5]}), 'valid integer'),
+    ],
+    ids=['out-of-range', 'malformed-coordinate'],
+)
+async def test_an_invalid_member_is_refused_and_nothing_runs(
+    bad: tuple[str, dict[str, Any]], message: str, allow_model_requests: None
+) -> None:
     provider = InMemoryProvider()
     client = MockAnthropic.create_mock(
         [
             _turn(
                 _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
-                _tool_use('toolu_2', 'wait', {'duration': 30}),
+                _tool_use('toolu_2', *bad),
             ),
             _turn(BetaTextBlock(text='done', type='text')),
         ]
@@ -238,7 +248,7 @@ async def test_an_out_of_range_member_is_refused_and_nothing_runs(allow_model_re
     _, second = get_mock_chat_completion_kwargs(client)
     results = second['messages'][-1]['content']
     assert [(r['tool_use_id'], r['is_error']) for r in results] == [('toolu_1', True), ('toolu_2', True)]
-    assert all('less than or equal to 10' in r['content'][0]['text'] for r in results)
+    assert all(message in r['content'][0]['text'] for r in results)
 
 
 async def test_a_deferred_computer_tool_stays_a_deferred_function(allow_model_requests: None) -> None:
@@ -330,6 +340,13 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
             {'type': 'drag', 'path': [{'x': 1, 'y': 2}, {'x': 3, 'y': 4}], 'modifiers': []},
         ),
         ('left_click_drag', {'coordinate': [3, 4]}, {'type': 'drag', 'path': [{'x': 3, 'y': 4}], 'modifiers': []}),
+        (
+            'left_click_drag',
+            {'start_coordinate': 7, 'coordinate': [3, 4]},
+            {'type': 'drag', 'path': [{'x': 7}, {'x': 3, 'y': 4}], 'modifiers': []},
+        ),
+        ('left_click', {'coordinate': [5]}, {'type': 'click', 'x': [5], 'button': 'left', 'count': 1, 'modifiers': []}),
+        ('mouse_move', {'coordinate': 'here'}, {'type': 'move', 'x': 'here', 'modifiers': []}),
         ('left_mouse_down', {}, {'type': 'mouse_down'}),
         ('left_mouse_up', {}, {'type': 'mouse_up'}),
         (
