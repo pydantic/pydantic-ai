@@ -164,7 +164,7 @@ def takes_ctx(func: Callable[..., object]) -> bool:
     value, so a second required positional parameter means it also wants the
     run context, whether or not it is annotated, as does a `*args` parameter
     alongside another parameter.
-    Keyword-only parameters are the guard's own options and never count. A
+    Keyword-only parameters are the guard's own options and never count on their own. A
     second positional parameter with a default is read from the first
     parameter's annotation: `RunContext` (also in a union or `Annotated`)
     means the run context, and any other type means the guarded value. A first

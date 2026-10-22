@@ -23,6 +23,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import (
     BinaryContent,
+    EnqueuedMessagesEvent,
     ModelMessage,
     ModelRequest,
     TextPart,
@@ -40,10 +41,12 @@ from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
 from pydantic_ai_harness.subagents import DelegationOutcome
-from pydantic_clai2.plugins import PanelIcon, PluginOrigin, PluginStatus
+from pydantic_clai2.plugins import PanelIcon, PluginOrigin, PluginStatus, QueuedInput
+from pydantic_clai2.runtime._session import STEERING
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
 from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+from pydantic_clai2.ui.prompt.prompt_queue import InputKind, input_kind
 from pydantic_clai2.ui.rendering.usage_report import SessionUsage, format_cost
 
 MONTY_TOOL = 'run_code'
@@ -271,6 +274,43 @@ class UpdateInfo:
     """Installed: CLAI is restarting as the new build, and the page reconnects once it is back."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class QueuedItem:
+    """An input waiting for the session's running turn or command to end, editable until it runs."""
+
+    id: str
+    text: str
+    kind: InputKind
+    """A prompt can steer the running turn; a `/command` or a `!` shell line, queued from the terminal, cannot."""
+
+
+def queued_item(entry: QueuedInput) -> QueuedItem:
+    """A waiting input as the page lists it, with whether it can steer."""
+    return QueuedItem(id=entry.id, text=entry.text, kind=input_kind(entry.text))
+
+
+@dataclass(frozen=True, kw_only=True)
+class QueueChanged:
+    """The session's queued input changed: one joined, ran, was edited, or was removed, here or in the terminal."""
+
+    type: Literal['queue'] = 'queue'
+    queue: list[QueuedItem]
+
+
+def delivered_steering(event: EnqueuedMessagesEvent) -> list[UserPromptPart]:
+    """The user's steering an enqueue delivered into the run, for the transcript to show.
+
+    Input a capability enqueues, such as a context file it found, is the model's to read, not the user's to see.
+    """
+    return [
+        part
+        for message in event.messages
+        if isinstance(message, ModelRequest) and message.metadata and message.metadata.get(STEERING)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
+
+
 @dataclass(kw_only=True)
 class Snapshot:
     """Everything a browser needs to show one live session: sent on connect, on `watch`, and on a conversation switch.
@@ -290,6 +330,8 @@ class Snapshot:
     """The conversation's delegated tasks, each parent before its children."""
     task_items: dict[str, list[Item]]
     """Each running task's transcript so far, by task ID."""
+    queue: list[QueuedItem] = field(default_factory=list[QueuedItem])
+    """The input waiting for the session's running turn or command, oldest first."""
     follows_workspace: bool = False
     """Whether each session runs in its own directory, as under `clai2 --web`, so a new one asks where."""
     version: str = ''
@@ -680,6 +722,7 @@ ServerMessage = (
     | SettingsChanged
     | TaskChanged
     | TaskItems
+    | QueueChanged
     | UpdateChanged
     | LiveChanged
 )
@@ -694,6 +737,7 @@ SessionMessage = (
     | TitleChanged
     | TaskChanged
     | TaskItems
+    | QueueChanged
 )
 """The messages about one live session, which only its watchers get, each with a `session` naming it."""
 _WIRE: TypeAdapter[ServerMessage] = TypeAdapter(ServerMessage)
