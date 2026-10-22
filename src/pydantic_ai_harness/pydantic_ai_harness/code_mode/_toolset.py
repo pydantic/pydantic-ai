@@ -333,8 +333,7 @@ class _RunCodeArguments(RunCodeArgs):
 
 
 _RUN_CODE_TOOL_NAME = 'run_code'
-_CODE_MODE_TOOLSET_ID = '<code_mode>'
-"""In angle brackets, which mark an id the framework chose (like `'<agent>'`), so no user toolset's id can collide with it."""
+_CODE_MODE_TOOLSET_ID = 'code_mode'
 _CATALOG_INSTRUCTION_NAME = 'catalog'
 _FRAMEWORK_CONTROL_TOOL_KINDS = frozenset({'tool-search', 'capability-load'})
 """Kinds of the framework's control tools, which stay native to drive tool search and capability loading."""
@@ -901,7 +900,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     When `True`, the description keeps only the static base prose and the catalog is
     surfaced as a dynamic [`InstructionPart`][pydantic_ai.messages.InstructionPart] via
     [`get_instructions`][pydantic_ai_harness.code_mode.CodeModeToolset.get_instructions],
-    with the id `toolset:<code_mode>:catalog` and `on_change='append'`, so a change to it is
+    with the id `toolset:code_mode:catalog` and `on_change='append'`, so a change to it is
     appended to the conversation instead of rewriting the instructions. Deferred tools the
     selector sandboxes are then kept off the wire until they're revealed, and from then on are
     callable only inside `run_code`, so a discovery doesn't change the request's tools either.
@@ -948,7 +947,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:
-        """`'<code_mode>'` with `dynamic_catalog`, which qualifies the catalog block into `toolset:<code_mode>:catalog`, else `None`."""
+        """`'code_mode'` with `dynamic_catalog`, which qualifies the catalog block into `toolset:code_mode:catalog`, else `None`."""
         return _CODE_MODE_TOOLSET_ID if self.dynamic_catalog else None
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
@@ -1026,7 +1025,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """Surface the tool catalog as a dynamic instruction when `dynamic_catalog` is set.
 
         The catalog is stashed by `get_tools` earlier in the same step. It's named `'catalog'`,
-        which this toolset's id qualifies into `toolset:<code_mode>:catalog`, and uses
+        which this toolset's id qualifies into `toolset:code_mode:catalog`, and uses
         `on_change='append'`, so a discovery appends the updated catalog to the message history
         instead of rewriting the instructions. It's returned even while empty, which renders as
         nothing, so the run's first instructions already hold it and the first function to appear

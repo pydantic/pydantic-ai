@@ -3714,25 +3714,25 @@ class TestDynamicCatalog:
         assert await toolset.get_instructions(ctx) is None
 
     def test_toolset_id_is_set_only_for_the_catalog(self) -> None:
-        """The toolset takes the framework-reserved id `<code_mode>` only to key its catalog block, so without one it has none."""
+        """The toolset takes the id `code_mode` only to key its catalog block, so without one it has none."""
         assert CodeModeToolset(wrapped=_build_function_toolset(add)).id is None
-        assert CodeModeToolset(wrapped=_build_function_toolset(add), dynamic_catalog=True).id == '<code_mode>'
+        assert CodeModeToolset(wrapped=_build_function_toolset(add), dynamic_catalog=True).id == 'code_mode'
 
-    async def test_catalog_key_leaves_a_users_code_mode_toolset_alone(self) -> None:
-        """A toolset the user named `code_mode` keeps its instructions next to the catalog, without a duplicate-id error."""
-        instruction_parts: list[InstructionPart] = []
+    async def test_catalog_key_collides_with_a_users_code_mode_toolset(self) -> None:
+        """A toolset the user named `code_mode` that contributes instructions can't share the catalog's key.
 
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            instruction_parts.extend(info.model_request_parameters.instruction_parts or ())
-            return ModelResponse(parts=[TextPart('done')])
-
+        The catalog is keyed through the toolset id `code_mode`, so the run fails with the duplicate-id
+        error instead of addressing two toolsets' instructions under one key. The fix is renaming that toolset.
+        """
         mine = FunctionToolset[object]([Tool(add)], id='code_mode', instructions='Mine.')
         agent: Agent[object, str] = Agent(
-            FunctionModel(model_fn), toolsets=[mine], capabilities=[CodeMode[object](dynamic_catalog=True)]
+            TestModel(call_tools=[]), toolsets=[mine], capabilities=[CodeMode[object](dynamic_catalog=True)]
         )
-        await agent.run('Hi')
 
-        assert [str(p.id) for p in instruction_parts] == ['toolset:code_mode', 'toolset:<code_mode>:catalog']
+        with pytest.raises(
+            UserError, match="Two toolsets have the same `id` 'code_mode' and both contribute instructions"
+        ):
+            await agent.run('Hi')
 
     async def test_empty_catalog_is_an_empty_append_block(self) -> None:
         """No sandboxed tools yet: the catalog block is still returned, empty, so its first content can be appended."""
@@ -4518,7 +4518,7 @@ class TestDynamicCatalog:
         assert 'async def forecast' not in (requests[0][2] or '')
 
         deltas = [p for m in result.all_messages() for p in m.parts if isinstance(p, InstructionDeltaPart)]
-        assert [str(delta.id) for delta in deltas] == ['toolset:<code_mode>:catalog']
+        assert [str(delta.id) for delta in deltas] == ['toolset:code_mode:catalog']
         assert deltas[0].content is not None and 'async def forecast(*, city: str) -> str:' in deltas[0].content
         run_code_returns = [
             p.content
@@ -4567,7 +4567,7 @@ class TestDynamicCatalog:
         assert len(set(requests)) == 1
         assert 'code_mode' not in (requests[0] or '')
         deltas = [p for m in result.all_messages() for p in m.parts if isinstance(p, InstructionDeltaPart)]
-        assert [str(delta.id) for delta in deltas] == ['toolset:<code_mode>:catalog']
+        assert [str(delta.id) for delta in deltas] == ['toolset:code_mode:catalog']
         assert deltas[0].content is not None and 'async def forecast' in deltas[0].content
 
     async def test_loaded_capability_tools_are_appended_to_the_catalog_not_declared(self) -> None:
@@ -4603,7 +4603,7 @@ class TestDynamicCatalog:
         assert {tuple(tools) for tools, _ in requests} == {('load_capability', 'run_code')}
         assert len({instructions for _, instructions in requests}) == 1
         deltas = [p for m in result.all_messages() for p in m.parts if isinstance(p, InstructionDeltaPart)]
-        assert [str(delta.id) for delta in deltas] == ['toolset:<code_mode>:catalog']
+        assert [str(delta.id) for delta in deltas] == ['toolset:code_mode:catalog']
         assert deltas[0].content is not None and 'async def forecast' in deltas[0].content
         run_code_returns = [
             p.content
@@ -4666,7 +4666,7 @@ class TestDynamicCatalog:
         assert [(str(p.id) if p.id else None, p.on_change) for p in instruction_parts] == [
             (None, 'rewrite'),
             ('toolset:weather', 'rewrite'),
-            ('toolset:<code_mode>:catalog', 'append'),
+            ('toolset:code_mode:catalog', 'append'),
         ]
         assert [p.content for p in instruction_parts[:2]] == ['Add carefully.', 'Be sunny.']
 
