@@ -14,8 +14,6 @@ from .workspaces.computer import _CONFIG  # pyright: ignore[reportPrivateUsage]
 
 __all__ = (
     'COMPUTER_KIND',
-    'MAX_ACTIONS_PER_CALL',
-    'OBSERVING_ACTIONS',
     'ComputerArgs',
     'ComputerContent',
     'ComputerResult',
@@ -23,9 +21,6 @@ __all__ = (
     'Screenshot',
     'Wait',
 )
-
-MAX_ACTIONS_PER_CALL = 20
-
 
 @dataclass(frozen=True, kw_only=True, config=_CONFIG)
 class Wait:
@@ -49,9 +44,6 @@ ComputerToolAction: TypeAlias = Annotated[
 ]
 """What the `computer` tool accepts: the workspace's display actions, plus waiting and looking."""
 
-OBSERVING_ACTIONS = frozenset({'wait', 'screenshot'})
-"""Action types that change nothing on the screen, so `require_approval` lets them through."""
-
 
 class ComputerArgs(TypedDict):
     """The `computer` tool's arguments."""
@@ -67,9 +59,6 @@ class ComputerResult(TypedDict):
 
     error: NotRequired[str]
     """Why the action after the performed ones failed; the rest did not run."""
-
-    screenshot_size: NotRequired[tuple[int, int]]
-    """The closing screenshot's width and height, absent when it failed."""
 
 
 ComputerContent: TypeAlias = list[str | BinaryImage]

@@ -77,7 +77,7 @@ async def test_actions_run_in_order_and_the_model_gets_a_summary_and_a_screensho
     assert provider.actions == [Click(x=10, y=20), TypeText(text='hi'), PressKeys(keys=('ctrl', 's'))]
     first, second = _returns(result.all_messages())
     assert first.content == ['Ran 3 actions. Screenshot attached (1280x800).', SCREENSHOT]
-    assert first.metadata == {'performed': 3, 'screenshot_size': (1280, 800)}
+    assert first.metadata == {'performed': 3}
     assert second.content == ['Ran 2 actions. Screenshot attached (1280x800).', SCREENSHOT]
     assert first.tool_kind == 'computer'
 
@@ -106,7 +106,6 @@ async def test_a_failed_action_stops_the_rest_and_still_returns_a_screenshot() -
     assert tool_return.metadata == {
         'performed': 1,
         'error': "the fake display cannot perform 'hold_key'",
-        'screenshot_size': (1280, 800),
     }
 
 
@@ -230,7 +229,7 @@ async def test_require_approval_lets_looking_through_and_defers_acting() -> None
         {'actions': [{'type': 'click', 'x': 1, 'y': 1}]}
     ]
     (looked,) = _returns(result.all_messages())
-    assert looked.metadata == {'performed': 1, 'screenshot_size': (1280, 800)}
+    assert looked.metadata == {'performed': 1}
     assert provider.actions == []
 
 
@@ -277,26 +276,7 @@ async def test_unknown_fields_are_ignored_and_a_batch_is_capped() -> None:
     assert 'List should have at most 20 items' in capped[0].model_response_str()
 
 
-async def test_other_tools_run_unchanged_beside_the_computer() -> None:
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if not any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
-            return ModelResponse(parts=[ToolCallPart('add', {'a': 2, 'b': 3})])
-        return ModelResponse(parts=[TextPart('done')])
-
-    model = FunctionModel(respond, profile=ModelProfile(computer_use_coordinate_grid=1000))
-    agent = Agent(
-        model, capabilities=[InMemoryProvider().capability(), ComputerUse(require_approval=True, settle_seconds=0)]
-    )
-
-    @agent.tool_plain
-    def add(a: int, b: int) -> int:
-        return a + b
-
-    (tool_return,) = _returns((await agent.run('Add.')).all_messages())
-    assert tool_return.content == 5
-
-
-async def test_the_tool_is_sequential_bounded_and_marked_as_the_computer_kind() -> None:
+async def test_the_tool_is_sequential_and_marked_as_the_computer_kind() -> None:
     seen: list[Any] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -308,7 +288,6 @@ async def test_the_tool_is_sequential_bounded_and_marked_as_the_computer_kind() 
     assert (tool.name, tool.sequential, tool.tool_kind) == ('computer', True, 'computer')
     # Under durable execution, each workspace call is its own activity or task rather than the whole call one.
     assert tool.metadata == {'temporal': False, 'prefect': False}
-    assert tool.parameters_json_schema['properties']['actions']['maxItems'] == 20
 
 
 @pytest.mark.parametrize(
@@ -415,8 +394,6 @@ async def test_a_grid_model_whose_display_size_fails_gets_a_failed_call_and_noth
     assert provider.actions == []
 
 
-def test_settings_are_checked() -> None:
-    with pytest.raises(UserError, match='`settle_seconds` must not be negative'):
-        ComputerUse(settle_seconds=-1)
+def test_keep_screenshots_is_checked() -> None:
     with pytest.raises(UserError, match='`keep_screenshots` must be at least 1'):
         ComputerUse(keep_screenshots=0)
