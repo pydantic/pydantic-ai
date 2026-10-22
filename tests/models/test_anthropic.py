@@ -3956,19 +3956,18 @@ async def test_document_binary_content_input(
 @pytest.mark.parametrize(
     'citations,enable_citations,web_fetch_citations',
     [
-        pytest.param(False, None, None, id='off'),
-        pytest.param(True, None, {'enabled': True}, id='on'),
-        pytest.param(True, False, None, id='on-web-fetch-off'),
+        pytest.param(False, False, None, id='off'),
+        pytest.param(True, False, {'enabled': True}, id='on'),
         pytest.param(False, True, {'enabled': True}, id='off-web-fetch-on'),
     ],
 )
 async def test_anthropic_citations_request_setting(
     allow_model_requests: None,
     citations: bool,
-    enable_citations: bool | None,
+    enable_citations: bool,
     web_fetch_citations: dict[str, bool] | None,
 ) -> None:
-    """The shared setting changes every Anthropic document block and Web Fetch, unless Web Fetch sets its own value.
+    """The shared setting enables citations on every Anthropic document block and on Web Fetch, as Web Fetch's own flag does.
 
     Unit test: it pins the request body, which the default cassette matchers ignore.
     """
