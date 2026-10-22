@@ -1,7 +1,21 @@
 """A Boat sandbox behind Pydantic AI's `WorkspaceBackend` protocol.
 
-Every command runs as a detached Boat command: it has a process ID that a timeout or a cancellation
-can stop, no server-side time limit, and Boat reports its exit once its own process exits.
+Every `run()` command runs as a detached Boat command: it has a process ID that a timeout or a
+cancellation can stop, no server-side time limit, and Boat reports its exit once its own process
+exits. Internal helpers, such as `pwd -P` and the shell file operations, run synchronously.
+
+Boat facts this module pins, verified 2026-10-21 against https://docs.boat.dev/api/v1 and the live
+API. The `boat_live` tier (`tests/harness/boat_sandbox/test_boat_live.py`) exercises each one not
+marked otherwise:
+
+- Boat returns at most the last 8 MiB of each stream of a command.
+- The file API moves at most 5 MiB in one call; a larger file needs a signed transfer URL.
+- The file API reaches only paths that resolve under `/home/user` and `/tmp`.
+- `noEnv` keeps the account's GitHub and Boat tokens out of commands.
+- `ttlSeconds: 0` means Boat's default auto-stop of an hour, and `null` disables it (not exercised).
+- Deleting a sandbox needs `X-Ascii-Confirm-Delete` set to its ID.
+- A stopped command gets about 5 seconds after SIGTERM before SIGKILL (not exercised).
+- Commands run under `bash -lc`, whose `~/.bash_logout` prints to the output unless the command `exec`s.
 """
 
 from __future__ import annotations
@@ -16,7 +30,7 @@ import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, NoReturn
 from urllib.parse import quote
 
 import anyio
@@ -65,19 +79,22 @@ _OUTPUT_LIMIT_MESSAGE = (
 )
 # Bound sandbox creation and attachment so a wedged control plane cannot hang acquisition.
 _CREATE_TIMEOUT = 120
-# Boat gives a stopped command about 5 seconds to exit before it kills it, and answers after that.
+# How long a stop waits for Boat's answer: Boat sends SIGTERM, then SIGKILL about 5 seconds later, and
+# answers once the command exits, about 5.4 seconds after the stop for a command that ignores SIGTERM.
 _KILL_TIMEOUT = 15
 _TEARDOWN_TIMEOUT = 30.0
 # Internal commands (`pwd -P`, the shell file operations) run synchronously; Boat stops one after this.
 _HELPER_TIMEOUT = 30
 # Between attempts to create a sandbox whose earlier request may have been lost.
 _RETRY_DELAY = 1.0
-# Between checks of a sandbox that is starting, and of a running command.
+# Between checks of a sandbox that is starting, and of a running command. The checks of a command
+# back off to `_MAX_POLL_INTERVAL`, since Boat allows 1,000 API requests a minute from one IP address.
 _READY_POLL = 0.5
 _POLL_INTERVAL = 0.2
+_MAX_POLL_INTERVAL = 2.0
 # The most partial output a timeout reports per stream, which is all each check of a running command reads.
 _PARTIAL_OUTPUT_LIMIT = 4096
-# Boat keeps the last 8 MiB of each stream of a command.
+# The most of each stream Boat returns: the tail of a synchronous reply, and the status endpoint's maximum `tailBytes`.
 _MAX_OUTPUT_BYTES = 8 * 1024 * 1024
 _OUTPUT_PREVIEW_BYTES = 64 * 1024
 # Boat's file API moves at most 5 MiB in one call; a larger file goes through a signed transfer URL.
@@ -204,7 +221,7 @@ def _translate(error: Exception, context: str, *, sandbox_id: str | None = None,
         return error
     if error.status == 401 or (error.status == 403 and error.code == 'forbidden'):
         return WorkspaceUnavailableError(f'{safe_credential_reason(error)}. {_AUTH_MESSAGE}')
-    if error.status in (402, 403):
+    if error.status in (402, 403) or (error.status == 429 and error.code == 'trial_compute_limit_reached'):
         # Billing and plan refusals, which no retry fixes.
         return WorkspaceUnavailableError(f'{context}: {error.message}')
     if sandbox_id is not None and error.status == 404 and error.code == 'not_found':
@@ -376,7 +393,10 @@ class _BoatProcess:
             self._finished = True
             raise
         except (httpx.HTTPError, _api.BoatAPIError) as error:
-            if isinstance(error, _api.BoatAPIError) and error.status == 429:
+            # Never sent, or refused unrun: a durable engine may retry it.
+            if isinstance(
+                error, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.UnsupportedProtocol)
+            ) or (isinstance(error, _api.BoatAPIError) and error.status == 429):
                 self._finished = True
                 raise
             # Not transient: a retry could run the command a second time.
@@ -385,12 +405,14 @@ class _BoatProcess:
             ) from error
 
     async def wait(self) -> CommandResult:
+        interval = _POLL_INTERVAL
         while True:
             status = await self._status(tailBytes=_PARTIAL_OUTPUT_LIMIT)
             self.stdout, self.stderr = status.stdout, status.stderr
             if not status.running or not status.known:
                 break
-            await anyio.sleep(_POLL_INTERVAL)
+            await anyio.sleep(interval)
+            interval = min(interval * 2, _MAX_POLL_INTERVAL)
         if not status.known or (exit_code := status.exit_code) is None:
             # Boat forgets a command's exit when the sandbox's agent restarts.
             raise await _probe(self._sandbox) or WorkspaceError(
@@ -404,8 +426,9 @@ class _BoatProcess:
                 raise WorkspaceOutputLimitError(
                     _OUTPUT_LIMIT_MESSAGE,
                     limit=_MAX_OUTPUT_BYTES,
-                    stdout=head.stdout[:_OUTPUT_PREVIEW_BYTES],
-                    stderr=head.stderr[:_OUTPUT_PREVIEW_BYTES],
+                    # Cut by bytes; a character split at the cut is dropped.
+                    stdout=head.stdout.encode()[:_OUTPUT_PREVIEW_BYTES].decode(errors='ignore'),
+                    stderr=head.stderr.encode()[:_OUTPUT_PREVIEW_BYTES].decode(errors='ignore'),
                 )
         if exit_code == 125 and status.stdout == f'{self.marker}-cwd':
             self.missing_cwd = True
@@ -432,23 +455,29 @@ class _BoatProcess:
         """Stop the command and every process it started, unless it already exited."""
         if self._finished:
             return
+        stopped = False
         try:
             for pid in [self._pid] if self._pid is not None else await self._unconfirmed():
                 try:
+                    # Bounded by the caller's grace, `_KILL_TIMEOUT`, rather than a request timeout.
                     await _api.call(
                         self._sandbox.client,
                         'DELETE',
                         self._sandbox.path(f'/commands/{pid}'),
                         model=_api.Empty,
-                        timeout=_KILL_TIMEOUT,
+                        retry='idempotent',
                     )
                 except _api.BoatAPIError as error:
                     # 400: Boat no longer knows the command; 404: its sandbox is gone.
                     if error.status not in (400, 404):
                         raise
-        except Exception:
-            logger.warning('Could not stop a command in Boat sandbox %s; it may still be running.', self._sandbox.id)
-            raise
+            stopped = True
+        finally:
+            if not stopped:
+                # A failure, or the grace running out before Boat answered.
+                logger.warning(
+                    'Could not stop a command in Boat sandbox %s; it may still be running.', self._sandbox.id
+                )
 
     async def _unconfirmed(self) -> list[int]:
         """The ID of this command if Boat started it without confirming, found by its marker."""
@@ -474,10 +503,10 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
     such as `FileNotFoundError`.
 
     Args:
-        client: An `httpx.AsyncClient` for Boat's API, with its `base_url` and an
-            `Authorization: Bearer` header set, to create or attach with. The caller owns closing
-            it. Without one, the backend opens its own from `BOAT_API_KEY` on first use and closes
-            it in `aclose()`.
+        client: An `httpx.AsyncClient` for Boat's API, with its `base_url`
+            (`https://boat.dev/api/v1`) and an `Authorization: Bearer` header set, to create or
+            attach with. The caller owns closing it. Without one, the backend opens its own from
+            `BOAT_API_KEY` on first use and closes it in `aclose()`.
         ref: Identity of an existing sandbox to attach to on first use.
         machine_type: Boat machine size for a newly created sandbox, such as `'small'` or
             `'large'`; Boat's default when `None`.
@@ -488,6 +517,8 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         working_dir: Absolute directory commands start in and relative paths resolve against; the
             sandbox's own default when `None`, discovered with `pwd -P` on first use.
         env: Environment variables every command gets; a command's own `env` is layered on top.
+            Values travel in each command's command line, so the sandbox's process list and Boat's
+            command history show them.
     """
 
     def __init__(
@@ -566,7 +597,8 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             logger.info('Created Boat sandbox %s', sandbox_id)
             return sandbox_id
 
-        # Creation finishes even if the caller is cancelled, so a billed sandbox is never left unrecorded.
+        # Creation finishes even if the caller is cancelled, so a cancellation does not leave a created
+        # sandbox unrecorded.
         sandbox_id = self._ref.id if self._ref is not None else await run_to_completion(create)
         sandbox = _Sandbox(client, sandbox_id)
         await self._wait_until_ready(sandbox)
@@ -597,6 +629,9 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
                         model=_api.SandboxResponse,
                     )
                     return created.sandbox.id
+                except (httpx.UnsupportedProtocol, httpx.LocalProtocolError):
+                    # The request never left the client, so nothing was created and a retry cannot help.
+                    raise
                 except httpx.TransportError:
                     pass  # The sandbox may have been created before the reply was lost; the key finds it.
                 except _api.BoatAPIError as error:
@@ -725,7 +760,16 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             sandbox = await self._connect()
             process = _BoatProcess(sandbox)
             line = _command_line(argv, marker=process.marker, cwd=self._working_dir, env={**self._env, **(env or {})})
-            async with command_deadline(timeout, stop=process.kill, output=lambda: (process.stdout, process.stderr)):
+
+            async def stop() -> None:
+                # An operation of its own, so a stop a repeated cancellation leaves running keeps the
+                # owned client open until it ends.
+                async with self._operation():
+                    await process.kill()
+
+            async with command_deadline(
+                timeout, stop=stop, grace=_KILL_TIMEOUT, output=lambda: (process.stdout, process.stderr)
+            ):
                 await process.start(line)
                 result = await process.wait()
                 if process.missing_cwd:
@@ -733,7 +777,7 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             return result
 
     async def realpath(self, path: str) -> str:
-        # Native, because the shell fallback would run several detached commands per call.
+        # Native, so it is one synchronous round trip instead of a detached start plus polls.
         async with self._operation():
             _check_path(path)
             sandbox = await self._connect()
@@ -758,10 +802,7 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
                     if refusal == 'outside':
                         return await self._shell(sandbox).read_bytes(path)
                     if refusal == 'not_a_file':
-                        # A directory, or a special file such as a FIFO.
-                        if (await self._shell(sandbox).stat(path)).is_dir:
-                            raise IsADirectoryError(errno.EISDIR, 'Is a directory in the Boat sandbox', path) from error
-                        raise OSError(f'Not a regular file in the Boat sandbox: {path!r}') from error
+                        await self._not_a_file(sandbox, path, error)
                     if refusal == 'too_large':
                         return await _download(sandbox, path)
                     raise
@@ -775,20 +816,23 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             async with _mapped_errors(f'Could not access {path!r} in the sandbox', sandbox=sandbox, path=path):
                 try:
                     if len(data) <= _MAX_INLINE_FILE_BYTES:
-                        await _api.call(
-                            sandbox.client,
-                            'PUT',
-                            sandbox.path('/files'),
-                            json={'path': path, 'content': base64.b64encode(data).decode(), 'encoding': 'base64'},
-                            model=_api.Empty,
-                            retry='idempotent',
-                        )
+                        await _write_inline(sandbox, path, data)
                     else:
                         await _upload(sandbox, path, data)
                 except _api.BoatAPIError as error:
-                    if _file_refusal(error) != 'outside':
+                    refusal = _file_refusal(error)
+                    if refusal == 'not_a_file':
+                        await self._not_a_file(sandbox, path, error)
+                    if refusal != 'outside':
                         raise
                     await self._shell(sandbox).write_bytes(path, data)
+
+    async def _not_a_file(self, sandbox: _Sandbox, path: str, error: Exception) -> NoReturn:
+        """Raise the built-in error for a path Boat's file API refused as not a regular file."""
+        # A directory, or a special file such as a FIFO, which the shell's `stat` refuses itself.
+        if (await self._shell(sandbox).stat(path)).is_dir:
+            raise IsADirectoryError(errno.EISDIR, 'Is a directory in the Boat sandbox', path) from error
+        raise OSError(f'Not a regular file in the Boat sandbox: {path!r}') from error
 
     # The other file operations are the ones Pydantic AI derives from commands, run synchronously.
     async def stat(self, path: str) -> FileEntry:
@@ -830,11 +874,33 @@ def _file_refusal(error: _api.BoatAPIError) -> Literal['outside', 'not_a_file', 
     # Boat's file API reaches only paths that resolve under /home/user or /tmp.
     if error.code == 'invalid_path' or 'Path must resolve under' in error.message:
         return 'outside'
-    if error.message == 'Path is not a file.':
+    # The file API's answer, and a signed transfer's.
+    if error.message == 'Path is not a file.' or error.code == 'not_a_file':
         return 'not_a_file'
     if error.message.startswith('File is too large'):
         return 'too_large'
     return None
+
+
+async def _write_inline(sandbox: _Sandbox, path: str, data: bytes) -> None:
+    try:
+        await _api.call(
+            sandbox.client,
+            'PUT',
+            sandbox.path('/files'),
+            json={'path': path, 'content': base64.b64encode(data).decode(), 'encoding': 'base64'},
+            model=_api.Empty,
+            retry='idempotent',
+        )
+    except httpx.TimeoutException as error:
+        # Boat answers a write to a FIFO only once something opens it for reading. Checked after a
+        # timeout rather than before every write, so a write stays one round trip.
+        special = await _exec(
+            sandbox, ['sh', '-c', 'test -e "$1" && ! test -f "$1" && ! test -d "$1"', 'sh', path], cwd=None
+        )
+        if special.exit_code == 0:
+            raise OSError(f'Not a regular file in the Boat sandbox: {path!r}') from error
+        raise
 
 
 async def _download(sandbox: _Sandbox, path: str) -> bytes:

@@ -323,7 +323,8 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   its output (`start_command` already does). On Daytona and Boat, `run()` returns when the command exits,
   without what the child prints later.
 - `BoatSandbox` creates sandboxes with Boat's `noEnv`, so commands get none of your account's GitHub or Boat
-  tokens; pass secrets with `env=`. A sandbox you attach to by ref keeps the setting it was created with.
+  tokens; pass secrets with `env=` (values go into each command line, so `ps` and Boat's command history show
+  them). A sandbox you attach to by ref keeps the setting it was created with.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
 

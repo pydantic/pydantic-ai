@@ -20,7 +20,7 @@ pip:
 pip install "pydantic-ai-harness[anthropic]"
 ```
 
-No extra is needed for Boat itself: the capability talks to Boat's REST API with `httpx`, which the harness already depends on. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `BOAT_API_KEY` to a [Boat API key](https://docs.boat.dev/api-keys), and `ANTHROPIC_API_KEY` for the examples. A key with Boat's `ci` preset is enough: it can create, resume, use, and delete the sandboxes it created.
+No extra is needed for Boat itself: the capability talks to Boat's REST API with `httpx`, which the harness already depends on. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `BOAT_API_KEY` to a [Boat API key](https://docs.boat.dev/api-keys), and `ANTHROPIC_API_KEY` for the examples. A key created with Boat's `ci` preset is enough for the sandboxes it creates: it can create, resume, use, and delete them. Boat added resume and delete to `ci` later, so an older `ci` key cannot resume or delete; create a new one ([Boat's scopes](https://docs.boat.dev/api-keys/scopes#presets)).
 
 ## Quick start
 
@@ -39,7 +39,7 @@ Give the agent a project directory with `BoatSandbox(working_dir='/home/user/pro
 
 A new sandbox runs Ubuntu 24.04 with git, Python, Node.js, Docker, and ripgrep (`rg`), which `Coder` uses for searches; see [Boat's pre-installed tools](https://docs.boat.dev/machines/tools). Commands run as `user`, who has passwordless `sudo`, so the agent can install what else it needs. For your project's dependencies, start from a named snapshot; see [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run).
 
-A new sandbox is created with Boat's `noEnv` setting. Without it, Boat gives every command your GitHub token and Boat tokens, which code the agent runs could read and use. With it, the sandbox holds none of your account's secrets and cannot act on your account or your other sandboxes; the one Boat token it keeps, `ASCII_TOKEN`, can only expose ports of that sandbox ([Boat's scopes](https://docs.boat.dev/api-keys/scopes#in-sandbox-api-key)). Pass the secrets a task needs with `env=`.
+A new sandbox is created with Boat's `noEnv` setting. Without it, Boat gives every command your GitHub token and Boat tokens, which code the agent runs could read and use. With it, the sandbox holds none of your account's secrets and cannot act on your account or your other sandboxes; the one Boat token it keeps, `ASCII_TOKEN`, can only expose ports of that sandbox ([Boat's scopes](https://docs.boat.dev/api-keys/scopes#in-sandbox-api-key)). Pass the secrets a task needs with `env=`; its values travel in each command's command line, so the sandbox's process list and Boat's command history show them (see [Configuration](#configuration)).
 
 ## Continue in the same sandbox
 
@@ -79,11 +79,11 @@ async def run_python(ctx: RunContext, code: str) -> str:
     return result.stdout + result.stderr
 ```
 
-Commands run under `sh -c` as `user`. File reads and writes under `/home/user` and `/tmp` go through Boat's file API; other paths go through shell commands run as `user`. Boat's file API reads as root, so a read can return a file that `user`'s commands cannot open; writes run as `user`. File reads refuse FIFOs rather than waiting for a writer. File writes create missing parent directories, write through a symlink to its target, and keep an existing file's mode.
+Commands run under `sh -c` as `user`. File reads and writes under `/home/user` and `/tmp` go through Boat's file API; other paths go through shell commands run as `user`. Boat's file API reads as root, so a read can return a file that `user`'s commands cannot open; writes run as `user`. File reads and writes refuse FIFOs with `OSError`: a read at once, and a write once its request times out after 30 seconds, since Boat's file API waits for a reader before it answers a write. File writes create missing parent directories, write through a symlink to its target, and keep an existing file's mode.
 
 ### What a timeout stops
 
-A command timeout starts after the sandbox is ready. Each command runs as a detached Boat command, so Boat's 600-second limit on commands that wait for their result does not apply. A timeout or a cancelled run stops the command through Boat's process API, which ends its whole process tree, background children included, and the sandbox keeps running for other commands. `WorkspaceTimeoutError` carries the last 4 KiB of each stream's output so far. If Boat does not confirm the stop, the command may still be running: inspect the sandbox or delete it yourself. `timeout=None` removes the command deadline, not Boat's auto-stop; a sandbox that Boat stops during a command makes `run()` raise `WorkspaceUnavailableError`.
+A command timeout starts after the sandbox is ready. Each command runs as a detached Boat command, so Boat's 600-second limit on commands that wait for their result does not apply. A timeout or a cancelled run stops the command through Boat's process API, which ends its whole process tree, background children included, and the sandbox keeps running for other commands. `WorkspaceTimeoutError` carries the last 4 KiB of each stream's output so far. If Boat does not confirm the stop within 15 seconds, the command may still be running: inspect the sandbox or delete it yourself. `timeout=None` removes the command deadline, not Boat's auto-stop; a sandbox that Boat stops during a command makes `run()` raise `WorkspaceUnavailableError`. Boat limits API requests to 1,000 per minute from one IP address, and the checks on a running command count toward that limit: they start 0.2 seconds apart and back off to one every 2 seconds.
 
 `run()` returns when the command exits, even if a background child it started is still running; output that child writes afterwards is not returned. A command whose stdout or stderr passes 8 MiB, Boat's limit per stream, raises `WorkspaceOutputLimitError` once it exits, with the first 64 KiB of each stream in `stdout` and `stderr`. Redirect large or background output to a file instead; `Shell.start_command` manages its own output log.
 
@@ -110,7 +110,7 @@ The ref holds no credentials, so the process that reattaches needs `BOAT_API_KEY
 
 `machine_type`, `snapshot`, and `auto_stop` only shape a new sandbox; a resumed sandbox keeps the auto-stop it was created with. `working_dir` and `env` apply to every command, including after you reattach. A new sandbox gets `working_dir` created for it; on an attached sandbox it must already exist, or commands fail with `WorkspaceError`.
 
-Already have a Boat sandbox, such as one from `boat new`? Pass `workspace=WorkspaceRef(provider='boat', id='bx_...')` to a run, with `WorkspaceRef` from `pydantic_ai.workspaces`. The sandbox keeps the settings it was created with: unless it was created with `noEnv`, its commands can read your account's credentials.
+Already have a Boat sandbox, such as one from `boat new`? Pass `workspace=WorkspaceRef(provider='boat', id='bx_...')` to a run, with `WorkspaceRef` from `pydantic_ai.workspaces`. The sandbox keeps the settings it was created with: unless it was created with `noEnv`, its commands can read your account's credentials. A `ci` key cannot resume or delete a sandbox it did not create.
 
 A run leaves a backend you built open. Call `await backend.aclose()` when you are done with it: that closes the client it opened from `BOAT_API_KEY`, not the sandbox, and a later operation opens a new one. A `client=` you passed is never closed.
 
@@ -183,7 +183,7 @@ async def delete_failed_run_sandbox(ctx: RunContext[None], *, error: BaseExcepti
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[BoatSandbox(), Coder(), hooks])
 ```
 
-A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed worker right after creation, leaves the sandbox behind. Its ID is logged at `INFO` as `Created Boat sandbox <id>`, and `boat list` shows your sandboxes; delete it with `await BoatSandbox().destroy(WorkspaceRef(provider='boat', id=...))`.
+A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed worker right after creation, leaves the sandbox behind. Its ID is logged at `INFO` as `Created Boat sandbox <id>`, and `boat list --all` shows your sandboxes, stopped ones included; delete it with `await BoatSandbox().destroy(WorkspaceRef(provider='boat', id=...))`.
 
 ## Configuration
 
@@ -192,7 +192,7 @@ A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed w
 | `client` | An `httpx.AsyncClient` to share across runs on one event loop, or to route through a proxy. Give it `base_url='https://boat.dev/api/v1'` and an `Authorization: Bearer <key>` header. Default: `None`, a client each run opens from `BOAT_API_KEY` and closes when it ends. You close a client you pass; `BoatSandbox` never does. |
 | `machine_type` | Size of a new sandbox: `'small'`, `'default'`, `'large'`, or `'xlarge'`. See [Boat's sizes](https://docs.boat.dev/machines). Default: `None`, Boat's `default` size, or the snapshot's size when `snapshot` is set. A size your plan doesn't allow fails on first use. |
 | `snapshot` | Named snapshot a new sandbox starts from. Default: `None`, Boat's base image. An unknown snapshot fails on first use. |
-| `auto_stop` | Seconds after a new sandbox is created, and after each resume, before Boat stops it, keeping its disk. Command activity does not move the deadline. `0` disables it; Boat's free trial refuses that, and caps the value at 2 hours. Default: `None`, Boat's default of 1 hour. |
+| `auto_stop` | Seconds after a new sandbox is created, and after each resume, before Boat stops it, keeping its disk. Command activity does not move the deadline. `0` disables it; on Boat's free trial, `0` or a value over 7200 fails on first use. Default: `None`, Boat's default of 1 hour. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/user`, where commands run as `user`); set a project directory, or use relative paths for portable code. Created on a new sandbox; on an attached sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. Values travel in each command's command line, so the sandbox's process list and Boat's command history show them. |
 
@@ -248,7 +248,7 @@ if __name__ == '__main__':
 
 `Coder`, `Shell`, and `FileSystem` work under DBOS, Temporal and Prefect. See the [Coder](https://pydantic.dev/docs/ai/harness/coder/#durable-execution), [Shell](https://pydantic.dev/docs/ai/harness/shell/#durable-execution), and [FileSystem](https://pydantic.dev/docs/ai/harness/filesystem/#durable-execution) guides for engine-specific limits.
 
-Creating a sandbox sends Boat an `Idempotency-Key`, so when a reply is lost the backend asks again without creating a second sandbox. The key lasts as long as the backend, and Temporal builds a new backend for each activity, so a retried activity that creates the sandbox can leave the first one behind; the `Created Boat sandbox <id>` log line finds it. A command is sent again only when Boat reports that it did not start. When a reply about a command is lost, `run()` raises `WorkspaceError`, which durable engines record rather than retry, since the command may have run.
+Creating a sandbox sends Boat an `Idempotency-Key`, so when a reply is lost the backend asks again without creating a second sandbox. The key lasts as long as the backend, and Temporal builds a new backend for each activity, so a retried activity that creates the sandbox can leave the first one behind; the `Created Boat sandbox <id>` log line finds it. A command is sent again only when Boat reports that it did not start, or when the request could not reach Boat. When a reply about a command is lost, `run()` raises `WorkspaceError`, which durable engines record rather than retry, since the command may have run.
 
 Removing a capability while workflows using it are still running changes their replay history. Drain those workflows or use [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) before deploying the change.
 

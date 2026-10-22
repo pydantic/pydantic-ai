@@ -76,6 +76,7 @@ async def fake_boat(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AsyncIte
         ('_backend._RETRY_DELAY', 0.0),
         ('_backend._READY_POLL', 0.0),
         ('_backend._POLL_INTERVAL', 0.01),
+        ('_backend._MAX_POLL_INTERVAL', 0.01),
     ):
         monkeypatch.setattr(f'pydantic_ai_harness.boat_sandbox.{name}', delay)
     try:

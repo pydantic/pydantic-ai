@@ -35,7 +35,8 @@ import httpx
 import pytest
 from pytest_examples import CodeExample
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Hooks
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -47,6 +48,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.run import AgentRunResult
 from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceOutputLimitError,
@@ -344,13 +346,25 @@ async def test_a_later_run_continues_in_the_same_sandbox() -> None:
     """Validates the fake-encoded assumption that the ref a run records, found in the message history
     or passed back from `result.workspace.ref`, attaches to the same Boat sandbox, and that
     `workspace='new'` starts another one even when the history names the first."""
-    agent = Agent(_shell_model(), capabilities=[BoatSandbox(machine_type='small', auto_stop=LIVE_AUTO_STOP), Shell()])
     refs: list[WorkspaceRef] = []
+    hooks = Hooks()
+
+    # A run that fails after creating its sandbox returns no result to read the ref from.
+    @hooks.on.run_error
+    async def keep_ref(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
+        if ctx.workspace.ref is not None:
+            refs.append(ctx.workspace.ref)
+        raise error
+
+    agent = Agent(
+        _shell_model(), capabilities=[BoatSandbox(machine_type='small', auto_stop=LIVE_AUTO_STOP), Shell(), hooks]
+    )
     try:
         first = await agent.run('echo continued > ~/continued.txt && echo written')
         ref = first.workspace.ref
-        assert ref is not None and 'written' in first.output
+        assert ref is not None
         refs.append(ref)
+        assert 'written' in first.output
 
         followup = await agent.run('cat ~/continued.txt', message_history=first.all_messages())
         assert 'continued' in followup.output and followup.workspace.ref == ref
@@ -366,6 +380,7 @@ async def test_a_later_run_continues_in_the_same_sandbox() -> None:
         refs.append(fresh.workspace.ref)
         assert fresh.workspace.ref != ref and 'absent' in fresh.output
     finally:
+        # `destroy` returns quietly for a sandbox already deleted, so a ref recorded twice is harmless.
         for ref in refs:
             await BoatSandbox().destroy(ref)
 

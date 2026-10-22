@@ -50,9 +50,9 @@ class BoatSandbox(AbstractCapability[AgentDepsT]):
     """
 
     client: httpx.AsyncClient | None = None
-    """An `httpx.AsyncClient` for Boat's API, with its `base_url` and an `Authorization: Bearer`
-    header set, to share across runs on one event loop; you close it. When `None`, each run opens
-    one from `BOAT_API_KEY` and closes it when the run ends."""
+    """An `httpx.AsyncClient` for Boat's API, with its `base_url` (`https://boat.dev/api/v1`) and an
+    `Authorization: Bearer` header set, to share across runs on one event loop; you close it. When
+    `None`, each run opens one from `BOAT_API_KEY` and closes it when the run ends."""
 
     machine_type: str | None = None
     """Boat machine size for a newly created sandbox: `'small'`, `'default'`, `'large'` or
@@ -74,7 +74,8 @@ class BoatSandbox(AbstractCapability[AgentDepsT]):
 
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, also on an attached sandbox; a command's `env` is
-    layered on top. Nothing is read from the host."""
+    layered on top. Nothing is read from the host. Values travel in each command's command line, so
+    the sandbox's process list and Boat's command history show them."""
 
     def __post_init__(self) -> None:
         if self.defer_loading:

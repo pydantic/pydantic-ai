@@ -1,10 +1,12 @@
 """Boat's v1 REST API over `httpx`: requests and typed answers, with no workspace semantics.
 
 Boat answers every call with a JSON envelope, `{"ok": true, ...}` on success and
-`{"ok": false, "code": ..., "message": ..., "error": {"details": ...}}` otherwise. Its documented
-retry signals (`409 sandbox_starting`, `502 sandbox_direct_failed` while restoring, and
-`error.details.retryable`) were checked against https://docs.boat.dev/api/v1 and the live API on
-2026-10-21; the `boat_live` test tier re-checks them.
+`{"ok": false, "code": ..., "message": ..., "error": {"details": ...}}` otherwise. Its retry signals
+(`409 sandbox_starting`, `502 sandbox_direct_failed` with `sandbox_restoring`, `error.details.retryable`,
+and `429 IP_RATE_LIMIT_EXCEEDED` with its wait in `retryAfter`) come from https://docs.boat.dev/api/v1,
+checked 2026-10-21. Live probes that day saw `retryable: false` on 409 and 502 answers but never
+`sandbox_starting` or `sandbox_restoring`: Boat held commands sent to a sandbox that was still
+starting. No test triggers these signals against real Boat, so re-check them against the docs page.
 """
 
 from __future__ import annotations
@@ -29,12 +31,21 @@ Retry = Literal['never', 'not_run', 'idempotent']
 class BoatAPIError(Exception):
     """An error answer from Boat, or an answer that is not Boat's envelope (`code` `invalid_response`)."""
 
-    def __init__(self, status: int, code: str, message: str, *, retryable: bool | None = None) -> None:
+    def __init__(
+        self,
+        status: int,
+        code: str,
+        message: str,
+        *,
+        retryable: bool | None = None,
+        retry_after: float | None = None,
+    ) -> None:
         super().__init__(f'Boat API returned HTTP {status} ({code}): {message}')
         self.status = status
         self.code = code
         self.message = message
         self.retryable = retryable
+        self.retry_after = retry_after
 
 
 class _Model(BaseModel):
@@ -98,6 +109,8 @@ class _ErrorBody(_Model):
 class _ErrorEnvelope(_Model):
     code: str
     message: str
+    # Seconds to wait, on an answer to too many requests from one IP address.
+    retry_after: float | None = None
     error: _ErrorBody = Field(default_factory=_ErrorBody)
 
 
@@ -134,8 +147,9 @@ async def call(
 
     `retry` repeats the call only on answers Boat documents as having taken no effect: a sandbox
     that is still starting or being restored (`not_run`), and, for a call that is safe to repeat,
-    any 502 Boat marks retryable (`idempotent`). Any other error answer raises `BoatAPIError`, and
-    `httpx` errors propagate as they are.
+    any 502 Boat marks retryable and a refusal of too many requests from this IP address
+    (`idempotent`). Any other error answer raises `BoatAPIError`, and `httpx` errors propagate as
+    they are.
     """
     deadline = anyio.current_time() + _RETRY_WINDOW
     while True:
@@ -153,9 +167,10 @@ async def call(
             except ValidationError:
                 raise BoatAPIError(response.status_code, 'invalid_response', 'Unexpected Boat response') from None
         error = _error(response)
-        if not _retryable(error, retry) or anyio.current_time() >= deadline:
+        delay = max(_RETRY_DELAY, error.retry_after or 0)
+        if not _retryable(error, retry) or anyio.current_time() + delay >= deadline:
             raise error
-        await anyio.sleep(_RETRY_DELAY)
+        await anyio.sleep(delay)
 
 
 async def transfer(
@@ -181,7 +196,11 @@ def _error(response: httpx.Response) -> BoatAPIError:
     except ValidationError:
         return BoatAPIError(response.status_code, 'invalid_response', 'Unexpected Boat response')
     return BoatAPIError(
-        response.status_code, envelope.code, envelope.message, retryable=envelope.error.details.retryable
+        response.status_code,
+        envelope.code,
+        envelope.message,
+        retryable=envelope.error.details.retryable,
+        retry_after=envelope.retry_after,
     )
 
 
@@ -190,6 +209,8 @@ def _retryable(error: BoatAPIError, retry: Retry) -> bool:
         return False
     if error.status == 409 and error.code == 'sandbox_starting':
         return True
+    if error.status == 429:
+        return retry == 'idempotent' and error.code == 'IP_RATE_LIMIT_EXCEEDED'
     if error.status != 502:
         return False
     if error.code == 'sandbox_direct_failed' and 'sandbox_restoring' in error.message:

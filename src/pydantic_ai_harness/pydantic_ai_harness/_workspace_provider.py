@@ -115,13 +115,17 @@ async def command_deadline(
     *,
     stop: Callable[[], Awaitable[object]],
     output: Callable[[], tuple[str, str]] = lambda: ('', ''),
+    grace: float = 2.0,
 ) -> AsyncGenerator[None, None]:
-    """Bound only the command phase, after sandbox acquisition; stop on timeout or cancellation."""
+    """Bound only the command phase, after sandbox acquisition; stop on timeout or cancellation.
+
+    `grace` bounds the stop, as in `stop_shielded`.
+    """
     with anyio.move_on_after(timeout) as scope:
         try:
             yield
         except BaseException:
-            await stop_shielded(stop)
+            await stop_shielded(stop, grace=grace)
             raise
     if scope.cancelled_caught:
         stdout, stderr = output()
