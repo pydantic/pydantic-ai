@@ -81,10 +81,11 @@ rejects or a response it can't parse.
 ## Untrusted content
 
 Titles, excerpts, page text, and deep search answers come from third-party
-pages, so they can carry instructions aimed at the model. Each title, author,
-and excerpt is rendered on one line, so a page can't fake another result's
-`Title:` or `URL:` line. The `text_summary` summary and the `deep_search`
-answer are Exa's own synthesized text and are passed through as returned.
+pages, so they can carry instructions aimed at the model. Each title, URL,
+author, date, and excerpt is rendered on one line, so a page can't fake
+another result's `Title:` or `URL:` line. The `text_summary` summary and the
+`deep_search` answer are Exa's own synthesized text and are passed through as
+returned.
 
 `include_domains` and `exclude_domains` don't restrict `get_page`: it reads any
 URL the model passes, including one a page told it to read, and the URL can
@@ -298,9 +299,11 @@ Inline execution polls the runs one after another, and `timeout_ms` applies to
 each, so a response that starts several runs can wait up to `timeout_ms` per
 run. A run whose polling times out keeps running on Exa, and the retry prompt
 gives the model its run ID to follow up on. When the agent run is cancelled
-while it polls, the capability cancels the Exa runs it hasn't finished polling,
-if the `runs` client has a `cancel` method, as `exa_py`'s does, and holds the
-cancellation up to about 5 seconds while Exa accepts it. Under durable
+while it polls, or polling fails with an error the model can't fix, the
+capability cancels the Exa runs nothing will read: the ones it hasn't finished
+polling and the ones it was leaving for the model to follow up on. This needs a
+`cancel` method on the `runs` client, as `exa_py`'s has, and holds the agent
+run up to about 5 seconds while Exa accepts the cancellations. Under durable
 execution the runs are left running, since the engine can resume the wait. If
 creating a run fails in a way that Exa may have acted on (a 5xx response, or a
 network failure after the request was sent), the error is raised instead of

@@ -74,8 +74,10 @@ class ExaAgentRuns(Protocol):
     `AsyncExa().agent.runs` satisfies the protocol as-is.
 
     An object that also has `async def cancel(self, run_id: str)`, as
-    `exa_py`'s does, lets the capability cancel the runs it was still polling
-    inline when the agent run is cancelled, outside durable execution.
+    `exa_py`'s does, lets the capability cancel the runs nothing will read
+    (ones it hasn't finished polling, and ones left for the model to follow up
+    on) when the agent run is cancelled or inline polling fails with an error
+    the model can't fix, outside durable execution.
     """
 
     async def create(
@@ -107,7 +109,7 @@ class _CancellableRuns(Protocol):
 
 
 _CANCEL_GRACE_SECONDS = 5.0
-"""How long a cancelled inline poll waits for Exa to accept the run's cancellation."""
+"""How long a cancelled or failed inline poll waits for Exa to accept the runs' cancellation."""
 
 
 def _default_runs() -> ExaAgentRuns:
@@ -398,17 +400,24 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         if not owned:
             return None
         calls: dict[str, ToolReturn[str] | ModelRetry] = {}
+        # Runs returned to the model as a retry, which may still be running for it to follow up on.
+        retried: list[str] = []
         for index, (tool_call_id, run_id) in enumerate(owned):
             try:
                 result = await self._resolve_run(run_id)
-            except anyio.get_cancelled_exc_class():
-                await self._cancel_runs(ctx, [run_id for _, run_id in owned[index:]])
+            except BaseException:
+                # Cancelled, or failed with an error the model can't fix, which ends the agent run.
+                await self._cancel_runs(ctx, [*retried, *(run_id for _, run_id in owned[index:])])
                 raise
-            calls[tool_call_id] = ModelRetry(result.message) if isinstance(result, RetryRequest) else result
+            if isinstance(result, RetryRequest):
+                retried.append(run_id)
+                calls[tool_call_id] = ModelRetry(result.message)
+            else:
+                calls[tool_call_id] = result
         return DeferredToolResults(calls=calls)
 
     async def _cancel_runs(self, ctx: RunContext[AgentDepsT], run_ids: list[str]) -> None:
-        """Cancel the runs a cancelled agent run was still waiting for, as nothing is left to read their results.
+        """Cancel the runs a cancelled or failed wait leaves, as nothing will read their results.
 
         Under durable execution the engine may resume the wait, for example on another worker after a
         restart, so there the runs are left running.

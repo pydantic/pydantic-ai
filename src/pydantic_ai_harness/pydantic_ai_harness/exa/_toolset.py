@@ -430,7 +430,7 @@ def one_line(text: str) -> str:
 
 def _format_result(result: Result, body: str | None) -> str:
     """Render one result as labelled metadata lines followed by its body text."""
-    lines = [f'Title: {one_line(result.title or "") or "(untitled)"}', f'URL: {result.url}']
+    lines = [f'Title: {one_line(result.title or "") or "(untitled)"}', f'URL: {one_line(result.url)}']
     if result.published_date:
         lines.append(f'Published: {one_line(result.published_date)}')
     if result.author:
@@ -445,7 +445,7 @@ def with_sources(body: str, sources: Mapping[str, str | None]) -> str:
     if not sources:
         return body
     lines = [body, '', 'Sources:']
-    lines.extend(f'- {one_line(title or "") or "(untitled)"}: {url}' for url, title in sources.items())
+    lines.extend(f'- {one_line(title or "") or "(untitled)"}: {one_line(url)}' for url, title in sources.items())
     return '\n'.join(lines)
 
 
