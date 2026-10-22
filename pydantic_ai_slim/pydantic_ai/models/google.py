@@ -1715,13 +1715,10 @@ class GeminiStreamedResponse(StreamedResponse):
                         thought_signature = base64.b64encode(part.thought_signature).decode('utf-8')
                         provider_details = {'thought_signature': thought_signature}
 
-                    if part.text is not None:
-                        if len(part.text) == 0 and not provider_details:
-                            continue
-                        is_text = not part.thought
-                    else:
-                        is_text = False
+                    if part.text is not None and len(part.text) == 0 and not provider_details:
+                        continue
                     # A new request's first text starts a new part, like any text after a non-text part.
+                    is_text = part.text is not None and not part.thought
                     if is_text and (not self._continue_text_run or new_request_vendor_part_id is not None):
                         self._text_runs.append(_GoogleStreamTextRun(part_id=uuid4()))
                     self._continue_text_run = is_text
