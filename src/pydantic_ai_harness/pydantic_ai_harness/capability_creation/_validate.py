@@ -14,7 +14,7 @@ from collections.abc import Iterable, Mapping
 from types import ModuleType
 from typing import TYPE_CHECKING, TypeGuard
 
-from pydantic_ai._instructions import normalize_instructions
+from pydantic_ai._instructions import normalize_instructions, validate_instruction_name
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import InstructionPart
 from pydantic_ai.native_tools import AbstractNativeTool
@@ -54,9 +54,16 @@ def _check_toolset_return(value: object) -> None:
 
 
 def _check_instruction_items(items: Iterable[object]) -> None:
-    """Reject a `get_instructions` item the run cannot render: each must be text, an `InstructionPart`, or a callable."""
+    """Reject a `get_instructions` item the run cannot render.
+
+    Each must be text, an `InstructionPart`, or a callable, and a part's `name` must be one the agent
+    accepts, as checked when it builds the capability's instructions.
+    """
     for item in items:
-        if not isinstance(item, (str, InstructionPart)) and not callable(item):
+        if isinstance(item, InstructionPart):
+            if item.name is not None:
+                validate_instruction_name(item.name)
+        elif not isinstance(item, str) and not callable(item):
             raise CapabilityValidationError(
                 f'get_instructions() returned a {type(item).__name__} item, '
                 f'expected a str, an InstructionPart, or a callable'
@@ -83,6 +90,14 @@ def _check_model_settings_return(value: object) -> None:
         raise CapabilityValidationError(
             f'get_model_settings() returned {type(value).__name__}, '
             f'expected a ModelSettings mapping, a callable, or None'
+        )
+
+
+def _check_serialization_name(value: object) -> None:
+    """Reject a `get_serialization_name` return that is neither a spec name nor None."""
+    if value is not None and not isinstance(value, str):
+        raise CapabilityValidationError(
+            f'get_serialization_name() returned {type(value).__name__}, expected a str or None'
         )
 
 
@@ -167,7 +182,7 @@ def load_capability_instance(path: Path) -> AbstractCapability[object]:
             _check_toolset_return(instance.get_toolset())
             _check_native_tool_items(instance.get_native_tools())
             _check_model_settings_return(instance.get_model_settings())
-            cls.get_serialization_name()
+            _check_serialization_name(cls.get_serialization_name())
         except BaseException as exc:
             if previous is None:
                 sys.modules.pop(name, None)
