@@ -987,7 +987,7 @@ async def _get_instructions(
 
 
 def _apply_instruction_parts(
-    request: _messages.ModelRequest, instruction_parts: list[_messages.InstructionPart] | None
+    request: _messages.ModelRequest | None, instruction_parts: list[_messages.InstructionPart] | None
 ) -> None:
     """Render the instruction parts being sent onto the request that records them.
 
@@ -996,9 +996,10 @@ def _apply_instruction_parts(
     instructions the model never received.
 
     `None` means "unset" rather than "no instructions" — it's what makes `Model._get_instruction_parts`
-    fall back to the request's own `instructions` — so it leaves the request alone.
+    fall back to the request's own `instructions` — so it leaves the request alone, as it does when
+    there's no request to record them on.
     """
-    if instruction_parts is not None:
+    if request is not None and instruction_parts is not None:
         request.instructions = _messages.InstructionPart.join(instruction_parts)
 
 
@@ -1464,6 +1465,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         repr=False, init=False, default=None
     )
     _did_stream: bool = field(repr=False, init=False, default=False)
+    _capability_load_request: _messages.ModelRequest | None = field(repr=False, init=False, default=None)
+    """The last request recorded by `_deliver_capability_loads`, which then ends the history instead of `request`."""
     last_request_context: ModelRequestContext | None = field(repr=False, init=False, default=None)
 
     async def run(
@@ -1899,6 +1902,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not self.is_resuming_without_prompt:
             fill_run_metadata(self.request, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         ctx.state.message_history.append(self.request)
+        self._capability_load_request = _deliver_capability_loads(ctx)
 
         ctx.state.run_step += 1
 
@@ -1927,11 +1931,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if instruction_parts:
             instruction_parts = _messages.InstructionPart.sorted(instruction_parts) or None
         self.request.instructions = _messages.InstructionPart.join(instruction_parts) if instruction_parts else None
+        if self._capability_load_request is not None:
+            # The request ending the history is where resumption and the history fallbacks read instructions from.
+            self._capability_load_request.instructions = self.request.instructions
         if instruction_parts is None and instruction_window(ctx.state.message_history) is not None:
             # An empty source set withdraws tracked blocks; hooks can still explicitly unset parts.
             instruction_parts = []
 
-        # Validate after instructions are resolved; self.request was appended above so [:-1] is prior history
+        # Validate after instructions are resolved. Capability loads are only delivered after a tool call,
+        # so when there are none, self.request is the last message and [:-1] is the prior history.
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
@@ -2093,6 +2101,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 ),
             )
             _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
+            _apply_instruction_parts(self._capability_load_request, model_request_parameters.instruction_parts)
 
             if self.is_resuming_without_prompt:
                 # No separate user-prompt request this run: the trailing request that arrived via
@@ -3017,6 +3026,35 @@ def run_cancelled_snapshot(
         run_id=state.run_id,
         conversation_id=state.conversation_id,
     )
+
+
+def _deliver_capability_loads(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+) -> _messages.ModelRequest | None:
+    """Record the capability loads queued by `RunContext.load_capability` after the request being prepared.
+
+    Recorded before `_refresh_loaded_capability_ids`, where a load the model made through the
+    `load_capability` tool already is by then, so the request sees the loaded capability in full:
+    its tools, instructions, model settings, native tools, and hooks.
+
+    Returns the last request recorded, which now ends the history, or `None` if there were no loads.
+    """
+    queue = ctx.state.pending_messages
+    assert isinstance(queue, _enqueue.PendingMessageQueue)
+    loads = queue.pop_capability_loads()
+    if not loads:
+        return None
+    run_context = build_run_context(ctx)
+    for pending in loads:
+        for message in pending.messages:
+            fill_run_metadata(message, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
+        ctx.state.message_history.extend(pending.messages)
+        run_context._emit_event(  # pyright: ignore[reportPrivateUsage]
+            _messages.EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending.messages))
+        )
+    last_message = loads[-1].messages[-1]
+    assert isinstance(last_message, _messages.ModelRequest)
+    return last_message
 
 
 def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
