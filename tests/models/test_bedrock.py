@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import io
 import json
 import os
-from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -33,7 +33,6 @@ from pydantic_ai import (
     FunctionToolResultEvent,
     ImageUrl,
     ModelMessage,
-    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelRequestAttempt,
     ModelResponse,
@@ -1930,149 +1929,83 @@ async def test_bedrock_partial_citation_block(
     assert response.parts == [expected]
 
 
-def _bedrock_history_with_citations(
-    provider_name: str,
-    location: dict[str, Any] = {'documentChar': {'documentIndex': 0, 'start': 21, 'end': 32}},
-    text: str = 'Thirty days.',
-    title: str | None = 'Document 1',
-    other_citations: Sequence[Any] = (),
-) -> list[ModelMessage]:
-    """Message history as it comes back from JSON storage, with a text document and a cited answer."""
-    citation: dict[str, Any] = {'location': location, 'sourceContent': [{'text': 'thirty days'}]}
-    if title is not None:
-        citation['title'] = title
-    return ModelMessagesTypeAdapter.validate_json(
-        ModelMessagesTypeAdapter.dump_json(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            [
-                                'What is the return window?',
-                                BinaryContent(
-                                    data=b'The return window is thirty days from purchase.', media_type='text/plain'
-                                ),
-                            ]
-                        )
+async def test_bedrock_leaves_out_citations_it_cannot_check(bedrock_provider: BedrockProvider) -> None:
+    """Replay leaves out each citation it can't check against a document in the request, and keeps the rest.
+
+    The page citation is what Bedrock returns for a PDF, which isn't sent as text; the others only come from history
+    edited after Bedrock sent it. Citations that are sent back are covered by recordings in `test_citations.py`.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    valid: dict[str, Any] = {
+        'location': {'documentChar': {'documentIndex': 0, 'start': 21, 'end': 32}},
+        'sourceContent': [{'text': 'thirty days'}],
+        'title': 'Document 1',
+    }
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    [
+                        'What is the return window?',
+                        BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain'),
                     ]
-                ),
-                ModelResponse(
-                    parts=[
-                        TextPart(
-                            text,
-                            provider_name=provider_name,
-                            provider_details={'citations': [citation, *other_citations]},
-                            citations=[
-                                Citation(sources=[DocumentCitationSource(title=title, excerpts=['thirty days'])])
-                            ],
-                        ),
-                        TextPart('Uncited note.'),
-                    ],
-                    provider_name=provider_name,
-                ),
-                ModelRequest(parts=[UserPromptPart('Continue.')]),
+                )
             ]
-        )
-    )
-
-
-async def _bedrock_replayed_answer(
-    bedrock_provider: BedrockProvider, mocker: MockerFixture, history: list[ModelMessage]
-) -> dict[str, Any]:
-    model = BedrockConverseModel(
-        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-        provider=bedrock_provider,
-        settings=ModelSettings(citations=True),
-    )
-    mock_converse = mocker.patch.object(model.client, 'converse')
-    mock_converse.return_value = {
-        'output': {'message': {'role': 'assistant', 'content': [{'text': 'Done.'}]}},
-        'stopReason': 'end_turn',
-        'usage': {'inputTokens': 1, 'outputTokens': 1, 'totalTokens': 2},
-        'ResponseMetadata': {'HTTPStatusCode': 200},
-    }
-    await model.request(history, None, ModelRequestParameters())
-    return [message for message in mock_converse.call_args.kwargs['messages'] if message['role'] == 'assistant'][-1]
-
-
-async def test_bedrock_replays_own_citations(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
-) -> None:
-    """Citations that can't be checked are left out without taking the others on the text with them."""
-    history = _bedrock_history_with_citations(
-        'bedrock',
-        other_citations=[
-            'not a citation',
-            {
-                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 11}},
-                'sourceContent': [{'text': 'thirty days'}],
-                'title': 'Document 1',
-            },
-        ],
-    )
-
-    assert await _bedrock_replayed_answer(bedrock_provider, mocker, history) == snapshot(
-        {
-            'role': 'assistant',
-            'content': [
-                {
-                    'citationsContent': {
-                        'content': [{'text': 'Thirty days.'}],
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'Thirty days.',
+                    provider_name='bedrock',
+                    provider_details={
                         'citations': [
-                            {
-                                'location': {'documentChar': {'documentIndex': 0, 'start': 21, 'end': 32}},
-                                'sourceContent': [{'text': 'thirty days'}],
-                                'title': 'Document 1',
-                            }
-                        ],
-                    }
-                },
-                {'text': 'Uncited note.'},
+                            valid,
+                            'not a citation',
+                            {key: value for key, value in valid.items() if key != 'title'},
+                            {**valid, 'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 11}}},
+                        ]
+                    },
+                ),
+                TextPart(
+                    'From the PDF.',
+                    provider_name='bedrock',
+                    provider_details={
+                        'citations': [
+                            {**valid, 'location': {'documentPage': {'documentIndex': 0, 'start': 1, 'end': 2}}}
+                        ]
+                    },
+                ),
+                TextPart('', provider_name='bedrock', provider_details={'citations': [valid]}),
+                TextPart('From another provider.', provider_name='anthropic', provider_details={'citations': [valid]}),
             ],
-        }
+            provider_name='bedrock',
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), BedrockModelSettings(citations=True)
     )
 
-
-@pytest.mark.parametrize(
-    'history',
-    [
-        pytest.param(_bedrock_history_with_citations('anthropic'), id='other-provider'),
-        pytest.param(
-            _bedrock_history_with_citations(
-                'bedrock', location={'documentChar': {'documentIndex': 0, 'start': 0, 'end': 11}}
-            ),
-            id='range-does-not-select-excerpt',
-        ),
-        pytest.param(
-            _bedrock_history_with_citations(
-                'bedrock', location={'documentPage': {'documentIndex': 0, 'start': 1, 'end': 2}}
-            ),
-            id='page-location',
-        ),
-        pytest.param(_bedrock_history_with_citations('bedrock', title=None), id='no-title'),
-    ],
-)
-async def test_bedrock_sends_unverifiable_citations_as_text(
-    allow_model_requests: None,
-    bedrock_provider: BedrockProvider,
-    mocker: MockerFixture,
-    history: list[ModelMessage],
-) -> None:
-    assert await _bedrock_replayed_answer(bedrock_provider, mocker, history) == {
-        'role': 'assistant',
-        'content': [{'text': 'Thirty days.'}, {'text': 'Uncited note.'}],
-    }
-
-
-async def test_bedrock_sends_citations_on_empty_text_as_text(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
-) -> None:
-    history = _bedrock_history_with_citations('bedrock', text='')
-
-    assert await _bedrock_replayed_answer(bedrock_provider, mocker, history) == {
-        'role': 'assistant',
-        'content': [{'text': ''}, {'text': 'Uncited note.'}],
-    }
+    assert bedrock_messages[1]['content'] == snapshot(
+        [
+            {
+                'citationsContent': {
+                    'content': [{'text': 'Thirty days.'}],
+                    'citations': [
+                        {
+                            'location': {'documentChar': {'documentIndex': 0, 'start': 21, 'end': 32}},
+                            'sourceContent': [{'text': 'thirty days'}],
+                            'title': 'Document 1',
+                        }
+                    ],
+                }
+            },
+            {'text': 'From the PDF.'},
+            {'text': ''},
+            {'text': 'From another provider.'},
+        ]
+    )
 
 
 async def test_bedrock_stream_citation_mapping(
