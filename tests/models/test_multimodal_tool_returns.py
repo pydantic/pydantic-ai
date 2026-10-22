@@ -9,6 +9,8 @@ product of test dimensions:
 
 The SUPPORT_MATRIX determines expected behavior for each (provider, file_type) pair:
 'in_tool_result', 'as_user_content', or an ExpectError with error type and match pattern.
+A file returned directly that the model's profile says it can't read is sent as a note instead; see
+NOTED_IN_TOOL_RESULTS.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    TextPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -42,6 +45,8 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 from tests.cassette_utils import CassetteContext
 
@@ -192,6 +197,30 @@ SUPPORT_MATRIX: dict[tuple[ProviderName, FileType], Expectation | ExpectError] =
     ),
 }
 
+NOTED_IN_TOOL_RESULTS: frozenset[tuple[ProviderName, FileType]] = frozenset(
+    {
+        ('anthropic', 'audio'),
+        ('anthropic', 'video'),
+        ('bedrock_nova', 'audio'),
+        ('bedrock_claude', 'audio'),
+        ('openai_chat', 'video'),
+        ('openai_responses', 'audio'),
+        ('openai_responses', 'video'),
+        ('xai', 'audio'),
+        ('xai', 'video'),
+        ('groq', 'document'),
+        ('groq', 'audio'),
+        ('groq', 'video'),
+        ('mistral', 'audio'),
+        ('mistral', 'video'),
+    }
+)
+"""Pairs whose file, returned directly by a tool, is replaced by a note: the model's profile says it can't read it.
+
+The SUPPORT_MATRIX error still applies to the same file sent through `ToolReturn.content`, which goes on
+the user channel as the developer wrote it, and to an `UploadedFile`, which only its provider can read.
+"""
+
 # Overrides for specific (provider, file_type, content_source, return_style) combos where
 # the behavior differs from the general SUPPORT_MATRIX entry. Keys use None to match all
 # values of that dimension.
@@ -229,6 +258,12 @@ ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, Return
     ('bedrock_nova', 'video', 'uploaded_file', 'direct'): ExpectError(ModelHTTPError, r'extraneous key \[toolResult\]'),
 }
 
+
+NOTE_ENDINGS: dict[FileType, str] = {
+    'document': 'documents.',
+    'audio': 'audio files.',
+    'video': 'video.',
+}
 
 _OverrideKey = tuple[ProviderName, FileType, ContentSource | None, ReturnStyle | None]
 
@@ -298,6 +333,28 @@ def create_model(
         return XaiModel(model_name, provider=xai_provider)
     else:
         assert_never(provider)
+
+
+class AnswerOnceToolReturned(WrapperModel):
+    """Sends requests as usual until one carries a tool result, then answers that one itself.
+
+    Lets a test assert what would have gone out after a tool ran without recording a model's reply to it.
+    """
+
+    def __init__(self, wrapped: Model):
+        super().__init__(wrapped)
+        self.follow_up: list[ModelMessage] | None = None
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        if any(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            self.follow_up = messages
+            return ModelResponse(parts=[TextPart('Received it.')])
+        return await super().request(messages, model_settings, model_request_parameters)
 
 
 def is_provider_available(provider: ProviderName) -> bool:
@@ -604,6 +661,15 @@ async def test_multimodal_tool_return_matrix(
 
     error_info = get_error_info(provider, file_type, content_source, return_style)
     model = create_model(provider, api_keys, bedrock_provider, xai_provider, vertex_provider)
+    noted = (
+        return_style == 'direct'
+        and content_source != 'uploaded_file'
+        and (provider, file_type) in NOTED_IN_TOOL_RESULTS
+    )
+    if noted:
+        # The model's reply to the note is not recorded: what this pins is that the file is replaced
+        # by a note in the request instead of failing the run, which `follow_up` shows.
+        model = AnswerOnceToolReturned(model)
     if content_source == 'uploaded_file':
         assert uf_provider is not None and file_id is not None
         content: Any = UploadedFile(
@@ -627,7 +693,15 @@ async def test_multimodal_tool_return_matrix(
 
     prompt = f'Use the get_file tool now to retrieve a {file_type} file, then describe what you received.'
 
-    if error_info:
+    if isinstance(model, AnswerOnceToolReturned):
+        result = await agent.run(prompt, usage_limits=UsageLimits(output_tokens_limit=100000))
+        assert model.follow_up is not None
+        [sent] = iter_message_parts(model.follow_up, ModelRequest, ToolReturnPart)
+        assert isinstance(sent.content, str)
+        assert sent.content.endswith('was not sent: this model cannot read ' + NOTE_ENDINGS[file_type])
+        # The history keeps the file, for a model that can read it.
+        assert_file_in_tool_return(result.all_messages(), file_type)
+    elif error_info:
         with pytest.raises(error_info.error_type, match=error_info.match):
             await agent.run(prompt, usage_limits=UsageLimits(output_tokens_limit=100000))
     else:

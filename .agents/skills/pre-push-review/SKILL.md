@@ -25,7 +25,7 @@ when the [canonical pre-push gate](../pushing-commits-to-the-repo/SKILL.md#befor
 Use that gate's [review scope](../pushing-commits-to-the-repo/SKILL.md#review-scope), exemptions, and budget.
 
 This is the local counterpart to the repository's high-judgment hosted review, run through the
-developer's model subscription. It is independent of the hosted review that runs after push.
+developer's model subscription. It is independent of any hosted review.
 
 ## Select the reviewer tier
 
@@ -70,6 +70,9 @@ review rubric independently of any named hosted reviewer:
 
 - Is the work ready, correctly scoped, non-duplicative, and aligned with the task and settled
   repository decisions?
+- Does a fix sit in a shared code path that reaches providers, models, or callers the PR did not
+  reproduce the defect on? Does the PR treat a recording or probe in which a surface accepts the
+  change as evidence that the surface needs it?
 - Does it meet root and directory instructions, including public API and compatibility requirements?
 - Does any behavior, design decision, or trade-off require an explicit human decision?
 - Review in priority order: public API, concepts and behavior, documentation, tests, code quality.

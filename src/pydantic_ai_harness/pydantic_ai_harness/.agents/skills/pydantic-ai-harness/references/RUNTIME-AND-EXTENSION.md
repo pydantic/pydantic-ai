@@ -267,8 +267,12 @@ Gotchas:
   set both `StepSemantics.AT_MOST_ONCE_PER_RETRY` and `retry_strategy=RetryPresets.none()`. Step
   retries stack with Pydantic AI and provider-client retries, so disable one side.
 - Tool calls run sequentially inside a durable handler. Nested durable runs are rejected.
-- Changing the tools, MCP servers, model, or `event_stream_handler` breaks in-flight executions. Deploy
-  a new published version.
+- Await agent runs one after another in a handler, never concurrently with `asyncio.gather` or tasks:
+  replay matches checkpoints by position, so concurrent runs can be served each other's results.
+- Changing the number or order of steps (tools, MCP servers, `aws_lambda: False` opt-outs,
+  `event_stream_handler`) breaks in-flight executions, and the mismatch is not detected. Deploy a new
+  published version.
+- Checkpoints hold model responses, tool results, and step error messages for the retention period.
 - `ctx.enqueue()` is unavailable inside a durable step. Do not detach work with `asyncio.create_task()`.
 - Budget: 3,000 operations and 100 MB of checkpointed state. Return references, not blobs.
 
@@ -541,8 +545,10 @@ set `engine: {id: pydantic-ai, model: openai/gpt-6.1-sol}` (`provider/model` is 
 `safeoutputs_add_comment` tool). A step that appends `{"type":"noop","message":"..."}` to
 `$GH_AW_SAFE_OUTPUTS` makes the engine exit 0 before starting the agent; gh-aw rejects a `noop`
 without `message`. Install extra dependencies with a workflow `steps:` `pip install --user`.
-The provider key is a repository secret, never `engine.env`. A spec agent **cannot** use harness
-capabilities, because the CLI passes no `custom_capability_types`. Use a Python module for those.
+The provider key is a repository secret, never `engine.env`. Threat detection on safe outputs runs on
+`copilot` and reads `COPILOT_GITHUB_TOKEN` (or `github.token` under `copilot-requests: write`); without
+either, set `safe-outputs.threat-detection.engine` to `codex`, `claude`, or `false`. A spec agent
+**cannot** use harness capabilities, because the CLI passes no `custom_capability_types`. Use a Python module for those.
 
 ## See also
 
