@@ -254,7 +254,7 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
 
 A few things to know:
 
-- Consecutive text parts, such as Anthropic's separately cited blocks, are shown as one text part. Read citations from `citations` in the metadata, which match the combined text.
+- Consecutive text parts, such as Anthropic's separately cited blocks, are shown as one text part. Read citations from `citations` in the metadata, which match the combined text. When the frontend sends combined text back, its citations stay in the metadata but go to Anthropic as plain text.
 - Anchor positions count characters the way Python does. JavaScript counts some characters, such as emoji, as two, so slice `Array.from(text)` rather than the string itself.
 - Google and OpenAI Chat send citations at the end of the response. When a tool call follows the text, those citations don't reach the frontend, so they're also missing from the history it sends back.
 

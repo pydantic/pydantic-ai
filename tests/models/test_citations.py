@@ -1083,10 +1083,11 @@ async def test_anthropic_document_citation_replay_counts_fetched_pages(
 async def test_anthropic_document_citation_replay_after_vercel_round_trip(
     allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ) -> None:
-    """Citations survive a Vercel AI frontend holding the history, and are sent back on the text that comes back.
+    """Citations survive a Vercel AI frontend holding the history, but aren't sent back on text it joined.
 
     Anthropic answers a sentence citing two documents in several text blocks. The Vercel adapter shows them as one
-    text part and loads it back as one, so the next request sends a single text block with both citations.
+    text part and loads it back as one, whose citations each cover only part of it, so the next request sends that
+    text without citations.
     """
     if not anthropic_available() or not vercel_available():
         pytest.skip('anthropic or Vercel AI dependencies not installed')
@@ -1110,7 +1111,7 @@ async def test_anthropic_document_citation_replay_after_vercel_round_trip(
     assert len(_cited_text_parts(history)) == 1
     await agent.run('Thanks. Reply only OK.', message_history=history)
 
-    assert _replayed_document_indices(request_capture.bodies('/v1/messages')[-1]) == snapshot([[0, 1]])
+    assert _replayed_document_indices(request_capture.bodies('/v1/messages')[-1]) == snapshot([])
 
 
 def read_shipping_policy() -> BinaryContent:

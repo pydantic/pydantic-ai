@@ -360,7 +360,8 @@ def _make_document_block(
     if format not in _SUPPORTED_DOCUMENT_FORMATS:
         raise UserError(f'Unsupported document format: {format}')
     document: DocumentBlockTypeDef = {'name': name, 'format': format, 'source': source}
-    if include_citations and format in {'txt', 'pdf'}:
+    # Bedrock rejects citations on a document read from S3.
+    if include_citations and format in {'txt', 'pdf'} and 's3Location' not in source:
         document['citations'] = {'enabled': True}
     return {'document': document}
 
@@ -726,8 +727,10 @@ def _insert_cache_point_before_trailing_documents(
         return False
 
 
-def _is_pdf(block: Any) -> bool:
-    return block.get('document', {}).get('format') == 'pdf'
+def _stays_in_place(block: Any) -> bool:
+    """Whether Bedrock keeps this document where it is, and accepts a `cachePoint` after it, on Anthropic models."""
+    document = block.get('document', {})
+    return document.get('format') == 'pdf' or 'citations' in document
 
 
 def _add_automatic_cache_point(
@@ -741,15 +744,15 @@ def _add_automatic_cache_point(
     same without it. See `bedrock_document_cache_point_variant`.
     """
     if variant == 'anthropic':
-        if _is_pdf(content[-1]):
+        if _stays_in_place(content[-1]):
             content.append(cache_point)
             return
         start = len(content)
-        while start > 0 and 'document' in content[start - 1] and not _is_pdf(content[start - 1]):
+        while start > 0 and 'document' in content[start - 1] and not _stays_in_place(content[start - 1]):
             start -= 1
         if (
             0 < start < len(content)
-            and not _is_pdf(content[start - 1])
+            and not _stays_in_place(content[start - 1])
             and not any('cachePoint' in block for block in content)
         ):
             # Bedrock moves these documents to the front of the message either way, so moving them ahead of the
@@ -1637,7 +1640,13 @@ class BedrockConverseModel(Model[BaseClient]):
 
         # Most families accept a `status` field on `toolResult` blocks; Writer Palmyra rejects it.
         supports_tool_result_status = profile.get('bedrock_supports_tool_result_status', True)
-        include_citations = settings.get('citations', False) and profile.get('bedrock_supports_citations', False)
+        # Anthropic models write their `<cite>` markup into tool and prompted output, so citations are only turned on for
+        # text output.
+        include_citations = (
+            settings.get('citations', False)
+            and profile.get('bedrock_supports_citations', False)
+            and model_request_parameters.output_mode == 'text'
+        )
 
         # Media returned from a tool that can't live inside a `toolResult` block (see
         # `bedrock_supported_media_kinds_in_tool_returns`) is emitted as a sibling block. Models like
@@ -2174,7 +2183,9 @@ class BedrockConverseModel(Model[BaseClient]):
                             'CachePoint cannot be preceded by another CachePoint - there must be content between cache points when using Bedrock.'
                         )
                     cache_point = BedrockConverseModel._get_cache_point(item.ttl)
-                    if self.profile.get('bedrock_document_cache_point_variant') == 'anthropic' and _is_pdf(content[-1]):
+                    if self.profile.get('bedrock_document_cache_point_variant') == 'anthropic' and _stays_in_place(
+                        content[-1]
+                    ):
                         content.append(cache_point)
                     else:
                         _insert_cache_point_before_trailing_documents(content, cache_point, raise_if_cannot_insert=True)

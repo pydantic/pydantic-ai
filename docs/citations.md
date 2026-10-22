@@ -8,9 +8,9 @@ every provider. The model's text is never changed.
 
 ## Turning citations on
 
-Models cite the results of search tools, such as [web search](native-tools.md#web-search-tool),
+Most models cite the results of search tools, such as [web search](native-tools.md#web-search-tool),
 [web fetch](native-tools.md#web-fetch-tool) and [file search](native-tools.md#file-search-tool), without being asked.
-Some providers only cite the documents you send when you ask. Add the [`Citations`][pydantic_ai.capabilities.Citations]
+Some providers only cite the documents you send, or on xAI any source, when you ask. Add the [`Citations`][pydantic_ai.capabilities.Citations]
 capability to ask them:
 
 ```python {title="document_citations.py"}
@@ -46,7 +46,8 @@ A [`Citation`][pydantic_ai.messages.Citation] has:
       Some providers, such as Anthropic, cite whole text parts, so the anchor covers the whole part.
     - A [`MarkerCitationAnchor`][pydantic_ai.messages.MarkerCitationAnchor] covers a marker the model wrote, such as
       `[1]` or a link.
-    - `None` means the provider didn't say where in the text the citation belongs.
+    - `None` means the provider didn't say which text the citation is about. OpenAI file citations, for example, only
+      give a position, which is kept in the part's `provider_details['citations']`.
 
 ```python {title="render_citations.py"}
 from pydantic_ai import (
@@ -126,8 +127,10 @@ TextPart(
 
 - Citations are only on text parts. If your output comes from a [tool call](output.md#output-modes), as structured
   output does by default, the output itself has no citations.
-- When streaming, Google and OpenAI Chat send citations at the end of the response, sometimes after a text part has
-  finished. Read citations from the final response.
+- With [structured output](output.md), `Citations()` doesn't turn on document and web fetch citations on Anthropic
+  and Bedrock: the model would write its citation markup into your output.
+- When streaming, citations can arrive after their text: at the end of each text part on Anthropic, and at the end of
+  the response on Google and OpenAI Chat. Read citations from the final response.
 - Citation URLs, titles and excerpts come from outside sources, so treat them as untrusted. Excerpts can also contain
   private content from your documents, so choose whether to log them or show them to users.
 - Anything else the provider returned about a citation, such as Google's confidence scores, is kept as the provider
@@ -146,7 +149,10 @@ from:
 
 Other citations stay on the saved messages, but their text is sent as plain text. That covers document and
 fetched-page citations, citations from other providers and APIs (such as OpenAI Chat), and history sent to a different
-provider. An OpenAI web citation is also left out if the text around its link was edited.
+provider. A citation is also left out when its text was changed or joined with other text.
+
+If you edit the text of a saved answer, also clear that part's `citations` and its `provider_details['citations']`.
+Pydantic AI leaves out citations whose text clearly changed, but an edit that keeps the same length can go unnoticed.
 
 History that's sent back unchanged goes out the same way every turn, so prompt caching keeps working.
 
@@ -160,10 +166,10 @@ The [Vercel AI adapter](ui/vercel-ai.md#citations) keeps citations when the fron
 
 | Provider | Citations | How to turn them on | Notes |
 | --- | --- | --- | --- |
-| [Anthropic](https://platform.claude.com/docs/en/build-with-claude/citations) | Web search, web fetch and documents | Web search: always. Web fetch and documents, including documents returned by tools: `Citations()`. [`WebFetchTool(enable_citations=True)`][pydantic_ai.native_tools.WebFetchTool.enable_citations] turns them on for web fetch only | Anchors cover whole text parts. A fetched PDF is a document source. Anthropic doesn't allow document citations with [`NativeOutput`][pydantic_ai.output.NativeOutput]. Citations of search results you provide yourself aren't included |
-| [Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_CitationsContentBlock.html) | Documents, on Anthropic models | `Citations()`, for text and PDF documents, including documents returned by tools | Other models on Bedrock don't support citations, so they ignore the setting. Anchors cover whole text parts. A document's title is the name Pydantic AI gives it, such as `Document 1` |
-| [Google Gemini API](https://ai.google.dev/gemini-api/docs/google-search) | Google Search, file search and web fetch | Turn on the tool | |
-| [Google Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/grounding/overview) | Google Search | Turn on the tool | |
+| [Anthropic](https://platform.claude.com/docs/en/build-with-claude/citations) | Web search, web fetch and documents | Web search: always. Web fetch and documents, including documents returned by tools: `Citations()`. [`WebFetchTool(enable_citations=True)`][pydantic_ai.native_tools.WebFetchTool.enable_citations] turns them on for web fetch only | Anchors cover whole text parts. A fetched PDF is a document source. Citations of search results you provide yourself aren't included |
+| [Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_CitationsContentBlock.html) | Documents, on Anthropic models | `Citations()`, for text and PDF documents, including documents returned by tools | Other models on Bedrock don't support citations, so they ignore the setting. Anchors cover whole text parts. A document's title is the name Pydantic AI gives it, such as `Document 1`. Documents read from S3 aren't cited, as Bedrock doesn't allow it |
+| [Google Gemini API](https://ai.google.dev/gemini-api/docs/google-search) | Google Search, file search and web fetch | Turn on the tool | Google Search URLs are Google redirect links, and titles are often just the site's domain |
+| [Google Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/grounding/overview) | Google Search | Turn on the tool | Same as the Gemini API |
 | [OpenAI Chat and Responses](https://platform.openai.com/docs/guides/tools-web-search) | Web pages, and files on Responses | Turn on web search, or file search for files | Other annotation types, such as `container_file_citation`, are only available with [`openai_include_raw_annotations`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_include_raw_annotations] |
-| [OpenRouter](https://openrouter.ai/docs/guides/features/server-tools/web-search) | Web pages | Turn on web search. Perplexity Sonar models always search | OpenRouter doesn't say where in the text a citation belongs, so citations have no anchor |
+| [OpenRouter](https://openrouter.ai/docs/guides/features/server-tools/web-search) | Web pages | Turn on web search. Perplexity Sonar models always search, and OpenRouter rejects them with the web search tool | OpenRouter doesn't say where in the text a citation belongs, so citations have no anchor |
 | [xAI](https://docs.x.ai/developers/tools/citations) | Web, X and collection citations | `Citations()` | Turning citations on changes the answer: the model writes Markdown markers such as `[[1]](https://x.com/...)` into it, and the anchor covers the marker. Collection citations are document sources |

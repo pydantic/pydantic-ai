@@ -75,6 +75,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     ToolAvailabilityDeltaPart,
     UploadedFile,
+    UserContent,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
@@ -1468,12 +1469,31 @@ async def test_bedrock_citations_request_setting(
     assert mock_converse.call_args.kwargs['messages'][0]['content'][1]['document'] == expected
 
 
+async def test_bedrock_citations_off_for_structured_output(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, text_document_content: BinaryContent
+) -> None:
+    """The shared setting doesn't turn on citations when the output isn't text.
+
+    Anthropic models write their `<cite>` markup into tool output, as checked live. Unit test: it pins the request.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [ModelRequest(parts=[UserPromptPart(content=['What is in this document?', text_document_content])])],
+        ModelRequestParameters(output_mode='tool', allow_text_output=False),
+        BedrockModelSettings(citations=True),
+    )
+    assert bedrock_messages[0]['content'][1] == {
+        'document': {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Dummy TXT file\n'}}
+    }
+
+
 async def test_bedrock_citations_for_uploaded_document(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:
-    """The shared setting also applies to supported documents already stored in S3.
+    """Bedrock rejects citations on a document read from S3, so the shared setting leaves them off.
 
-    Unit test: replaying a recording would need a real S3 object in the bucket.
+    Unit test: replaying a recording would need a real S3 object in the bucket. The rejection was checked live:
+    'S3 as a document source is not allowed when citations are enabled'.
     """
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
     mock_converse = mocker.patch.object(model.client, 'converse')
@@ -1496,7 +1516,6 @@ async def test_bedrock_citations_for_uploaded_document(
         'name': 'Document 1',
         'format': 'pdf',
         'source': {'s3Location': {'uri': 's3://bucket/report.pdf'}},
-        'citations': {'enabled': True},
     }
 
 
@@ -1625,7 +1644,6 @@ async def test_bedrock_tool_return_document_citations_request(bedrock_provider: 
                                     'name': 'Document 2',
                                     'format': 'txt',
                                     'source': {'s3Location': {'uri': 's3://bucket/uploaded.txt'}},
-                                    'citations': {'enabled': True},
                                 }
                             },
                         ],
@@ -5534,6 +5552,38 @@ async def test_bedrock_cache_messages_trailing_pdf_document(
 
 
 @pytest.mark.vcr()
+@pytest.mark.parametrize(
+    ('content', 'expected'),
+    [
+        pytest.param(
+            ['Summarize this:', BinaryContent(data=b'Report text.', media_type='text/plain')],
+            [['text', 'document', 'cachePoint']],
+            id='automatic',
+        ),
+        pytest.param(
+            ['Summarize this:', BinaryContent(data=b'Report text.', media_type='text/plain'), CachePoint()],
+            [['text', 'document', 'cachePoint']],
+            id='explicit',
+        ),
+    ],
+)
+async def test_bedrock_cache_point_after_document_with_citations(
+    bedrock_provider: BedrockProvider, content: list[UserContent], expected: list[list[str]]
+):
+    """A cache point goes right after a document with citations on, which Bedrock keeps in place, like a PDF.
+
+    Moving the document ahead of the text, as for other documents, would make the next request, which no longer has
+    this cache point, miss the cache. Unit test: checked live, a moved citations document missed on the second turn.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [ModelRequest(parts=[UserPromptPart(content=content)])],
+        ModelRequestParameters(),
+        BedrockModelSettings(citations=True, bedrock_cache_messages=True),
+    )
+    assert _block_kinds({'messages': bedrock_messages}) == expected
+
+
 async def test_bedrock_cache_point_after_trailing_pdf_document(
     allow_model_requests: None, bedrock_provider: BedrockProvider, document_content: BinaryContent
 ):

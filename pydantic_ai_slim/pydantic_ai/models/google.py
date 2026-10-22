@@ -2159,17 +2159,51 @@ def _character_index(text: str, byte_index: int) -> int | None:
         return None
 
 
-def _grounding_support_part_index(parts: Sequence[Part], segment: Segment) -> int | None:
+def _segment_anchor(text: str, segment: Segment, byte_offset: int = 0) -> ContentCitationAnchor | None:
+    """Return the anchor of a segment's offsets in `text`, if they select the segment text Google reports for them."""
+    start = _character_index(text, (segment.start_index or 0) - byte_offset)
+    end = _character_index(text, (segment.end_index or 0) - byte_offset)
+    if start is not None and end is not None and start < end and text[start:end] == segment.text:
+        return ContentCitationAnchor(start=start, end=end)
+    return None
+
+
+def _locate_grounding_segment(
+    parts: Sequence[Part], segment: Segment
+) -> tuple[int | None, ContentCitationAnchor | None]:
+    """Return the index of the text part a grounding segment belongs to, and its anchor in that part."""
     # Grounding supports the answer, so thought parts are never cited.
     text_parts = {index: part.text for index, part in enumerate(parts) if part.text and not part.thought}
     if (index := segment.part_index) is not None and index in text_parts:
+        if anchor := _segment_anchor(text_parts[index], segment):
+            return index, anchor
+    else:
+        # Without a part index, the offsets count across all the text parts joined together.
+        byte_offset = 0
+        for index, text in text_parts.items():
+            if anchor := _segment_anchor(text, segment, byte_offset):
+                return index, anchor
+            byte_offset += len(text.encode())
+
+    part_index = None
+    if (index := segment.part_index) is not None and index in text_parts:
         if segment.text is None or segment.text in text_parts[index]:
-            return index
-    if segment.text is not None:
+            part_index = index
+    if part_index is None and segment.text is not None:
         candidates = [index for index, text in text_parts.items() if segment.text in text]
         if len(candidates) == 1:
-            return candidates[0]
-    return next(iter(text_parts)) if len(text_parts) == 1 else None
+            part_index = candidates[0]
+    if part_index is None and len(text_parts) == 1:
+        part_index = next(iter(text_parts))
+    if part_index is None or not segment.text:
+        return part_index, None
+    # The offsets don't select the segment text, which Google sometimes reports a byte off. The text itself still
+    # anchors the citation when it occurs only once in the part.
+    text = text_parts[part_index]
+    start = text.find(segment.text)
+    if start != -1 and text.find(segment.text, start + 1) == -1:
+        return part_index, ContentCitationAnchor(start=start, end=start + len(segment.text))
+    return part_index, None
 
 
 def _map_citation_source(chunk: GroundingChunk) -> CitationSource | None:
@@ -2203,8 +2237,8 @@ def _map_citations(
         segment = support.segment
         if segment is None or segment.end_index is None:
             continue
-        part_index = _grounding_support_part_index(parts, segment)
-        if part_index is None or (text := parts[part_index].text) is None:
+        part_index, anchor = _locate_grounding_segment(parts, segment)
+        if part_index is None:
             continue
 
         support_chunks = [
@@ -2212,12 +2246,6 @@ def _map_citations(
         ]
         sources = [source for chunk in support_chunks if chunk and (source := _map_citation_source(chunk))]
         if sources:
-            start = _character_index(text, segment.start_index or 0)
-            end = _character_index(text, segment.end_index)
-            anchor = None
-            # Only keep offsets that select the segment text Google reports for them.
-            if start is not None and end is not None and start < end and text[start:end] == segment.text:
-                anchor = ContentCitationAnchor(start=start, end=end)
             citations, provider_details = citations_by_part.setdefault(part_index, ([], {'citations': []}))
             citations.append(Citation(sources=sources, anchor=anchor))
             # Supports refer to the response's chunks by index, so the raw data keeps the chunks it refers to, in the
