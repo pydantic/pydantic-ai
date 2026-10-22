@@ -19,6 +19,7 @@
             - Click
             - MoveMouse
             - Drag
+            - Point
             - MouseDown
             - MouseUp
             - MouseButton

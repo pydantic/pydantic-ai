@@ -26,6 +26,7 @@ from .computer import (
     MouseDown,
     MouseUp,
     MoveMouse,
+    Point,
     Scroll,
     TypeText,
 )
@@ -62,7 +63,7 @@ def _computer(backend: WorkspaceBackend) -> SupportsComputerUse:
 class _UnknownAction:
     """An action kind no backend knows, standing in for one added to `ComputerAction` after the backend was written."""
 
-    kind: str = 'conformance_unknown_action'
+    type: str = 'conformance_unknown_action'
 
 
 @asynccontextmanager
@@ -596,11 +597,11 @@ class WorkspaceBackendSuite:
             MoveMouse(x=x, y=y),
             Click(x=x, y=y),
             Click(count=2),
-            Click(button='right', keys=('shift',)),
+            Click(button='right', modifiers=('shift',)),
             KeyPress(keys=('escape',)),
-            Scroll(x=x, y=y, dy=1),
-            Scroll(dx=-1),
-            Drag(path=((x, y), (x + 10, y + 10))),
+            Scroll(x=x, y=y, direction='down'),
+            Scroll(direction='left', amount=1),
+            Drag(path=(Point(x=x, y=y), Point(x=x + 10, y=y + 10))),
             MouseDown(),
             MouseUp(),
             TypeText(text='a'),
@@ -611,7 +612,7 @@ class WorkspaceBackendSuite:
             with suppress(UnsupportedComputerActionError):
                 await computer.act(action)
 
-    async def test_an_unknown_action_kind_is_refused(self, backend: WorkspaceBackend) -> None:
+    async def test_an_unknown_action_type_is_refused(self, backend: WorkspaceBackend) -> None:
         computer = _computer(backend)
         with pytest.raises(UnsupportedComputerActionError):
             await computer.act(_UnknownAction())  # pyright: ignore[reportArgumentType]

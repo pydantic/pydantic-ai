@@ -21,6 +21,7 @@ from pydantic_ai.workspaces import (
     MouseDown,
     MouseUp,
     MoveMouse,
+    Point,
     ReadOnlyWorkspace,
     Scroll,
     TypeText,
@@ -45,6 +46,7 @@ class ScriptedCommands:
     def __init__(self, *results: CommandResult) -> None:
         self.results = list(results)
         self.calls: list[tuple[WorkspaceCommand, bool, Mapping[str, str] | None]] = []
+        self.timeouts: list[tuple[WorkspaceCommand, bool, float | None]] = []
 
     async def run(
         self,
@@ -55,6 +57,7 @@ class ScriptedCommands:
         timeout: float | None = None,
     ) -> CommandResult:
         self.calls.append((command, shell, env))
+        self.timeouts.append((command, shell, timeout))
         return self.results.pop(0) if self.results else CommandResult(exit_code=0, stdout='', stderr='')
 
     @property
@@ -83,25 +86,25 @@ class BlockingCommands(ScriptedCommands):
         (Click(x=10, y=20), ['xdotool', 'mousemove', '10', '20', 'click', '--repeat', '1', '1']),
         (Click(count=2, button='right'), ['xdotool', 'click', '--repeat', '2', '3']),
         (
-            Click(x=1, y=2, button='back', keys=('ctrl', 'shift')),
+            Click(x=1, y=2, button='back', modifiers=('ctrl', 'shift')),
             ['xdotool', 'keydown', 'ctrl', 'shift', 'mousemove', '1', '2', 'click', '--repeat', '1', '8']
             + ['keyup', 'shift', 'ctrl'],
         ),
         (MoveMouse(x=5, y=6), ['xdotool', 'mousemove', '5', '6']),
         (
-            Drag(path=((1, 2), (3, 4), (5, 6))),
+            Drag(path=(Point(x=1, y=2), Point(x=3, y=4), Point(x=5, y=6))),
             ['xdotool', 'mousemove', '1', '2', 'mousedown', '1', 'mousemove', '3', '4', 'mousemove', '5', '6']
             + ['mouseup', '1'],
         ),
         (MouseDown(button='middle'), ['xdotool', 'mousedown', '2']),
         (MouseUp(), ['xdotool', 'mouseup', '1']),
-        (Scroll(x=7, y=8, dy=3), ['xdotool', 'mousemove', '7', '8', 'click', '--repeat', '3', '5']),
+        (Scroll(x=7, y=8, direction='down'), ['xdotool', 'mousemove', '7', '8', 'click', '--repeat', '3', '5']),
+        (Scroll(direction='up', amount=2), ['xdotool', 'click', '--repeat', '2', '4']),
         (
-            Scroll(dy=-2, dx=1, keys=('shift',)),
-            ['xdotool', 'keydown', 'shift', 'click', '--repeat', '2', '4', 'click', '--repeat', '1', '7']
-            + ['keyup', 'shift'],
+            Scroll(direction='right', amount=1, modifiers=('shift',)),
+            ['xdotool', 'keydown', 'shift', 'click', '--repeat', '1', '7', 'keyup', 'shift'],
         ),
-        (Scroll(dx=-4), ['xdotool', 'click', '--repeat', '4', '6']),
+        (Scroll(direction='left', amount=4), ['xdotool', 'click', '--repeat', '4', '6']),
         (TypeText(text='-n "hi"\n'), ['xdotool', 'type', '--', '-n "hi"\n']),
         (KeyPress(keys=('ctrl', 's')), ['xdotool', 'key', '--repeat', '1', '--', 'ctrl+s']),
         (KeyPress(keys=('Return',), repeat=3), ['xdotool', 'key', '--repeat', '3', '--', 'Return']),
@@ -123,7 +126,7 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: Computer
     [
         KeyPress(keys=('exec',)),
         KeyPress(keys=('ctrl', 'a b')),
-        Click(keys=('ctrl', 'exec')),
+        Click(modifiers=('ctrl', 'exec')),
         HoldKey(keys=('--help',), seconds=1),
         KeyPress(keys=('é',)),
     ],
@@ -139,9 +142,12 @@ async def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands(act
 @pytest.mark.parametrize(
     'action, release',
     [
-        (Click(x=1, y=2, keys=('ctrl', 'shift')), ['xdotool', 'keyup', 'shift', 'ctrl']),
-        (Drag(path=((1, 2), (3, 4))), ['xdotool', 'mouseup', '1']),
-        (Drag(path=((1, 2), (3, 4)), keys=('alt',)), ['xdotool', 'mouseup', '1', 'keyup', 'alt']),
+        (Click(x=1, y=2, modifiers=('ctrl', 'shift')), ['xdotool', 'keyup', 'shift', 'ctrl']),
+        (Drag(path=(Point(x=1, y=2), Point(x=3, y=4))), ['xdotool', 'mouseup', '1']),
+        (
+            Drag(path=(Point(x=1, y=2), Point(x=3, y=4)), modifiers=('alt',)),
+            ['xdotool', 'mouseup', '1', 'keyup', 'alt'],
+        ),
     ],
 )
 async def test_x11_computer_releases_what_a_failed_action_held(action: ComputerAction, release: list[str]) -> None:
@@ -154,11 +160,11 @@ async def test_x11_computer_releases_what_a_failed_action_held(action: ComputerA
 async def test_x11_computer_releases_held_keys_when_cancelled() -> None:
     commands = BlockingCommands()
     async with anyio.create_task_group() as tg:
-        tg.start_soon(X11Computer(commands).act, HoldKey(keys=('shift',), seconds=60))
+        tg.start_soon(X11Computer(commands).act, HoldKey(keys=('shift',), seconds=5))
         await commands.started.wait()
         tg.cancel_scope.cancel()
     assert commands.argvs == [
-        ['xdotool', 'keydown', 'shift', 'sleep', '60.0', 'keyup', 'shift'],
+        ['xdotool', 'keydown', 'shift', 'sleep', '5.0', 'keyup', 'shift'],
         ['xdotool', 'keyup', 'shift'],
     ]
 
@@ -231,25 +237,30 @@ def test_actions_normalize_key_names_and_validate_from_json() -> None:
     adapter = TypeAdapter(list[ComputerAction])
     actions = adapter.validate_python(
         [
-            {'kind': 'key_press', 'keys': ['CTRL', 'Return']},
-            {'kind': 'click', 'x': 1, 'y': 2, 'keys': ['Control', 'cmd', 'Option']},
-            {'kind': 'hold_key', 'keys': ['ESC'], 'seconds': 1},
+            {'type': 'keypress', 'keys': ['CTRL', 'Return']},
+            {'type': 'click', 'x': 1, 'y': 2, 'modifiers': ['Control', 'cmd', 'Option'], 'scale': 0.5},
+            {'type': 'hold_key', 'keys': ['ESC'], 'seconds': 1},
+            {'type': 'keypress', 'keys': ['ctrl+shift+T']},
+            {'type': 'keypress', 'keys': ['+']},
         ]
     )
     assert actions == [
         KeyPress(keys=('ctrl', 'enter')),
-        Click(x=1, y=2, keys=('ctrl', 'super', 'alt')),
+        Click(x=1, y=2, modifiers=('ctrl', 'super', 'alt')),
         HoldKey(keys=('escape',), seconds=1),
+        KeyPress(keys=('ctrl', 'shift', 't')),
+        KeyPress(keys=('+',)),
     ]
     assert adapter.validate_json(adapter.dump_json(actions)) == actions
     invalid_actions: list[dict[str, object]] = [
-        {'kind': 'click', 'count': 4},
-        {'kind': 'drag', 'path': [[1, 2]]},
-        {'kind': 'key_press', 'keys': []},
-        {'kind': 'click', 'x': 10},
-        {'kind': 'scroll', 'y': 10, 'dy': 1},
-        {'kind': 'scroll', 'x': 1, 'y': 2},
-        {'kind': 'teleport'},
+        {'type': 'click', 'count': 4},
+        {'type': 'drag', 'path': [{'x': 1, 'y': 2}]},
+        {'type': 'keypress', 'keys': []},
+        {'type': 'click', 'x': 10},
+        {'type': 'scroll', 'y': 10, 'direction': 'down'},
+        {'type': 'scroll', 'x': 1, 'y': 2},
+        {'type': 'teleport'},
+        {'x': 1, 'y': 2},
     ]
     for invalid in invalid_actions:
         with pytest.raises(ValidationError):
@@ -264,6 +275,12 @@ def test_actions_normalize_key_names_and_validate_from_json() -> None:
         lambda: Drag(path=()),
         lambda: KeyPress(keys=()),
         lambda: HoldKey(keys=('shift',), seconds=float('inf')),
+        lambda: HoldKey(keys=('shift',), seconds=11),
+        lambda: KeyPress(keys=('a',), repeat=51),
+        lambda: KeyPress(keys=('a',) * 9),
+        lambda: Scroll(direction='down', amount=51),
+        lambda: TypeText(text='x' * 2_001),
+        lambda: Drag(path=(Point(x=0, y=0),) * 51),
     ],
 )
 def test_actions_are_validated_when_built_in_python(build: Any) -> None:
@@ -311,3 +328,19 @@ def test_has_display_follows_wrappers_without_io() -> None:
     assert ReadOnlyWorkspace(Workspace(FakeWorkspace('no-display'))).has_display is False
     assert Workspace(UnavailableWorkspace('no workspace here')).has_display is False
     assert provider.log == []
+
+
+def test_the_schema_tells_the_model_what_each_field_means() -> None:
+    schema = TypeAdapter(ComputerAction).json_schema()['$defs']
+    assert all(definition['required'][0] == 'type' for name, definition in schema.items() if name != 'Point')
+    assert schema['Scroll']['properties']['direction']['description'] == (
+        'Which way the content moves into view: `down` shows what is below.'
+    )
+    assert schema['KeyPress']['properties']['keys']['description'].startswith('One key per entry')
+
+
+async def test_x11_computer_bounds_every_command() -> None:
+    commands = ScriptedCommands()
+    await X11Computer(commands).act(TypeText(text='hi'))
+    ((_, _, timeout),) = commands.timeouts
+    assert timeout == 60

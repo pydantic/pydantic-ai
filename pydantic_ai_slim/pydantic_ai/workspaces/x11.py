@@ -34,6 +34,9 @@ __all__ = ('X11Computer',)
 
 _BUTTONS: dict[MouseButton, str] = {'left': '1', 'middle': '2', 'right': '3', 'back': '8', 'forward': '9'}
 
+_WHEEL_BUTTONS = {'up': '4', 'down': '5', 'left': '6', 'right': '7'}
+"""X reports the scroll wheel as buttons."""
+
 _KEYSYMS = {
     'enter': 'Return',
     'escape': 'Escape',
@@ -117,6 +120,9 @@ _XDOTOOL_COMMANDS = frozenset(
 )
 """`xdotool help`'s command names: xdotool reads one among key names as the start of the next command, such as `exec`."""
 
+_COMMAND_TIMEOUT = 60
+"""Maximum time for one display command; the longest bounded action, typing 2,000 characters, takes about 25 s."""
+
 _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
 
@@ -161,7 +167,9 @@ class X11Computer(SupportsComputerUse):
         self._display = display
 
     async def _run(self, command: list[str] | str) -> CommandResult:
-        result = await self._backend.run(command, shell=isinstance(command, str), env={'DISPLAY': self._display})
+        result = await self._backend.run(
+            command, shell=isinstance(command, str), env={'DISPLAY': self._display}, timeout=_COMMAND_TIMEOUT
+        )
         if result.exit_code != 0:
             raise WorkspaceError(
                 f'Display command failed with exit code {result.exit_code} on display {self._display}: '
@@ -206,28 +214,25 @@ class X11Computer(SupportsComputerUse):
 
     async def act(self, action: ComputerAction) -> None:
         match action:
-            case Click(x=x, y=y, button=button, count=count, keys=keys):
-                await self._holding(keys, [*_move(x, y), 'click', '--repeat', str(count), _BUTTONS[button]])
-            case MoveMouse(x=x, y=y, keys=keys):
-                await self._holding(keys, _move(x, y))
-            case Drag(path=path, keys=keys):
-                (start_x, start_y), *rest = path
-                steps = [arg for x, y in rest for arg in _move(x, y)]
+            case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
+                await self._holding(modifiers, [*_move(x, y), 'click', '--repeat', str(count), _BUTTONS[button]])
+            case MoveMouse(x=x, y=y, modifiers=modifiers):
+                await self._holding(modifiers, _move(x, y))
+            case Drag(path=path, modifiers=modifiers):
+                start, *rest = path
+                steps = [arg for point in rest for arg in _move(point.x, point.y)]
                 await self._holding(
-                    keys, [*_move(start_x, start_y), 'mousedown', '1', *steps, 'mouseup', '1'], release=['mouseup', '1']
+                    modifiers,
+                    [*_move(start.x, start.y), 'mousedown', '1', *steps, 'mouseup', '1'],
+                    release=['mouseup', '1'],
                 )
             case MouseDown(button=button):
                 await self._xdotool(['mousedown', _BUTTONS[button]])
             case MouseUp(button=button):
                 await self._xdotool(['mouseup', _BUTTONS[button]])
-            case Scroll(x=x, y=y, dx=dx, dy=dy, keys=keys):
-                # X maps the wheel to buttons: 4 up, 5 down, 6 left, 7 right.
-                clicks: list[str] = []
-                if dy:
-                    clicks += ['click', '--repeat', str(abs(dy)), '5' if dy > 0 else '4']
-                if dx:
-                    clicks += ['click', '--repeat', str(abs(dx)), '7' if dx > 0 else '6']
-                await self._holding(keys, [*_move(x, y), *clicks])
+            case Scroll(x=x, y=y, direction=direction, amount=amount, modifiers=modifiers):
+                wheel = _WHEEL_BUTTONS[direction]
+                await self._holding(modifiers, [*_move(x, y), 'click', '--repeat', str(amount), wheel])
             case TypeText(text=text):
                 await self._xdotool(['type', '--', text])
             case KeyPress(keys=keys, repeat=repeat):

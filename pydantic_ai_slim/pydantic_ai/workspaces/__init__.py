@@ -10,6 +10,7 @@ from .computer import (
     MouseDown,
     MouseUp,
     MoveMouse,
+    Point,
     Scroll,
     TypeText,
 )
@@ -49,6 +50,7 @@ __all__ = (
     'MouseDown',
     'MouseUp',
     'MoveMouse',
+    'Point',
     'ReadOnlyWorkspace',
     'Scroll',
     'TypeText',
