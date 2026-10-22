@@ -105,7 +105,7 @@ The capability runs the `docker` CLI on your machine, so it uses whichever daemo
 export DOCKER_HOST=ssh://dev@build-box  # or: docker context use build-box
 ```
 
-The host needs Docker, and `ssh` must log in without a prompt, through a key or your SSH agent. Paths in `docker_args`, such as a `--volume` source, are paths on that host, and `allow_internet_access` reaches that host's network. The daemon comes from the environment, so every `DockerSandbox` in a process uses the same one.
+The host needs Docker, and `ssh` must log in without a prompt, through a key or your SSH agent. `DOCKER_HOST` overrides `DOCKER_CONTEXT`, which overrides `docker context use`, so unset the ones you don't use. Paths in `docker_args`, such as a `--volume` source, are paths on that host, and `allow_internet_access` reaches that host's network. Each run reads these settings when it starts, and `destroy` when it's called, so keep them the same while a container is in use.
 
 ## Reattach later
 
