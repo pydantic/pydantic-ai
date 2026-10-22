@@ -9,6 +9,7 @@ from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Literal, TypeAlias
 
+from pydantic_ai._framing import neutralize_tags
 from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
@@ -378,7 +379,8 @@ class Memory(AbstractCapability[AgentDepsT]):
         reader: tuple[str, str] | None,
     ) -> tuple[str, bool] | None:
         """The framed snapshot and whether it says memory is empty, or `None` when it doesn't fit the budget."""
-        main_content = '' if main is None else _MEMORY_TAG_RE.sub('&lt;', main.content)
+        main_content = '' if main is None else _neutralize(main.content)
+        subfiles = [_neutralize(name) for name in subfiles]
         guidance = self._render_guidance()
         content_budget = snapshot_content_budget(self.max_tokens, guidance)
         if content_budget <= 0:
@@ -495,6 +497,15 @@ def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> 
                 if isinstance(item, TextContent) and (item.metadata == metadata or item.metadata in legacy):
                     return item.content
     return None
+
+
+def _neutralize(text: str) -> str:
+    """Escape every framing tag in stored memory, and `<memory>` itself, so it can't end its block or forge one.
+
+    Memory is model- or user-written data: a `<system>` in it must not read as the application speaking.
+    """
+    # TODO: switch to `pydantic_ai.framing.wrap()` with `memory` registered as a framing tag (#10957).
+    return _MEMORY_TAG_RE.sub('&lt;', neutralize_tags(text))
 
 
 def _snapshot_metadata(scope_hash: str, memory_id: str | None) -> dict[str, str]:
