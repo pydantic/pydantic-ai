@@ -521,8 +521,8 @@ def _quantifier_at(pattern: str, index: int) -> tuple[int, float, int] | None:
     return int(quantifier['low'] or 0), int(high) if high else math.inf, quantifier.end()
 
 
-_MAX_BOUNDED_PATHS = 1024
-"""Most ways a repeated group with bounded repetition inside may match a text before it counts as nested repetition."""
+_MAX_BOUNDED_PATHS = 64
+"""Most ways the bounded repeated groups of a pattern may match a text, together, before they count as nested repetition."""
 
 
 def _power(base: float, exponent: float) -> float:
@@ -564,7 +564,7 @@ def _has_nested_quantifier(pattern: str, *, verbose: bool) -> bool:
     That shape can make a backtracking engine such as Python's `re` take exponential or high
     polynomial time on a short line, and `re` has no timeout, so a search run in Python refuses it.
     A group repeated a bounded number of times whose inside is bounded too, such as
-    `([0-9]{1,3}[.]){3}`, is allowed while the ways it can match stay below `_MAX_BOUNDED_PATHS`.
+    `([0-9]{1,3}[.]){3}`, is allowed while the ways all such groups can match, together, stay within `_MAX_BOUNDED_PATHS`.
     This is a heuristic for the common shape: it also refuses some harmless patterns, such as
     `([a-z]+,)+x`, and misses overlapping alternatives, such as `(a|a)+`. `verbose` says whether
     the compiled pattern is verbose as a whole; a scoped `(?x:...)` group is tracked here. Where
@@ -575,6 +575,7 @@ def _has_nested_quantifier(pattern: str, *, verbose: bool) -> bool:
     enclosing: list[tuple[bool, float, bool]] = []
     repeats = False  # whether the innermost open group repeats anything so far
     paths = 1.0  # a bound on the ways the innermost open group can match a given text so far
+    allowed = 1.0  # the product of the ways every bounded repeated group allowed so far can match
     index = 0
     while (index := _skip_insignificant(pattern, index, verbose)) < len(pattern):
         char = pattern[index]
@@ -605,8 +606,11 @@ def _has_nested_quantifier(pattern: str, *, verbose: bool) -> bool:
             if quantifier is not None:
                 low, high, index = quantifier
                 index -= 1
-                if repeats and high > 1 and _power(paths, high) * (high - low + 1) > _MAX_BOUNDED_PATHS:
-                    return True
+                if repeats and high > 1:
+                    # Groups one after another multiply, so they share one budget.
+                    allowed *= _power(paths, high) * (high - low + 1)
+                    if allowed > _MAX_BOUNDED_PATHS:
+                        return True
                 repeats = repeats or high > 1
                 paths = _power(paths, high) * (high - low + 1)
             repeats, paths = outer_repeats or repeats, outer_paths * paths
