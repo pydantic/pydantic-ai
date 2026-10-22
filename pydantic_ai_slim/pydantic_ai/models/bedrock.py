@@ -2343,8 +2343,8 @@ def _thinking_rejects_tool_forcing(
 ) -> bool:
     """Whether this request's thinking rejects the forced tool choice Tool Output relies on.
 
-    Extended thinking and thinking on the non-Anthropic variants do, except xAI Grok, which always reasons and
-    accepts a forced `toolChoice` on Converse.
+    Extended thinking and thinking on the non-Anthropic variants do, except xAI Grok, which always reasons: Converse
+    accepts a forced `toolChoice` with Grok 4.6 while it reasons, and Grok 4.7 is assumed to match.
     """
     return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') != 'xai'
 
