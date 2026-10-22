@@ -6,7 +6,7 @@ Split out of `test_capabilities.py` per #7304.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncIterable, AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
@@ -40,6 +40,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    EnqueuedMessagesEvent,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -59,7 +60,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import (
     ModelRequestContext,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
     AbstractNativeTool,
@@ -3019,6 +3020,55 @@ Pass the order ID, not the customer ID.\
         )
     )
     assert parse_loaded_capabilities(result.all_messages()) == {'refunds', 'policy', 'escalation'}
+
+
+async def test_content_enqueued_by_a_loading_tool_follows_the_load() -> None:
+    """Content a loading tool enqueues follows the load exchange, in history as in the event order.
+
+    The load already follows the tool's return, so the content is its own request after it rather than
+    joining the tool's return.
+    """
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='open_case', json_args='{}')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[_refunds()])
+
+    @agent.tool
+    async def open_case(ctx: RunContext[object]) -> str:
+        ctx.enqueue('The customer is a VIP.')
+        await ctx.load_capability('refunds')
+        return 'Case opened.'
+
+    events: list[AgentStreamEvent] = []
+
+    async def event_stream_handler(_: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    result = await agent.run('Where is my refund?', event_stream_handler=event_stream_handler)
+
+    assert [[type(part).__name__ for part in message.parts] for message in result.all_messages()] == snapshot(
+        [
+            ['UserPromptPart', 'InstructionBaselinePart'],
+            ['ToolCallPart'],
+            ['ToolReturnPart'],
+            ['LoadCapabilityCallPart'],
+            ['LoadCapabilityReturnPart', 'ToolAvailabilityDeltaPart'],
+            ['UserPromptPart'],
+            ['TextPart'],
+        ]
+    )
+    assert [
+        [type(part).__name__ for message in event.messages for part in message.parts]
+        for event in events
+        if isinstance(event, EnqueuedMessagesEvent)
+    ] == snapshot(
+        [['LoadCapabilityCallPart', 'LoadCapabilityReturnPart', 'ToolAvailabilityDeltaPart'], ['UserPromptPart']]
+    )
 
 
 @pytest.mark.parametrize(
