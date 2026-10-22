@@ -1,9 +1,8 @@
 from __future__ import annotations as _annotations
 
-import re
-
 from pydantic_ai import TextPart, ThinkingPart
 
+from ._framing import ASSISTANT_THINKING_TAG, wrap
 from .profiles import DEFAULT_THINKING_TAGS, ModelProfile
 
 
@@ -33,11 +32,6 @@ def split_content_into_text_and_thinking(content: str, thinking_tags: tuple[str,
     if content:
         parts.append(TextPart(content=content))
     return parts
-
-
-_ASSISTANT_THINKING_TAG = 'assistant_thinking'
-_ASSISTANT_THINKING_CLOSE_TAG_OPENER = re.compile(rf'<(?=\s*/\s*{_ASSISTANT_THINKING_TAG}(?=[\s/>]))', re.IGNORECASE)
-"""Matches only the `<` of a closing `assistant_thinking` tag, in every spelling a model might reach for."""
 
 
 def render_replayed_thinking(content: str, profile: ModelProfile) -> tuple[str, bool]:
@@ -70,10 +64,10 @@ def render_replayed_thinking(content: str, profile: ModelProfile) -> tuple[str, 
     carry_in_user_turn = profile.get('mimics_assistant_message_formatting', False)
     if carry_in_user_turn:
         # Reasoning that talks about the wrapper would otherwise close it early and spill the rest into
-        # the message as if the user had written it. Only the `<` of a closing tag is escaped, so the
-        # rest of the reasoning goes in exactly as written.
-        content = _ASSISTANT_THINKING_CLOSE_TAG_OPENER.sub('&lt;', content)
-        start_tag, end_tag = f'<{_ASSISTANT_THINKING_TAG}>', f'</{_ASSISTANT_THINKING_TAG}>'
+        # the message as if the user had written it, or open a `<system>` block of its own. `wrap` escapes
+        # only the `<` of each opening or closing framing tag, so the rest goes in exactly as written.
+        text = wrap(ASSISTANT_THINKING_TAG, f'\n{content}\n')
     else:
         start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-    return '\n'.join([start_tag, content, end_tag]), carry_in_user_turn
+        text = '\n'.join([start_tag, content, end_tag])
+    return text, carry_in_user_turn

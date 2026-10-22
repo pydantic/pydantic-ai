@@ -339,12 +339,12 @@ _THINKING_BINDING_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicBedrockMantle,
     AsyncAnthropicFoundry,
 )
-# The legacy Bedrock InvokeModel API (`AsyncAnthropicBedrock`) doesn't support the `bm25` tool-search
-# variant — it 400s with `BM25 tool search is not supported on Bedrock. Use tool_search_tool_regex instead.`
-# — so we default to `regex` there. The other transports (Vertex, Foundry, and the Messages-API-based
-# `AsyncAnthropicBedrockMantle`) expose the full Messages API, including both tool-search variants, so they
-# keep the `bm25` default.
-_BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
+# The legacy Bedrock InvokeModel API (`AsyncAnthropicBedrock`) accepts the `bm25` tool-search variant wherever it
+# accepts `regex`, but an unset strategy resolves to `regex` there: it was the only variant Bedrock accepted,
+# and resolving to `bm25` would change the search algorithm for every request that doesn't set one. For the same
+# reason, recorded `bm25` calls replay as `regex` there unless the request asks for `bm25`. The other transports
+# (Vertex, Foundry, and the Messages-API-based `AsyncAnthropicBedrockMantle`) default to `bm25`.
+_REGEX_DEFAULT_TOOL_SEARCH_CLIENTS = (AsyncAnthropicBedrock,)
 # Anthropic web-tool availability is client/platform-specific:
 # * `AsyncAnthropicBedrock` is the legacy Amazon Bedrock InvokeModel client, where web search/fetch
 #   are unavailable.
@@ -1050,6 +1050,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     # has to re-insert them.
     compaction_requires_encrypted_content = False
     compaction_retains_standing_prompt = False
+    # The Messages API has no audio or video block, and its document block takes a PDF or plain text.
+    _unsupported_file_inputs = frozenset({'audio', 'video'})
+    _supported_document_media_types = frozenset({'application/pdf', 'text/plain'})
 
     _model_name: AnthropicModelName = field(repr=False)
     _provider: Provider[AsyncAnthropicClient] = field(repr=False)
@@ -2104,15 +2107,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _resolve_tool_search_strategy(self, strategy: Literal['bm25', 'regex'] | None) -> Literal['bm25', 'regex']:
         """Resolve which native tool-search variant to send.
 
-        `bm25` is the default, except on clients that don't support it (the legacy Bedrock
-        InvokeModel API), where `regex` is the default and an explicit `bm25` is rejected.
+        An explicit strategy is sent as given. An unset one resolves to `bm25`, except on the legacy
+        Bedrock InvokeModel API, where it resolves to `regex`.
         """
-        if isinstance(self.client, _BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS):
-            if strategy == 'bm25':
-                raise UserError(
-                    "ToolSearch(strategy='bm25') is not supported by the `AsyncAnthropicBedrock` client; "
-                    "use ToolSearch(strategy='regex') instead, or leave the strategy unset to use the default."
-                )
+        if strategy is None and isinstance(self.client, _REGEX_DEFAULT_TOOL_SEARCH_CLIENTS):
             return 'regex'
         return strategy or 'bm25'
 
@@ -2360,6 +2358,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # Anthropic's docs). When present, blocks — including a dangling pause_turn call — round-trip
         # verbatim (no pairing logic needed).
         advisor_active = any(isinstance(t, AdvisorTool) for t in model_request_parameters.native_tools)
+        bm25_requested = any(
+            isinstance(t, ToolSearchTool) and t.strategy == 'bm25' for t in model_request_parameters.native_tools
+        )
         # Filter `tool_reference` entries during replay against the tools the current turn
         # will actually send: Anthropic rejects references to tools not in the wire `tools`
         # list (e.g. an MCP that failed to register this turn). The previously-discovered
@@ -2689,13 +2690,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             elif response_part.tool_name == ToolSearchTool.kind:
                                 # Round-trip the native variant (bm25/regex) so we don't
                                 # silently rewrite the algorithm. `_map_server_tool_use_block`
-                                # stashes it in `provider_details['strategy']`. Clients that don't
-                                # support `bm25` (legacy Bedrock InvokeModel) always replay as `regex`.
+                                # stashes it in `provider_details['strategy']`. On the legacy Bedrock
+                                # InvokeModel API, `bm25` calls replay as `regex` unless this request
+                                # asks for `bm25` (see `_REGEX_DEFAULT_TOOL_SEARCH_CLIENTS`).
                                 details = response_part.provider_details or {}
                                 strategy: Literal['bm25', 'regex'] = (
                                     'regex'
                                     if details.get('strategy') == 'regex'
-                                    or isinstance(self.client, _BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS)
+                                    or (
+                                        isinstance(self.client, _REGEX_DEFAULT_TOOL_SEARCH_CLIENTS)
+                                        and not bm25_requested
+                                    )
                                     else 'bm25'
                                 )
                                 native_name = (
