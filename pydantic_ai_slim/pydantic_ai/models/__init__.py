@@ -49,6 +49,7 @@ from .._file_input import (
     unsupported_file_input,
     unsupported_file_note,
 )
+from .._framing import SYSTEM_TAG, neutralize_tags, wrap
 from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._http import (
     DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT,
@@ -118,7 +119,6 @@ from ..messages import (
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
-    _wrap_in_tag,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
@@ -2933,16 +2933,6 @@ def _standing_prompt_request(prefix: list[ModelMessage], *, include_system_parts
     return [ModelRequest(parts=list(opening), instructions=instructions)]
 
 
-def _wrap_in_system_tags(content: str) -> str:
-    """Tag text as the harness speaking, for a channel with no system role of its own.
-
-    A closing `</system>` inside `content` is neutralized as it is wrapped, so the statement can't be
-    ended early by text that reached here from a model — through a validation error's `loc` or `msg`,
-    or through an MCP-chosen tool name in a tool-availability announcement.
-    """
-    return _wrap_in_tag(content, tag='system')
-
-
 _REQUEST_SCOPED_TAIL_KEY = 'request_scoped_tail'
 """Key in a prepared request's `__pydantic_ai__` metadata: how many of its trailing parts render request-scoped prompts."""
 
@@ -3127,6 +3117,9 @@ def _request_scoped_tail_texts(messages: Sequence[ModelMessage]) -> tuple[str, .
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_prompt_count: int) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
 
+    A closing `</system>` inside a part's content is neutralized as it is wrapped, so text that reached
+    the instruction from elsewhere (a tool name, a validation error) can't end the block early.
+
     The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
     parts those are is `_standing_system_prompt_count`'s question, and it is not simply "everything
     in the first request". The caller counts them on the history as authored and passes
@@ -3149,7 +3142,7 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
         start = standing_prompt_count if offset == 0 else 0
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
             new_parts = [
-                UserPromptPart(content=_wrap_in_system_tags(part.content), timestamp=part.timestamp)
+                UserPromptPart(content=wrap(SYSTEM_TAG, part.content), timestamp=part.timestamp)
                 if index >= start and isinstance(part, SystemPromptPart)
                 else part
                 for index, part in enumerate(msg.parts)
@@ -3555,7 +3548,7 @@ def _translate_retry_parts(messages: list[ModelMessage], *, keep_feedback: bool)
         if not _retry_feedback_speaks_for_the_harness(part):
             return UserPromptPart(content=part.model_response(), timestamp=part.timestamp)
         if in_standing_run:
-            return UserPromptPart(content=_wrap_in_system_tags(part.model_response()), timestamp=part.timestamp)
+            return UserPromptPart(content=wrap(SYSTEM_TAG, part.model_response()), timestamp=part.timestamp)
         return SystemPromptPart(content=part.model_response(), timestamp=part.timestamp)
 
     first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
@@ -3751,14 +3744,19 @@ def _announce_tool_availability_delta_messages(
             if not isinstance(part, ToolAvailabilityDeltaPart):
                 replacement_parts.append(part)
                 continue
-            # A delta that adds nothing has nothing to announce, so it drops out entirely.
-            added = [name for name in part.tools_added if deferred_tool_names is None or name in deferred_tool_names]
+            # A delta that adds nothing has nothing to announce, so it drops out entirely. A name can come
+            # from a remote MCP server, so one that carries a framing tag (which could end the `<system>`
+            # wrap on a fallback model, or open a frame of its own) isn't named. Its content gains nothing
+            # otherwise: the model sees the same name in the request's tool definitions. The tool itself
+            # still goes on the wire; it just isn't announced.
+            added = [
+                name
+                for name in part.tools_added
+                if (deferred_tool_names is None or name in deferred_tool_names) and neutralize_tags(name) == name
+            ]
             if added:
-                replacement_parts.append(
-                    SystemPromptPart(
-                        content=TOOL_AVAILABILITY_ANNOUNCEMENT.format(names=', '.join(f'`{name}`' for name in added))
-                    )
-                )
+                names = ', '.join(f'`{name}`' for name in added)
+                replacement_parts.append(SystemPromptPart(content=TOOL_AVAILABILITY_ANNOUNCEMENT.format(names=names)))
         # A request whose only part was an empty delta would otherwise reach the adapter with no
         # parts at all, which providers reject.
         if replacement_parts:

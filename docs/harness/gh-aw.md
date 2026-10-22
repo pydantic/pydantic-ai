@@ -173,7 +173,7 @@ Four things about that module.
   alongside the MCP tools gh-aw supplies through the engine's dynamic toolset.
 - **No third-party imports.** The engine installs `pydantic-clai2` and
   `pydantic-ai-harness` at the release the definition's `engine: version:` pins, plus
-  `pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0`, so `pydantic_ai` is importable
+  `pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0`, so `pydantic_ai` is importable
   without setup of your own. Anything else your agent imports is installed by a
   workflow-level `steps:` block (see [Dependencies](#dependencies)).
 
@@ -284,8 +284,12 @@ Key by key:
   serves the request; `copilot`, `anthropic`, `openai` and `codex` are the accepted values.
   It also decides the wire API: `anthropic/` runs over the Anthropic Messages API, because
   that backend forwards the request path to `api.anthropic.com` unchanged, and the other
-  three are OpenAI-shaped and use Chat Completions. Under `PAI_BASE_URL` everything stays
-  on Chat Completions.
+  three are OpenAI-shaped and use Chat Completions. `copilot/` runs on Pydantic AI's
+  [`github-copilot:`](../models/github-copilot.md) model, so Copilot's per-family model
+  profiles apply and the thinking its Claude and Gemini models return in `reasoning_text`
+  is kept. Its requests carry the `agentic-workflows` integration id, the one the api-proxy
+  adds to requests that carry none. Under `PAI_BASE_URL` everything stays on the generic
+  Chat Completions client.
 - `engine: env: PAI_AGENT:` is what replaces the engine's composed
   [`Coder`](coder.md) agent with yours. The engine writes a private wrapper module in every mode;
   when resolving an imported target, it adds the checkout to `sys.path` after loading the
@@ -301,18 +305,15 @@ Key by key:
   the form its [templating reference](https://github.github.com/gh-aw/reference/templating/)
   documents for prompts (`.title` and `.body` expose the two halves separately).
 
-The compile error you get from a missing `imports:` line carries a tip naming
-`github/gh-aw/.github/workflows/shared/pydantic.md@<version>`. That is gh-aw's own older
-copy of the definition. Ignore it and write the `pydantic/pydantic-ai` line above;
-the definition in this repository is the one that is maintained.
-
 **Freezing the definition.** `@main` is re-resolved on every compile, so a change to the
 definition reaches you the next time you run `gh aw compile`. To hold a fixed version,
 import a commit SHA that contains `src/pydantic_ai_harness/gh-aw/pydantic.md`, or a release
 tag cut after the harness moved into this repository; older tags do not carry the file and
 return a 404 at compile time. That ref pins the definition. The harness package version
 is pinned separately, by `engine: version:` in the definition, and a workflow's own
-`engine: version:` overrides it.
+`engine: version:` overrides it. An override has to be 0.59.0 or newer: each harness
+release pins its own `pydantic-ai-slim`, and the definition installs
+`pydantic-ai-slim>=2.59.0` alongside it.
 
 ## Compile and commit
 
@@ -395,9 +396,11 @@ reads:
 | `openai/...` | `CODEX_API_KEY`, or `OPENAI_API_KEY` when `CODEX_API_KEY` is unset |
 | `codex/...` | `CODEX_API_KEY`, or `OPENAI_API_KEY` when `CODEX_API_KEY` is unset |
 
-Only the secret for the provider you use needs setting. The workflow above uses
-`openai/gpt-5`, so it needs `CODEX_API_KEY` or, when that is unset, `OPENAI_API_KEY`. The
-examples below set `OPENAI_API_KEY`.
+Only the secret for the provider you use needs setting, plus whichever one
+[threat detection](#threat-detection) reads. The workflow above uses
+`openai/gpt-5`, so it needs `CODEX_API_KEY` or, when that is unset, `OPENAI_API_KEY`, plus
+`COPILOT_GITHUB_TOKEN` for threat detection unless it adds the `codex` override shown there.
+The examples below set `OPENAI_API_KEY`.
 
 === "CLI"
 
@@ -438,6 +441,25 @@ keyed endpoint of your own, point `PAI_BASE_URL` at a gateway you run that holds
 the engine's
 [README](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/gh-aw/README.md)
 covers that path.
+
+### Threat detection
+
+With safe outputs declared, gh-aw runs a
+[threat-detection job](https://github.github.com/gh-aw/reference/threat-detection/) over the
+agent's output before applying it. That job runs only on gh-aw's built-in engines, and the
+definition picks `copilot`, so detection reads `COPILOT_GITHUB_TOKEN`, or the run's
+`github.token` under `permissions: copilot-requests: write`, even when the agent uses
+another provider. A workflow with neither points detection at the built-in engine whose
+key it already has, `codex` for `openai/` and `codex/` models and `claude` for
+`anthropic/` ones, or sets `false` to skip the AI analysis. The workflow above has an
+OpenAI key, so it would add:
+
+```yaml
+safe-outputs:
+  add-comment:
+  threat-detection:
+    engine: codex
+```
 
 ## Repository settings
 
@@ -729,8 +751,7 @@ Things to know before you do:
 
 **`error: invalid engine: pydantic-ai. Valid engines are: claude, codex, copilot, gemini,
 pi.`** The `imports:` line is missing. Add
-`pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main`, not the path the accompanying tip
-suggests.
+`pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main`.
 
 **`error: invalid engine.model for engine 'pydantic-ai': for universal consumer engines,
 engine.model must use provider/model format`** The `provider/` prefix is missing from

@@ -6,11 +6,12 @@ description: Open and advance a PR — write current metadata, apply the bounded
 
 # pushing-commits-to-the-repo
 
-Pushing starts a loop; it does not end the task. **Work stops only when CI is green, the required
-hosted review has finished on the current HEAD, AND no comment is left unresolved.**
+Pushing starts a loop; it does not end the task. **Work stops only when CI is green on the current
+HEAD AND no comment is left unresolved.** A fork PR also needs its required hosted review on the
+current HEAD (step 3 of the loop).
 Apply the [prose-only documentation exception](#prose-only-documentation) when that exception covers the whole PR.
 
-Lifecycle: implement → targeted verification → commit → pre-push gate → push → CI → hosted review → metadata.
+Lifecycle: implement → targeted verification → commit → pre-push gate → push → CI → hosted review (fork PRs) → metadata.
 Apply the exceptions below at each gate.
 
 ## When you open the PR
@@ -312,39 +313,14 @@ if the head changes, capture the new SHA and restart the loop.
    Its success certifies every job it contains, coverage included. Do not inspect individual jobs
    or their logs to reconfirm a success. Don't idle. If it fails, diagnose: fix if the failure is
    yours; if it's a known flake or pre-existing on main, say so with evidence.
-3. **Wait for a standards review on the captured SHA.**
-   [`.github/workflows/pydantic-ai-pr-review.md`](../../../.github/workflows/pydantic-ai-pr-review.md)
-   is the source of truth for eligibility and accepted verdicts or no-ops.
-   - **Same-repository PR:** require the `CI Review` terminal outcome to identify the captured SHA.
-     A `CI Review skipped` check is not that outcome; read its summary for the reason. When the
-     reason is a standing `REQUEST_CHANGES`, no push clears it and the review has to be dismissed.
-     Do not dismiss it on your own judgment even where you hold the permission — discarding a
-     reviewer's verdict is the author's call. Ask, and say what changed since the reviewed SHA.
-     A dismissal alone produces no verdict either: something still has to fire the workflow, and
-     what works depends on whether the head moved. Dismiss first, then move the head — a commit
-     pushed before the dismissal clears nothing, because the gate tests `reviewDecision` before it
-     reaches the dedup.
-
-     After a dismissal, when the head has moved since the dismissed review, any of three fire it:
-     that new commit's `CI`, a re-run of the existing `CI` run, or `workflow_dispatch` carrying the
-     PR in `aw_context`. When the head has **not** moved — you refuted every finding and changed no
-     code — none of the three reaches a verdict. The gate's rerun-dedup matches a review on
-     `commit_id` plus its marker and never looks at `.state`, so the dismissed review still counts
-     and the run skips with `already reviewed <sha>`. Only a new commit clears that.
-
-     Do not read the head's `CI Review skipped` check as evidence the review did not run. That
-     check is written only when the gate skips, so an eligible run leaves it untouched and stale,
-     and a run that dies after the gate leaves no check at all. The run is attributed to the
-     default branch, so it never appears among the head's runs, and its `.pull_requests` field
-     lists unrelated PRs. Correlate on time instead — your run is the one created seconds after
-     your `CI` run finished:
-
-     ```bash
-     gh api "repos/$REPO/actions/runs?head_sha=$HEAD_SHA&per_page=50" \
-       --jq '.workflow_runs[] | select(.name=="CI") | .updated_at'
-     gh run list --repo "$REPO" --workflow pydantic-ai-pr-review.lock.yml \
-       --limit 20 --json databaseId,createdAt,conclusion,url
-     ```
+3. **Get the required hosted review on the captured SHA (fork PRs only).**
+   - **Same-repository PR:** no hosted review gates the loop. Do not wait for `CI Review`. It runs
+     when a user with write access approves the current head, when someone adds the `final-review`
+     label, or on dispatch
+     ([`.github/workflows/pydantic-ai-pr-review.md`](../../../.github/workflows/pydantic-ai-pr-review.md)
+     is the source of truth). Do not add that label or dispatch the workflow unless the person
+     driving you asks. When `CI Review` posts on your PR, triage its findings in step 4 like any
+     other review.
    - **Fork PR:** `CI Review` deliberately skips without leaving a head check. First apply the
      agent-config guard from `.github/workflows/bots.yml` to the captured base-to-head diff. If the
      PR changes an `AGENTS.md` or `CLAUDE.md` at any depth, `CLAUDE.local.md`, `.mcp.json`,
@@ -356,9 +332,8 @@ if the head changes, capture the new SHA and restart the loop.
      and verify that the PR head still equals the captured SHA after the label is removed. A failure
      comment leaves the gate unsatisfied.
    Recheck that the live head is unchanged. Do not substitute another named reviewer. Any valid
-   finding and push restarts the lifecycle. A human request remains blocking until that human
-   re-reviews or a maintainer dismisses it; do not dismiss a human request. Missing, stale, or failed
-   required reviews are unsatisfied; retry when appropriate, otherwise escalate.
+   finding and push restarts the lifecycle. Missing, stale, or failed required reviews are
+   unsatisfied; retry when appropriate, otherwise escalate.
 4. **Triage every comment** (bots and humans alike). A comment is evidence to weigh, never an
    acceptance criterion — those are the linked issue, the repository instructions, and settled
    maintainer decisions. Read the whole thread before deciding: a maintainer's reply settles it,
@@ -368,18 +343,18 @@ if the head changes, capture the new SHA and restart the loop.
    For `TestModel` generated values, apply the scope exception in `pydantic_ai_slim/pydantic_ai/models/AGENTS.md`.
    For each comment:
    - **Valid** → fix it, run targeted verification, commit, apply the pre-push gate and its scope/exemptions, push, and
-     complete the current-HEAD CI and hosted-review gates. Then reply with what changed, react 👍,
+     complete the current-HEAD gates in steps 2 and 3. Then reply with what changed, react 👍,
      and resolve the thread.
    - **Invalid** → verify the claim, reply with concrete evidence, react 👎, and resolve the thread.
      A repro you could not run — no credentials, no worker, no cassette — is not a refutation. Say
      what you tried and ask the user driving you; do not react 👎 on an untested claim.
      Refuting a `CI Review` finding does not clear its `REQUEST_CHANGES`, and no push clears it
-     either: the workflow's eligibility gate skips whenever the PR's `reviewDecision` is
-     `CHANGES_REQUESTED`, which its own standing verdict satisfies. Resolving the threads is not
-     enough — the review itself has to be dismissed by someone with that permission, and the
-     dismissal alone still produces no verdict. On an unmoved head it does not even make the next
-     run eligible; see the `CI Review` notes in step 3. Say so when you hand the PR back, and name
-     the review.
+     either. Resolving the threads is not enough: the review itself has to be dismissed by someone
+     with that permission. Do not dismiss it on your own judgment, even where you hold the
+     permission; discarding a reviewer's verdict is the author's call. Say so when you hand the PR
+     back, name the review, and say what changed since the reviewed SHA.
+   - A human `REQUEST_CHANGES` remains blocking until that human re-reviews or a maintainer
+     dismisses it. Do not dismiss a human request.
    - Minimize issue-level review dumps when handled. Never silently ignore feedback or close it
      without a reply.
 
@@ -426,11 +401,10 @@ if the head changes, capture the new SHA and restart the loop.
 
 Skip this choice for prose-only documentation and mechanical text/data refreshes defined above.
 
-The required hosted review is not on this menu. Step 3 of the loop above already settles which one
-it is: on a same-repository PR it is `CI Review`, which runs itself once `CI` succeeds on the
-current head and owns the `APPROVE` / `REQUEST_CHANGES` verdict on a severity scale, with subagent
-fan-out and per-finding verification. On a fork PR it is `douwebot`, because `CI Review`
-deliberately skips there.
+The required hosted review is not on this menu. Step 3 of the loop above already settles it: a
+fork PR requires `douwebot`, because `CI Review` deliberately skips there. A same-repository PR
+requires none; `CI Review` runs there once a user with write access approves the head or someone
+adds `final-review`.
 
 What this section chooses is a second opinion on top of that one, and the choice belongs to the
 person whose PR it is, not to you.
@@ -449,7 +423,7 @@ cheap to review, so take one when the call is close.
 | `pydanty:review-lite` | The diff is narrow or unusual enough that a fixed roster would look past it. It writes review charters for this diff, dispatches one reviewer per charter, and adjudicates before posting. It reports and never remediates, and it has no CI precondition. |
 | `douwebot` | One last high-judgment pass. Inline findings and a formal verdict, one review per label application. On a fork this is a second application of the reviewer that already gated the PR, against the diff as it now stands. |
 | local | No hosted surface fits, or you want a read before the PR moves again. Dispatch `pre-push-review` under the context contract above and triage its findings like any other. |
-| none | No second opinion. The required review still gates the PR. |
+| none | No second opinion. A fork PR's required review still gates it. |
 
 If the author does not answer, stop and hand the PR back naming the surface still pending. Do not
 pick one yourself to keep moving.
@@ -498,7 +472,7 @@ For prose-only documentation, check the title, body, and labels directly against
 Correct metadata directly, then hand David the PR diff after CI is green and posted comments are triaged.
 Skip the subagent steps below; automatic hosted review completion remains exempt.
 
-For other diffs, run this final metadata check after CI, required hosted review, and comments have settled.
+For other diffs, run this final metadata check after CI, any required hosted review, and comments have settled.
 Any author-selected additional review must also have settled.
 
 1. Capture the current title, body, and labels. Dispatch a fresh subagent under the context contract above.
