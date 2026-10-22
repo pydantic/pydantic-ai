@@ -29,7 +29,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import github_copilot
 from pydantic_clai2.models.model_catalog import github_copilot_models
 from pydantic_clai2.ui.menus.model_menu import ModelMenu, open_add_model_menu
-from tests.clai2.menu_script import Script, make_context, pick, typed
+from tests.clai2.menu_script import QUIET, Script, make_context, pick, typed
 from tests.clai2.test_app_edges import inputs
 
 CREDENTIALS = GitHubCopilotCredentials(access_token='fake-access', token_type='bearer', scope='')
@@ -45,6 +45,7 @@ def isolate_copilot(monkeypatch: pytest.MonkeyPatch) -> None:
         'GITHUB_COPILOT_BASE_URL',
         'COPILOT_API_URL',
         'GITHUB_COPILOT_API_BASE',
+        'GITHUB_COPILOT_INTEGRATION_ID',
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -218,9 +219,11 @@ async def test_connect(
     monkeypatch.setattr(github_copilot, 'discover', discover)
     context, _ = make_context(tmp_path)
     previous = context.settings.model
+    output = io.StringIO()
     for _ in range(2):
         script = Script(lists=[pick('github-copilot'), selected, MenuResult(cancelled=True)], choices=[], texts=[])
-        result = await open_add_model_menu(context, runners=script.runners)
+        result = await open_add_model_menu(context, console=Console(file=output), runners=script.runners)
+        assert 'Enter code: ABCD-EFGH' in output.getvalue(), 'the device code goes to the shell console'
         if selected.item and selected.item.value == 'github-copilot:claude-haiku-4.5':
             assert context.settings.model == 'github-copilot:claude-haiku-4.5'
             assert result == 'Saved model. Applied.'
@@ -255,7 +258,7 @@ async def test_provider_menu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         choices=[],
         texts=[typed('42')],
     )
-    result = await open_add_model_menu(context, runners=script.runners)
+    result = await open_add_model_menu(context, console=QUIET, runners=script.runners)
     assert f'Saved max_tokens for {name}' in result
     assert 'Saved model. Applied.' in result
     assert context.settings.model == name
@@ -299,6 +302,26 @@ async def test_discovery_http_failure(monkeypatch: pytest.MonkeyPatch, status: i
         await github_copilot.discover(transport=httpx2.MockTransport(respond))
     assert len(requests) == 1
     assert 'private error' not in str(caught.value)
+
+
+async def test_integration_id_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CLAI 2 builds its own provider, so the environment is how a launcher picks the integration id."""
+    monkeypatch.setenv('GITHUB_COPILOT_API_KEY', 'test-token')
+    monkeypatch.setenv('GITHUB_COPILOT_INTEGRATION_ID', 'agentic-workflows')
+    model = github_copilot.model('github-copilot:gpt-5.4')
+    assert model.client.default_headers['copilot-integration-id'] == 'agentic-workflows'
+    async with model:
+        pass
+
+    integration_ids: list[str] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        integration_ids.append(request.headers['copilot-integration-id'])
+        served = {'id': 'gpt-5.4', 'supported_endpoints': ['/chat/completions'], 'model_picker_enabled': True}
+        return httpx2.Response(200, json={'data': [served]})
+
+    assert await github_copilot.discover(transport=httpx2.MockTransport(respond)) == ['gpt-5.4']
+    assert integration_ids == ['agentic-workflows']
 
 
 @pytest.mark.parametrize('body', ['{"data": []}', '{"data": [{"id": "responses-only"}]}', '{"bad": true}'])

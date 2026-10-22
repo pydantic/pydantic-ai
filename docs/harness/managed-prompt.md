@@ -19,13 +19,6 @@ Install the `logfire` extra:
 pip/uv-add "pydantic-ai-harness[logfire]"
 ```
 
-!!! note "A first-party `Managed` capability is in flight"
-    A broader, first-party `Managed` capability is being built in
-    [pydantic-ai#5107](https://github.com/pydantic/pydantic-ai/pull/5107) and will eventually be
-    importable as `pydantic_ai.managed.logfire.Managed` -- covering instructions, model settings,
-    and whole-spec variables. Until then, `ManagedPrompt` is the supported path for backing an
-    agent's instructions with a Logfire-managed prompt.
-
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
 ## The problem it solves
@@ -113,9 +106,10 @@ agent = Agent(
 ```
 
 Pass `attributes` (a mapping, or a callable returning one) for condition-based targeting rules.
-When `label` is omitted, the variable's rollout and targeting rules pick the label. When both
-`targeting_key` and `attributes` are omitted, Logfire falls back to its own targeting context and
-then to the active trace id.
+When `label` is omitted, the variable's rollout and targeting rules pick the label. When
+`targeting_key` is omitted, Logfire falls back to its own targeting context and then to the trace id
+of the span enclosing the run. The prompt resolves before the agent run span opens, so with no
+enclosing span the label is drawn at random per run.
 
 For Logfire-side targeting that lives outside the agent (e.g. set once per request handler), use
 Logfire's
@@ -127,7 +121,7 @@ the agent's `RunContext`.
 
 By default the resolved prompt is used verbatim. Pass `render_template=True` to render it as a
 Handlebars template against the agent's `deps` -- the same mechanism as
-[`TemplateStr`](../api/agent.md) -- so `{{field}}` is filled
+[`TemplateStr`][pydantic_ai.template.TemplateStr] -- so `{{field}}` is filled
 from `deps`:
 
 ```python
@@ -158,18 +152,38 @@ agent = Agent(
 
 Rendering requires `pydantic-handlebars` (install `pydantic-ai-slim[spec]`). It is off by default.
 
+The template can reference any field of `deps`, so anyone who can edit the prompt in Logfire can place any
+`deps` value in the system prompt, and from there in your traces. Keep secrets out of `deps`, or leave
+rendering off.
+
+The template is compiled once per run. If a remote prompt is not a valid template, the run uses the code
+default, emits a `RuntimeWarning`, and logs a warning to Logfire; the run's baggage and `resolved` then report
+the code default, with the template error in `resolved.exception`. An invalid code default raises.
+
 ## Prompt-cache trade-off
 
 The resolved value lands in the agent's **system instructions**. Provider prompt caches (Anthropic,
-OpenAI, etc.) key strictly by prefix -- `tools -> system -> messages` -- so any change to the system
-block invalidates the cached prefix for the affected runs.
+OpenAI, etc.) key strictly by prefix -- `tools -> system -> messages` -- so each distinct value has
+its own cached prefix.
+
+Within one conversation (runs that continue from `message_history`), a new value doesn't rewrite
+that prefix. The block keeps the value the conversation started with, and the new version is
+[appended](../agent.md#appending-instruction-changes) to the history as a
+replacement, so the cached conversation behind it stays reusable. That's also why the prompt is
+sent inside a `<context id="capability:managed-prompt-support_agent">` element from the first
+request. Appended changes reach the model as system messages, so keep the prompt, and the `deps`
+fields `render_template=True` fills in, to text you control: see
+[keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
+
+Across conversations, the value a new conversation starts with decides its prefix:
 
 | Mode | Cache impact |
 | --- | --- |
 | Pinned `label='production'`, no rollout split | **Cache-stable.** The value only changes on a deliberate prompt rollout, which is the same cost as a redeploy. |
+| Pinned `label` that does not exist on the variable | Falls back to the rollout; same as no `label`. |
 | Percentage rollout across labels (no `label=`) | Different runs land on different labels -> splits the cache into one lane per label. |
 | `targeting_key` per user/tenant with multiple labels in play | Cache lanes per assigned label; deterministic per key but still N lanes overall. |
-| Mid-traffic label flip in the Logfire UI | One-shot cold-invalidation for everyone on that label. |
+| Mid-traffic label flip in the Logfire UI | New conversations on that label start on a cold prefix; conversations already under way append the new value. |
 
 In short: pinning a `label` keeps the cache hot; using `ManagedPrompt` as an A/B platform is opt-in
 cache cost. If you don't need rollouts, `label='production'` is the recommended default.
@@ -180,7 +194,9 @@ Declaring the same name more than once is fine -- each `ManagedPrompt` builds it
 variable, so sharing a prompt across several agents just works. Pass an existing
 [`logfire.variables.Variable`](https://logfire.pydantic.dev/docs/reference/advanced/managed-variables/)
 as the first argument instead of a name when you want to declare the variable yourself -- for
-example a template variable, or one registered for `variables_push`:
+example one registered for `variables_push`. The variable a `ManagedPrompt` builds from a name is not
+registered, so `variables_push()` and `@{...}@` composition from other variables don't see it.
+`TemplateVariable` is not supported; use a plain `Variable` with `render_template=True`:
 
 ```python
 import logfire
@@ -201,8 +217,16 @@ agent = Agent('{{ openai:medium }}', capabilities=[ManagedPrompt(support_prompt,
 
 When `name` is a prompt name (not a `Variable`), pass `logfire_instance=` to declare the variable
 on a specific Logfire instance instead of the module-level default. `default` is required when
-`name` is a prompt name and is ignored when you pass a `Variable` (which already carries its own
-default and instance).
+`name` is a prompt name. With a `Variable`, `default` and `logfire_instance` are ignored with a warning,
+since the variable carries its own.
+
+The capability's `id` is derived from the prompt: `ManagedPrompt('support_agent', ...)` and a
+`Variable` named `prompt__support_agent` both get `managed-prompt-support_agent`. It names the
+prompt's instruction block, so a new version can be appended to a conversation rather than
+rewriting it. Two `ManagedPrompt`s with different names on one agent each get their own block, and
+two with the same name raise a `UserError` when the agent is built, since they're one prompt stated
+twice. Pass `id=` to override the derived one. Earlier releases left the `id` unset and accepted
+two of one name, so an agent built that way now needs a distinct `id` on each.
 
 ## How it composes
 
@@ -211,14 +235,21 @@ default and instance).
   baggage scope across all child spans.
 - **Runs outermost.** The capability wraps
   [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
-  so the resolved variable's baggage covers the agent run span as well as its children. On recent
-  Logfire versions both the selected label and the version are propagated as separate baggage
-  attributes.
+  so the resolved variable's baggage covers the agent run span as well as its children. The selected
+  label is propagated as baggage; Logfire 4.34 and later also propagate the version as a separate
+  baggage attribute.
 - **Concurrency-safe.** Resolution is isolated per run via a context variable, so a single
   capability instance is safe to share across concurrent runs.
 - **Inspectable mid-run.** `ManagedPrompt.resolved` exposes the active run's `ResolvedVariable`
   (`value`, `label`, `version`, `reason`) for inspection -- e.g. from inside a tool. It is `None`
   outside a run.
+- **Telemetry.** Besides the baggage, Logfire records a `Resolve variable prompt__<name>` span per run with
+  the resolved prompt text, the targeting key, and the targeting attributes.
+  `InstrumentationSettings(include_content=False)` does not apply to this span.
+- **Resolves on the event loop.** Resolution is synchronous. With Logfire's remote variables provider, the
+  first resolution in a process waits for the initial fetch of the variables config; set
+  `block_before_first_resolve=False` in `logfire.VariablesOptions` to resolve against the code default
+  instead.
 
 ## API reference
 

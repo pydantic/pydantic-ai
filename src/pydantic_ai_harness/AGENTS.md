@@ -145,7 +145,7 @@ If CI reports a coverage gap, run coverage only for the flagged file or focused 
 ### Workspace and Python versions
 
 ```bash
-uv sync --locked --all-packages --all-extras --group lint
+uv sync --locked --all-packages --all-extras --no-extra mcp-tasks --group lint
 ```
 
 Harness and `pydantic-clai2` share the root `uv.lock`, `.venv`, and Pyright

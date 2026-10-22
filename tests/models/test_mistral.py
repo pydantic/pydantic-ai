@@ -25,7 +25,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryInfo,
     StructuredDict,
     SystemPromptPart,
     TextContent,
@@ -39,7 +39,14 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelConnectionError,
+    ModelHTTPError,
+    ModelRetry,
+    TransportPhase,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.settings import ThinkingLevel
@@ -1698,11 +1705,13 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -1876,11 +1885,13 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 instructions='this is the system prompt',
@@ -2324,11 +2335,13 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 instructions='this is the system prompt',
@@ -3081,11 +3094,11 @@ def _stream_breaking_off(request: httpx2.Request) -> httpx2.Response:
 
 
 @pytest.mark.parametrize(
-    ('handler', 'stream', 'message', 'cause'),
+    ('handler', 'stream', 'message', 'cause', 'phase'),
     [
-        pytest.param(_connect_error, False, 'connection refused', httpx2.ConnectError, id='connect'),
-        pytest.param(_connect_error, True, 'connection refused', httpx2.ConnectError, id='stream-connect'),
-        pytest.param(_stream_breaking_off, True, 'connection reset', httpx2.ReadError, id='mid-stream'),
+        pytest.param(_connect_error, False, 'connection refused', httpx2.ConnectError, 'connect', id='connect'),
+        pytest.param(_connect_error, True, 'connection refused', httpx2.ConnectError, 'connect', id='stream-connect'),
+        pytest.param(_stream_breaking_off, True, 'connection reset', httpx2.ReadError, 'read', id='mid-stream'),
     ],
 )
 async def test_model_transport_error(
@@ -3094,6 +3107,7 @@ async def test_model_transport_error(
     stream: bool,
     message: str,
     cause: type[Exception],
+    phase: TransportPhase,
 ) -> None:
     """`mistralai` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
@@ -3106,7 +3120,8 @@ async def test_model_transport_error(
             else:
                 await agent.run('hello')
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == phase
     assert exc_info.value.message == message
     assert isinstance(exc_info.value.__cause__, cause)
 
@@ -3694,7 +3709,7 @@ async def test_stream_cancel(allow_model_requests: None):
 async def test_mistral_empty_response_skipped_in_history(allow_model_requests: None):
     """An empty `ModelResponse(parts=[])` must not be sent back as an assistant message with
     neither content nor tool calls, which Mistral rejects with a 400. The agent graph retries
-    empty responses by emitting a `RetryPromptPart`, relying on the model adapter to omit the
+    empty responses by emitting a `RetryFeedbackPart`, relying on the model adapter to omit the
     empty response from the API payload.
     """
     completions = [
@@ -3709,11 +3724,13 @@ async def test_mistral_empty_response_skipped_in_history(allow_model_requests: N
     assert result.output == 'hello back'
 
     # The empty response is omitted from the payload (no assistant message with neither content nor
-    # tool calls, which would trigger a 400); a retry prompt is appended instead so the model can
-    # self-correct.
+    # tool calls, which would trigger a 400); the retry feedback is appended instead so the model can
+    # self-correct. Mistral honors a mid-conversation system message, so the feedback keeps the
+    # system voice rather than degrading to `<system>`-tagged user text.
     second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
     assert not any(message.role == 'assistant' for message in second_call_messages)
-    assert [message.role for message in second_call_messages] == ['user', 'user']
+    assert [message.role for message in second_call_messages] == ['user', 'system']
+    assert second_call_messages[-1].content == snapshot('Please return text.')
 
 
 #####################
@@ -4080,8 +4097,11 @@ async def test_mistral_foreign_tool_call_ids_are_rewritten(
         ModelRequest(
             parts=[
                 ToolReturnPart('get_weather', 'Sunny, 21C', tool_call_id='call_abc123def456ghi789jkl012'),
-                RetryPromptPart(
-                    'Use the English city name.', tool_name='get_weather', tool_call_id='toolu_01A09q90qw90lq917835lq9'
+                ToolReturnPart(
+                    'get_weather',
+                    'Use the English city name.',
+                    tool_call_id='toolu_01A09q90qw90lq917835lq9',
+                    outcome='retried',
                 ),
                 ToolReturnPart('get_weather', 'Cloudy, 15C', tool_call_id='pyd_ai_0123456789abcdef0123456789abcdef'),
             ]

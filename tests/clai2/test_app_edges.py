@@ -337,19 +337,16 @@ async def test_codex_login_and_turns_share_lazy_auth(tmp_path: Path, monkeypatch
 async def test_lazy_add_model_menu_and_named_selection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     inputs(monkeypatch, ['/model add', '/add_model test', '/exit'])
 
-    async def add_model(context: CommandContext, *, runners: Runners) -> str:
-        return await open_add_model_menu(context, run=lambda menu: [])
+    output = io.StringIO()
+    shell = Console(file=output)
+
+    async def add_model(context: CommandContext, *, console: Console, runners: Runners) -> str:
+        assert console is shell, 'a provider sign-in prints through the shell console, into the transcript'
+        return await open_add_model_menu(context, console=console, run=lambda menu: [])
 
     monkeypatch.setattr('pydantic_clai2.ui.menus.model_menu.open_add_model_menu', add_model)
-    output = io.StringIO()
     store = SettingsStore(tmp_path / 'config.db')
-    await chat(
-        Agent(TestModel()),
-        deps=None,
-        settings=Settings(model=None),
-        store=store,
-        console=Console(file=output),
-    )
+    await chat(Agent(TestModel()), deps=None, settings=Settings(model=None), store=store, console=shell)
     assert 'No changes.' in output.getvalue()
     assert 'Saved model. Applied.' in output.getvalue()
     assert store.load().model == 'test'
