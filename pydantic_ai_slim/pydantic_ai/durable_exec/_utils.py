@@ -19,7 +19,6 @@ from typing import Any, TypeAlias, TypeVar
 
 from pydantic_ai._utils import disable_threads
 from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.wrapper import WrapperModel
@@ -75,15 +74,6 @@ def unwrap_model(model: Model) -> Model:
     while isinstance(model, WrapperModel):
         model = model.wrapped
     return model
-
-
-def reject_live_connection(model: Model) -> None:
-    """Reject a model whose live connection cannot cross a durable boundary."""
-    if model._contains_live_connection:  # pyright: ignore[reportPrivateUsage]
-        raise UserError(
-            'A model with a live connection cannot be used inside a durable workflow or flow. '
-            'Use a model without a live connection inside the workflow.'
-        )
 
 
 @dataclass(kw_only=True)

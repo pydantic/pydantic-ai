@@ -14,7 +14,7 @@ import time
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from copy import copy
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timedelta
@@ -721,10 +721,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Get the model settings."""
         return self._settings
 
-    @property
-    def _contains_live_connection(self) -> bool:
-        """Whether a request would borrow runtime state that cannot cross a durable boundary."""
-        return False
+    def _run_scope(self) -> AbstractAsyncContextManager[None]:
+        """The context an agent run holds around its requests to this model, unless it runs in a durable workflow.
+
+        Unlike `__aenter__`, it leaves the provider's HTTP client alone. A model can use it to keep a connection it
+        opens on demand open for the run. A model that wraps others holds theirs.
+        """
+        return nullcontext()
 
     def __eq__(self, other: object) -> bool:
         """Compare `settings`, `profile`, and the subclass's dataclass fields; a subclass that hashes by identity compares by identity."""

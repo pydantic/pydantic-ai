@@ -104,10 +104,6 @@ class FallbackModel(Model):
 
     models: list[Model]
 
-    @property
-    def _contains_live_connection(self) -> bool:
-        return any(model._contains_live_connection for model in self.models)
-
     _exception_handlers: list[ExceptionHandler] = field(repr=False)
     _response_handlers: list[ResponseHandler] = field(repr=False)
 
@@ -225,6 +221,13 @@ class FallbackModel(Model):
     def _refresh_http_client(self) -> None:
         for model in self.models:
             model._refresh_http_client()
+
+    @asynccontextmanager
+    async def _run_scope(self) -> AsyncGenerator[None]:
+        async with AsyncExitStack() as stack:
+            for model in self.models:
+                await stack.enter_async_context(model._run_scope())
+            yield
 
     @property
     def provider(self) -> None:

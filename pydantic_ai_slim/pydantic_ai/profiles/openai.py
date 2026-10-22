@@ -408,13 +408,14 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_responses_supports_websocket_stream_id: bool
     """Whether the Responses WebSocket endpoint runs concurrent responses on separate `stream_id` lanes.
 
-    When `True`, concurrent requests on a model from
-    [`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect] each run on their own
-    named `stream_id` lane of the connection. When `False`, requests send no `stream_id` and take turns on the
-    connection, since an endpoint that doesn't route events by `stream_id` would hand one request another's events.
-    When unset, `connect()` decides by the host of the SDK client's WebSocket URL: lanes on `api.openai.com`, turns
-    on any other host, including services and proxies reached through `OpenAIProvider`. An explicit value wins, set
-    either in the model's `profile=` or in a provider subclass's `model_profile`.
+    When `True`, concurrent requests that
+    [`openai_transport='websocket'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_transport] sends
+    over the model's socket each run on their own named `stream_id` lane. When `False`, requests send no `stream_id`
+    and the socket runs one at a time, sending the others over HTTP, since an endpoint that doesn't route events by
+    `stream_id` would hand one request another's events. When unset, the socket decides by the host of the SDK
+    client's WebSocket URL when it opens: lanes on `api.openai.com`, one at a time on any other host, including
+    services and proxies reached through `OpenAIProvider`. An explicit value wins, set either in the model's
+    `profile=` or in a provider subclass's `model_profile`.
     """
 
     openai_responses_requires_streaming: bool

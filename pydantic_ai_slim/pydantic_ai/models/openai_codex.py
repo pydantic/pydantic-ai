@@ -1,11 +1,9 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Mapping
-from typing import Literal, Never
+from typing import Literal
 
 from typing_extensions import override
 
-from ..exceptions import UserError
 from ..messages import ModelRequest, ModelResponse
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
@@ -13,7 +11,6 @@ from ..settings import ModelSettings
 
 try:
     from openai import AsyncOpenAI
-    from openai.types.websocket_connection_options import WebSocketConnectionOptions
 
     from .openai import OpenAIModelName, OpenAIResponsesModel, OpenAIResponsesModelSettings
 except ImportError as _import_error:  # pragma: no cover
@@ -56,17 +53,8 @@ class OpenAICodexModel(OpenAIResponsesModel):
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)
 
     @override
-    def connect(
-        self,
-        *,
-        extra_headers: Mapping[str, str] | None = None,
-        websocket_connection_options: WebSocketConnectionOptions | None = None,
-    ) -> Never:
-        """Codex session headers are resolved per request, after a handshake would occur."""
-        raise UserError(
-            '`OpenAICodexModel` cannot use a persistent Responses WebSocket because its '
-            'session headers depend on each conversation. Use ordinary runs.'
-        )
+    def _websocket_unsupported_reason(self) -> str | None:
+        return 'its session headers depend on each conversation, after a WebSocket handshake would have sent them.'
 
     @override
     def _prepare_responses_settings(
