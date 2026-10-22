@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, ComputerUse, LocalWorkspace
 from pydantic_ai.durable_exec._workspace import DurableWorkspace
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
@@ -112,9 +112,19 @@ class ScenarioAgents:
     local: Agent[None, str]
     amnesiac: Agent[None, str]
     uncaught: Agent[None, str]
+    computer: Agent[None, str]
 
     def all(self) -> list[Agent[None, str]]:
-        return [self.fresh, self.plain, self.read_only, self.explicit, self.local, self.amnesiac, self.uncaught]
+        return [
+            self.fresh,
+            self.plain,
+            self.read_only,
+            self.explicit,
+            self.local,
+            self.amnesiac,
+            self.uncaught,
+            self.computer,
+        ]
 
 
 def scenario_agents(
@@ -156,6 +166,11 @@ def scenario_agents(
         ),
         uncaught=Agent(
             TestModel(), name=f'{prefix}uncaught', capabilities=[ReadMissingInHook(), workspaces(), durability()]
+        ),
+        computer=Agent(
+            TestModel(call_tools=['computer']),
+            name=f'{prefix}computer',
+            capabilities=[ComputerUse(), workspaces(), durability()],
         ),
     )
 
@@ -300,9 +315,25 @@ async def uncaught(agents: ScenarioAgents, arg: str | None, engine_id: str) -> s
     return (await agents.uncaught.run('Nothing to do.')).output
 
 
+async def computer(agents: ScenarioAgents, arg: str | None, engine_id: str) -> str:
+    return (await agents.computer.run('Look at the screen.')).output
+
+
 SCENARIOS: dict[str, Scenario] = {
     scenario.__name__: scenario
-    for scenario in (fresh, multi_turn, two_agents, run_id, read_only, explicit, binary, local, amnesiac, uncaught)
+    for scenario in (
+        fresh,
+        multi_turn,
+        two_agents,
+        run_id,
+        read_only,
+        explicit,
+        binary,
+        local,
+        amnesiac,
+        uncaught,
+        computer,
+    )
 }
 
 
@@ -383,6 +414,12 @@ async def check_binary(run: Runner, agents: ScenarioAgents) -> None:
     assert agents.provider.actions == [KeyPress(keys=('ctrl', 's'))]
 
 
+async def check_computer(run: Runner, agents: ScenarioAgents) -> None:
+    """The `computer` tool reaches the display from inside a durable unit and returns the screenshot's size."""
+    output = await run('computer', None)
+    assert '"screen_size":[1280,800]' in output, output
+
+
 async def check_local(run: Runner, agents: ScenarioAgents) -> None:
     shutil.rmtree(agents.local_dir, ignore_errors=True)
     os.makedirs(agents.local_dir)
@@ -437,6 +474,7 @@ CASES: dict[str, Check] = {
     'local': check_local,
     'amnesiac': partial(check_failure, 'amnesiac', 'UserError', 'which the run just created'),
     'uncaught': partial(check_failure, 'uncaught', 'FileNotFoundError', '/remote/missing.txt'),
+    'computer': check_computer,
 }
 
 

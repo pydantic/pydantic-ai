@@ -25,6 +25,7 @@ from pydantic_ai.capabilities import (
     MCP,
     Caching,
     Capability,
+    ComputerUse,
     ImageGeneration,
     IncludeToolReturnSchemas,
     Instrumentation,
@@ -93,6 +94,7 @@ def test_capability_types() -> None:
         {
             'NativeTool': NativeTool,
             'Caching': Caching,
+            'ComputerUse': ComputerUse,
             'RaiseContentFilterError': RaiseContentFilterError,
             'ImageGeneration': ImageGeneration,
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
@@ -1953,6 +1955,13 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_Caching',
                     'type': 'object',
                 },
+                'spec_ComputerUse': {
+                    'additionalProperties': False,
+                    'properties': {'ComputerUse': {'$ref': '#/$defs/spec_params_ComputerUse'}},
+                    'required': ['ComputerUse'],
+                    'title': 'spec_ComputerUse',
+                    'type': 'object',
+                },
                 'short_spec_SetToolMetadata': {
                     'additionalProperties': False,
                     'properties': {
@@ -2076,6 +2085,16 @@ def test_model_json_schema_with_capabilities():
                         'messages': {'title': 'Messages', 'type': 'boolean'},
                     },
                     'title': 'spec_params_Caching',
+                    'type': 'object',
+                },
+                'spec_params_ComputerUse': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                    },
+                    'title': 'spec_params_ComputerUse',
                     'type': 'object',
                 },
                 'spec_XSearch': {
@@ -2325,6 +2344,8 @@ def test_model_json_schema_with_capabilities():
                                 {'$ref': '#/$defs/short_spec_NativeTool'},
                                 {'const': 'Caching', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_Caching'},
+                                {'const': 'ComputerUse', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_ComputerUse'},
                                 {'const': 'RaiseContentFilterError', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_RaiseContentFilterError'},
                                 {'const': 'ImageGeneration', 'type': 'string'},
@@ -2554,6 +2575,8 @@ def test_model_json_schema_with_capabilities():
                             {'$ref': '#/$defs/short_spec_NativeTool'},
                             {'const': 'Caching', 'type': 'string'},
                             {'$ref': '#/$defs/spec_Caching'},
+                            {'const': 'ComputerUse', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_ComputerUse'},
                             {'const': 'RaiseContentFilterError', 'type': 'string'},
                             {'$ref': '#/$defs/spec_RaiseContentFilterError'},
                             {'const': 'ImageGeneration', 'type': 'string'},

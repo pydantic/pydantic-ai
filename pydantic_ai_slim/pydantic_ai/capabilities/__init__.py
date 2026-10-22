@@ -38,6 +38,7 @@ from .abstract import (
 from .caching import Caching
 from .capability import Capability
 from .combined import CombinedCapability
+from .computer_use import ComputerUse
 from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .durable_operation import durable_operation
@@ -78,6 +79,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     for cls in (
         NativeTool,
         Caching,
+        ComputerUse,
         RaiseContentFilterError,
         ImageGeneration,
         IncludeToolReturnSchemas,
@@ -161,6 +163,7 @@ __all__ = [
     'WrapperCapability',
     'XSearch',
     'CombinedCapability',
+    'ComputerUse',
     'DynamicCapability',
     'durable_operation',
     'HandleDeferredToolCalls',

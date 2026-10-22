@@ -28,6 +28,7 @@ from pydantic_ai.capabilities import (
     Caching,
     Capability,
     CapabilityOrdering,
+    ComputerUse,
     Hooks,
     ImageGeneration,
     Instrumentation,
@@ -116,6 +117,10 @@ def _check_web_fetch(merged: WebFetch) -> None:
 
 def _check_reinject(merged: ReinjectSystemPrompt) -> None:
     assert merged.replace_existing is True
+
+
+def _check_computer_use(merged: ComputerUse[Any]) -> None:
+    assert merged.id == 'computer'
 
 
 def _check_content_filter(merged: RaiseContentFilterError) -> None:
@@ -209,6 +214,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         'carries no configuration at all, so two are interchangeable',
         lambda: (RaiseContentFilterError(), RaiseContentFilterError()),
         _check_content_filter,
+    ),
+    'ComputerUse': Combines(
+        'carries no configuration, and an agent has one display to control',
+        lambda: (ComputerUse(), ComputerUse()),
+        _check_computer_use,
     ),
     'LocalWorkspace': Combines(
         'the later configuration replaces the earlier one whole',
