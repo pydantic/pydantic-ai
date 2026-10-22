@@ -455,7 +455,7 @@ def _commands(app: FastAPI, service: WebService) -> None:
 
 
 def _tasks(app: FastAPI, service: WebService) -> None:
-    """The Workers tree: read a delegated task's history, steer or prompt it, and stop or background it."""
+    """The Workers tree: read a delegated task's history, steer or prompt it, and stop, background, or resume it."""
 
     @app.get('/api/tasks/{task_id}')
     async def task(task_id: str) -> TaskTranscript:

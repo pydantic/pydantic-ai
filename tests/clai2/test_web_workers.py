@@ -29,6 +29,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 from pydantic_clai2.builtin_plugins.web.workers import Workers
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.plugins import TaskEvent, TaskInfo
+from pydantic_clai2.runtime.tasks import resume_prompt
 from tests.clai2.test_web import TOKEN, WIRE, MakeWeb, Web, make_web, receive_until
 
 __all__ = ['make_web']
@@ -163,7 +164,6 @@ def test_workers_stream_steer_and_control(make_web: MakeWeb) -> None:
             "Unknown sub-agent 'gone'. Available sub-agents: self.",
         )
         del web_.shell.tasks.owner.records[gone.id]
-        assert web_.post(f'/api/tasks/{task_id}/resume').status_code == 422, 'the page prompts it instead'
         assert web_.post(f'/api/tasks/{task_id}/prompt', {'text': ' and the docs? '}).status_code == 204
         messages, again = until_finished(socket)
         assert not [message for message in messages if isinstance(message, TurnStarted | TurnEnded)]
@@ -186,6 +186,11 @@ def test_workers_stream_steer_and_control(make_web: MakeWeb) -> None:
         owner = web_.shell.tasks.owner
         assert owner.directory is not None
         assert 'docs done' in (owner.directory / f'{task_id}.json').read_text(), 'saved to its own history'
+
+        # For HTTP callers, resume still asks the agent, as `/tasks resume` does; the page prompts instead.
+        assert web_.post(f'/api/tasks/{task_id}/resume').status_code == 204
+        receive_until(socket, TurnEnded)
+        assert prompts(web_.shell.session.messages)[-1] == resume_prompt(owner.records[task_id])
 
         assert web_.post('/api/input', {'text': 'stop me'}).json() == {'menu': None}
         messages, _ = receive_until(socket, TaskItems)

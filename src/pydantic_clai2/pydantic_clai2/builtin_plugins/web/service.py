@@ -80,7 +80,7 @@ from pydantic_clai2.runtime.task_prompts import is_task_prompt
 
 THEME = 'display.theme'
 PluginAction = Literal['enable', 'disable', 'reload']
-TaskAction = Literal['stop', 'background']
+TaskAction = Literal['stop', 'background', 'resume']
 SERVING = 'This page runs on the web plugin, so change it from the terminal; any change restarts the web UI.'
 
 VIEW_TIMEOUT = 10.0
@@ -560,12 +560,14 @@ class WebService:
         return TaskTranscript(task=task_entry(task), items=history_items(catalog.history(task_id)))
 
     async def task_action(self, task_id: str, action: TaskAction) -> None:
-        """Stop or background a task, as `/tasks` does."""
+        """Stop, background, or resume a task, as `/tasks` does."""
         channel, catalog = self._task(task_id)
         if action == 'stop':
             await catalog.stop(task_id)
-        else:
+        elif action == 'background':
             catalog.background(task_id)
+        else:
+            await catalog.resume(task_id)
         # Backgrounding changes the row without an event from the task, which may be waiting on its model.
         for task in catalog.listing():
             if task.id == task_id:

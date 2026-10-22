@@ -1293,7 +1293,8 @@ runs (`host.tasks.steer`), and Stop and Background act as `/tasks` does. Once a 
 the page shows its saved history (`GET /api/tasks/ID`), and the server keeps no live copy of it;
 the box then prompts the task on its own (`host.tasks.prompt`), when it can resume: the task
 continues its saved history, its reply streams into its transcript, and the session's
-conversation and the agent never see it.
+conversation and the agent never see it. `POST /api/tasks/ID/resume`, which the page no longer
+calls, still asks the agent to resume a finished task, as `/tasks resume` does.
 
 The page follows `/theme`: the `default` theme is Pydantic's own colours, in the
 browser's light or dark mode, and any other palette paints the page as it paints the terminal,
