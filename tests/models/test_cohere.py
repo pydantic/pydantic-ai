@@ -36,7 +36,6 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import WebSearchTool
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -765,19 +764,6 @@ async def test_cohere_unified_thinking(
     assert '4' in result.output
     assert single_request_body(vcr)['thinking'] == expected_thinking
     assert any(isinstance(part, ThinkingPart) for part in result.response.parts) is expect_thinking_part
-
-
-async def test_cohere_thinking_false_on_always_on_profile_uses_smallest_budget(allow_model_requests: None):
-    """A profile that marks thinking always-on gets the smallest budget for `thinking=False` instead of `disabled`."""
-    model = CohereModel(
-        'command-a-reasoning-08-2025',
-        provider=CohereProvider(api_key='foobar'),
-        profile=ModelProfile(supports_thinking=True, thinking_always_enabled=True),
-    )
-    assert model._translate_thinking(ModelRequestParameters(thinking=False)) == snapshot(  # pyright: ignore[reportPrivateUsage]
-        cohere.Thinking(type='enabled', token_budget=512)
-    )
-    assert model._translate_thinking(ModelRequestParameters()) is None  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.vcr()

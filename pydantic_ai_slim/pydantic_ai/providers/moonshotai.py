@@ -45,18 +45,18 @@ MoonshotAIModelName = Literal[
 ]
 
 
-_REASONING_EFFORTS_BY_PREFIX: dict[str, tuple[OpenAIReasoningEffort, ...]] = {
+_REASONING_EFFORTS_BY_PREFIX: dict[str, frozenset[OpenAIReasoningEffort]] = {
     # https://platform.kimi.ai/docs/guide/use-reasoning-effort
-    'kimi-k3': ('low', 'high', 'max'),
+    'kimi-k3': frozenset(('low', 'high', 'max')),
     # Live-verified in https://github.com/pydantic/pydantic-ai/pull/6208: `'none'` is rejected.
-    'kimi-k2.5': ('minimal', 'low', 'medium', 'high'),
-    'kimi-k2.6': ('minimal', 'low', 'medium', 'high'),
+    'kimi-k2.5': frozenset(('minimal', 'low', 'medium', 'high')),
+    'kimi-k2.6': frozenset(('minimal', 'low', 'medium', 'high')),
 }
 """The `reasoning_effort` values `api.moonshot.ai` accepts, per model-name prefix. Kimi K2.7 Code has no effort
 knob, so it's left out and `thinking=False` sends nothing for it."""
 
 
-def _reasoning_efforts(model_name: str) -> tuple[OpenAIReasoningEffort, ...] | None:
+def _reasoning_efforts(model_name: str) -> frozenset[OpenAIReasoningEffort] | None:
     lower_name = model_name.lower()
     return next(
         (efforts for prefix, efforts in _REASONING_EFFORTS_BY_PREFIX.items() if lower_name.startswith(prefix)), None
@@ -91,7 +91,7 @@ class MoonshotAIProvider(_OpenAICompatibleProvider):
         is_reasoning = bool(profile and profile.get('supports_thinking'))
         reasoning_profile = OpenAIModelProfile(thinking_always_enabled=is_reasoning)
         if is_reasoning and (efforts := _reasoning_efforts(model_name)) is not None:
-            reasoning_profile['openai_supported_reasoning_efforts'] = efforts
+            reasoning_profile['openai_reasoning_efforts'] = efforts
 
         # As the MoonshotAI API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly.

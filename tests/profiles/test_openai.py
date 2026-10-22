@@ -3,7 +3,7 @@
 Tests verify model profile detection for different OpenAI models, particularly the full desired
 reasoning-flag matrix per model version: `openai_supports_reasoning`,
 `thinking_enabled_by_default`, `openai_supports_reasoning_effort_none`,
-`openai_supports_minimal_reasoning_effort`, `openai_supported_reasoning_efforts`, and
+`openai_supports_minimal_reasoning_effort`, `openai_reasoning_efforts`, and
 `openai_responses_supports_reasoning_mode`.
 """
 
@@ -250,7 +250,7 @@ def test_reasoning_matrix(case: ReasoningCase):
     assert profile.get('openai_responses_supports_reasoning_context', False) is case.supports_context
     assert profile.get('supports_thinking', False) is supports_reasoning
     assert profile.get('thinking_always_enabled', False) is (case.enabled_by_default and not case.can_be_disabled)
-    assert profile.get('openai_supported_reasoning_efforts') == case.efforts
+    assert profile.get('openai_reasoning_efforts') == (None if case.efforts is None else frozenset(case.efforts))
 
 
 class TestEncryptedReasoningContent:

@@ -618,7 +618,7 @@ def _resolve_openai_thinking_effort(thinking: ThinkingLevel, profile: OpenAIMode
 
     `thinking=False` on a model that always reasons resolves to the least reasoning it accepts.
     """
-    supported = profile.get('openai_supported_reasoning_efforts')
+    supported = profile.get('openai_reasoning_efforts')
     if supported is None:
         if thinking is False and profile.get('thinking_always_enabled', False):
             # Without the model's accepted efforts there's no lowest one to send, so it keeps its default.
@@ -641,7 +641,7 @@ def _resolve_openai_thinking_effort(thinking: ThinkingLevel, profile: OpenAIMode
 
 def _supports_reasoning_effort_none(profile: OpenAIModelProfile) -> bool:
     """Whether the model accepts `reasoning_effort='none'`, read from its accepted efforts where they're pinned."""
-    if (supported := profile.get('openai_supported_reasoning_efforts')) is not None:
+    if (supported := profile.get('openai_reasoning_efforts')) is not None:
         return 'none' in supported
     return profile.get('openai_supports_reasoning_effort_none', False)
 

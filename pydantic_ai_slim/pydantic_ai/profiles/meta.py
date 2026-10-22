@@ -23,7 +23,7 @@ def muse_model_profile(model_name: str) -> OpenAIModelProfile | None:
         supports_thinking=True,
         thinking_always_enabled=True,
         thinking_enabled_by_default=True,
-        openai_supported_reasoning_efforts=('minimal', 'low', 'medium', 'high', 'xhigh', 'max'),
+        openai_reasoning_efforts=frozenset(('minimal', 'low', 'medium', 'high', 'xhigh', 'max')),
         openai_supports_encrypted_reasoning_content=True,
         # Muse labels progress preambles `commentary`; sending the phase back keeps the model from reading its
         # own preambles as final answers in long tool-calling runs.

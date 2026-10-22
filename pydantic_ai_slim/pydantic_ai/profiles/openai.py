@@ -76,7 +76,7 @@ class _ReasoningSupport:
     supports_context: bool
     """The Responses API accepts `reasoning.context='all_turns'` for the model."""
 
-    efforts: tuple[OpenAIReasoningEffort, ...] | None = None
+    efforts: frozenset[OpenAIReasoningEffort] | None = None
     """The `reasoning.effort` values the Responses API accepts for the model, or `None` where they aren't pinned."""
 
     @property
@@ -105,16 +105,20 @@ _O_SERIES_REASONING = _ReasoningSupport(
     can_be_disabled=False,
     supports_mode=False,
     supports_context=False,
-    efforts=('low', 'medium', 'high'),
+    efforts=frozenset(('low', 'medium', 'high')),
 )
 """The o-series models always reason, at efforts `low` through `high`."""
 
 _CHAT_LATEST_REASONING = _ReasoningSupport(
-    enabled_by_default=True, can_be_disabled=False, supports_mode=False, supports_context=False, efforts=('medium',)
+    enabled_by_default=True,
+    can_be_disabled=False,
+    supports_mode=False,
+    supports_context=False,
+    efforts=frozenset(('medium',)),
 )
 """The GPT-5.1+ chat variants always reason at a fixed `'medium'` effort."""
 
-_GPT_5_PRO_EFFORTS: tuple[OpenAIReasoningEffort, ...] = ('medium', 'high', 'xhigh')
+_GPT_5_PRO_EFFORTS: frozenset[OpenAIReasoningEffort] = frozenset(('medium', 'high', 'xhigh'))
 """The efforts GPT-5.2+ -pro models accept (live-verified for gpt-5.2-pro, gpt-5.4-pro and gpt-5.5-pro, 2026-10)."""
 
 _GPT_6_MODEL_PREFIXES = ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol')
@@ -128,7 +132,7 @@ _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
         can_be_disabled=False,
         supports_mode=True,
         supports_context=True,
-        efforts=('low', 'medium', 'high', 'xhigh', 'max'),
+        efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
     ),
     # GPT-6.1 Sol follows GPT-6 Astra rather than GPT-6 Sol: it rejects `effort='none'`.
     # https://developers.openai.com/api/docs/models/gpt-6.1-sol
@@ -137,7 +141,7 @@ _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
         can_be_disabled=False,
         supports_mode=True,
         supports_context=True,
-        efforts=('low', 'medium', 'high', 'xhigh', 'max'),
+        efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
     ),
     # GPT-6 Sol and Luna retain GPT-5.6's default medium reasoning and accept `effort='none'`.
     # https://developers.openai.com/api/docs/guides/latest-model
@@ -201,7 +205,11 @@ _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
     'gpt-5-chat': _NO_REASONING,
     # gpt-5-pro only accepts `effort='high'` (live-verified 2026-10).
     'gpt-5-pro': _ReasoningSupport(
-        enabled_by_default=True, can_be_disabled=False, supports_mode=False, supports_context=False, efforts=('high',)
+        enabled_by_default=True,
+        can_be_disabled=False,
+        supports_mode=False,
+        supports_context=False,
+        efforts=frozenset(('high',)),
     ),
     # The original GPT-5 family (incl. -mini/-nano) reasons at 'medium' by default, and accepts
     # `minimal` through `high`. See https://platform.openai.com/docs/guides/reasoning
@@ -210,7 +218,7 @@ _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
         can_be_disabled=False,
         supports_mode=False,
         supports_context=False,
-        efforts=('minimal', 'low', 'medium', 'high'),
+        efforts=frozenset(('minimal', 'low', 'medium', 'high')),
     ),
     # Match o-series families explicitly so gateway prefixes like `openrouter/` don't match.
     'o1': _O_SERIES_REASONING,
@@ -350,7 +358,7 @@ class OpenAIModelProfile(ModelProfile, total=False):
     accepted in that mode. When reasoning is enabled (low/medium/high/xhigh), sampling params are not supported.
     Whether the model reasons by default is tracked separately by `thinking_enabled_by_default`.
 
-    Ignored when `openai_supported_reasoning_efforts` is set: `'none'` in that sequence decides it instead."""
+    Ignored when `openai_reasoning_efforts` is set: `'none'` in that set decides it instead."""
 
     openai_supports_minimal_reasoning_effort: bool
     """Whether the model accepts `reasoning_effort='minimal'`. Default: `True`.
@@ -360,15 +368,15 @@ class OpenAIModelProfile(ModelProfile, total=False):
     See https://developers.openai.com/api/docs/guides/latest-model.
     Explicit `openai_reasoning_effort='minimal'` settings are still passed through unchanged.
 
-    Ignored when `openai_supported_reasoning_efforts` is set."""
+    Ignored when `openai_reasoning_efforts` is set."""
 
-    openai_supported_reasoning_efforts: Sequence[OpenAIReasoningEffort]
+    openai_reasoning_efforts: frozenset[OpenAIReasoningEffort]
     """The `reasoning_effort` values the model accepts. Default: unset.
 
     When set, the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting resolves to the
     closest accepted effort: the lowest one at or above the requested level, else the highest. `thinking=False`
     sends `'none'` where it's accepted, and otherwise the lowest accepted effort, so a model that always
-    reasons (`thinking_always_enabled`) thinks as little as it can. An empty sequence means the model has no
+    reasons (`thinking_always_enabled`) thinks as little as it can. An empty set means the model has no
     effort knob, so the unified setting sends nothing.
 
     When set, it also decides whether the model takes `'none'` and `'minimal'`, in place of
@@ -578,7 +586,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         supported_native_tools=supported_native_tools,
     )
     if reasoning.efforts is not None:
-        profile['openai_supported_reasoning_efforts'] = reasoning.efforts
+        profile['openai_reasoning_efforts'] = reasoning.efforts
     return profile
 
 

@@ -516,7 +516,7 @@ class TestOpenAIChatThinkingTranslation:
         model = FunctionModel(
             _echo,
             profile=OpenAIModelProfile(
-                supports_thinking=True, thinking_always_enabled=True, openai_supported_reasoning_efforts=()
+                supports_thinking=True, thinking_always_enabled=True, openai_reasoning_efforts=frozenset()
             ),
         )
 

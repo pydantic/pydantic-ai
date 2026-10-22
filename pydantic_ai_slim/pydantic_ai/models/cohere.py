@@ -270,16 +270,13 @@ class CohereModel(Model[AsyncClientV2]):
         """Map the unified `thinking` setting to Cohere's `thinking` parameter.
 
         Reasoning models think by default; `thinking=False` turns that off, and an effort level caps the
-        thinking at a `token_budget`. A model whose profile marks thinking always-on gets the smallest budget
-        for `thinking=False` instead.
+        thinking at a `token_budget`.
         """
         thinking = model_request_parameters.thinking
         if thinking is None:
             return None
         if thinking is False:
-            if not self.profile.get('thinking_always_enabled', False):
-                return CohereThinking(type='disabled')
-            thinking = 'minimal'
+            return CohereThinking(type='disabled')
         if thinking is True:
             return CohereThinking(type='enabled')
         return CohereThinking(type='enabled', token_budget=_THINKING_TOKEN_BUDGETS[thinking])
