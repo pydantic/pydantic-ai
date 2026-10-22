@@ -3991,7 +3991,9 @@ async def test_anthropic_citations_request_setting(
         pytest.param(PromptedOutput(int), id='prompted'),
     ],
 )
-async def test_anthropic_citations_off_for_structured_output(allow_model_requests: None, output_type: Any) -> None:
+async def test_anthropic_citations_off_for_structured_output(
+    allow_model_requests: None, output_type: ToolOutput[int] | NativeOutput[int] | PromptedOutput[int]
+) -> None:
     """The `citations` setting doesn't turn on document or Web Fetch citations when the output isn't text.
 
     Anthropic rejects citations with native output, and writes its `<cite>` markup into tool and prompted output.
