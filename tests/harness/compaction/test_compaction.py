@@ -17,7 +17,7 @@ from opentelemetry.trace import NoOpTracer, Tracer, get_tracer
 import pydantic_ai_harness
 import pydantic_ai_harness.compaction as compaction
 from pydantic_ai import Agent, Tool, ToolReturn
-from pydantic_ai._context_size import mark_initial_input_tokens
+from pydantic_ai._context_size import mark_context_input_tokens
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
@@ -362,7 +362,7 @@ class TestEstimateContextTokens:
         # A provider SDK that continued the response in a second request (Google long decode) summed both
         # requests' input, which re-counts the first one's 500 output tokens; the context is the first request's.
         response = _assistant_with_usage('long', 50_000 + 50_500, 1_000)
-        mark_initial_input_tokens(response, 50_000)
+        mark_context_input_tokens(response, 50_000)
         msgs: list[ModelMessage] = [_user('x' * 40), response]
         assert estimate_context_tokens(msgs) == 51_000
 
@@ -533,7 +533,7 @@ class TestEstimateMessageTokens:
         """A response continued across requests counts its first request's input, not their sum."""
         # Its second request's input re-counted the first one's 500 output tokens.
         long_decode = _reported(input_tokens=1000 + 1500, output_tokens=600)
-        mark_initial_input_tokens(long_decode, 1000)
+        mark_context_input_tokens(long_decode, 1000)
         msgs: list[ModelMessage] = [
             long_decode,
             _user('y' * 400),  # with the response above, shares 1900 - 1000 in proportion 600:100

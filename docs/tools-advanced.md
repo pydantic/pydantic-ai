@@ -66,7 +66,7 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-Some models (e.g. Gemini) natively support semi-structured return values, while some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
+Some models (e.g. Gemini) natively support semi-structured return values, while some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON. A value whose JSON form is a string, such as a `datetime`, `UUID` or `Decimal`, is sent as that string without JSON quotes, which is also what it reloads as after you [store and load the message history](message-history.md#storing-and-loading-messages-to-json), so the model sees the same text either way.
 
 ### Where a returned file is sent {#tool-return-file-provenance}
 
