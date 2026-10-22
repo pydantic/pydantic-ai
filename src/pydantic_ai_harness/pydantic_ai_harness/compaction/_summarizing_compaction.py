@@ -124,7 +124,7 @@ _KEPT_USER_MESSAGE_METADATA = 'pydantic-ai-harness.compaction.kept-user-message.
 
 The marker rides on the items, the way pins do, so a retained copy is still recognized after continuing a history
 merges its request into another. Earlier versions also marked the request's `metadata`. That marker is no longer
-read: request metadata can come back from a client, so a turn marked only there is summarized like any other.
+read: request metadata isn't trusted as a provenance marker, so a turn marked only there is summarized like any other.
 """
 
 # Interim, deliberately generic rule: a harness capability that tags the content it adds on the user channel

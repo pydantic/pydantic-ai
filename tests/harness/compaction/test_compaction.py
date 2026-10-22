@@ -4138,8 +4138,8 @@ class TestKeepUserMessages:
     async def test_a_turn_marked_only_in_request_metadata_is_summarized_and_bounded(self):
         """Only the marker on a kept copy's text counts, so request metadata can't keep a turn whole.
 
-        Request metadata can come back from a client (Vercel AI restores it from `UIMessage.metadata`), so a turn
-        marked there is summarized and cut to `keep_user_messages_max_chars` like any other.
+        Request metadata isn't trusted as a provenance marker, so a turn marked there is summarized and cut to
+        `keep_user_messages_max_chars` like any other.
         """
         prompts: list[str] = []
         comp = SummarizingCompaction(
