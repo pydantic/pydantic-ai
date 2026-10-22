@@ -66,8 +66,9 @@ class RealtimeModelSettings(TypedDict, total=False):
     Defines the common settings vocabulary used across realtime model providers. A setting a provider has
     no way to apply is silently ignored, while one whose intent the provider would visibly violate (a
     forced `tool_choice`, or a `turn_detection` it cannot honor) raises
-    [`UserError`][pydantic_ai.exceptions.UserError] before connecting; each setting's docs say which
-    applies where. Providers with additional generation parameters extend it, e.g.
+    [`UserError`][pydantic_ai.exceptions.UserError] before connecting; the
+    [provider pages](../realtime/overview.md#provider-support) cover each provider's own cases. Providers
+    with additional generation parameters extend it, e.g.
     [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings].
     """
 
@@ -173,7 +174,8 @@ class RealtimeModelSettings(TypedDict, total=False):
 
     Supported by: OpenAI `gpt-realtime-2*` models (also on Azure), reasoning chat models like `gpt-5`
     on Azure AI Voice Live, Gemini Live models other than Vertex AI's half-cascade `gemini-live-2.5-flash`
-    and `gemini-3.8-live`, xAI's reasoning Grok Voice models
+    and `gemini-3.8-live` (not its `gemini-3.8-live-extended-thinking` variant, which always thinks), xAI's
+    reasoning Grok Voice models
     (`grok-voice-latest` and the `grok-voice-think-*` family), and OpenAI GPT-Live, where it sets the
     reasoning effort of the delegated backend model if that model reasons, unless
     `openai_live_delegation` sets its own `reasoning_effort`.

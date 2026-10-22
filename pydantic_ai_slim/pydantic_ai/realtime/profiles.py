@@ -93,7 +93,8 @@ class RealtimeModelProfile(TypedDict, total=False):
     """Whether the model supports reasoning/thinking configuration via the
     [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting — OpenAI's `gpt-realtime-2*`
     reasoning models, Gemini Live models other than Vertex AI's half-cascade `gemini-live-2.5-flash` and
-    `gemini-3.8-live`, xAI's `grok-voice-latest` and
+    `gemini-3.8-live` (not its `gemini-3.8-live-extended-thinking` variant, which always thinks), xAI's
+    `grok-voice-latest` and
     `grok-voice-think-*` models, and OpenAI GPT-Live, whose delegated backend does the reasoning. When
     `False` (the default), a `thinking` setting is silently ignored rather than sent to a model that
     would reject it."""
