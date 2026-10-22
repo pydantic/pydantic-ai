@@ -81,7 +81,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail the run at its start when it has no workspace or its model can't see screenshots."""
-        if not ctx.workspace.attached:
+        if not ctx.workspace.attached or not ctx.workspace.has_display:
             raise UserError(
                 '`ComputerUse` needs a workspace with a display. Attach a sandbox capability that starts a '
                 'desktop, or a capability whose workspace backend implements `SupportsComputerUse`.'

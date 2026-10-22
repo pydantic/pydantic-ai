@@ -30,7 +30,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 
-from .workspace_fakes import FAKE_SCREENSHOT, InMemoryProvider, ProviderBackend
+from .workspace_fakes import FAKE_SCREENSHOT, InMemoryProvider, ProviderBackend, WorkspaceCapability
 
 pytestmark = pytest.mark.anyio
 
@@ -132,8 +132,12 @@ async def test_the_tool_is_sequential_and_marked_as_the_computer_kind() -> None:
     assert (tool.name, tool.sequential, tool.tool_kind) == ('computer', True, 'computer')
 
 
-async def test_a_run_without_a_workspace_fails_at_its_start() -> None:
-    agent = Agent(_scripted([]), capabilities=[ComputerUse()])
+@pytest.mark.parametrize(
+    'workspace',
+    [pytest.param([], id='no-workspace'), pytest.param([WorkspaceCapability()], id='no-display')],
+)
+async def test_a_run_without_a_display_fails_at_its_start(workspace: list[AbstractCapability[Any]]) -> None:
+    agent = Agent(_scripted([{'kind': 'click', 'x': 1, 'y': 1}]), capabilities=[*workspace, ComputerUse()])
     with pytest.raises(UserError, match='`ComputerUse` needs a workspace with a display'):
         await agent.run('Go.')
 
