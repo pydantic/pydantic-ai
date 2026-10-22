@@ -1,3 +1,4 @@
+import copy
 import importlib
 import os
 import subprocess
@@ -125,6 +126,12 @@ def test_coder_members_and_parameters() -> None:
     limits = next(item for item in coder.capabilities if type(item).__name__ == '_BoundToolOutputs')
     assert limits.id == 'coder_tool_output_limits'
     assert isinstance(coder.for_agent(Agent(TestModel())), Coder)
+
+
+def test_bound_tool_outputs_sharing_an_id_raise_instead_of_merging() -> None:
+    limits = next(item for item in Coder().capabilities if type(item).__name__ == '_BoundToolOutputs')
+    with pytest.raises(UserError, match="'coder_tool_output_limits' is used by multiple capabilities"):
+        Agent(TestModel(), capabilities=[limits, copy.copy(limits)])
 
 
 async def test_no_workspace_fails_the_run_naming_coder() -> None:

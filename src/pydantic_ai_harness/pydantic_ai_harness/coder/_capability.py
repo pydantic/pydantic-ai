@@ -25,11 +25,11 @@ FILE_TOOL_NAMES: tuple[str, ...] = ('read_file', 'write_file', 'edit_file', 'lis
 
 
 class _BoundToolOutputs(ToolOutputLimits[AgentDepsT]):
-    # Keeps this class anonymous under the combine policy: without it, `_BoundToolOutputs` inherits
-    # `ToolOutputLimits`' class-level default id, so two of these with one id would merge as one
-    # configuration stated twice instead of raising, and its `Anonymous` `COMBINE_POLICY` entry would
-    # not hold. A `ToolOutputLimits` next to `Coder` stays separate regardless: grouping is by
-    # instance id, and `Coder` passes `id='coder_tool_output_limits'`.
+    # Unsets only the class-level default id, which is what the combine policy reads: two instances
+    # sharing an id raise instead of merging as one configuration stated twice, so the `Anonymous`
+    # `COMBINE_POLICY` entry holds. Instances still default to `id='tool_output_limits'` through the
+    # inherited `__init__`; `Coder` passes `id='coder_tool_output_limits'`, which keeps its bound
+    # limits separate from a standalone `ToolOutputLimits`.
     id: str | None = None
 
     def get_toolset(self) -> None:
