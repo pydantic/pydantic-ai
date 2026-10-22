@@ -35,6 +35,12 @@
       "fingerprint": "a8c9648f9d121526e82e7a5e6f1a54043ea5c3c78a8aaf1b417e75c75ecf6674",
       "reason": "Adds the new `Citations` capability to `CAPABILITY_TYPES`; every existing entry is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/7434"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "679024394731649b9cd4c4300679de05df481ee1512142e772055756302b9541",
+      "reason": "Adds the xAI Grok 4.6 and 4.7 Bedrock ids to `LatestBedrockModelNames`; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8639"
     }
   ]
 }

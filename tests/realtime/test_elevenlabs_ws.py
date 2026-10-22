@@ -269,6 +269,49 @@ async def test_tool_call_round(elevenlabs_ws_cassette: tuple[ElevenLabsProvider,
     assert 'fog' in (final_part.transcript or '').lower()
 
 
+async def test_parallel_tool_calls_get_one_reply(
+    elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette],
+) -> None:
+    """Parallel tool calls come as back-to-back responses of one call each, and the reply to both completes the turn."""
+    provider, _ = elevenlabs_ws_cassette
+    model = ElevenLabsRealtimeModel(MODEL, provider=provider)
+    agent = Agent(instructions='Use get_weather for every city asked about, in parallel. Answer in one short sentence.')
+
+    # Run one after the other, so the results go out in the recorded order.
+    @agent.tool_plain(sequential=True)
+    def get_weather(city: str) -> str:
+        """Look up the current weather for a city."""
+        return f'It is foggy and 12 degrees in {city}.'
+
+    events: list[Any] = []
+    replies: list[ModelResponse] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('What is the weather in Paris and in Berlin? Check both at once.')
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    final = session.all_messages()[-1]
+                    assert isinstance(final, ModelResponse)
+                    replies.append(final)
+                    if len(replies) == 2:
+                        break
+                    # The next turn is tracked as usual.
+                    await session.send('What is two plus two?')
+
+    assert [e.part.args_as_dict() for e in events if isinstance(e, FunctionToolCallEvent)] == snapshot(
+        [{'city': 'Paris'}, {'city': 'Berlin'}]
+    )
+    assert not any(isinstance(e, RealtimeSessionErrorEvent) for e in events)
+    transcripts = [part.transcript for reply in replies for part in reply.parts if isinstance(part, SpeechPart)]
+    assert transcripts == snapshot(
+        [
+            'The weather in Paris is foggy with a temperature of twelve degrees, and the same goes for Berlin, which is also foggy and at twelve degrees.',
+            'Two plus two equals four.',
+        ]
+    )
+
+
 async def test_message_history_seeding(elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette]) -> None:
     """Seeded prior turns are sent on the wire and reflected in the model's reply."""
     provider, cassette = elevenlabs_ws_cassette
