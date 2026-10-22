@@ -587,6 +587,24 @@ class TestContainerManagement:
         assert (f'run -d --rm -p 127.0.0.1:{health.port}:4566 -e GATEWAY_LISTEN localstack/localstack') in log_text
         assert 'stop managed-xyz' in log_text
 
+    async def test_reentry_stops_a_container_whose_stop_failed_before_starting_another(self, tmp_path: Path) -> None:
+        log = tmp_path / 'docker.log'
+        stop_failed = tmp_path / 'stop-failed'
+        docker = _make_stub(
+            tmp_path,
+            f'echo "$@" >> {log}\n'
+            'if [ "$1" = run ]; then echo managed-xyz; fi\n'
+            f'if [ "$1" = stop ] && [ ! -e {stop_failed} ]; then touch {stop_failed}; echo busy >&2; exit 1; fi',
+        )
+        with http_server([HttpResponse(200), HttpResponse(200)]) as health:
+            toolset = _toolset(endpoint_url=health.endpoint_url, manage_container=True, docker_path=docker)
+            with pytest.raises(LocalStackError, match='Failed to stop LocalStack container managed-xyz: busy'):
+                async with toolset:
+                    pass
+            async with toolset:
+                pass
+        assert [line.split()[0] for line in log.read_text().splitlines()] == ['run', 'stop', 'stop', 'run', 'stop']
+
     async def test_managed_defaults_to_edge_port_when_endpoint_has_no_port(self, tmp_path: Path) -> None:
         docker, log = _docker_stub(tmp_path)
         with pytest.raises(LocalStackError, match=r'did not become ready within 1.0s'):
