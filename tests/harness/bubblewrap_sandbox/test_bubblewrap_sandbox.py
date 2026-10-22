@@ -6,12 +6,11 @@ Most use a fake `bwrap` that records its arguments, so they run anywhere; the la
 from __future__ import annotations
 
 import base64
-import contextlib
 import os
 import shutil
 import socket
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 
 import anyio
@@ -550,17 +549,24 @@ async def test_capability_keeps_the_wrapped_policy_and_declines_foreign_refs(tmp
 
 @pytest.mark.skipif(not BWRAP_WORKS, reason='needs a working `bwrap` (Linux with user namespaces)')
 class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
-    async def test_commands_write_only_to_the_working_dir(self, tmp_path: Path) -> None:
+    @pytest.fixture
+    def host_dir(self) -> Iterator[Path]:
+        """A host directory outside `/tmp`, which the sandbox replaces with its own, so only the read-only root guards it."""
+        directory = Path(tempfile.mkdtemp(prefix='pydantic-ai-bwrap-', dir='/var/tmp'))
+        yield directory
+        shutil.rmtree(directory)
+
+    async def test_commands_write_only_to_the_working_dir(self, tmp_path: Path, host_dir: Path) -> None:
         workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path / 'work')))
         (tmp_path / 'work').mkdir()
 
         inside = await workspace.run(['sh', '-c', 'printf ok > inside.txt'])
-        await workspace.run(['sh', '-c', f'printf no > {tmp_path}/outside.txt'])
+        outside = await workspace.run(['sh', '-c', f'printf no > {host_dir}/outside.txt'])
 
         assert inside.exit_code == 0
         assert await workspace.read_text('inside.txt') == 'ok'
-        # Outside the working directory, a write fails or lands in the sandbox's private `/tmp`.
-        assert not (tmp_path / 'outside.txt').exists()
+        assert outside.exit_code != 0
+        assert not (host_dir / 'outside.txt').exists()
 
     async def test_tmp_is_private(self, tmp_path: Path) -> None:
         marker = Path('/tmp') / f'pydantic-ai-bwrap-{os.getpid()}'
@@ -571,15 +577,16 @@ class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
         finally:
             marker.unlink()
 
-    async def test_file_methods_cannot_write_through_a_symlink_out_of_the_working_dir(self, tmp_path: Path) -> None:
-        outside = tmp_path / 'outside.txt'
+    async def test_file_methods_cannot_write_through_a_symlink_out_of_the_working_dir(
+        self, tmp_path: Path, host_dir: Path
+    ) -> None:
+        outside = host_dir / 'outside.txt'
         outside.write_text('host')
         (tmp_path / 'work').mkdir()
         (tmp_path / 'work' / 'link').symlink_to(outside)
         workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path / 'work')))
 
-        # The write fails, or lands in the sandbox's private `/tmp`: either way the host file is untouched.
-        with contextlib.suppress(OSError, WorkspaceError):
+        with pytest.raises((OSError, WorkspaceError)):
             await workspace.write_text('link', 'escaped')
 
         assert outside.read_text() == 'host'
@@ -649,7 +656,11 @@ class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
         """The harness `Shell` detaches its jobs and checks on them in later calls."""
         workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
 
-        await workspace.run('setsid sh -c "sleep 1; echo alive > out" < /dev/null > /dev/null 2>&1 &', shell=True)
-        await anyio.sleep(3)
+        await workspace.run(
+            'setsid sh -c "sleep 1; echo alive > out.tmp && mv out.tmp out" < /dev/null > /dev/null 2>&1 &', shell=True
+        )
+        with anyio.fail_after(30):
+            while not await workspace.exists('out'):
+                await anyio.sleep(0.1)
 
         assert await workspace.read_text('out') == 'alive\n'

@@ -109,6 +109,26 @@ agent = Agent(
 Prefect both `store_resolver` and a callable `namespace` must be deterministic and do no backend
 I/O.
 
+### Write metadata (who wrote a file)
+
+When the app's UI also edits memory, record provenance with the write instead of in the note.
+`InMemoryStore`, `SqliteMemoryStore` and `PostgresMemoryStore` implement `MetadataMemoryStore`:
+`store.write_with_metadata(path, content, expected_version=..., metadata={'updated_by': 'ui'})`
+stores a `Mapping[str, str]` (at most 4,096 characters as JSON) in the content's transaction
+(Postgres: a queryable `write_metadata JSONB` column), and
+`store.read(...).metadata` returns it. `Memory(write_metadata=...)` (a mapping or a
+`RunContext -> Mapping | None` callable, resolved per write, never a tool argument) records it
+with the model's writes.
+
+- Every write replaces the metadata; a plain `write`, including the model's writes when
+  `write_metadata` is unset, leaves none, so `updated_by='ui'` cannot outlive an agent edit.
+  Deletes remove it; a replayed tool call returns its receipt and leaves the stored metadata as is.
+- Files live at `{namespace}/{agent_name}/{file}`, so a UI edits `{user_id}/main/MEMORY.md`.
+- `write_metadata` with a store that is not a `MetadataMemoryStore` (`FileStore`, or a custom
+  store implementing only `MemoryStore`) raises `UserError` at construction or run start.
+- A custom store opts in by implementing `write_with_metadata` (checked structurally, like
+  `search`), writing metadata atomically with the content; its `write` must record none.
+
 ### Bounded injection and search
 
 - `max_tokens=2_000` (approx, 4 chars/token) bounds guidance + notebook + file list together;

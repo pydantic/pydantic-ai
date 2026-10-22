@@ -20,6 +20,8 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, assert_never
 
+from pydantic_core import ErrorDetails
+
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
     InstructionBaselinePart,
@@ -27,7 +29,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextPart,
@@ -185,21 +188,26 @@ def _clip(text: str, limit: int, terms: frozenset[str] | None) -> str:
     return ('...' if start else '') + text[start:end] + ('...' if end < len(text) else '')
 
 
-def _retry_text(part: RetryPromptPart) -> str:
-    """A retry prompt as text: the plain message, or its validation errors as compact JSON.
+def _retry_text(content: list[ErrorDetails] | str) -> str:
+    """Retry feedback as text: the plain message, or its validation errors as compact JSON.
 
     Serialized with core's `error_details_ta`, without `ctx` as core sends tool-call retries.
-    `RetryPromptPart.model_response()` would also add a code fence and core's closing
-    instruction to the model, which do not help a search. The excerpt is clipped like the rest.
+    `RetryFeedbackPart.model_response()` would also add the fence and the line that says the
+    application is speaking, which do not help a search. The excerpt is clipped like the rest.
     """
-    if isinstance(part.content, str):
-        return part.content
-    errors = error_details_ta.dump_json(part.content, exclude={'__all__': {'ctx'}}).decode()
-    return f'{len(part.content)} validation error(s): {errors}'
+    if isinstance(content, str):
+        return content
+    errors = error_details_ta.dump_json(content, exclude={'__all__': {'ctx'}}).decode()
+    return f'{len(content)} validation error(s): {errors}'
 
 
 def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None) -> str | None:
-    """Render one request part to a searchable line, or `None` for non-content parts."""
+    """Render one request part to a searchable line, or `None` for non-content parts.
+
+    The complexity waiver covers the exhaustive part-type chain itself, which grows by one branch
+    every time pydantic-ai adds a part; splitting it would separate the branches from the
+    `assert_never` that keeps them exhaustive.
+    """
     if isinstance(part, UserPromptPart):
         return f'User: {_clip(" ".join(user_prompt_texts(part)), _EXCERPT_CHARS, terms)}'
     if isinstance(part, SystemPromptPart):
@@ -211,10 +219,25 @@ def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None
     if isinstance(part, InstructionDeltaPart):
         return f'System: {_clip(part.render(), _SHORT_EXCERPT_CHARS, terms)}'
     if isinstance(part, ToolReturnPart):
+        if part.outcome == 'retried':
+            # A retried call reads as a retry rather than a return: why a run changed course is what
+            # makes it worth recalling. `model_response_str` renders a validation failure's serialized
+            # errors the way the model was shown them, unwrapped because the `{"error": ...}` envelope
+            # is a wire detail; `str(part.content)` would put a Python repr in the index.
+            retry = part.model_response_str(wrap_if_error=False)
+            return f'Retry [{part.tool_name}]: {_clip(retry, _EXCERPT_CHARS, terms)}'
         # `tool_return_text` names each file instead of spelling out its bytes.
         return f'Tool [{part.tool_name}]: {_clip(tool_return_text(part), _EXCERPT_CHARS, terms)}'
-    if isinstance(part, RetryPromptPart):
-        return f'Retry [{part.tool_name}]: {_clip(_retry_text(part), _EXCERPT_CHARS, terms)}'
+    if isinstance(part, RetryFeedbackPart):
+        # The same feedback for a response that answered no particular call. No tool name: it is
+        # never bound to a call.
+        return f'Retry: {_clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
+    # TODO(v3): remove RetryPromptPart
+    if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        # The part the two above replaced. A stored history loads as one of them, but code that
+        # builds one by hand and passes it as `message_history` still puts an instance here, and
+        # this reads the history before the model translates it.
+        return f'Retry [{part.tool_name}]: {_clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
     if isinstance(part, SpeechPart):
         # A realtime user turn: index the spoken transcript so speech is searchable, not the
         # raw audio. `transcript` is optional, so an audio-only part contributes no text.

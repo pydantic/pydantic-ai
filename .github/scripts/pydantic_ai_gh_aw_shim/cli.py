@@ -58,10 +58,19 @@ from pydantic import Field, TypeAdapter, ValidationError
 from tenacity import RetryCallState, stop_after_delay, wait_random_exponential
 from tenacity.asyncio.retry import retry_if_result
 
-from pydantic_ai import Agent, AgentRunResult, ModelRequestContext, ModelRetry, RunContext, UsageLimitExceeded
+from pydantic_ai import (
+    Agent,
+    AgentRunResult,
+    ModelRequestContext,
+    ModelRetry,
+    RunContext,
+    UsageLimitExceeded,
+    capture_run_messages,
+)
 from pydantic_ai.capabilities import (
     AbstractCapability,
     NativeTool,
+    PrepareTools,
     ProcessEventStream,
     ProcessHistory,
     WrapModelRequestHandler,
@@ -79,7 +88,6 @@ from pydantic_ai.messages import (
     ModelResponsePart,
     NativeToolCallPart,
     NativeToolSearchCallPart,
-    RetryPromptPart,
     ToolAvailabilityDeltaPart,
     ToolCallEvent,
     ToolCallPart,
@@ -87,6 +95,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     ToolSearchCallPart,
     UserPromptPart,
+    repair_messages,
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -500,6 +509,24 @@ def time_budget_notice() -> str | None:
     return TIME_BUDGET_NOTICE
 
 
+# gh-aw's `safeoutputs` MCP server, under the shim's Claude Code tool-name prefix.
+SAFE_OUTPUT_TOOL_PREFIX = 'mcp__safeoutputs__'
+
+
+def hold_time_reserve_for_safe_output(
+    _ctx: RunContext[object], tool_defs: list[ToolDefinition]
+) -> list[ToolDefinition]:
+    """Offer only the safe-output tools once the run is inside the parent's time reserve.
+
+    The notice alone does not stop a model from investigating into the reserve. The request in
+    flight when the reserve starts still completes and its tool calls still run; the notice
+    stays, so the model knows why its other tools are gone.
+    """
+    if time_budget_notice() is None:
+        return tool_defs
+    return [tool_def for tool_def in tool_defs if tool_def.name.startswith(SAFE_OUTPUT_TOOL_PREFIX)]
+
+
 class RunTimeLimitExceeded(Exception):
     """The run used its whole wall-clock budget, which is not a provider timeout."""
 
@@ -547,6 +574,14 @@ SUBAGENT_INSTRUCTIONS = (
     'codebase, and fetch web content, but you cannot modify the workspace or '
     'shell out. Investigate the task you were given and return a concise, '
     'evidence-grounded answer to your caller — do not try to act on it.'
+)
+
+# A sub-agent that hits its timeout has often gathered most of what it needs. `task` then makes
+# one request without tools on its saved history to recover its answer.
+SUBAGENT_RESUME_PROMPT = (
+    'Your time is up and your tools are no longer available. Answer your caller now, in the '
+    'format your task asks for, from what you have already found. Name everything you were '
+    'asked to cover that you did not finish.'
 )
 
 # History compaction (pydantic-ai `ProcessHistory` capability). Two stages
@@ -1156,11 +1191,9 @@ async def _stream_events(_ctx: RunContext[object], events: AsyncIterable[AgentSt
             )
             logger.info('tool_use: %s', event.part.tool_name)
         elif isinstance(event, ToolResultEvent):
-            # `event.part` is `ToolReturnPart | RetryPromptPart`; the latter
-            # means the tool result failed validation and pydantic-ai is
-            # asking the model to retry. Tag it so gh-aw doesn't read it as
-            # success.
-            is_retry = isinstance(event.part, RetryPromptPart)
+            # `outcome='retried'` means the call didn't work and pydantic-ai is asking the model to
+            # make it again. Tag it so gh-aw doesn't read it as success.
+            is_retry = event.part.outcome == 'retried'
             content = str(event.part.content)
             if len(content) > MAX_LIVE_TOOL_RESULT_CHARS:
                 content = (
@@ -1225,6 +1258,14 @@ def _subagent_request_limit(ctx: RunContext[object]) -> int:
     return min(SUBAGENT_REQUEST_LIMIT, headroom)
 
 
+def _subagent_time_limit() -> float:
+    """Seconds a sub-agent may run from now without eating into the parent's time reserve."""
+    seconds_left = _run_seconds_left()
+    if seconds_left is None:
+        return SUBAGENT_TIMEOUT_SECS
+    return min(SUBAGENT_TIMEOUT_SECS, seconds_left - RUN_TIME_RESERVE_SECS)
+
+
 async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     """Claude's `Task` tool: spawn a read-only sub-agent on `ctx.model`."""
     global _subagent_requests_in_flight
@@ -1232,12 +1273,7 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     if sub_request_limit <= 0:
         logger.info('Task refused, request budget nearly spent: %s', description[:120])
         return 'error: the request budget is nearly spent; finish the task from what you already have'
-    seconds_left = _run_seconds_left()
-    timeout = (
-        SUBAGENT_TIMEOUT_SECS
-        if seconds_left is None
-        else min(SUBAGENT_TIMEOUT_SECS, seconds_left - RUN_TIME_RESERVE_SECS)
-    )
+    timeout = _subagent_time_limit()
     if timeout <= 0:
         logger.info('Task refused, time budget nearly spent: %s', description[:120])
         return 'error: the time budget is nearly spent; finish the task from what you already have'
@@ -1250,9 +1286,10 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     # always a `Model` here.
     model = ctx.model
     assert isinstance(model, Model)
+    instructions = [INSTRUCTIONS, SUBAGENT_INSTRUCTIONS, prompt]
     sub = Agent(
         cast('Model[Any]', model),
-        instructions=[INSTRUCTIONS, SUBAGENT_INSTRUCTIONS, prompt],
+        instructions=instructions,
         toolsets=[sub_toolset],
         capabilities=[
             local_workspace(),
@@ -1264,18 +1301,56 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     # Fresh `RunUsage` so `sub_request_limit` bounds the sub-agent, not
     # (parent + sub). Merge the deltas back regardless of success/failure.
     sub_usage = RunUsage()
+    sub_messages: list[ModelMessage] = []
     _subagent_requests_in_flight += sub_request_limit
     try:
-        async with _wall_clock_cap(timeout):
-            result = await sub.run(
-                RUN_TRIGGER, usage_limits=UsageLimits(request_limit=sub_request_limit), usage=sub_usage
-            )
+        with capture_run_messages() as sub_messages:
+            async with _wall_clock_cap(timeout):
+                result = await sub.run(
+                    RUN_TRIGGER, usage_limits=UsageLimits(request_limit=sub_request_limit), usage=sub_usage
+                )
     except TimeoutError:
         # A bare `TimeoutError` stringifies to '' — without an explicit message
         # the model (and the log) would see `sub-agent failed:` with no payload.
         ctx.usage.incr(sub_usage)
         logger.error('sub-agent timed out after %.0f min: %s', timeout / 60, description[:120])
-        return f'error: sub-agent timed out after {math.ceil(timeout / 60)}min'
+        timeout_error = f'error: sub-agent timed out after {math.ceil(timeout / 60)}min'
+        # The resume is the sub-agent's last request, so it spends from the sub-agent's own request grant,
+        # which stays in flight until `finally`. A response the cut left partial is dropped, and
+        # `repair_messages` closes out tool calls the cut left unanswered.
+        history = [m for m in sub_messages if not (isinstance(m, ModelResponse) and m.state == 'interrupted')]
+        resume_timeout = _subagent_time_limit()
+        if (
+            resume_timeout <= 0
+            or sub_usage.requests >= sub_request_limit
+            or not any(isinstance(m, ModelResponse) for m in history)
+        ):
+            return timeout_error
+        resume_usage = RunUsage()
+        try:
+            async with _wall_clock_cap(resume_timeout):
+                # Streamed like the sub-agent, so a long report is not cut by the client's read timeout.
+                resumed = await Agent(
+                    cast('Model[Any]', model),
+                    name='delegate-resume',
+                    instructions=instructions,
+                    capabilities=[_MarkTimedOutSpans(), ProcessEventStream(_stream_events)],
+                ).run(
+                    SUBAGENT_RESUME_PROMPT,
+                    message_history=repair_messages(history),
+                    usage_limits=UsageLimits(request_limit=1),
+                    usage=resume_usage,
+                )
+        except Exception:
+            logger.exception('timed-out sub-agent could not be resumed: %s', description[:120])
+            return timeout_error
+        finally:
+            ctx.usage.incr(resume_usage)
+        logger.info('Task resumed after its timeout: %s', description[:120])
+        return (
+            f'note: the sub-agent timed out after {math.ceil(timeout / 60)}min and wrote this report afterwards '
+            f'from what it had already found, without further tool calls.\n\n{resumed.output}'
+        )
     except Exception as exc:
         # The parent agent reacts to the returned string, but a sub-agent can hit
         # the same nested `ExceptionGroup`/`McpError` as the main run — log the
@@ -1360,6 +1435,7 @@ async def run(
             ProcessHistory(_compact_history),
             ProcessEventStream(_stream_events),
             _MarkTimedOutSpans(),
+            PrepareTools(hold_time_reserve_for_safe_output),
         ],
     )
     agent.output_validator(require_safe_output)
@@ -1406,7 +1482,7 @@ async def run(
     duration_ms = round((time.perf_counter() - started) * 1000)
     messages = result.all_messages()
     tool_calls = count_tool_calls(messages)
-    num_turns = sum(isinstance(m, ModelResponse) for m in messages)
+    num_turns = run_usage.requests
     logger.info('tool calls observed: %d, turns: %d', tool_calls, num_turns)
 
     text = str(result.output or '')
