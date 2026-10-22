@@ -593,6 +593,12 @@ class _FailedAttempts:
         start: AttemptStart,
     ) -> None:
         """Record that the attempt started at `start` failed with `failure`, an error or a rejected response."""
+        ledger = request_context._usage_response_ledger  # pyright: ignore[reportPrivateUsage]
+        if isinstance(failure, _messages.ModelResponse):
+            # Described by what the provider billed for it, recorded just before the hook rejected it: a copy
+            # for a resumed suspended response (see `billed_beyond`), whose usage leaves out what the run that
+            # suspended it already counted.
+            failure = ledger.responses[-1]
         policy = open_request_policy()
         self.log.record(
             request_context.model,
@@ -603,11 +609,8 @@ class _FailedAttempts:
         )
         if isinstance(failure, _messages.ModelResponse):
             # The rejected response now has its own span, which reports its usage, so the `chat` span
-            # describes only the response that answers, as it does under `FallbackModel`. The billed-response
-            # record holds what the provider billed for it, which is a copy for a resumed suspended response
-            # (see `billed_beyond`), recorded just before the hook rejected it.
-            ledger = request_context._usage_response_ledger  # pyright: ignore[reportPrivateUsage]
-            ledger.rejected.append(ledger.responses[-1])
+            # describes only the response that answers, as it does under `FallbackModel`.
+            ledger.rejected.append(failure)
         capture_model_response_span_context(request_context, None)
 
     def record_exhausted(

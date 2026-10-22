@@ -508,6 +508,44 @@ async def test_an_unpinned_suspended_response_resumes_on_the_step_model():
     assert continued == [True]
 
 
+async def test_a_rejected_resumed_continuation_describes_only_what_this_run_billed():
+    """A resumed continuation that's rejected is listed with the usage billed beyond the suspended response it continued.
+
+    The run that suspended the response already counted its usage.
+    """
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('bad')], usage=RequestUsage(input_tokens=5, output_tokens=1))
+
+    def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('good')], usage=RequestUsage(input_tokens=1, output_tokens=1))
+
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'primary'
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('x')]),
+        ModelResponse(
+            parts=[TextPart('old')],
+            model_name='primary',
+            state='suspended',
+            usage=RequestUsage(input_tokens=100, output_tokens=10),
+            metadata={'__pydantic_ai__': {'fallback_candidate': primary_model.model_id}},
+        ),
+    ]
+    agent = Agent(
+        primary_model,
+        capabilities=[ModelFallback(FunctionModel(backup, model_name='backup'), fallback_on=reject_primary)],
+    )
+    result = await agent.run(message_history=history)
+    assert result.output == 'good'
+    assert result.usage.input_tokens == 6
+    assert [(attempt.model_name, attempt.usage) for attempt in result.response.failed_attempts or []] == [
+        ('primary', RequestUsage(input_tokens=5, output_tokens=1))
+    ]
+
+
 async def test_a_failed_pinned_continuation_cancels_its_job():
     cancelled: list[str | None] = []
 
