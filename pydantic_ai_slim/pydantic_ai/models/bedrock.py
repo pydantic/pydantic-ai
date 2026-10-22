@@ -351,6 +351,19 @@ _QWEN_REASONING_CONFIG_MAP: dict[ThinkingLevel, str] = {
 }
 """Maps unified thinking values to Qwen's `reasoning_config` on Converse, which takes `none`, `low`, `medium`, or `high`."""
 
+_GROK_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
+    # Grok always reasons on Converse and accepts `low`/`medium`/`high`/`xhigh`, so `thinking=False` and `minimal`
+    # reason as little as it can. `True` picks `medium` like the other always-on effort-based variants.
+    False: 'low',
+    True: 'medium',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'medium',
+    'high': 'high',
+    'xhigh': 'xhigh',
+}
+"""Maps unified thinking values to Grok's `reasoning.effort` on Converse."""
+
 _BEDROCK_USAGE_FIELDS = frozenset(
     {'inputTokens', 'outputTokens', 'totalTokens', 'cacheReadInputTokens', 'cacheWriteInputTokens'}
 )
@@ -524,6 +537,11 @@ LatestBedrockModelNames = Literal[
     # Moonshot AI Kimi
     'moonshot.kimi-k2-thinking',
     'moonshotai.kimi-k2.5',
+    # xAI Grok (require a cross-region inference profile)
+    'us.xai.grok-4.6',
+    'global.xai.grok-4.6',
+    'us.xai.grok-4.7',
+    'global.xai.grok-4.7',
 ]
 """Latest Bedrock models."""
 
@@ -886,11 +904,8 @@ class BedrockConverseModel(Model[BaseClient]):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> StructuredOutputMode:
         profile = cast(BedrockModelProfile, self.profile)
-        # Extended thinking, and thinking on the non-Anthropic variants, reject the forced tool choice Tool Output
-        # relies on.
-        if (
-            model_request_parameters.output_tools
-            and _effective_thinking_type(model_settings, model_request_parameters, profile) == 'enabled'
+        if model_request_parameters.output_tools and _thinking_rejects_tool_forcing(
+            _effective_thinking_type(model_settings, model_request_parameters, profile), profile
         ):
             return 'native' if profile.get('supports_json_schema_output', False) else 'prompted'
         return super()._default_structured_output_mode(model_settings, model_request_parameters)
@@ -910,7 +925,9 @@ class BedrockConverseModel(Model[BaseClient]):
             model_request_parameters.output_mode == 'tool'
             and not model_request_parameters.allow_text_output
             and profile.get('bedrock_thinking_variant') not in (None, 'anthropic')
-            and _effective_thinking_type(settings, model_request_parameters, profile) is not None
+            and _thinking_rejects_tool_forcing(
+                _effective_thinking_type(settings, model_request_parameters, profile), profile
+            )
         ):
             # This would result in `toolChoice: any`, which isn't available here.
             suggested_output_type = (
@@ -1291,6 +1308,11 @@ class BedrockConverseModel(Model[BaseClient]):
             existing['reasoning_effort'] = _GPT_OSS_REASONING_EFFORT_MAP[thinking]
         elif variant == 'qwen' and 'reasoning_config' not in existing:
             existing['reasoning_config'] = _QWEN_REASONING_CONFIG_MAP[thinking]
+        elif variant == 'xai' and 'reasoning' not in existing:
+            # `True` leaves the effort out where the profile records that the model's own default applies then
+            # (Grok 4.7: `high`).
+            if not (thinking is True and profile.get('grok_default_effort_omitted', False)):
+                existing['reasoning'] = {'effort': _GROK_REASONING_EFFORT_MAP[thinking]}
 
         return existing or None
 
@@ -2337,6 +2359,17 @@ def _effective_thinking_type(
     return None
 
 
+def _thinking_rejects_tool_forcing(
+    thinking_type: Literal['adaptive', 'enabled'] | None, profile: BedrockModelProfile
+) -> bool:
+    """Whether this request's thinking rejects the forced tool choice Tool Output relies on.
+
+    Extended thinking and thinking on the non-Anthropic variants do, except xAI Grok, which always reasons: Converse
+    accepts a forced `toolChoice` with Grok 4.6 while it reasons, and Grok 4.7 is assumed to match.
+    """
+    return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') != 'xai'
+
+
 def _support_tool_forcing(
     model_name: str,
     profile: BedrockModelProfile,
@@ -2355,7 +2388,7 @@ def _support_tool_forcing(
         )
     else:
         unavailable_reason = FORCING_UNSUPPORTED_REASON
-    if unavailable_reason is None and thinking_type == 'enabled':
+    if unavailable_reason is None and _thinking_rejects_tool_forcing(thinking_type, profile):
         if profile.get('bedrock_thinking_variant') != 'anthropic':
             unavailable_reason = (
                 "Bedrock doesn't support forcing tool use with thinking enabled for this model. "
