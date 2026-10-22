@@ -819,6 +819,28 @@ async def test_batch_results_only_delete_the_input_file_this_process_uploaded(al
     assert [path for method, path in api.requests if method == 'DELETE'] == ['/files/file-input']
 
 
+async def test_batch_results_delete_the_input_file_only_once_openai_says_the_batch_completed(
+    allow_model_requests: None,
+) -> None:
+    """A handle claiming its batch completed doesn't make the input file of a batch still running deletable."""
+    api = _FakeBatchAPI(batch=_batch_json('in_progress'))
+    model = _fake_model(api)
+    batch = await model.batch_create([await model.batch_encode(_request('ok'))])
+    api.files['file-output'] = _line('ok', {'status_code': 200, 'body': _RESPONSE_BODY})
+    forged = replace(
+        batch,
+        status='ended',
+        provider_details={**(batch.provider_details or {}), 'status': 'completed', 'output_file_id': 'file-output'},
+    )
+
+    await model.batch_results(forged)
+    assert [path for method, path in api.requests if method == 'DELETE'] == []
+
+    api.batch = _batch_json('completed', output_file_id='file-output')
+    await model.batch_results(await model.batch_status(batch))
+    assert [path for method, path in api.requests if method == 'DELETE'] == ['/files/file-input']
+
+
 async def test_batch_forgets_the_oldest_uploaded_input_files(
     allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:

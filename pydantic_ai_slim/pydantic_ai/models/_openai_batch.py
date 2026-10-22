@@ -12,6 +12,7 @@ import json
 from collections import OrderedDict
 from collections.abc import Sequence
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Required, cast
 
@@ -81,11 +82,20 @@ class _BatchDetails(TypedDict, total=False):
 
 _DETAILS_ADAPTER = TypeAdapter(_BatchDetails)
 
-_UPLOADED_INPUT_FILES: OrderedDict[str, str] = OrderedDict()
+
+@dataclass
+class _UploadedInputFile:
+    file_id: str
+    completed: bool = False
+    """Whether OpenAI said the batch completed, rather than a handle claiming it."""
+
+
+_UPLOADED_INPUT_FILES: OrderedDict[str, _UploadedInputFile] = OrderedDict()
 """The input file this process uploaded for each batch it created, by batch ID, to delete once every request ran.
 
 A `Batch` handle can come from a stored message history, which a caller controls, so the file IDs it names are only
-read, never deleted. The oldest are forgotten first, which leaves their files for OpenAI to delete.
+read, never deleted, and its status doesn't say when the file can be: only OpenAI's own answer that the batch
+completed does. The oldest are forgotten first, which leaves their files for OpenAI to delete.
 """
 _UPLOADED_INPUT_FILES_SIZE = 1024
 
@@ -178,7 +188,7 @@ async def batch_create(model: OpenAIResponsesModel, requests: Sequence[EncodedBa
     batch = await client.batches.create(
         input_file_id=file.id, endpoint=_ENDPOINT, completion_window='24h', extra_headers=headers
     )
-    _UPLOADED_INPUT_FILES[batch.id] = file.id
+    _UPLOADED_INPUT_FILES[batch.id] = _UploadedInputFile(file.id)
     while len(_UPLOADED_INPUT_FILES) > _UPLOADED_INPUT_FILES_SIZE:
         _UPLOADED_INPUT_FILES.popitem(last=False)
     return _to_batch(model, batch, group, len(requests))
@@ -188,6 +198,8 @@ async def batch_status(model: OpenAIResponsesModel, batch: Batch) -> Batch:
     check_allow_model_requests()
     _validate_batch_group(model, batch.group, collecting=True)
     openai_batch = await _batch_client(model).batches.retrieve(batch.id)
+    if openai_batch.status == 'completed' and (uploaded := _UPLOADED_INPUT_FILES.get(batch.id)) is not None:
+        uploaded.completed = True
     return _to_batch(model, openai_batch, batch.group, batch.request_count)
 
 
@@ -205,10 +217,11 @@ async def batch_results(model: OpenAIResponsesModel, batch: Batch) -> list[Batch
                 result = _to_result(_OutputLine.model_validate_json(line))
                 results[result.custom_id] = result
     if details['status'] == 'completed':
-        if (input_file_id := _UPLOADED_INPUT_FILES.pop(batch.id, None)) is not None:
+        if (uploaded := _UPLOADED_INPUT_FILES.get(batch.id)) is not None and uploaded.completed:
+            del _UPLOADED_INPUT_FILES[batch.id]
             # Every request ran, so the input file isn't needed again; OpenAI would otherwise keep it for 30 days.
             with suppress(APIError):
-                await client.files.delete(input_file_id)
+                await client.files.delete(uploaded.file_id)
     else:
         # The output and error files have no line for a request the batch didn't run, so the input file lists them.
         lines = (await client.files.content(details['input_file_id'])).text.splitlines()
