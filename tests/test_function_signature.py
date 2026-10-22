@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import gc
+import types
 import typing
 from enum import Enum
 from typing import Optional, Union
@@ -265,6 +267,45 @@ def test_dedup_replaces_nested_generic_and_union_refs_with_canonical():
     assert users_expr.args[0] is user1
     assert maybe_user_expr.members[0] is user1
     assert return_expr.args[0] is user1
+
+
+def test_dedup_leaves_no_closure_garbage():
+    """Deduplicating shared types must not create function/closure reference cycles."""
+    user_def = {
+        'type': 'object',
+        'properties': {'name': {'type': 'string'}},
+        'required': ['name'],
+    }
+
+    def make_sig(name: str) -> FunctionSignature:
+        return FunctionSignature.from_schema(
+            name=name,
+            parameters_schema={
+                'type': 'object',
+                'properties': {'user': {'$ref': '#/$defs/User'}},
+                'required': ['user'],
+                '$defs': {'User': user_def},
+            },
+        )
+
+    was_enabled = gc.isenabled()
+    old_debug = gc.get_debug()
+    gc.collect()
+    gc.disable()
+    gc.set_debug(gc.DEBUG_SAVEALL)
+    try:
+        sig1, sig2 = make_sig('tool_a'), make_sig('tool_b')
+        FunctionSignature.get_conflicting_type_names([sig1, sig2])
+        assert sig2.params['user'].type is sig1.referenced_types[0]
+        del sig1, sig2
+        gc.collect()
+        leaked = [o for o in gc.garbage if isinstance(o, (types.FunctionType, types.CellType))]
+        assert leaked == []
+    finally:
+        gc.set_debug(old_debug)
+        gc.garbage.clear()
+        if was_enabled:
+            gc.enable()
 
 
 def test_dedup_mixed_identical_and_conflicting_from_schemas():

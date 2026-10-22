@@ -839,30 +839,36 @@ def _build_type_signature(
 # =============================================================================
 
 
+def _replace_in_expr(expr: TypeExpr, old_ref: TypeSignature, canonical: TypeSignature) -> TypeExpr:
+    """Replace `old_ref` with `canonical` anywhere in `expr`, in place.
+
+    Module-level rather than nested in `_replace_type_refs`: a nested function that calls itself
+    refers to itself through its closure cell, forming a reference cycle that keeps `old_ref`,
+    `canonical` and every type tree under them alive until the cyclic garbage collector runs.
+    """
+    if expr is old_ref:
+        return canonical
+    if isinstance(expr, GenericTypeExpr):
+        new_args = [_replace_in_expr(a, old_ref, canonical) for a in expr.args]
+        if any(new is not orig for new, orig in zip(new_args, expr.args)):
+            expr.args = new_args
+    elif isinstance(expr, UnionTypeExpr):
+        new_members = [_replace_in_expr(m, old_ref, canonical) for m in expr.members]
+        if any(new is not orig for new, orig in zip(new_members, expr.members)):
+            expr.members = new_members
+    return expr
+
+
 def _replace_type_refs(sig: FunctionSignature, old_ref: TypeSignature, canonical: TypeSignature) -> None:
     """Replace all references to old_ref with canonical in a signature's TypeExpr trees."""
-
-    def _replace_in_expr(expr: TypeExpr) -> TypeExpr:
-        if expr is old_ref:
-            return canonical
-        if isinstance(expr, GenericTypeExpr):
-            new_args = [_replace_in_expr(a) for a in expr.args]
-            if any(new is not orig for new, orig in zip(new_args, expr.args)):
-                expr.args = new_args
-        elif isinstance(expr, UnionTypeExpr):
-            new_members = [_replace_in_expr(m) for m in expr.members]
-            if any(new is not orig for new, orig in zip(new_members, expr.members)):
-                expr.members = new_members
-        return expr
-
     # Replace in params
     for param in sig.params.values():
-        param.type = _replace_in_expr(param.type)
+        param.type = _replace_in_expr(param.type, old_ref, canonical)
 
     # Replace in return type
-    sig.return_type = _replace_in_expr(sig.return_type)
+    sig.return_type = _replace_in_expr(sig.return_type, old_ref, canonical)
 
     # Replace in field types of referenced types
     for type_sig in sig.referenced_types:
         for f in type_sig.fields.values():
-            f.type = _replace_in_expr(f.type)
+            f.type = _replace_in_expr(f.type, old_ref, canonical)
