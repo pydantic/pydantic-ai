@@ -804,6 +804,33 @@ class TestCapabilityStore:
             loader.join(timeout=_READY_TIMEOUT)
         assert store.list_all() == [record]
 
+    @pytest.mark.parametrize('update', ['disable', 'author'])
+    def test_load_active_keeps_manifest_updates_made_while_loading(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, update: str
+    ) -> None:
+        # Recording a load error must not write back a manifest read before a concurrent disable or write.
+        store = CapabilityStore(tmp_path)
+        store.write('x', VALID_CODE)
+        gate = _gate_module(monkeypatch, 'entered', 'release')
+        broken = (
+            f'import {gate.__name__} as g\ng.entered.set()\ng.release.wait({_READY_TIMEOUT})\n'
+            'raise ValueError("broken")\n'
+        )
+        (tmp_path / 'x.py').write_text(broken, encoding='utf-8')
+        loader = threading.Thread(target=store.load_active)
+        loader.start()
+        try:
+            assert _gate(gate, 'entered').wait(timeout=_READY_TIMEOUT)
+            if update == 'disable':
+                store.disable('x')
+            else:
+                store.write('y', VALID_CODE)
+        finally:
+            _gate(gate, 'release').set()
+            loader.join(timeout=_READY_TIMEOUT)
+        statuses = {record.name: record.status for record in store.list_all()}
+        assert statuses == ({'x': 'disabled'} if update == 'disable' else {'x': 'active', 'y': 'active'})
+
     def test_load_manifest_missing_returns_empty(self, tmp_path: Path) -> None:
         assert CapabilityStore(tmp_path / 'absent').list_all() == []
 
