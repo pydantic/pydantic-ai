@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
@@ -16,7 +17,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import ModelRetry
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ToolFailed, UserError
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import (
     WorkspaceError,
@@ -25,7 +26,9 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._durable import RetryRequest, raise_retry, retry_as_result
-from pydantic_ai_harness._workspace import raise_tool_failure
+from pydantic_ai_harness._workspace import in_working_dir, raise_tool_failure
+from pydantic_ai_harness.filesystem import READ_FILE_KIND
+from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.memory._file import FileStore
 from pydantic_ai_harness.memory._store import (
     MemoryConflictError,
@@ -43,6 +46,8 @@ from pydantic_ai_harness.memory._store import (
 if TYPE_CHECKING:
     from pydantic_ai_harness.memory._capability import Memory
 
+_READ_MEMORY = 'read_memory'
+
 MAIN_FILENAME = 'MEMORY.md'
 """The main notebook file injected as bounded user-role context."""
 
@@ -53,6 +58,44 @@ _MAX_SEARCH_TERMS = 32
 _READ_TRUNCATION_MARKER = (
     '\n\n[Truncated: this file exceeds `max_memory_size`; edit it externally before using `write_memory`.]'
 )
+
+
+MEMORY_DATA_PREFIX = '<memory>\n'
+MEMORY_DATA_SUFFIX = '\n</memory>'
+
+
+def snapshot_content_budget(max_tokens: int, guidance: str | None) -> int:
+    """Characters left for the injected snapshot once the guidance and its delimiters are counted."""
+    return max_tokens * 4 - len(guidance or '') - len(MEMORY_DATA_PREFIX) - len(MEMORY_DATA_SUFFIX)
+
+
+def run_workspace_directory(store: MemoryStore, scope: str) -> str | None:
+    """Where this scope's files are in the run's workspace, or `None` when the run's file tools cannot see them.
+
+    Known from configuration: a `FileStore` without a `workspace` of its own, whose `directory` is
+    inside the working directory, which `FileSystem`'s root contains.
+    """
+    if not isinstance(store, FileStore) or store.workspace is not None:
+        return None
+    if not in_working_dir(store.directory):
+        return None
+    return posixpath.join(posixpath.normpath(store.directory), scope)
+
+
+def file_reader(ctx: RunContext[AgentDepsT], store: MemoryStore, scope: str) -> tuple[str, str] | None:
+    """The file tool that reads this scope's files in place of `read_memory`, and where they are."""
+    directory = run_workspace_directory(store, scope)
+    if directory is None or (reader := ctx.tool_name_for_kind(READ_FILE_KIND)) is None:
+        return None
+    return reader, directory
+
+
+def read_call(found: tuple[str, str] | None, name: str) -> str:
+    """How the model reads memory file `name`, given the run's `file_reader` result."""
+    if found is None:
+        return f'{_READ_MEMORY}("{name}")'
+    reader, directory = found
+    return f'{reader}(path="{posixpath.join(directory, name)}")'
 
 
 _WriteStatus = Literal['created', 'appended', 'updated']
@@ -125,7 +168,9 @@ def _normalize_search_query(query: str) -> str:
     return ' '.join(terms)
 
 
-def _apply_write(existing: str | None, content: str, old_text: str | None, name: str) -> tuple[str, _WriteStatus]:
+def _apply_write(
+    existing: str | None, content: str, old_text: str | None, name: str, read_current: str
+) -> tuple[str, _WriteStatus]:
     if old_text is None:
         if existing is not None and existing.strip():
             return f'{existing.rstrip()}\n{content.rstrip()}\n', 'appended'
@@ -134,9 +179,7 @@ def _apply_write(existing: str | None, content: str, old_text: str | None, name:
         raise ModelRetry(f'There is no memory file named {name!r} to edit -- omit `old_text` to create it.')
     occurrences = existing.count(old_text) if old_text else 0
     if occurrences == 0:
-        raise ModelRetry(
-            f'`old_text` was not found in {name!r} -- call `read_memory("{name}")` to see its current content.'
-        )
+        raise ModelRetry(f'`old_text` was not found in {name!r} -- call `{read_current}` to see its current content.')
     if occurrences > 1:
         raise ModelRetry(
             f'`old_text` appears {occurrences} times in {name!r}; it must match exactly once. '
@@ -199,7 +242,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         self._capability = capability
         self._operations = operations
         self.add_function(self.write_memory, name='write_memory')
-        self.add_function(self.read_memory, name='read_memory')
+        self.add_function(self.read_memory, name=_READ_MEMORY, prepare=self._prepare_read_memory)
         self.add_function(self.delete_memory, name='delete_memory')
         self.add_function(self.search_memory, name='search_memory')
 
@@ -224,6 +267,24 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         if ctx.root_capability is not None:
             ctx.root_capability.apply(select)
         return run_capability.resolve_scope(ctx)
+
+    async def _prepare_read_memory(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition:
+        """Step aside for a tool of `FileSystem`'s `READ_FILE_KIND` when it can read this run's memory files.
+
+        Only the injected snapshot tells the model where the files are, so `read_memory` stays when nothing is
+        injected: with `inject_memory=False`, or when the guidance leaves no room for the snapshot.
+        """
+        capability = self._capability
+        guidance = capability.get_instructions()
+        if (
+            not capability.inject_memory
+            or snapshot_content_budget(capability.max_tokens, guidance if isinstance(guidance, str) else None) <= 0
+        ):
+            return tool_def
+        store, scope = self._resolve_scope(ctx)
+        if run_workspace_directory(store, scope) is None:
+            return tool_def
+        return step_aside_for_read_file(ctx, tool_def)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools = await super().get_tools(ctx)
@@ -290,6 +351,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                         content,
                         old_text,
                         name,
+                        read_call(file_reader(ctx, store, scope), name),
                     )
                     if len(updated) > capability.max_memory_size:
                         raise ModelRetry(
@@ -416,7 +478,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
     async def search_memory(self, ctx: RunContext[AgentDepsT], query: str) -> MemorySearchResponse:
         """Search memory files in the current tenant and agent scope.
 
-        Results contain bounded snippets; call `read_memory` when a larger
+        Results contain bounded snippets; read the file when a larger
         bounded excerpt is relevant.
 
         Args:

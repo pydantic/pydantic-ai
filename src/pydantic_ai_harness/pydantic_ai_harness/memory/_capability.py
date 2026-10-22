@@ -33,13 +33,18 @@ from pydantic_ai_harness.memory._sqlite import SqliteMemoryStore
 from pydantic_ai_harness.memory._store import MemoryFile, MemoryStore, encode_metadata, validate_store_path
 from pydantic_ai_harness.memory._toolset import (
     MAIN_FILENAME,
+    MEMORY_DATA_PREFIX,
+    MEMORY_DATA_SUFFIX,
     MemoryDeleteResult,
     MemorySearchResponse,
     MemoryToolOperations,
     MemoryToolset,
     MemoryWriteResult,
+    file_reader,
+    read_call,
     require_metadata_store,
     run_as_operation,
+    snapshot_content_budget,
 )
 
 _DEFAULT_GUIDANCE = (
@@ -49,14 +54,12 @@ _DEFAULT_GUIDANCE = (
     'bullet lines, and put longer or evolving topics in separate files referenced from '
     'MEMORY.md. When you learn something a future session will need, store it proactively with '
     '`write_memory` (append by default; pass `old_text` to correct or remove). Read a listed '
-    'file with `read_memory` when it looks relevant, or use `search_memory` to find relevant '
+    'file when it looks relevant, or use `search_memory` to find relevant '
     'files. Keep memory curated -- update instead of duplicating, delete what turns out wrong. '
     'Never claim something was remembered or saved unless you actually called `write_memory` '
     'in this turn. A later `<memory>` block for this memory supersedes its earlier ones.'
 )
 
-_MEMORY_DATA_PREFIX = '<memory>\n'
-_MEMORY_DATA_SUFFIX = '\n</memory>'
 _EMPTY_MEMORY = '[memory is empty]'
 # The slash is inside the optional group so the two `\s*` never compete for one run of spaces.
 _MEMORY_TAG_RE = re.compile(r'<(?=(?:\s*/)?\s*memory\b)', re.IGNORECASE)
@@ -74,7 +77,9 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     A snapshot of `MEMORY.md` is recorded in the conversation as user-role data,
     once per run in which it changed, and longer topic files are available
-    through `read_memory` and `search_memory`. Automatic snapshot
+    through `read_memory` and `search_memory`. When a `FileStore` keeps the
+    files in the run's workspace, `read_memory` steps aside for `FileSystem`'s
+    `read_file`, and the snapshot gives the directory. Automatic snapshot
     loading is journaled by durability engines that support capability
     operations.
     """
@@ -248,7 +253,9 @@ class Memory(AbstractCapability[AgentDepsT]):
 
         Stored memory is added separately as user-role context by
         `before_model_request` so model-written content is not placed in the
-        instruction channel.
+        instruction channel. The guidance is the same in every run, so it stays
+        static and inside the cached prefix; when `read_file` reads the files in
+        place of `read_memory`, the injected snapshot says where they are.
         """
         return self._render_guidance()
 
@@ -326,7 +333,7 @@ class Memory(AbstractCapability[AgentDepsT]):
                 return request_context
 
             has_memory = bool((main is not None and main.content) or subfiles or files_truncated)
-            snapshot = self._render_snapshot(main, subfiles, files_truncated)
+            snapshot = self._render_snapshot(main, subfiles, files_truncated, file_reader(ctx, store, scope))
             rendered = None if snapshot is None else snapshot[0]
             # An empty snapshot is only worth recording when it replaces one the model would still read as current.
             if snapshot is not None and snapshot[1] and latest is None:
@@ -351,18 +358,22 @@ class Memory(AbstractCapability[AgentDepsT]):
         return request_context
 
     def _render_snapshot(
-        self, main: MemoryFile | None, subfiles: list[str], files_truncated: bool
+        self,
+        main: MemoryFile | None,
+        subfiles: list[str],
+        files_truncated: bool,
+        reader: tuple[str, str] | None,
     ) -> tuple[str, bool] | None:
         """The framed snapshot and whether it says memory is empty, or `None` when it doesn't fit the budget."""
         main_content = '' if main is None else _MEMORY_TAG_RE.sub('&lt;', main.content)
         guidance = self._render_guidance()
-        content_budget = self.max_tokens * 4 - len(guidance or '') - len(_MEMORY_DATA_PREFIX) - len(_MEMORY_DATA_SUFFIX)
+        content_budget = snapshot_content_budget(self.max_tokens, guidance)
         if content_budget <= 0:
             return None
         if not (main_content or subfiles or files_truncated):
             # Under its heading, so several memories on one agent stay apart.
             empty = f'## {self.heading}\n\n{_EMPTY_MEMORY}' if self.heading else _EMPTY_MEMORY
-            return None if len(empty) > content_budget else (f'{_MEMORY_DATA_PREFIX}{empty}{_MEMORY_DATA_SUFFIX}', True)
+            return None if len(empty) > content_budget else (f'{MEMORY_DATA_PREFIX}{empty}{MEMORY_DATA_SUFFIX}', True)
         rendered = render_memory_prompt(
             main_content,
             subfiles,
@@ -372,8 +383,10 @@ class Memory(AbstractCapability[AgentDepsT]):
             max_tokens=max(1, content_budget // 4),
             main_truncated=main is not None and main.truncated,
             files_truncated=files_truncated,
+            read_main=read_call(reader, MAIN_FILENAME),
+            location=None if reader is None else reader[1],
         )[:content_budget]
-        return f'{_MEMORY_DATA_PREFIX}{rendered}{_MEMORY_DATA_SUFFIX}', False
+        return f'{MEMORY_DATA_PREFIX}{rendered}{MEMORY_DATA_SUFFIX}', False
 
     @durable_operation('load_snapshot')
     async def _load_snapshot(
