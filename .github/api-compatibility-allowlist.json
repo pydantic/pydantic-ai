@@ -1,3 +1,28 @@
 {
-  "allowed_breakages": []
+  "allowed_breakages": [
+    {
+      "against": "v2.59.0",
+      "fingerprint": "b881938683d7a5ced698e9551495f8a1098fce10d9c64642076231d15d211336",
+      "reason": "Adds `RunInstructionSource` to the `InstructionSource` union; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10789"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "4c68f760f7da49fd330ae6ec1c15bf49951de8ed4ff692e0de9509b451b3336c",
+      "reason": "Adds `RetryFeedbackPart` and the legacy retry translations to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8094"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "05907702fc1a6791d1a91c17069ed3bb3a21212936176b789fdeb4c53f9c31ae",
+      "reason": "Adds input-support profile flags to `DEFAULT_PROFILE`; every existing key and value is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10476"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "c4aa7c8b9e94bd5ada5a90325d99ca764fed5f8bd156d31ef511842e4d854f3a",
+      "reason": "False positive: `BackgroundTools` still inherits `prepare_tools` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; the tool preparation moved into the wrapper toolset.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10613"
+    }
+  ]
 }

@@ -8,6 +8,8 @@ description: "Connect a Pydantic AI agent to local or remote MCP servers with th
 
 Backed by [`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool] on the native side (see [MCP Server Tool](../native-tools.md#mcp-server-tool) for provider support and configuration) — pass `native=MCPServerTool(...)` directly when you need full control (e.g. a different `id`, `authorization_token`, or `description` than the capability would derive). On the local side, `local=` accepts any [`MCPToolset`][pydantic_ai.mcp.MCPToolset] input (URL, `fastmcp.Client`, transport, in-process `FastMCP` server, script path, …) — non-toolset inputs are wrapped in `MCPToolset` automatically.
 
+Without an explicit `id=`, the capability uses the server URL's hostname as its [`id`][pydantic_ai.capabilities.AbstractCapability.id], which also names its local toolset and [durable](../durable_execution/overview.md) operations. Only the hostname is used, because a URL's path or query can carry a credential. Two `MCP` capabilities for servers on the same host would get the same `id`, so the agent rejects them and asks for an explicit `id=` on each.
+
 ```python {title="mcp.py" test="skip" lint="skip"}
 from pydantic_ai.capabilities import MCP
 from pydantic_ai.native_tools import MCPServerTool

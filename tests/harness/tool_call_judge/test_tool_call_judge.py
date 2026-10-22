@@ -23,7 +23,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -39,6 +40,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolResults, RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge, ToolCallVerdict
+from tests.conftest import legacy_retry_prompt_part
 from tests.harness._recording_durability import RecordingDurability
 
 pytestmark = pytest.mark.anyio
@@ -673,8 +675,10 @@ class TestConversationContext:
                     UserPromptPart(content=['look at this', TextContent(content='and this'), ImageUrl(url='u')]),
                     UserPromptPart(content=[ImageUrl(url='u')]),
                     ToolReturnPart(tool_name='reader', content='file body', tool_call_id='t1'),
-                    RetryPromptPart(content='try again', tool_name='reader', tool_call_id='t3'),
-                    RetryPromptPart(content='bad output', tool_call_id='t4'),
+                    ToolReturnPart(tool_name='reader', content='try again', tool_call_id='t3', outcome='retried'),
+                    RetryFeedbackPart(content='bad output', retry=RetryInfo(cause='model_retry')),
+                    legacy_retry_prompt_part('legacy try again', tool_name='reader', tool_call_id='t7'),
+                    legacy_retry_prompt_part('legacy bad output'),
                 ]
             ),
             ModelResponse(
@@ -701,10 +705,15 @@ class TestConversationContext:
 user: look at this and this
 tool reader returned: file body
 retry (reader): try again
+retry (output): Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+bad output
+</retry_feedback>
+retry (reader): legacy try again
 
 Fix the errors and try again.
 retry (output): Validation feedback:
-bad output
+legacy bad output
 
 Fix the errors and try again.
 native tool web_search returned: hits
