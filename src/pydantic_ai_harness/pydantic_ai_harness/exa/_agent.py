@@ -67,8 +67,10 @@ class ExaAgentRuns(Protocol):
     `AsyncExa().agent.runs` satisfies the protocol as-is.
 
     An object that also has `async def cancel(self, run_id: str)`, as
-    `exa_py`'s does, lets the capability cancel the runs it was still polling
-    inline when the agent run is cancelled, outside durable execution.
+    `exa_py`'s does, lets the capability cancel the runs nothing will read
+    (ones it hasn't finished polling, and ones left for the model to follow up
+    on) when the agent run is cancelled or inline polling fails with an error
+    the model can't fix, outside durable execution.
     """
 
     async def create(
@@ -100,7 +102,7 @@ class _CancellableRuns(Protocol):
 
 
 _CANCEL_GRACE_SECONDS = 5.0
-"""How long a cancelled inline poll waits for Exa to accept the run's cancellation."""
+"""How long a cancelled or failed inline poll waits for Exa to accept the runs' cancellation."""
 
 
 def _default_runs() -> ExaAgentRuns:
@@ -411,7 +413,7 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         return DeferredToolResults(calls=calls)
 
     async def _cancel_runs(self, ctx: RunContext[AgentDepsT], run_ids: list[str]) -> None:
-        """Cancel the runs an agent run that was cancelled or failed while waiting leaves, as nothing will read their results.
+        """Cancel the runs a cancelled or failed wait leaves, as nothing will read their results.
 
         Under durable execution the engine may resume the wait, for example on another worker after a
         restart, so there the runs are left running.
