@@ -34,6 +34,7 @@ from pydantic_ai.models.decision import (
     NoulQuestion,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.system_one import SystemOneModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers import system_one as system_one_provider
@@ -555,7 +556,7 @@ async def test_judge_failure_is_reported_to_the_model(tmp_path: Path) -> None:
     )
     result = await agent.run('find it')
     content = str(_tool_return(result.all_messages()).content)
-    assert 'smart_search failed: ModelHTTPError' in content
+    assert '`smart_search` failed: ModelHTTPError' in content
 
 
 async def test_workspace_failure_is_reported_to_the_model(tmp_path: Path) -> None:
@@ -597,18 +598,37 @@ def test_toolset_advertises_the_upstream_schema() -> None:
 
 
 @pytest.mark.usefixtures('instrument_all_agents')
-async def test_judge_runs_are_not_traced(capfire: CaptureLogfire, tmp_path: Path) -> None:
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_judge_runs_are_not_traced_and_the_search_span_is(
+    capfire: CaptureLogfire, tmp_path: Path, include_content: bool
+) -> None:
     """The judge's prompt carries source, so global instrumentation must not export it past the host's settings."""
     (tmp_path / 'a.py').write_text('expired = True\n')
-    judge_model = FakeJev('x')
+    judge_model = FakeJev('expired')
     agent = Agent(
-        _calls_smart_search(),
+        _calls_smart_search(query='where is the expired flag set'),
         name='outer',
         capabilities=[LocalWorkspace(tmp_path), SmartSearch(model=judge_model)],
     )
+    agent.instrument = InstrumentationSettings(include_content=include_content)
     await agent.run('find it')
     assert judge_model.requests  # the judge ran
     assert agent_run_names(capfire) == ['outer']
+    [span] = [s for s in capfire.exporter.exported_spans_as_dict() if s['name'] == 'smart search']
+    searched = {k: v for k, v in span['attributes'].items() if k.startswith('smart_search.')}
+    expected: dict[str, object] = {
+        'smart_search.judge_model': 'fake:jev-fake',
+        'smart_search.files': 1,
+        'smart_search.skipped_files': 0,
+        'smart_search.snippets': 1,
+        'smart_search.evaluated': 1,
+        'smart_search.selection_complete': True,
+        'smart_search.matches': 1,
+        'smart_search.omitted_matches': 0,
+    }
+    if include_content:
+        expected['smart_search.query'] = 'where is the expired flag set'
+    assert searched == expected
 
 
 @pytest.mark.parametrize(('cache_index', 'chunked'), [(True, 1), (False, 2)])

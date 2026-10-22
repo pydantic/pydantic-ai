@@ -19,7 +19,8 @@ class SmartSearch(AbstractCapability[AgentDepsT]):
     functions, methods and long blocks of a Python file), shortlists the snippets with
     local BM25, and has a judge model score each shortlisted snippet's relevance.
     Matches come back ranked, with file and line ranges and a focused excerpt,
-    plus coverage figures so an empty result is never mistaken for absence.
+    plus coverage figures so the model can tell an empty result from a complete
+    search that found nothing.
 
     The judge is any Pydantic AI model. A decision model is the recommended kind,
     since it answers each relevance question with a probability: any one served
@@ -87,10 +88,10 @@ class SmartSearch(AbstractCapability[AgentDepsT]):
 
     def __post_init__(self) -> None:
         if not 0 <= self.threshold <= 1:
-            raise ValueError(f'threshold must be between 0 and 1, got {self.threshold}')
+            raise ValueError(f'`threshold` must be between 0 and 1, got {self.threshold}')
         # Negated so NaN, which an agent spec can pass through unvalidated, fails too instead of hanging the search.
         if not self.concurrency >= 1:
-            raise ValueError(f'concurrency must be a positive integer, got {self.concurrency}')
+            raise ValueError(f'`concurrency` must be a positive integer, got {self.concurrency}')
 
     def get_toolset(self) -> SmartSearchToolset[AgentDepsT]:
         """Build the toolset providing `smart_search`."""

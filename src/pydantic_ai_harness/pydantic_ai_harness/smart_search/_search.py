@@ -73,7 +73,7 @@ class SmartSearchResult:
     omitted_matches: int = 0
     """Relevant snippets beyond `limit`."""
     warnings: list[str] = field(default_factory=list[str])
-    """Why the result may be incomplete. No matches never prove absence."""
+    """Why the result may be incomplete: no matches do not prove absence."""
 
 
 @dataclass(frozen=True)

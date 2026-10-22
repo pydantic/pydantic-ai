@@ -37,7 +37,9 @@ Left unset, the judge is `'typesafe:jev-latest'` when the `typesafe` SDK is inst
 set, and the run's own model otherwise.
 
 A search sends the query, the shortlisted snippets and their paths to the judge model's provider, and only searches
-inside the workspace's working directory. If no source may leave the machine, judge with a local model.
+inside the workspace's working directory. If no source may leave the machine, judge with a local model. With
+instrumentation on, each search is a `smart search` span with the judge model and coverage figures as
+attributes; the judge runs themselves are not traced, as their prompts carry source.
 
 See the [Smart Search docs](https://pydantic.dev/docs/ai/harness/smart-search/) for the search
 pipeline, the result shape, choosing the judge and tuning `threshold`.
