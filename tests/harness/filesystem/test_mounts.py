@@ -1,4 +1,4 @@
-"""File tools in a workspace with mounted storage that shell commands can't see."""
+"""File tools in a workspace with mounted filesystems that shell commands can't see."""
 
 from __future__ import annotations
 
@@ -11,16 +11,17 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Mount, Workspace
-from pydantic_ai_harness.bucket import Bucket
 from pydantic_ai_harness.filesystem import FileSystem
 
+from ...workspace_fakes import MemoryFilesystem
 from .._tool_calls import call_tools
+from ..cloud_storage.memory_bucket import MemoryBucket
 
 pytestmark = pytest.mark.anyio
 
 
-async def _workspace(tmp_path: Path) -> tuple[Workspace, Bucket]:
-    bucket = Bucket('memory:///')
+async def _workspace(tmp_path: Path) -> tuple[Workspace, MemoryBucket]:
+    bucket = MemoryBucket()
     await bucket.write_bytes('/2026/refunds.csv', b'region,refund\neu,12\n')
     (tmp_path / 'notes.txt').write_text('refund policy: 30 days\n')
     return Workspace(LocalWorkspaceBackend(tmp_path), mounts=[Mount('data', bucket)]), bucket
@@ -41,7 +42,7 @@ async def test_searches_from_above_a_mount_include_it(tmp_path: Path) -> None:
     assert listing.splitlines() == ['data/2026/refunds.csv', 'notes.txt']
 
 
-async def test_writes_through_a_mount_reach_its_storage(tmp_path: Path) -> None:
+async def test_writes_through_a_mount_reach_its_filesystem(tmp_path: Path) -> None:
     workspace, bucket = await _workspace(tmp_path)
 
     await call_tools(
@@ -55,7 +56,7 @@ async def test_writes_through_a_mount_reach_its_storage(tmp_path: Path) -> None:
 
 
 async def test_the_model_is_told_about_mounts(tmp_path: Path) -> None:
-    exports = Mount('exports', Bucket('memory:///'), read_only=True, description='Daily exports')
+    exports = Mount('exports', MemoryBucket(), read_only=True, description='Daily exports')
     agent = Agent(TestModel(call_tools=[]), capabilities=[FileSystem()])
 
     result = await agent.run('Go.', workspace=Workspace(LocalWorkspaceBackend(tmp_path), mounts=[exports]))
@@ -64,13 +65,13 @@ async def test_the_model_is_told_about_mounts(tmp_path: Path) -> None:
     assert isinstance(request, ModelRequest)
     assert request.instructions is not None
     assert (
-        'Mounted storage in this workspace:\n'
+        'Mounted folders in this workspace:\n'
         '- `exports` (read-only; file tools only, shell commands do not see it): Daily exports'
     ) in request.instructions
 
 
 async def test_mounts_of_a_read_only_workspace_are_read_only_to_the_model(tmp_path: Path) -> None:
-    exports = Mount('exports', Bucket('memory:///'))
+    exports = Mount('exports', MemoryBucket())
     agent = Agent(
         TestModel(call_tools=[]),
         capabilities=[LocalWorkspace(tmp_path, mounts=[exports], read_only=True), FileSystem()],
@@ -80,4 +81,15 @@ async def test_mounts_of_a_read_only_workspace_are_read_only_to_the_model(tmp_pa
 
     request = result.all_messages()[0]
     assert isinstance(request, ModelRequest)
-    assert '- `exports` (read-only; file tools only, shell commands do not see it)' in (request.instructions or '')
+    # A read-only workspace runs no commands, so there is no shell to mention.
+    assert 'Mounted folders in this workspace:\n- `exports` (read-only)' in (request.instructions or '')
+
+
+async def test_without_a_shell_the_model_is_not_told_about_commands() -> None:
+    agent = Agent(TestModel(call_tools=[]), capabilities=[FileSystem()])
+
+    result = await agent.run('Go.', workspace=Workspace(MemoryFilesystem(), mounts=[Mount('data', MemoryBucket())]))
+
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert 'Mounted folders in this workspace:\n- `data` (read-write)' in (request.instructions or '')

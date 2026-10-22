@@ -1,13 +1,14 @@
-"""A cloud storage bucket (S3, Google Cloud Storage, Azure Blob) as workspace storage."""
+"""S3, Google Cloud Storage and Azure Blob Storage as filesystems: workspace backends that store files."""
 
 from __future__ import annotations
 
 import posixpath
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property, partial
-from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast
+from urllib.parse import urlsplit
 
 import anyio
 import anyio.to_thread
@@ -17,17 +18,22 @@ try:
     from obstore.exceptions import GenericError, PermissionDeniedError, UnauthenticatedError
     from obstore.store import from_url
 except ImportError as _import_error:
-    raise ImportError('Install `pydantic-ai-harness[bucket]` to use Bucket.') from _import_error
+    raise ImportError(
+        'Install `pydantic-ai-harness[cloud-storage]` to use cloud storage filesystems.'
+    ) from _import_error
 
-from pydantic_ai.workspaces import FileEntry, SupportsFilesystem, WorkspaceUnavailableError
+from pydantic_ai.workspaces import (
+    FileEntry,
+    SupportsFilesystem,
+    WorkspaceBackend,
+    WorkspaceRef,
+    WorkspaceUnavailableError,
+)
 
 if TYPE_CHECKING:
     from obstore.store import AzureCredential, GCSCredential, ObjectStore, S3Credential
 
-__all__ = ('Bucket',)
-
-_Credentials: TypeAlias = 'S3Credential | GCSCredential | AzureCredential'
-"""Keys for the bucket's cloud, in obstore's shape."""
+__all__ = ('AzureFilesystem', 'GCSFilesystem', 'S3Filesystem')
 
 _T = TypeVar('_T')
 
@@ -36,55 +42,52 @@ _DIRECTORY_MARKER = '.pydantic-ai-dir'
 
 
 @dataclass(frozen=True)
-class Bucket(SupportsFilesystem):
-    """A bucket, or a folder in one, as storage for a [`Mount`][pydantic_ai.workspaces.Mount].
+class _ObjectStoreFilesystem(WorkspaceBackend, SupportsFilesystem):
+    """What the three clouds share: a bucket, or a folder in one, read and written with obstore.
 
-    ```python {test="skip"}
-    from pydantic_ai_harness.bucket import Bucket
-
-    Bucket('s3://acme-data/exports/')  # AWS S3, keys from the environment
-    Bucket('s3://acme-data', endpoint='https://<account>.r2.cloudflarestorage.com', region='auto')  # R2
-    Bucket('gs://acme-data/exports/')  # Google Cloud Storage
-    Bucket('https://<account>.blob.core.windows.net/<container>/exports/')  # Azure Blob Storage
-    ```
-
-    Paths start at `/`, which is the folder in `url`. Folders exist while they hold something; an empty folder
-    made through this storage holds a hidden `.pydantic-ai-dir` object. There are no symlinks.
+    Paths start at `/`, which is the folder in `url` and the working directory. Folders exist while they hold
+    something; an empty folder made here holds a hidden `.pydantic-ai-dir` object. There are no symlinks.
     """
 
+    _schemes: ClassVar[tuple[str, ...]]
+    _provider: ClassVar[str]
+
     url: str
-    """The bucket and an optional folder in it: `s3://`, `gs://`, `az://` or an Azure `https://` URL."""
+    """The bucket or container, and an optional folder in it."""
 
     _: KW_ONLY
 
-    credentials: _Credentials | Callable[[], _Credentials] | None = field(default=None, compare=False, repr=False)
-    """Keys, or a function returning fresh ones before they expire; `None` finds them in the environment,
-    as the cloud's own SDK would."""
+    # Each cloud types its own keys.
+    credentials: Any = field(default=None, compare=False, repr=False)
 
     endpoint: str | None = None
-    """The storage service's URL, for S3-compatible services (R2, MinIO) or an emulator."""
+    """The storage service's URL, for a compatible service or an emulator."""
 
-    region: str | None = None
-    """The bucket's region, where the cloud needs one."""
+    def __post_init__(self) -> None:
+        scheme = urlsplit(self.url).scheme
+        if scheme not in self._schemes:
+            schemes = ' or '.join(f'`{scheme}://`' for scheme in self._schemes)
+            raise ValueError(f'{type(self).__name__} URLs start with {schemes}, got {self.url!r}')
 
-    # Left out of the hash, which a dict can't take; it still counts for equality.
-    options: Mapping[str, str] = field(default_factory=dict[str, str], hash=False)
-    """Further [obstore store settings](https://developmentseed.org/obstore/latest/api/store/), such as
-    `{'account_name': ...}` for Azure with `az://` URLs."""
+    @property
+    def ref(self) -> WorkspaceRef:
+        return WorkspaceRef(provider=self._provider, id=self.url)
+
+    async def working_dir(self) -> str:
+        return '/'
+
+    def _config(self) -> dict[str, str]:
+        """Settings for obstore beyond the URL and keys."""
+        return {} if self.endpoint is None else {'endpoint': self.endpoint}
 
     @cached_property
     def _store(self) -> ObjectStore:
-        config: dict[str, Any] = dict(self.options)
-        if self.endpoint is not None:
-            config['base_url' if self.url.startswith('gs://') else 'endpoint'] = self.endpoint
-        if self.region is not None:
-            config['region'] = self.region
         credentials = self.credentials
         provider = credentials if callable(credentials) or credentials is None else lambda: credentials
         # One call for every cloud: obstore's overloads type `config` and the provider per cloud.
         return from_url(
             self.url,
-            config=cast(Any, config),
+            config=cast(Any, self._config()),
             client_options={'allow_http': True} if (self.endpoint or '').startswith('http://') else None,
             credential_provider=cast(Any, provider),
         )
@@ -203,6 +206,108 @@ class Bucket(SupportsFilesystem):
         # caller waits for the request to finish rather than leaving it running unowned.
         with _translate_errors(self.url, path):
             return await anyio.to_thread.run_sync(partial(operation, self._store))
+
+
+@dataclass(frozen=True)
+class S3Filesystem(_ObjectStoreFilesystem):
+    """An S3 bucket, or a folder in one, as a filesystem; also S3-compatible services such as R2 and MinIO.
+
+    ```python {test="skip"}
+    from pydantic_ai_harness.cloud_storage import S3Filesystem
+
+    S3Filesystem('s3://acme-data/exports/')  # keys from the environment
+    S3Filesystem('s3://acme-data', endpoint='https://<account>.r2.cloudflarestorage.com', region='auto')  # R2
+    ```
+
+    Paths start at `/`, which is the folder in `url`. An empty folder holds a hidden `.pydantic-ai-dir` object.
+    """
+
+    _schemes = ('s3',)
+    _provider = 's3'
+
+    _: KW_ONLY
+
+    credentials: S3Credential | Callable[[], S3Credential] | None = field(default=None, compare=False, repr=False)
+    """Keys, or a function returning fresh ones before they expire; `None` finds them in the environment, as the
+    cloud's own SDK would."""
+
+    region: str | None = None
+    """The bucket's region."""
+
+    def _config(self) -> dict[str, str]:
+        config = super()._config()
+        if self.region is not None:
+            config['region'] = self.region
+        return config
+
+
+@dataclass(frozen=True)
+class GCSFilesystem(_ObjectStoreFilesystem):
+    """A Google Cloud Storage bucket, or a folder in one, as a filesystem.
+
+    ```python {test="skip"}
+    from pydantic_ai_harness.cloud_storage import GCSFilesystem
+
+    GCSFilesystem('gs://acme-data/exports/')  # keys from the environment
+    ```
+
+    Paths start at `/`, which is the folder in `url`. An empty folder holds a hidden `.pydantic-ai-dir` object.
+    """
+
+    _schemes = ('gs',)
+    _provider = 'gcs'
+
+    _: KW_ONLY
+
+    credentials: GCSCredential | Callable[[], GCSCredential] | None = field(default=None, compare=False, repr=False)
+    """Keys, or a function returning fresh ones before they expire; `None` finds them in the environment, as the
+    cloud's own SDK would."""
+
+    def _config(self) -> dict[str, str]:
+        return {} if self.endpoint is None else {'base_url': self.endpoint}
+
+
+@dataclass(frozen=True)
+class AzureFilesystem(_ObjectStoreFilesystem):
+    """An Azure Blob Storage container, or a folder in one, as a filesystem.
+
+    ```python {test="skip"}
+    from pydantic_ai_harness.cloud_storage import AzureFilesystem
+
+    AzureFilesystem('https://<account>.blob.core.windows.net/<container>/exports/')  # keys from the environment
+    AzureFilesystem('az://<container>/exports/', account='<account>')
+    ```
+
+    Paths start at `/`, which is the folder in `url`. An empty folder holds a hidden `.pydantic-ai-dir` object.
+    """
+
+    _schemes = ('az', 'https')
+    _provider = 'azure'
+
+    _: KW_ONLY
+
+    credentials: AzureCredential | Callable[[], AzureCredential] | None = field(default=None, compare=False, repr=False)
+    """Keys, or a function returning fresh ones before they expire; `None` finds them in the environment, as the
+    cloud's own SDK would."""
+
+    account: str | None = None
+    """The storage account, for an `az://` URL; an `https://` URL names it."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        url = urlsplit(self.url)
+        if url.scheme == 'https' and not url.netloc.endswith('.blob.core.windows.net'):
+            raise ValueError(
+                f'AzureFilesystem takes an `https://<account>.blob.core.windows.net/` URL, got {self.url!r}'
+            )
+        if url.scheme == 'az' and self.account is None:
+            raise ValueError('AzureFilesystem needs `account=` with an `az://` URL')
+
+    def _config(self) -> dict[str, str]:
+        config = super()._config()
+        if self.account is not None:
+            config['account_name'] = self.account
+        return config
 
 
 def _list(store: ObjectStore, prefix: str, chunk_size: int = 1000) -> obstore.ListStream[Sequence[obstore.ObjectMeta]]:

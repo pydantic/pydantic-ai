@@ -222,7 +222,7 @@ def _commands_reach(scope: _Scope, path: str) -> bool:
     target = posixpath.normpath(posixpath.join(scope.cwd, path))
     for mount in scope.workspace.mounts:
         root = posixpath.join(scope.cwd, mount.path)
-        if not scope.workspace.shell_can_see(mount) and (
+        if not mount.shell and (
             root == target or root.startswith(f'{target.rstrip("/")}/') or target.startswith(f'{root}/')
         ):
             return False

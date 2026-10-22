@@ -58,7 +58,7 @@ dbos = ["pydantic-ai-slim[dbos]=={{ major }}.{{ minor }}.{{ patch }}{% if distan
 logfire = ["logfire>=4.31.0", "pydantic-ai-slim[spec]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}", "pydantic-handlebars>=0.2.1"]
 render = ["render>=1.2.0"]
 modal = ["modal>=1.5.2"]
-bucket = ["obstore>=0.11.1"]
+cloud-storage = ["obstore>=0.11.1"]
 e2b = ["e2b>=2.48.0"]
 sprites = ["sprites-py>=0.7.0,<0.8"]
 # Daytona's current SDK line is 0.x; the older 1.0.1 and the 2.0 pre-release are other APIs.

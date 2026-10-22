@@ -74,7 +74,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
     layered on top. Nothing is read from the host."""
 
     mounts: Mounts = ()
-    """Storage to show as folders in the sandbox, such as a [`Bucket`][pydantic_ai_harness.bucket.Bucket]; a function of the run can pick them per run."""
+    """Filesystems to show as folders in the sandbox, such as an [`S3Filesystem`][pydantic_ai_harness.cloud_storage.S3Filesystem]; a function of the run can pick them per run."""
 
     def __post_init__(self) -> None:
         if self.defer_loading:

@@ -204,7 +204,7 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM s
 | `image` | Image for a new container, such as `'python:3.13-slim'`. Default: `None`, which only attaches to and removes containers by ref. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`; `None` uses the image's own (`WORKDIR`, or `/`). |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the container except Docker's proxy settings, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
-| `mounts` | Storage to show as folders, such as a [`Bucket`](https://pydantic.dev/docs/ai/harness/bucket/), or a function of the run that picks them, for example one folder per customer. Default: none. |
+| `mounts` | [Filesystems to show as folders](https://pydantic.dev/docs/ai/harness/cloud-storage/), such as an `S3Filesystem`, or a function of the run that picks them, for example one folder per customer. File tools reach them. Default: none. |
 | `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `True`; `False` runs it with `--network none`. |
 | `docker_args` | Extra `docker run` arguments for a new container, such as mounts, `--memory` or `--user`; a `--pids-limit` here replaces the default of 2048. Default: `()`. |
 | `executable` | The container CLI to run, such as `'podman'`, looked up on `PATH` when the capability is created. Default: `'docker'`. |
