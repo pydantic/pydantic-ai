@@ -552,7 +552,7 @@ def _map_citations_for_replay(
             continue
         index, start, end = char_location.get('documentIndex'), char_location.get('start'), char_location.get('end')
         source_content = [
-            content.get('text') for content in citation.get('sourceContent', []) if _utils.is_str_dict(content)
+            content.get('text') for content in citation.get('sourceContent') or [] if _utils.is_str_dict(content)
         ]
         cited_text = source_content[0] if len(source_content) == 1 else None
         if (
@@ -561,6 +561,8 @@ def _map_citations_for_replay(
             or not isinstance(end, int)
             or not 0 <= start < end
             or not isinstance(cited_text, str)
+            # Slicing stops at the end of a document, so a range past it could still match.
+            or end - start != len(cited_text)
         ):
             continue
         # Bedrock numbers documents by their position in the request, which moves when earlier history is left out,
@@ -1175,17 +1177,17 @@ class BedrockConverseModel(Model[BaseClient]):
                 elif citations_content := item.get('citationsContent'):
                     text = ''.join(content.get('text', '') for content in citations_content.get('content', []))
                     block_citations = citations_content.get('citations', [])
-                    if citations := _map_citations(block_citations, text):
+                    citations = _map_citations(block_citations, text)
+                    # Like a stream, a block with neither text nor citations makes no part.
+                    if text or citations:
                         items.append(
                             TextPart(
                                 content=text,
-                                provider_name=self.system,
-                                provider_details=_citations_provider_details(block_citations),
+                                provider_name=self.system if citations else None,
+                                provider_details=_citations_provider_details(block_citations) if citations else None,
                                 citations=citations,
                             )
                         )
-                    else:
-                        items.append(TextPart(content=text))
                 elif tool_use := item.get('toolUse'):
                     if tool_use.get('type') == 'server_tool_use':
                         if tool_use['name'] == 'nova_code_interpreter':  # pragma: no branch
@@ -1586,7 +1588,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                 if isinstance(item, AudioUrl):
                                     raise NotImplementedError('AudioUrl is not supported in Bedrock tool returns')
                                 file_block = await self._map_file_to_content_block(
-                                    cast(ImageUrl | DocumentUrl | VideoUrl | BinaryContent, item),
+                                    item,  # pyright: ignore[reportArgumentType]
                                     document_count,
                                     include_citations=include_citations,
                                 )
@@ -1665,8 +1667,7 @@ class BedrockConverseModel(Model[BaseClient]):
                             )
                             # Replay checks citations against the documents' text, which is only sent as text when
                             # citations are enabled.
-                            if settings.get('citations', False)
-                            and profile.get('bedrock_supports_citations', False)
+                            if include_citations
                             and item.provider_name == self.system
                             and isinstance(raw_citations, list)
                             else None
@@ -2266,7 +2267,7 @@ class BedrockStreamedResponse(StreamedResponse):
                         block_citations = citations.pop(index, [])
                         part = self._parts_manager.get_part_by_vendor_id(index)
                         text = part.content if isinstance(part, TextPart) else ''
-                        if block_citations and (block_text_citations := _map_citations(block_citations, text)):
+                        if block_text_citations := _map_citations(block_citations, text):
                             for event in self._parts_manager.handle_text_delta(
                                 vendor_part_id=index,
                                 content='',

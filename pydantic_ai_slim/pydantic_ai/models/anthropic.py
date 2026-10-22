@@ -214,6 +214,8 @@ def _map_citation_for_replay(
         or not isinstance(start, int)
         or not isinstance(end, int)
         or not 0 <= start < end
+        # Slicing stops at the end of a document, so a range past it could still match.
+        or end - start != len(cited_text)
     ):
         return None
     # Anthropic numbers documents by their position in the request, which moves when earlier history is left out, so
@@ -3470,7 +3472,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         )
                 elif is_multi_modal_content(item):
                     yield await AnthropicModel._map_file_to_content_block(
-                        cast(BinaryContent | ImageUrl | DocumentUrl | AudioUrl | VideoUrl, item),
+                        item,  # pyright: ignore[reportArgumentType]
                         'user prompts',
                         include_citations=include_citations,
                     )
@@ -4001,8 +4003,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                         continue
                     if isinstance(event.delta, BetaTextDelta):
                         for event_ in self._parts_manager.handle_text_delta(
-                            vendor_part_id=event.index,
-                            content=event.delta.text,
+                            vendor_part_id=event.index, content=event.delta.text
                         ):
                             yield event_
                     elif isinstance(event.delta, BetaThinkingDelta):

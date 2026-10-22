@@ -362,6 +362,8 @@ async def test_anthropic_leaves_out_citations_it_cannot_check():
                             'not a citation',
                             {key: value for key, value in valid.items() if key != 'cited_text'},
                             {**valid, 'start_char_index': 0, 'end_char_index': 11},
+                            # The range runs past the end of the document, so only slicing makes it match.
+                            {**valid, 'cited_text': 'thirty days from purchase.', 'end_char_index': 100},
                             {
                                 'type': 'web_search_result_location',
                                 'url': 'https://example.com',
