@@ -115,6 +115,7 @@ from ._instrumentation import (
 from ._lifecycle import LifecycleEvent, ResponseStarted, StaleEvent
 from ._retained_audio import RetainedAudioBudget
 from ._utils import (
+    SystemPromptText,
     seed_pcm_audio,
 )
 from .codec import (
@@ -499,19 +500,22 @@ def _pending_message_text(pending: PendingMessage) -> str:
         'channel.'
     )
     texts: list[str] = []
+    from_user = False
     for message in pending.messages:
         if not isinstance(message, ModelRequest):
             raise error
         for part in message.parts:
             if isinstance(part, UserPromptPart) and isinstance(part.content, str):
                 texts.append(part.content)
+                from_user = True
             elif isinstance(part, SystemPromptPart):
                 texts.append(wrap(SYSTEM_TAG, part.content))
             else:
                 raise error
     if not texts:
         raise error
-    return '\n\n'.join(texts)
+    text = '\n\n'.join(texts)
+    return text if from_user else SystemPromptText(text)
 
 
 class _RealtimePendingMessages(PendingMessageQueue):
@@ -1580,7 +1584,8 @@ class RealtimeSession:
             assert_never(content)
 
     async def _send_text(self, content: str, *, respond: bool) -> ModelRequest:
-        request = self._new_request([UserPromptPart(content=content)])
+        # (History records plain text, not what marks it for the connection.)
+        request = self._new_request([UserPromptPart(content=str(content))])
         await self._send_frame(content if respond else TextContext(content), request=request)
         return request
 
