@@ -75,7 +75,7 @@ def resolve_judge_model(model: JudgeModel | None, run_model: object) -> JudgeMod
         return TYPESAFE_MODEL
     if _is_request_response_model(run_model):
         return run_model
-    raise UserError(
+    raise UserError(  # pragma: no cover
         '`SmartFileSearch` could not pick a judge model: the run model is not a request-response `Model`. '
         'Pass `SmartFileSearch(model=...)`.'
     )
