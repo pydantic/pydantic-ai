@@ -79,6 +79,9 @@ def reset_banner(monkeypatch: pytest.MonkeyPatch):
     def find_spec_without_harness(name: str) -> object | None:
         return None if name == 'pydantic_ai_harness' else _find_spec(name)
 
+    def uvx_not_found(_command: str) -> None:
+        return None
+
     # Process-wide state has to be reset so each test starts at its first run.
     _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
     pydantic_ai.BANNER_ENABLED = True
@@ -95,7 +98,7 @@ def reset_banner(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv('NO_COLOR', '1')
     monkeypatch.setattr(importlib.util, 'find_spec', find_spec_without_harness)
     # Runtime callers detect `uvx`, but rendering tests must not inspect the test machine's PATH.
-    monkeypatch.setattr(_display.shutil, 'which', lambda _: None)
+    monkeypatch.setattr(_display.shutil, 'which', uvx_not_found)
     yield
     _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
     pydantic_ai.BANNER_ENABLED = True
@@ -293,8 +296,11 @@ def test_the_observability_links_and_command_each_survive_on_one_line(
 def test_display_banner_detects_uvx(
     monkeypatch: pytest.MonkeyPatch, stderr: TTYStream, uvx_path: str | None, expected: str
 ):
+    def which(_command: str) -> str | None:
+        return uvx_path
+
     monkeypatch.setattr(sys, 'stderr', stderr)
-    monkeypatch.setattr(_display.shutil, 'which', lambda _: uvx_path)
+    monkeypatch.setattr(_display.shutil, 'which', which)
 
     display_banner()
 
