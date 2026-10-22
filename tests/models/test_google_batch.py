@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -518,14 +519,16 @@ async def test_gemini_succeeded_job_whose_rows_all_failed(
 
 
 @pytest.mark.parametrize(
-    'error',
+    'make_error',
     [
-        errors.ClientError(404, {'error': {'code': 404, 'message': 'Not found', 'status': 'NOT_FOUND'}}),
-        httpx2.ConnectError('Connection refused'),
+        # Built lazily, as `errors` only exists when google-genai is installed.
+        lambda: errors.ClientError(404, {'error': {'code': 404, 'message': 'Not found', 'status': 'NOT_FOUND'}}),
+        lambda: httpx2.ConnectError('Connection refused'),
     ],
+    ids=['not-found', 'connect-error'],
 )
 async def test_gemini_batch_results_survive_failing_to_delete_the_input_file(
-    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, error: Exception
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, make_error: Callable[[], Exception]
 ) -> None:
     """Deleting the input file is best effort: the file expires on its own, and the results matter more."""
     model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
@@ -535,6 +538,8 @@ async def test_gemini_batch_results_survive_failing_to_delete_the_input_file(
         {'state': 'JOB_STATE_SUCCEEDED', 'dest': {'file_name': 'files/out'}},
         [{'key': 'ok', 'response': _OK_RESPONSE}],
     )
+
+    error = make_error()
 
     async def delete(*, name: str, config: Any = None) -> None:
         raise error
