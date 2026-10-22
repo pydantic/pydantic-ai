@@ -24,7 +24,6 @@ from pydantic_core import SchemaValidator, core_schema
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai._agent_graph import resolve_conversation_id
 from pydantic_ai._enqueue import PendingMessage
-from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, NativeTool, WebFetch
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -94,7 +93,12 @@ from pydantic_ai.realtime._session import (
     _pending_message_text,  # pyright: ignore[reportPrivateUsage]
     _TapView,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai.realtime._utils import resolve_advertised_tools, seed_pcm_audio, seed_speech_content
+from pydantic_ai.realtime._utils import (
+    resolve_advertised_tools,
+    seed_pcm_audio,
+    seed_speech_content,
+    session_instructions,
+)
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     CancelResponse,
@@ -434,7 +438,7 @@ class FakeRealtimeModel(RealtimeModel):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[RealtimeConnection]:
         # The same call every provider's `connect` makes.
-        self.last_instructions = get_instructions(messages, model_request_parameters) or ''
+        self.last_instructions = session_instructions(messages, model_request_parameters)
         self.last_tools = model_request_parameters.function_tools
         self.last_native_tools = model_request_parameters.native_tools
         self.last_model_settings = model_settings
@@ -8012,6 +8016,163 @@ async def test_agent_realtime_session_ignores_seeded_history_instructions() -> N
     async with agent.realtime(model, message_history=seed).session() as session:
         _ = [e async for e in session]
     assert model.last_instructions == ''
+
+
+async def test_agent_realtime_session_system_prompt_joins_instructions() -> None:
+    """The agent's system prompts open the session instructions, ahead of its instructions, as in a standard run."""
+    agent: Agent[None, str] = Agent(system_prompt='Static system prompt.', instructions='Agent instructions.')
+
+    @agent.system_prompt
+    def dynamic_prompt() -> str:
+        return 'Dynamic system prompt.'
+
+    conn = FakeRealtimeConnection([ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model).session() as session:
+        _ = [e async for e in session]
+    assert model.last_instructions == snapshot("""\
+Static system prompt.
+
+Dynamic system prompt.
+
+Agent instructions.\
+""")
+
+
+async def test_agent_realtime_session_seeded_system_prompt_joins_instructions() -> None:
+    """Seeded history's standing system prompt opens the session instructions; its request-level instructions don't.
+
+    As in a standard run, history is taken to carry its own system prompt, so the agent's isn't added.
+    """
+    agent: Agent[None, str] = Agent(system_prompt='Agent system prompt.', instructions='Agent instructions.')
+    seed = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='Seeded system prompt.'), UserPromptPart(content='earlier question')],
+            instructions='Client instructions',
+        ),
+        ModelResponse(parts=[TextPart(content='earlier answer')]),
+    ]
+    conn = FakeRealtimeConnection([ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model, message_history=seed).session() as session:
+        _ = [e async for e in session]
+    assert model.last_instructions == 'Seeded system prompt.\n\nAgent instructions.'
+
+
+async def test_agent_realtime_session_records_system_prompt_for_handoff() -> None:
+    """A fresh session records the agent's system prompt first, as a standard run's first request holds it.
+
+    So `new_messages()` includes it, a text run continuing the conversation sends it once (and doesn't add
+    the agent's again), and a session seeded with the history configures it as instructions rather than
+    replaying it.
+    """
+    agent: Agent[None, str] = Agent(system_prompt='Static system prompt.', instructions='Agent instructions.')
+
+    @agent.system_prompt(dynamic=True)
+    def dynamic_prompt() -> str:
+        return 'Dynamic system prompt.'
+
+    conn = FakeRealtimeConnection(
+        [
+            RealtimeInputSpeechStartEvent(item_id='u1'),
+            RealtimeInputSpeechEndEvent(item_id='u1'),
+            InputTranscript(text='question', is_final=True, item_id='u1'),
+            OutputTranscript(text='answer', is_final=True),
+            ResponseDone(),
+        ]
+    )
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        _ = [e async for e in session]
+    history = session.all_messages()
+    assert history == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Static system prompt.', timestamp=IsDatetime()),
+                    SystemPromptPart(
+                        content='Dynamic system prompt.',
+                        timestamp=IsDatetime(),
+                        dynamic_ref=dynamic_prompt.__qualname__,
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[SpeechPart(speaker='user', transcript='question')],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='answer')],
+                model_name='fake-realtime',
+                timestamp=IsDatetime(),
+                provider_name='fake',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    assert session.new_messages() == history
+    assert session.result is not None and session.result.new_messages() == history
+
+    sent: list[ModelMessage] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.extend(messages)
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    await agent.run('next', model=FunctionModel(respond), message_history=history)
+    assert [part.content for m in sent for part in m.parts if isinstance(part, SystemPromptPart)] == [
+        'Static system prompt.',
+        'Dynamic system prompt.',
+    ]
+
+    reseeded = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    async with agent.realtime(reseeded, message_history=history).session() as session:
+        _ = [e async for e in session]
+    assert reseeded.last_instructions == snapshot("""\
+Static system prompt.
+
+Dynamic system prompt.
+
+Agent instructions.\
+""")
+    # The seeded system prompt isn't recorded a second time.
+    assert [type(m) for m in session.all_messages()] == [type(m) for m in history]
+
+
+async def test_agent_realtime_session_reevaluates_seeded_dynamic_system_prompt() -> None:
+    """As in a standard run, a dynamic system prompt in seeded history is re-run before it is sent."""
+    agent: Agent[None, str] = Agent()
+
+    @agent.system_prompt(dynamic=True)
+    def dynamic_prompt() -> str:
+        return 'Current value.'
+
+    seed = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='Stale value.', dynamic_ref=dynamic_prompt.__qualname__),
+                UserPromptPart(content='earlier question'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='earlier answer')]),
+    ]
+    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    async with agent.realtime(model, message_history=seed).session() as session:
+        _ = [e async for e in session]
+    assert model.last_instructions == 'Current value.'
+    first = session.all_messages()[0]
+    assert isinstance(first, ModelRequest) and isinstance(first.parts[0], SystemPromptPart)
+    assert first.parts[0].content == 'Current value.'
+    # The caller's history is left as it was.
+    stale = seed[0]
+    assert isinstance(stale, ModelRequest) and isinstance(stale.parts[0], SystemPromptPart)
+    assert stale.parts[0].content == 'Stale value.'
 
 
 async def test_agent_realtime_session_unknown_tool() -> None:
