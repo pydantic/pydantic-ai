@@ -70,7 +70,7 @@ from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ParallelExecutionMode
-from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE,
@@ -3118,7 +3118,7 @@ async def test_load_capability_outside_tool_call_raises(hook: str) -> None:
 
     agent = Agent(FunctionModel(_open_case_then_check_refund), capabilities=[_refunds(), hooks])
 
-    with pytest.raises(UserError, match=r'can only be called while a tool call is being handled'):
+    with pytest.raises(UserError, match=r'can currently only be called while a tool call is being handled'):
         await agent.run('hi')
 
 
@@ -3190,6 +3190,51 @@ async def test_load_capability_is_discarded_when_the_step_ends_the_run(
 
     outcome = (type(result.output).__name__, model_requests, loaded, _load_calls(result.all_messages()))
     assert outcome == (expected_output, 1, [True], [])
+
+
+@pytest.mark.parametrize('loader', ['sibling_tool', 'approved_tool'])
+async def test_load_capability_after_an_approval_needs_the_resumed_tool(loader: str) -> None:
+    """A load discarded when the run stops for an approval isn't redone on resume, since only the approved tool runs.
+
+    So the capability is only loaded after resuming when the load comes from the approved tool.
+    """
+    tools_seen: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tools_seen.append(sorted(tool.name for tool in info.function_tools))
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('open_case', {}, tool_call_id='open'),
+                    ToolCallPart('refund', {}, tool_call_id='ok'),
+                ]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), output_type=[str, DeferredToolRequests], capabilities=[_refunds()])
+
+    @agent.tool
+    async def open_case(ctx: RunContext[object]) -> str:
+        if loader == 'sibling_tool':
+            await ctx.load_capability('refunds')
+        return 'Case opened.'
+
+    @agent.tool(requires_approval=True)
+    async def refund(ctx: RunContext[object]) -> str:
+        if loader == 'approved_tool':
+            await ctx.load_capability('refunds')
+        return 'Refunded.'
+
+    paused = await agent.run('Refund me.')
+    assert isinstance(paused.output, DeferredToolRequests)
+    resumed = await agent.run(
+        message_history=paused.all_messages(), deferred_tool_results=DeferredToolResults(approvals={'ok': True})
+    )
+
+    loaded_after_resume = 'refund_status' in tools_seen[-1]
+    assert (parse_loaded_capabilities(resumed.all_messages()), loaded_after_resume) == (
+        ({'refunds'}, True) if loader == 'approved_tool' else (set(), False)
+    )
 
 
 async def test_load_capability_is_delivered_with_a_message_that_continues_the_run() -> None:

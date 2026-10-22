@@ -111,11 +111,13 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
 async def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> bool:
     """Load a deferred capability from code; see [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability]."""
     # Only while a tool call is handled, where the run normally continues with another model request
-    # that the load can ride along with; elsewhere it would have to force an extra model turn.
+    # that the load can ride along with. After a model response with no tool calls, it would have to force
+    # an extra model turn; loading before a run's first model request is tracked in #10089.
     if ctx.tool_call_id is None:
         raise UserError(
-            '`ctx.load_capability()` can only be called while a tool call is being handled: '
-            'from a tool function or a tool hook such as `after_tool_execute`.'
+            '`ctx.load_capability()` can currently only be called while a tool call is being handled: '
+            'from a tool function or a tool hook such as `after_tool_execute`. Loading before the first '
+            'model request of a run is tracked in https://github.com/pydantic/pydantic-ai/issues/10089.'
         )
     tool_manager = ctx.tool_manager
     pending_messages = ctx.pending_messages

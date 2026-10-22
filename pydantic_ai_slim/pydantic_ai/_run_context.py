@@ -974,7 +974,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Call it while a tool call is being handled: from a tool function, or from a tool hook such as
         `after_tool_execute`. The load rides along with the run's next model request and never causes one:
         if the run ends at this step instead (because a tool call needs approval or is deferred, or the
-        run produces its output), the load is discarded. Durable execution engines run some tools in an
+        run produces its output), the load is discarded, and resuming the run doesn't run that tool again.
+        Durable execution engines run some tools in an
         activity, step, or task, where it isn't supported; see
         [Loading a capability from code](../capabilities/on-demand.md#loading-from-code).
 
