@@ -487,19 +487,20 @@ async def test_forcing_the_computer_offers_the_toolset_alone(allow_model_request
     assert forced['tool_choice'] == {'type': 'any'}
 
 
-async def test_a_result_without_its_metadata_reads_as_every_call_having_run() -> None:
+async def test_a_result_without_metadata_or_screenshot_runs_every_call_and_ends_with_its_text() -> None:
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key='unused'))
     blocks: list[dict[str, Any]] = [
         {'id': 'toolu_1', 'type': 'tool_use', 'name': 'left_click', 'input': {}, 'toolset_name': 'computer'},
         {'id': 'toolu_2', 'type': 'tool_use', 'name': 'type', 'input': {'text': 'hi'}, 'toolset_name': 'computer'},
     ]
-    part = ToolReturnPart('computer', 'Ran 2 actions.', tool_call_id='toolu_1')
+    # As `keep_screenshots` leaves it: the summary, then the note in place of the screenshot.
+    part = ToolReturnPart('computer', ['Ran 2 actions.', '[Older screenshot removed.]'], tool_call_id='toolu_1')
 
     results = await model._map_computer_results(part, blocks)  # pyright: ignore[reportPrivateUsage]
 
     assert [(r['tool_use_id'], r.get('is_error'), r.get('content')) for r in results] == [
         ('toolu_1', False, [{'text': 'OK', 'type': 'text'}]),
-        ('toolu_2', False, [{'text': 'Ran 2 actions.', 'type': 'text'}]),
+        ('toolu_2', False, [{'text': 'Ran 2 actions. [Older screenshot removed.]', 'type': 'text'}]),
     ]
 
 
