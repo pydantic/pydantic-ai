@@ -13,10 +13,13 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import sys
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, NotRequired, cast
+from contextlib import suppress
+from typing import Any, NotRequired, cast
 
-from google.genai import Client
+import httpx2
+from google.genai import Client, errors
 from google.genai._common import (
     convert_to_dict,
     encode_unserializable_types,
@@ -39,12 +42,13 @@ from pydantic_core import to_json
 from typing_extensions import TypedDict
 
 from .._utils import is_str_dict, now_utc
-from ..exceptions import ModelHTTPError, UserError
+from ..exceptions import UserError
 from ..messages import ModelResponse
 from . import check_allow_model_requests
 from ._batch_codec import (
     BatchJobError,
     batch_priced,
+    check_batch_bytes,
     group_matches,
     prepare_decode,
     refuse_http_client_auth,
@@ -53,9 +57,17 @@ from ._batch_codec import (
     unrun_error,
 )
 from .batch import Batch, BatchRequest, BatchResult, BatchStatus, EncodedBatchRequest
+from .google import (
+    GoogleModel,
+    GoogleModelSettings,
+    _http_error,  # pyright: ignore[reportPrivateUsage]
+)
 
-if TYPE_CHECKING:
-    from .google import GoogleModel, GoogleModelSettings
+MAX_BATCH_BYTES = 2_000_000_000
+"""The most bytes the Gemini API accepts in a batch's input file."""
+
+MAX_BATCH_REQUESTS = sys.maxsize
+"""The Gemini API limits a batch by the size of its input file, `MAX_BATCH_BYTES`, rather than its number of requests."""
 
 _STATUSES: dict[JobState, BatchStatus] = {
     JobState.JOB_STATE_UNSPECIFIED: 'in_progress',
@@ -73,25 +85,25 @@ _STATUSES: dict[JobState, BatchStatus] = {
 }
 
 # https://github.com/googleapis/googleapis/blob/master/google/rpc/code.proto
-_RPC_STATUS_CODES = {
-    1: 499,  # CANCELLED
-    2: 500,  # UNKNOWN
-    3: 400,  # INVALID_ARGUMENT
-    4: 504,  # DEADLINE_EXCEEDED
-    5: 404,  # NOT_FOUND
-    6: 409,  # ALREADY_EXISTS
-    7: 403,  # PERMISSION_DENIED
-    8: 429,  # RESOURCE_EXHAUSTED
-    9: 400,  # FAILED_PRECONDITION
-    10: 409,  # ABORTED
-    11: 400,  # OUT_OF_RANGE
-    12: 501,  # UNIMPLEMENTED
-    13: 500,  # INTERNAL
-    14: 503,  # UNAVAILABLE
-    15: 500,  # DATA_LOSS
-    16: 401,  # UNAUTHENTICATED
+_RPC_STATUSES: dict[int, tuple[str, int]] = {
+    1: ('CANCELLED', 499),
+    2: ('UNKNOWN', 500),
+    3: ('INVALID_ARGUMENT', 400),
+    4: ('DEADLINE_EXCEEDED', 504),
+    5: ('NOT_FOUND', 404),
+    6: ('ALREADY_EXISTS', 409),
+    7: ('PERMISSION_DENIED', 403),
+    8: ('RESOURCE_EXHAUSTED', 429),
+    9: ('FAILED_PRECONDITION', 400),
+    10: ('ABORTED', 409),
+    11: ('OUT_OF_RANGE', 400),
+    12: ('UNIMPLEMENTED', 501),
+    13: ('INTERNAL', 500),
+    14: ('UNAVAILABLE', 503),
+    15: ('DATA_LOSS', 500),
+    16: ('UNAUTHENTICATED', 401),
 }
-"""The HTTP status `generateContent` answers each `google.rpc.Code` with, so a batch error raises the same `ModelHTTPError`."""
+"""The status name and HTTP status `generateContent` answers each `google.rpc.Code` with."""
 
 
 class _Group(TypedDict):
@@ -135,21 +147,29 @@ async def batch_encode(model: GoogleModel, request: BatchRequest) -> EncodedBatc
         InlinedRequest.model_validate({'contents': contents, 'config': config}),
     )
     body = encode_unserializable_types(convert_to_dict(converted['request']))
-    return EncodedBatchRequest(custom_id=request.custom_id, group=_batch_group(model), body=to_json(body).decode())
+    encoded = EncodedBatchRequest(custom_id=request.custom_id, group=_batch_group(model), body=to_json(body).decode())
+    check_batch_bytes([encoded], request_size, MAX_BATCH_BYTES, 'Gemini')
+    return encoded
+
+
+def request_size(request: EncodedBatchRequest) -> int:
+    """The bytes `request` adds to a batch's input file: its line and the newline that separates it from the next."""
+    return len(_input_line(request)) + 1
+
+
+def _input_line(request: EncodedBatchRequest) -> bytes:
+    # The body is this provider's own `batch_encode` output, so it's embedded as is.
+    return b''.join((b'{"key":', to_json(request.custom_id), b',"request":', request.body.encode(), b'}'))
 
 
 async def batch_create(model: GoogleModel, requests: Sequence[EncodedBatchRequest]) -> Batch:
     check_allow_model_requests()
     group = shared_group(requests, 'Gemini', 'client configurations or models')
     _validate_batch_group(model, group)
+    check_batch_bytes(requests, request_size, MAX_BATCH_BYTES, 'Gemini')
     client = _batch_client(model)
-    lines = (
-        # The body is this provider's own `batch_encode` output.
-        to_json({'key': request.custom_id, 'request': json.loads(request.body)})
-        for request in requests
-    )
     file = await client.aio.files.upload(
-        file=io.BytesIO(b'\n'.join(lines)),
+        file=io.BytesIO(b'\n'.join(_input_line(request) for request in requests)),
         config=UploadFileConfigDict(mime_type='application/jsonl', display_name='pydantic-ai-batch'),
     )
     assert file.name is not None
@@ -176,6 +196,11 @@ async def batch_results(model: GoogleModel, batch: Batch) -> list[BatchResult]:
     _validate_batch_group(model, batch.group, collecting=True)
     client = _batch_client(model)
     job = await client.aio.batches.get(name=batch.id)
+    if isinstance(input_file := (batch.provider_details or {}).get('input_file'), str):
+        # The job has ended, so its input file isn't needed again; it would otherwise count against the project's
+        # file storage until it expires.
+        with suppress(errors.APIError, httpx2.TransportError):
+            await client.aio.files.delete(name=input_file)
     if job.dest is None or job.dest.file_name is None:
         # A job that expired, or was canceled or failed before it ran a request, writes no results. The job doesn't
         # say which requests it held, so a failed or canceled one fails all of them with its own reason.
@@ -183,13 +208,13 @@ async def batch_results(model: GoogleModel, batch: Batch) -> list[BatchResult]:
             error = job.error
             code = error.code if error is not None else None
             raise BatchJobError(
-                status_code=_RPC_STATUS_CODES.get(code, 500) if code is not None else 500,
+                status_code=_RPC_STATUSES[code][1] if code in _RPC_STATUSES else 500,
                 model_name=model.model_name,
                 body={'error': error.model_dump(exclude_none=True) if error is not None else None},
             )
         if job.state == JobState.JOB_STATE_CANCELLED:
             raise BatchJobError(
-                status_code=_RPC_STATUS_CODES[1],
+                status_code=_RPC_STATUSES[1][1],
                 model_name=model.model_name,
                 body={'error': {'code': 1, 'message': 'The batch job was canceled before the model ran the request.'}},
             )
@@ -230,11 +255,21 @@ def batch_decode(model: GoogleModel, result: BatchResult, request: BatchRequest)
     if result.status == 'errored':
         assert result.body is not None
         error = json.loads(result.body)
-        code = error.get('code') if is_str_dict(error) else None
-        raise ModelHTTPError(
-            status_code=_RPC_STATUS_CODES.get(code, 500) if isinstance(code, int) else 500,
-            model_name=model.model_name,
-            body={'error': error},
+        error = error if is_str_dict(error) else {}
+        message = message if isinstance(message := error.get('message'), str) else None
+        if isinstance(code := error.get('code'), int) and code in _RPC_STATUSES:
+            status, status_code = _RPC_STATUSES[code]
+            # As the REST API answers a request with this status: its HTTP status as the `code`, and its name.
+            body = {'error': {**error, 'code': status_code, 'status': status}}
+        else:
+            status, status_code, body = None, 500, {'error': error}
+        raise _http_error(
+            model.model_name,
+            model._provider.model_id_namespace,  # pyright: ignore[reportPrivateUsage]
+            status_code=status_code,
+            status=status,
+            message=message,
+            body=body,
         )
     raise unrun_error(model.model_name, result)
 

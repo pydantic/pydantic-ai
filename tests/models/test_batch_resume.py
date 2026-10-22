@@ -106,6 +106,9 @@ class _BatchAPI:
                 'status': 'in_progress',
             }
             return httpx2.Response(200, json=self.batches[batch_id])
+        if request.method == 'DELETE':
+            # Kept, so a test can still read the requests a batch held.
+            return httpx2.Response(200, json={'id': path.split('/')[2], 'object': 'file', 'deleted': True})
         if path.startswith('/files/'):
             return httpx2.Response(200, content=self.files[path.split('/')[2]])
         batch_id = path.split('/')[2]
@@ -229,7 +232,7 @@ async def test_a_transient_error_is_submitted_again_until_resubmissions_run_out(
     api.fail('batch_1', status_code, error)
     with pytest.raises(ModelHTTPError) as exc_info:
         await _resume(api, stored, batching=BatchModelRequests(**FAST_BATCH_SETTINGS, max_resubmissions=1))
-    assert (exc_info.value.status_code, exc_info.value.body) == (status_code, error)
+    assert (exc_info.value.status_code, exc_info.value.body) == (status_code, error['error'])
     assert list(api.batches) == ['batch_0', 'batch_1']
 
 
@@ -282,7 +285,11 @@ async def test_resuming_many_histories_checks_each_batch_once() -> None:
         for stored in histories
     ]
     assert outputs == ['Hi!'] * 6
-    assert [path for _, path, _ in api.calls] == [
+    assert [(method, path) for method, path, _ in api.calls if method == 'DELETE'] == [
+        ('DELETE', '/files/file-0'),
+        ('DELETE', '/files/file-1'),
+    ]
+    assert [path for method, path, _ in api.calls if method == 'GET'] == [
         '/batches/batch_0',
         '/files/file-output-batch_0/content',
         '/batches/batch_1',

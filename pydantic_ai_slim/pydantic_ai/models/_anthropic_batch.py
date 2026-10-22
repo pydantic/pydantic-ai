@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterable, Sequence
-from typing import TYPE_CHECKING, cast
+from typing import cast, get_args
 
 from anthropic import AsyncAnthropic, Omit, omit as OMIT
 from anthropic.types.beta.message_create_params import MessageCreateParamsNonStreaming
 from anthropic.types.beta.messages import (
     BetaMessageBatch,
-    BetaMessageBatchErroredResult,
     BetaMessageBatchSucceededResult,
 )
 from pydantic import TypeAdapter
@@ -25,11 +25,12 @@ from pydantic_core import to_json
 from typing_extensions import TypedDict
 
 from .._utils import is_str_dict
-from ..exceptions import ModelHTTPError, UserError
+from ..exceptions import UserError
 from ..messages import ModelResponse
 from . import check_allow_model_requests, get_user_agent
 from ._batch_codec import (
     batch_priced,
+    check_batch_bytes,
     credential_hash,
     group_matches,
     prepare_decode,
@@ -38,23 +39,24 @@ from ._batch_codec import (
     shared_group,
     unrun_error,
 )
-from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
+from .anthropic import (
+    _ERROR_TYPE_STATUS_CODES,  # pyright: ignore[reportPrivateUsage]
+    AnthropicModel,
+    AnthropicModelSettings,
+    _api_error,  # pyright: ignore[reportPrivateUsage]
+)
+from .batch import Batch, BatchRequest, BatchResult, BatchStatus, EncodedBatchRequest
 
-if TYPE_CHECKING:
-    from .anthropic import AnthropicModel, AnthropicModelSettings
+_CUSTOM_ID = re.compile(r'[a-zA-Z0-9_-]{1,64}')
+"""The `custom_id`s Message Batches accept."""
 
-_ERROR_STATUS_CODES = {
-    'invalid_request_error': 400,
-    'authentication_error': 401,
-    'billing_error': 402,
-    'permission_error': 403,
-    'not_found_error': 404,
-    'rate_limit_error': 429,
-    'api_error': 500,
-    'timeout_error': 504,
-    'overloaded_error': 529,
-}
-"""The HTTP status the Messages API answers each error type with, so a batch error raises the same `ModelHTTPError`."""
+_ENVELOPE = b'{"requests":[]}'
+"""What the create request's body adds around its requests."""
+
+MAX_BATCH_BYTES = 256_000_000 - len(_ENVELOPE)
+"""The most bytes of requests Anthropic accepts in a batch, whose create request is limited to 256 MB."""
+
+_STATUSES: tuple[BatchStatus, ...] = get_args(BatchStatus)
 
 
 class _Group(TypedDict):
@@ -100,15 +102,29 @@ async def batch_encode(model: AnthropicModel, request: BatchRequest) -> EncodedB
 
     if 'speed' in body or body.get('stream') is True or body.get('max_tokens') == 0:
         raise UserError('Anthropic Message Batches do not support `speed`, `stream=True`, or `max_tokens=0`.')
-    return EncodedBatchRequest(
+    encoded = EncodedBatchRequest(
         custom_id=request.custom_id, group=_batch_group(model, prepared.initial_betas), body=to_json(body).decode()
     )
+    check_batch_bytes([encoded], request_size, MAX_BATCH_BYTES, 'Anthropic')
+    return encoded
+
+
+def request_size(request: EncodedBatchRequest) -> int:
+    """The bytes `request` adds to the create request's body, as the SDK serializes it: its item and a comma."""
+    # `{"custom_id":...,"params":...},`, where the body is compact JSON as the SDK writes it.
+    return len(b'{"custom_id":,"params":},') + len(to_json(request.custom_id)) + len(request.body.encode())
 
 
 async def batch_create(model: AnthropicModel, requests: Sequence[EncodedBatchRequest]) -> Batch:
     check_allow_model_requests()
     group = shared_group(requests, 'Anthropic', 'client configurations or beta flags')
     _validate_batch_group(model, group)
+    check_batch_bytes(requests, request_size, MAX_BATCH_BYTES, 'Anthropic')
+    # Checked here rather than when encoding, as `BatchModelRequests` gives a request its ID after encoding it.
+    if invalid := [request.custom_id for request in requests if not _CUSTOM_ID.fullmatch(request.custom_id)]:
+        raise UserError(
+            f'Anthropic Message Batches need `custom_id`s of 1 to 64 letters, digits, `_` or `-`, not {invalid[0]!r}.'
+        )
     batch = (
         await _batch_client(model)
         .with_options(max_retries=0)
@@ -165,11 +181,19 @@ def batch_decode(model: AnthropicModel, result: BatchResult, request: BatchReque
         return batch_priced(response)
     if result.status == 'errored':
         assert result.body is not None
-        error = BetaMessageBatchErroredResult.model_validate_json(result.body).error
-        raise ModelHTTPError(
-            status_code=_ERROR_STATUS_CODES.get(error.error.type, 500),
-            model_name=model.model_name,
-            body=error.model_dump(mode='json'),
+        # The error is the body the Messages API would have answered the request with, read without validation so an
+        # error type added later still raises an error.
+        body = json.loads(result.body).get('error')
+        error = body.get('error') if is_str_dict(body) else None
+        error_type, message = (error.get('type'), error.get('message')) if is_str_dict(error) else (None, None)
+        raise _api_error(
+            model.model_name,
+            model._provider.model_id_namespace,  # pyright: ignore[reportPrivateUsage]
+            status_code=_ERROR_TYPE_STATUS_CODES.get(error_type, 500) if isinstance(error_type, str) else 500,
+            body=body,
+            message=message if isinstance(message, str) else 'The batch request failed.',
+            headers=None,
+            in_stream=False,
         )
     raise unrun_error(model.model_name, result)
 
@@ -181,7 +205,8 @@ def _to_batch(model: AnthropicModel, batch: BetaMessageBatch, group: str) -> Bat
         model_name=model.model_name,
         provider_name=model.system,
         group=group,
-        status=batch.processing_status,
+        # A status added after this was written is one the batch hasn't ended in.
+        status=batch.processing_status if batch.processing_status in _STATUSES else 'in_progress',
         created_at=batch.created_at,
         request_count=counts.processing + counts.succeeded + counts.errored + counts.canceled + counts.expired,
     )

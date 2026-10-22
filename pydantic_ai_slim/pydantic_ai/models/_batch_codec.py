@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from pydantic_core import to_json
@@ -49,6 +49,15 @@ def group_matches(group: str, expected: str, *, collecting: bool) -> bool:
     if not collecting:
         return group == expected
     return {**json.loads(group), 'credential': None} == {**json.loads(expected), 'credential': None}
+
+
+def check_batch_bytes(
+    requests: Sequence[EncodedBatchRequest], size: Callable[[EncodedBatchRequest], int], limit: int, provider: str
+) -> None:
+    """Refuse `requests` that take more than the `limit` bytes of a batch, before anything is sent."""
+    if (total := sum(size(request) for request in requests)) > limit:
+        subject = 'This request takes' if len(requests) == 1 else 'These requests take'
+        raise UserError(f'{subject} {total:,} bytes, more than the {limit:,} bytes a {provider} batch can hold.')
 
 
 def require_ended(batch: Batch) -> None:

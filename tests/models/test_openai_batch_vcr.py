@@ -12,10 +12,10 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.models.batch import BatchRequest
 from pydantic_ai.settings import ModelSettings
 from tests.batch_vcr_utils import batch_poll_interval, wait_for_batch
-from tests.conftest import IsStr, try_import
+from tests.conftest import IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
 
@@ -30,9 +30,26 @@ def _request(custom_id: str, settings: ModelSettings | None = None) -> BatchRequ
     )
 
 
+def _batch_priced(response: ModelResponse) -> bool:
+    """Whether `response` costs half what the same usage costs outside a batch."""
+    standard = ModelResponse(
+        parts=response.parts,
+        usage=response.usage,
+        model_name=response.model_name,
+        provider_name=response.provider_name,
+        timestamp=response.timestamp,
+    )
+    return response.cost().total_price * 2 == standard.cost().total_price
+
+
 @pytest.mark.vcr
-async def test_openai_batch_roundtrip(allow_model_requests: None, openai_api_key: str, vcr: Cassette) -> None:
-    model = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_batch_roundtrip(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette, request_capture: RequestCapture
+) -> None:
+    """A batch runs its requests, and once they've all run, its input file is deleted."""
+    model = OpenAIResponsesModel(
+        'gpt-4.1-nano', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    )
     requests = [_request('pydantic-ai-batch-one'), _request('pydantic-ai-batch-two')]
 
     batch = await model.batch_create([await model.batch_encode(request) for request in requests])
@@ -46,6 +63,7 @@ async def test_openai_batch_roundtrip(allow_model_requests: None, openai_api_key
     assert batch.provider_details is not None and batch.provider_details['status'] == 'completed'
     results = {result.custom_id: result for result in await model.batch_results(batch)}
     assert set(results) == {'pydantic-ai-batch-one', 'pydantic-ai-batch-two'}
+    assert request_capture.paths[-1] == f'/v1/files/{batch.provider_details["input_file_id"]}'
 
     for request in requests:
         response = model.batch_decode(results[request.custom_id], request)
@@ -87,12 +105,10 @@ async def test_openai_batch_item_error(allow_model_requests: None, openai_api_ke
     assert exc_info.value.status_code == 400
     assert exc_info.value.body == snapshot(
         {
-            'error': {
-                'message': "Invalid 'max_output_tokens': integer below minimum value. Expected a value >= 16, but got 1 instead.",
-                'type': 'invalid_request_error',
-                'param': 'max_output_tokens',
-                'code': 'integer_below_min_value',
-            }
+            'message': "Invalid 'max_output_tokens': integer below minimum value. Expected a value >= 16, but got 1 instead.",
+            'type': 'invalid_request_error',
+            'param': 'max_output_tokens',
+            'code': 'integer_below_min_value',
         }
     )
 
@@ -165,3 +181,25 @@ async def test_openai_batch_model_agent_run(allow_model_requests: None, openai_a
     assert response.state == 'complete'
     assert response.provider_details is not None and response.provider_details['processing'] == 'batch'
     assert response.provider_details['batch'] == {'id': IsStr(), 'custom_id': IsStr()}
+
+
+@pytest.mark.vcr
+async def test_openai_batch_usage_has_reasoning_tokens(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+) -> None:
+    """A batched response reports reasoning tokens as the request would on its own, priced at batch rates.
+
+    Cached tokens are covered in `test_openai_batch.py`: OpenAI doesn't reliably serve a batched request from the cache.
+    """
+    model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    request = BatchRequest(
+        custom_id='usage',
+        messages=[ModelRequest(parts=[UserPromptPart('What is 17 squared? Reply with the number.')])],
+        model_settings=OpenAIResponsesModelSettings(openai_reasoning_effort='low'),
+    )
+    batch = await wait_for_batch(model, await model.batch_create([await model.batch_encode(request)]), vcr)
+    [result] = await model.batch_results(batch)
+    response = model.batch_decode(result, request)
+    assert response.text == '289'
+    assert response.usage.output_reasoning_tokens > 0
+    assert _batch_priced(response)

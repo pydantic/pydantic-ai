@@ -262,20 +262,43 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gene
 
 
 def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: str) -> ModelHTTPError:
-    body: object | None = e.body
+    return _status_error(
+        model_name,
+        model_id_namespace,
+        status_code=e.status_code,
+        body=e.body,
+        code=e.code,
+        error_type=e.type,
+        message=e.message,
+        headers=dict(e.response.headers),
+    )
+
+
+def _status_error(
+    model_name: str,
+    model_id_namespace: str,
+    *,
+    status_code: int,
+    body: object | None,
+    code: str | None,
+    error_type: str | None,
+    message: str | None,
+    headers: dict[str, str] | None = None,
+) -> ModelHTTPError:
+    """The error for an HTTP error status, which a batch also reports for each request that failed."""
     suggested_model_id = None
-    if e.code == 'model_not_found':
+    if code == 'model_not_found':
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-    category = _model_errors.openai_compatible_category(e.status_code, e.code, e.type, e.message)
+    category = _model_errors.openai_compatible_category(status_code, code, error_type, message)
     return ModelHTTPError.for_category(
         category,
-        status_code=e.status_code,
+        status_code=status_code,
         model_name=model_name,
         body=body,
-        headers=dict(e.response.headers),
+        headers=headers,
         suggested_model_id=suggested_model_id,
-        provider_error_code=e.code,
-        provider_error_type=e.type,
+        provider_error_code=code,
+        provider_error_type=error_type,
     )
 
 
@@ -2618,6 +2641,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         ):
             return None
         return 50_000
+
+    @property
+    def batch_max_bytes(self) -> int | None:
+        return None if self.batch_max_requests is None else _batch_module().MAX_BATCH_BYTES
+
+    def batch_request_size(self, request: EncodedBatchRequest) -> int:
+        return _batch_module().request_size(request)
 
     async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
         return await _batch_module().batch_encode(self, request)

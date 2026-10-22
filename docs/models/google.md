@@ -502,8 +502,9 @@ agent = Agent(GoogleModel('{{ google:medium.name }}'), model_settings=model_sett
 
 `GoogleModel` supports [batch processing](../batch.md) through the Gemini API's
 [Batch Mode](https://ai.google.dev/gemini-api/docs/batch-api), which charges 50% of the standard price. A job
-targets one model, its requests are uploaded as a file of up to 2 GB, and it expires if it hasn't finished within
-48 hours.
+targets one model, its requests are uploaded as a file of up to 2 GB, which limits how many it can hold, and it
+expires if it hasn't finished within 48 hours. The file is deleted once its job has ended and its results are
+retrieved, so it doesn't count against the project's file storage until it expires.
 
 Batch Mode isn't available on Google Cloud (Vertex AI), which runs batch prediction jobs from Cloud Storage or
 BigQuery instead. Configure timeouts and custom headers on the client: per-request `timeout` and `extra_headers`

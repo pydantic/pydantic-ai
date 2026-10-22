@@ -73,6 +73,13 @@ class WrapperModel(Model):
     def batch_max_requests(self) -> int | None:
         return self.wrapped.batch_max_requests
 
+    @property
+    def batch_max_bytes(self) -> int | None:
+        return self.wrapped.batch_max_bytes
+
+    def batch_request_size(self, request: EncodedBatchRequest) -> int:
+        return self.wrapped.batch_request_size(request)
+
     async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
         return await self.wrapped.batch_encode(request)
 

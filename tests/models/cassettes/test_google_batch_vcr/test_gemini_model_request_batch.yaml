@@ -1,9 +1,8 @@
 version: 1
 interactions:
 - request:
-    method: GET
-    uri: >-
-      https://generativelanguage.googleapis.com/v1beta/batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
+    method: DELETE
+    uri: https://generativelanguage.googleapis.com/v1beta/files/l3xwitmydxpg
     headers:
       accept:
       - "*/*"
@@ -25,7 +24,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=54
+      - gfet4t7; dur=369
       transfer-encoding:
       - chunked
       vary:
@@ -34,26 +33,12 @@ interactions:
       - Referer
     body:
       type: json
-      content:
-        name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-        metadata:
-          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
-          model: models/gemini-2.5-flash-lite
-          displayName: pydantic-ai-batch
-          inputConfig:
-            fileName: files/kwg5ptjbu7lq
-          createTime: 2026-10-15T22:17:57.110735396Z
-          updateTime: 2026-10-15T22:17:57.110735396Z
-          batchStats:
-            requestCount: "2"
-            pendingRequestCount: "2"
-          state: BATCH_STATE_RUNNING
-          name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-  recorded_at: 2026-10-15T22:18:14.889373+00:00
+      content: {}
+  recorded_at: 2026-10-22T00:30:18.521988+00:00
 - request:
     method: GET
     uri: >-
-      https://generativelanguage.googleapis.com/v1beta/batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
+      https://generativelanguage.googleapis.com/v1beta/batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
     headers:
       accept:
       - "*/*"
@@ -75,7 +60,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=190
+      - gfet4t7; dur=216
       transfer-encoding:
       - chunked
       vary:
@@ -85,25 +70,25 @@ interactions:
     body:
       type: json
       content:
-        name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
+        name: batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
         metadata:
           "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
           model: models/gemini-2.5-flash-lite
           displayName: pydantic-ai-batch
           inputConfig:
-            fileName: files/kwg5ptjbu7lq
-          createTime: 2026-10-15T22:17:57.110735396Z
-          updateTime: 2026-10-15T22:17:57.110735396Z
+            fileName: files/l3xwitmydxpg
+          createTime: 2026-10-22T00:28:44.515373436Z
+          updateTime: 2026-10-22T00:28:44.515373436Z
           batchStats:
             requestCount: "2"
             pendingRequestCount: "2"
           state: BATCH_STATE_RUNNING
-          name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-  recorded_at: 2026-10-15T22:18:30.146610+00:00
+          name: batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
+  recorded_at: 2026-10-22T00:29:02.289121+00:00
 - request:
     method: GET
     uri: >-
-      https://generativelanguage.googleapis.com/v1beta/batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
+      https://generativelanguage.googleapis.com/v1beta/batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
     headers:
       accept:
       - "*/*"
@@ -125,7 +110,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=45
+      - gfet4t7; dur=51
       transfer-encoding:
       - chunked
       vary:
@@ -135,25 +120,25 @@ interactions:
     body:
       type: json
       content:
-        name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
+        name: batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
         metadata:
           "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
           model: models/gemini-2.5-flash-lite
           displayName: pydantic-ai-batch
           inputConfig:
-            fileName: files/kwg5ptjbu7lq
-          createTime: 2026-10-15T22:17:57.110735396Z
-          updateTime: 2026-10-15T22:17:57.110735396Z
+            fileName: files/l3xwitmydxpg
+          createTime: 2026-10-22T00:28:44.515373436Z
+          updateTime: 2026-10-22T00:28:44.515373436Z
           batchStats:
             requestCount: "2"
             pendingRequestCount: "2"
           state: BATCH_STATE_RUNNING
-          name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-  recorded_at: 2026-10-15T22:18:45.255638+00:00
+          name: batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
+  recorded_at: 2026-10-22T00:29:17.409716+00:00
 - request:
     method: GET
     uri: >-
-      https://generativelanguage.googleapis.com/v1beta/batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
+      https://generativelanguage.googleapis.com/v1beta/batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
     headers:
       accept:
       - "*/*"
@@ -175,7 +160,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=54
+      - gfet4t7; dur=55
       transfer-encoding:
       - chunked
       vary:
@@ -185,175 +170,25 @@ interactions:
     body:
       type: json
       content:
-        name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
+        name: batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
         metadata:
           "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
           model: models/gemini-2.5-flash-lite
           displayName: pydantic-ai-batch
           inputConfig:
-            fileName: files/kwg5ptjbu7lq
-          createTime: 2026-10-15T22:17:57.110735396Z
-          updateTime: 2026-10-15T22:17:57.110735396Z
+            fileName: files/l3xwitmydxpg
+          createTime: 2026-10-22T00:28:44.515373436Z
+          updateTime: 2026-10-22T00:28:44.515373436Z
           batchStats:
             requestCount: "2"
             pendingRequestCount: "2"
           state: BATCH_STATE_RUNNING
-          name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-  recorded_at: 2026-10-15T22:19:00.379320+00:00
+          name: batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
+  recorded_at: 2026-10-22T00:29:32.532603+00:00
 - request:
     method: GET
     uri: >-
-      https://generativelanguage.googleapis.com/v1beta/batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-    headers:
-      accept:
-      - "*/*"
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-type:
-      - application/json
-      host:
-      - generativelanguage.googleapis.com
-    body:
-      type: none
-  response:
-    status: 200
-    headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-type:
-      - application/json; charset=UTF-8
-      server-timing:
-      - gfet4t7; dur=140
-      transfer-encoding:
-      - chunked
-      vary:
-      - Origin
-      - X-Origin
-      - Referer
-    body:
-      type: json
-      content:
-        name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-        metadata:
-          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
-          model: models/gemini-2.5-flash-lite
-          displayName: pydantic-ai-batch
-          inputConfig:
-            fileName: files/kwg5ptjbu7lq
-          createTime: 2026-10-15T22:17:57.110735396Z
-          updateTime: 2026-10-15T22:17:57.110735396Z
-          batchStats:
-            requestCount: "2"
-            pendingRequestCount: "2"
-          state: BATCH_STATE_RUNNING
-          name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-  recorded_at: 2026-10-15T22:19:15.584981+00:00
-- request:
-    method: GET
-    uri: >-
-      https://generativelanguage.googleapis.com/v1beta/batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-    headers:
-      accept:
-      - "*/*"
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-type:
-      - application/json
-      host:
-      - generativelanguage.googleapis.com
-    body:
-      type: none
-  response:
-    status: 200
-    headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-type:
-      - application/json; charset=UTF-8
-      server-timing:
-      - gfet4t7; dur=323
-      transfer-encoding:
-      - chunked
-      vary:
-      - Origin
-      - X-Origin
-      - Referer
-    body:
-      type: json
-      content:
-        name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-        metadata:
-          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
-          model: models/gemini-2.5-flash-lite
-          displayName: pydantic-ai-batch
-          inputConfig:
-            fileName: files/kwg5ptjbu7lq
-          createTime: 2026-10-15T22:17:57.110735396Z
-          updateTime: 2026-10-15T22:17:57.110735396Z
-          batchStats:
-            requestCount: "2"
-            pendingRequestCount: "2"
-          state: BATCH_STATE_RUNNING
-          name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-  recorded_at: 2026-10-15T22:19:30.971910+00:00
-- request:
-    method: GET
-    uri: >-
-      https://generativelanguage.googleapis.com/v1beta/batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-    headers:
-      accept:
-      - "*/*"
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-type:
-      - application/json
-      host:
-      - generativelanguage.googleapis.com
-    body:
-      type: none
-  response:
-    status: 200
-    headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-type:
-      - application/json; charset=UTF-8
-      server-timing:
-      - gfet4t7; dur=195
-      transfer-encoding:
-      - chunked
-      vary:
-      - Origin
-      - X-Origin
-      - Referer
-    body:
-      type: json
-      content:
-        name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-        metadata:
-          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
-          model: models/gemini-2.5-flash-lite
-          displayName: pydantic-ai-batch
-          inputConfig:
-            fileName: files/kwg5ptjbu7lq
-          createTime: 2026-10-15T22:17:57.110735396Z
-          updateTime: 2026-10-15T22:17:57.110735396Z
-          batchStats:
-            requestCount: "2"
-            pendingRequestCount: "2"
-          state: BATCH_STATE_RUNNING
-          name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-  recorded_at: 2026-10-15T22:19:46.232188+00:00
-- request:
-    method: GET
-    uri: >-
-      https://generativelanguage.googleapis.com/v1beta/batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
+      https://generativelanguage.googleapis.com/v1beta/batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
     headers:
       accept:
       - "*/*"
@@ -385,33 +220,25 @@ interactions:
     body:
       type: json
       content:
-        name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
+        name: batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
         metadata:
           "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
           model: models/gemini-2.5-flash-lite
           displayName: pydantic-ai-batch
           inputConfig:
-            fileName: files/kwg5ptjbu7lq
-          output:
-            responsesFile: files/batch-u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-          createTime: 2026-10-15T22:17:57.110735396Z
-          endTime: 2026-10-15T22:19:46.892204347Z
-          updateTime: 2026-10-15T22:19:46.892204377Z
+            fileName: files/l3xwitmydxpg
+          createTime: 2026-10-22T00:28:44.515373436Z
+          updateTime: 2026-10-22T00:28:44.515373436Z
           batchStats:
             requestCount: "2"
-            successfulRequestCount: "2"
-          state: BATCH_STATE_SUCCEEDED
-          name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-        done: true
-        response:
-          "@type": >-
-            type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatchOutput
-          responsesFile: files/batch-u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-  recorded_at: 2026-10-15T22:20:01.468791+00:00
+            pendingRequestCount: "2"
+          state: BATCH_STATE_RUNNING
+          name: batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
+  recorded_at: 2026-10-22T00:29:47.772130+00:00
 - request:
     method: GET
     uri: >-
-      https://generativelanguage.googleapis.com/v1beta/batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
+      https://generativelanguage.googleapis.com/v1beta/batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
     headers:
       accept:
       - "*/*"
@@ -443,33 +270,141 @@ interactions:
     body:
       type: json
       content:
-        name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
+        name: batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
         metadata:
           "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
           model: models/gemini-2.5-flash-lite
           displayName: pydantic-ai-batch
           inputConfig:
-            fileName: files/kwg5ptjbu7lq
+            fileName: files/l3xwitmydxpg
+          createTime: 2026-10-22T00:28:44.515373436Z
+          updateTime: 2026-10-22T00:28:44.515373436Z
+          batchStats:
+            requestCount: "2"
+            pendingRequestCount: "2"
+          state: BATCH_STATE_RUNNING
+          name: batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
+  recorded_at: 2026-10-22T00:30:02.886702+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=55
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash-lite
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/l3xwitmydxpg
           output:
-            responsesFile: files/batch-u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-          createTime: 2026-10-15T22:17:57.110735396Z
-          endTime: 2026-10-15T22:19:46.892204347Z
-          updateTime: 2026-10-15T22:19:46.892204377Z
+            responsesFile: files/batch-oowe9ovzxjz59zlgz9keurqwplknuwymubno
+          createTime: 2026-10-22T00:28:44.515373436Z
+          endTime: 2026-10-22T00:30:11.416129870Z
+          updateTime: 2026-10-22T00:30:11.416129890Z
           batchStats:
             requestCount: "2"
             successfulRequestCount: "2"
           state: BATCH_STATE_SUCCEEDED
-          name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
+          name: batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
         done: true
         response:
           "@type": >-
             type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatchOutput
-          responsesFile: files/batch-u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-  recorded_at: 2026-10-15T22:20:01.531706+00:00
+          responsesFile: files/batch-oowe9ovzxjz59zlgz9keurqwplknuwymubno
+  recorded_at: 2026-10-22T00:30:18.008011+00:00
 - request:
     method: GET
     uri: >-
-      https://generativelanguage.googleapis.com/v1beta/files/batch-u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f:download?alt=media
+      https://generativelanguage.googleapis.com/v1beta/batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=120
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash-lite
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/l3xwitmydxpg
+          output:
+            responsesFile: files/batch-oowe9ovzxjz59zlgz9keurqwplknuwymubno
+          createTime: 2026-10-22T00:28:44.515373436Z
+          endTime: 2026-10-22T00:30:11.416129870Z
+          updateTime: 2026-10-22T00:30:11.416129890Z
+          batchStats:
+            requestCount: "2"
+            successfulRequestCount: "2"
+          state: BATCH_STATE_SUCCEEDED
+          name: batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
+        done: true
+        response:
+          "@type": >-
+            type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatchOutput
+          responsesFile: files/batch-oowe9ovzxjz59zlgz9keurqwplknuwymubno
+  recorded_at: 2026-10-22T00:30:18.143088+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/files/batch-oowe9ovzxjz59zlgz9keurqwplknuwymubno:download?alt=media
     headers:
       accept:
       - "*/*"
@@ -497,7 +432,7 @@ interactions:
       content-type:
       - application/jsonl
       expires:
-      - Thu, 15 Oct 2026 22:20:01 GMT
+      - Thu, 22 Oct 2026 00:30:18 GMT
       vary:
       - Origin
       - X-Origin
@@ -505,9 +440,9 @@ interactions:
     body:
       type: text
       content: |
-        {"response":{"candidates":[{"content":{"parts":[{"text":"OK"}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":6,"candidatesTokenCount":1,"totalTokenCount":7,"promptTokensDetails":[{"modality":"TEXT","tokenCount":6}],"serviceTier":"SERVICE_TIER_STANDARD"},"modelVersion":"gemini-2.5-flash-lite","responseId":"eFHRaqG8PIqBz7IP09CK2Ao"},"key":"one"}
-        {"response":{"candidates":[{"content":{"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":6,"totalTokenCount":6,"promptTokensDetails":[{"modality":"TEXT","tokenCount":6}],"serviceTier":"SERVICE_TIER_STANDARD"},"modelVersion":"gemini-2.5-flash-lite","responseId":"eVHRavGcAZ2o_PUP-YiGoAg"},"key":"two"}
-  recorded_at: 2026-10-15T22:20:01.793948+00:00
+        {"response":{"candidates":[{"content":{"parts":[{"text":"OK"}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":6,"candidatesTokenCount":1,"totalTokenCount":7,"promptTokensDetails":[{"modality":"TEXT","tokenCount":6}],"serviceTier":"SERVICE_TIER_STANDARD"},"modelVersion":"gemini-2.5-flash-lite","responseId":"ClnZariFJOPRz7IP3u6WiQg"},"key":"one"}
+        {"response":{"candidates":[{"content":{"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":6,"totalTokenCount":6,"promptTokensDetails":[{"modality":"TEXT","tokenCount":6}],"serviceTier":"SERVICE_TIER_STANDARD"},"modelVersion":"gemini-2.5-flash-lite","responseId":"ClnZaru3JPWIqtsP1JjCgA4"},"key":"two"}
+  recorded_at: 2026-10-22T00:30:18.720908+00:00
 - request:
     method: POST
     uri: https://generativelanguage.googleapis.com/upload/v1beta/files
@@ -544,14 +479,14 @@ interactions:
       - active
       x-goog-upload-url:
       - >-
-        https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=AP6rU82cXXnn3lSy2oGOkwWJFQoS4zsc1He6q0gQR66iNq9QtvXPG-A6g9DqRLsymbTix6la_K8S8idYaoDCw7EbKOsI8Ay-b8C1Rd1_duGRJA&upload_protocol=resumable
+        https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=AP6rU82B0Hxscqkl88rqqYa6pfTGLp_Lu0rq79NOL7vtSa3OIVa_OnyTcwrt-1reutIWE4yXjatrbdkuxEokMZZBC7wAfN0TIJ9aJEV5d3cESj0&upload_protocol=resumable
     body:
       type: none
-  recorded_at: 2026-10-15T22:17:56.463101+00:00
+  recorded_at: 2026-10-22T00:28:43.833151+00:00
 - request:
     method: POST
     uri: >-
-      https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=AP6rU82cXXnn3lSy2oGOkwWJFQoS4zsc1He6q0gQR66iNq9QtvXPG-A6g9DqRLsymbTix6la_K8S8idYaoDCw7EbKOsI8Ay-b8C1Rd1_duGRJA&upload_protocol=resumable
+      https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=AP6rU82B0Hxscqkl88rqqYa6pfTGLp_Lu0rq79NOL7vtSa3OIVa_OnyTcwrt-1reutIWE4yXjatrbdkuxEokMZZBC7wAfN0TIJ9aJEV5d3cESj0&upload_protocol=resumable
     headers:
       accept:
       - "*/*"
@@ -589,19 +524,19 @@ interactions:
       type: json
       content:
         file:
-          name: files/kwg5ptjbu7lq
+          name: files/l3xwitmydxpg
           displayName: pydantic-ai-batch
           mimeType: application/jsonl
           sizeBytes: "356"
-          createTime: 2026-10-15T22:17:56.825596Z
-          updateTime: 2026-10-15T22:17:56.825596Z
-          expirationTime: 2026-10-17T22:17:56.636518373Z
+          createTime: 2026-10-22T00:28:44.157305Z
+          updateTime: 2026-10-22T00:28:44.157305Z
+          expirationTime: 2026-10-24T00:28:44.024240588Z
           sha256Hash: >-
             MTFmZGU5YWQ1MjQzNTQ4ZGFjNzc1OWM5NzVjZmE4MWVmOTY4MzU2MTQyNzczNTQ2MjcwY2U5MTFlNmQ0NzBhYg==
-          uri: https://generativelanguage.googleapis.com/v1beta/files/kwg5ptjbu7lq
+          uri: https://generativelanguage.googleapis.com/v1beta/files/l3xwitmydxpg
           state: ACTIVE
           source: UPLOADED
-  recorded_at: 2026-10-15T22:17:56.852968+00:00
+  recorded_at: 2026-10-22T00:28:44.191008+00:00
 - request:
     method: POST
     uri: >-
@@ -624,7 +559,7 @@ interactions:
       content:
         batch:
           inputConfig:
-            fileName: files/kwg5ptjbu7lq
+            fileName: files/l3xwitmydxpg
           displayName: pydantic-ai-batch
   response:
     status: 200
@@ -634,7 +569,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2893
+      - gfet4t7; dur=2785
       transfer-encoding:
       - chunked
       vary:
@@ -644,18 +579,18 @@ interactions:
     body:
       type: json
       content:
-        name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
+        name: batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
         metadata:
           "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
           model: models/gemini-2.5-flash-lite
           displayName: pydantic-ai-batch
           inputConfig:
-            fileName: files/kwg5ptjbu7lq
-          createTime: 2026-10-15T22:17:57.110735396Z
-          updateTime: 2026-10-15T22:17:57.110735396Z
+            fileName: files/l3xwitmydxpg
+          createTime: 2026-10-22T00:28:44.515373436Z
+          updateTime: 2026-10-22T00:28:44.515373436Z
           batchStats:
             requestCount: "2"
             pendingRequestCount: "2"
           state: BATCH_STATE_PENDING
-          name: batches/u3uftiaulqtuzzrv99qapdio3rvpjz6zbj3f
-  recorded_at: 2026-10-15T22:17:59.763227+00:00
+          name: batches/oowe9ovzxjz59zlgz9keurqwplknuwymubno
+  recorded_at: 2026-10-22T00:28:46.992835+00:00

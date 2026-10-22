@@ -681,6 +681,24 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         return None
 
+    @property
+    def batch_max_bytes(self) -> int | None:
+        """The most bytes the provider accepts in one batch, or `None` when it only limits the number of requests.
+
+        A batch's size is the sum of its requests' [`batch_request_size`][pydantic_ai.models.Model.batch_request_size].
+        [`batch_encode`][pydantic_ai.models.Model.batch_encode] refuses a request too large for any batch, and
+        [`batch_create`][pydantic_ai.models.Model.batch_create] refuses requests too large for one batch.
+        """
+        return None
+
+    def batch_request_size(self, request: EncodedBatchRequest) -> int:
+        """The bytes `request` adds to a batch, which [`batch_max_bytes`][pydantic_ai.models.Model.batch_max_bytes] limits.
+
+        By default, the UTF-8 size of its `custom_id` and `body`; a model whose batch format adds bytes around each
+        request counts those too.
+        """
+        return len(request.custom_id.encode()) + len(request.body.encode())
+
     async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
         """Encode a request for the provider's batch API, with the parameters the model would send on its own.
 
