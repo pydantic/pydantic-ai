@@ -16,7 +16,9 @@ The complete implementations for [Temporal][pydantic_ai.durable_exec.temporal.Te
 [AWS Lambda](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda),
 [Absurd](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/absurd),
 and [pgtask](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/pgtask)
-integrations show the same public builder with JSON journals.
+integrations show the same public builder with JSON journals, and
+[Render Workflows](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/render)
+shows an engine whose durable units run in another process.
 
 ## Choose a backend tier
 
@@ -163,6 +165,45 @@ Pydantic AI adds durable units. Sandbox operations are one planned example. Engi
 must therefore include a default branch when matching IDs. Use that branch to apply a safe base
 configuration or raise an actionable unsupported-operation error. Do not rely on an exhaustive
 match that assumes the current union will never gain another arm.
+
+## Durable units in another process
+
+Some engines run a durable unit on a different worker than the run that dispatched it, so its
+parameters have to cross the boundary as data. By default every operation passes its parameters
+through unchanged. An engine whose units run out of process overrides the capability's
+parameter-transport hooks, such as `_model_request_parameter_transport`,
+`_function_call_parameter_transport`, `_mcp_call_parameter_transport`,
+`_event_stream_handler_parameter_transport`, `_capability_operation_parameter_transport`, and
+`_workspace_call_transport`. Each returns a
+[`ParameterTransport`][pydantic_ai.durable_exec.ParameterTransport] that dumps one of the public
+parameter types to the engine's wire format at dispatch and loads it back worker-side:
+[`ModelRequestParams`][pydantic_ai.durable_exec.ModelRequestParams],
+[`ModelCompactMessagesParams`][pydantic_ai.durable_exec.ModelCompactMessagesParams],
+[`ModelCancelSuspendedResponseParams`][pydantic_ai.durable_exec.ModelCancelSuspendedResponseParams],
+[`EventStreamHandlerParams`][pydantic_ai.durable_exec.EventStreamHandlerParams],
+[`ToolsetGetToolsParams`][pydantic_ai.durable_exec.ToolsetGetToolsParams],
+[`ToolsetCallToolParams`][pydantic_ai.durable_exec.ToolsetCallToolParams],
+[`DynamicToolsetCallToolParams`][pydantic_ai.durable_exec.DynamicToolsetCallToolParams],
+[`CapabilityOperationParams`][pydantic_ai.durable_exec.CapabilityOperationParams], and
+[`WorkspaceCallParams`][pydantic_ai.durable_exec.WorkspaceCallParams].
+A `RegisteredOperationBackend` receives each [`DurableOperation`][pydantic_ai.durable_exec.DurableOperation]
+in `register` and returns a [`BoundDurableOperation`][pydantic_ai.durable_exec.BoundDurableOperation].
+Its worker-side handler should run inside
+[`durable_unit_scope`][pydantic_ai.durable_exec.durable_unit_scope], so a durable operation
+called from inside the unit runs directly instead of scheduling another unit.
+
+Every parameter type carries the live `RunContext`, which holds objects that cannot be serialized.
+Use [`DurableRunContext`][pydantic_ai.durable_exec.DurableRunContext] for that part:
+`DurableRunContext.serialize_run_context(ctx)` returns a mapping of the fields that can cross,
+which the engine encodes with its own codec, and `DurableRunContext.restore(...)` rebuilds the
+context worker-side and re-attaches the worker's agent and workspace. Reading a field that wasn't
+carried raises a `UserError` instead of returning a default that could be mistaken for run state.
+Subclass it to word that error for your engine. Your users can subclass your context to carry more
+fields. Temporal's [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] is
+one such subclass.
+
+The run's validation context is an arbitrary user object, so it isn't carried. Rebuild it
+worker-side with [`validation_context_from_agent`][pydantic_ai.durable_exec.validation_context_from_agent].
 
 ## Persisted names and recovery
 

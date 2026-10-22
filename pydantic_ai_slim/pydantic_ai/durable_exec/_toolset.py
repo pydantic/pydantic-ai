@@ -394,6 +394,12 @@ CallToolResult = Annotated[
     _ApprovalRequired | _CallDeferred | _ModelRetry | _ValidationError | _ToolReturn | _ToolContentResult | _ToolFailed,
     Discriminator('kind'),
 ]
+"""The recorded result of a tool call operation, with control-flow signals (`ApprovalRequired`,
+`CallDeferred`, `ModelRetry`, `ToolFailed`, validation errors) carried as data.
+
+Engines that decode results themselves validate the journaled value against this type; its
+variants are internal and can change between minor releases.
+"""
 
 
 async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:

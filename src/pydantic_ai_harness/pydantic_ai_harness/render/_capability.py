@@ -282,6 +282,7 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
             deps_type=self._deps_type,
             agent=agent,
             resolve_model=self._resolve_child_task_model,
+            engine_spec=self.engine_spec,
         )
         self._operation_backend = RenderOperationBackend(
             self.app,

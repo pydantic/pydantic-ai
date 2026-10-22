@@ -23,7 +23,6 @@ from pydantic_ai.durable_exec._base import (
     conversation_id_from_run_id,
 )
 from pydantic_ai.durable_exec._capability_operation import CapabilityMethodDeclaration
-from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import (
     DurableOperationId,
     ToolsetCallToolId,
@@ -31,7 +30,6 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetKind,
     ToolsetValidateToolArgumentsId,
 )
-from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._toolset import DurableToolsetBase, validation_context_from_agent
 from pydantic_ai.durable_exec._utils import disable_threads, managed_model_scope
 from pydantic_ai.exceptions import ModelAPIError, UserError
@@ -55,6 +53,7 @@ from ._event_stream import (
 )
 from ._operation_backend import TemporalBoundOperation, TemporalOperationBackend
 from ._run_context import TemporalRunContext, deserialize_run_context
+from ._spec import TEMPORAL_ENGINE_SPEC
 from ._toolset import (
     TemporalWrapperToolset,
     resolve_tool_activity_config,
@@ -141,24 +140,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         ```
     """
 
-    engine_spec = DurabilityEngineSpec(
-        engine_name='Temporal',
-        durable_unit_noun='activity',
-        durable_unit_plural='activities',
-        durable_container_noun='workflow',
-        codec=IDENTITY_CODEC,
-        unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
-        wrapped_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
-        toolset_lifecycles={
-            'function': 'enter-outside-durable',
-            'mcp': 'enter-outside-durable',
-            'dynamic': 'enter-never',
-        },
-        tool_call_result_upgrade_lenient=False,
-        journal_discovery=True,
-        sequential_tools_in_durable_context=False,
-        tool_config_key='temporal',
-    )
+    engine_spec = TEMPORAL_ENGINE_SPEC
 
     run_context_type: type[TemporalRunContext[AgentDepsT]]
     """The `TemporalRunContext` subclass used to serialize/deserialize the run context."""

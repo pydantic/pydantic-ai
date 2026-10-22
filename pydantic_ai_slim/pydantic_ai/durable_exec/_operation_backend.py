@@ -38,6 +38,13 @@ def in_durable_unit() -> bool:
 
 @contextmanager
 def durable_unit_scope() -> Generator[None]:
+    """Mark the current task as running a durable unit's body.
+
+    `CallableOperationBackend` enters it around every unit. A `RegisteredOperationBackend` enters it
+    around its worker-side handler, so a nested durable operation called from inside the unit (a
+    `DurableWorkspace` call, a capability's durable operation called from a tool) runs directly
+    instead of scheduling a second unit.
+    """
     token = _IN_DURABLE_UNIT.set(True)
     try:
         yield
@@ -46,6 +53,12 @@ def durable_unit_scope() -> Generator[None]:
 
 
 class BoundDurableOperation(Generic[ParamsT_bound, WireT_bound, ResultT_bound], Protocol):
+    """The caller a backend returns for one bound [`DurableOperation`][pydantic_ai.durable_exec.DurableOperation].
+
+    Calling it runs the operation in a durable unit when the run is inside the engine's durable
+    container, passing per-call `config` (such as a per-tool override) when there is one.
+    """
+
     @property
     @abstractmethod
     def operation(self) -> DurableOperation[ParamsT_bound, WireT_bound, ResultT_bound]: ...

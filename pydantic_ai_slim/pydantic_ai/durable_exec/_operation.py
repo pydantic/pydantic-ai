@@ -43,6 +43,8 @@ class ModelRequestId:
 
 @dataclass(frozen=True)
 class ModelRequestParams:
+    """Parameters of a model request operation; `model_id` selects the registered model."""
+
     model_id: str | None = None
     _: KW_ONLY
     messages: list[ModelMessage]
@@ -65,6 +67,8 @@ class ModelCancelSuspendedResponseId:
 
 @dataclass(frozen=True)
 class ModelCancelSuspendedResponseParams:
+    """Parameters of an operation that cancels a suspended model response."""
+
     model_id: str | None = None
     _: KW_ONLY
     response: ModelResponse
@@ -85,6 +89,8 @@ class ModelCompactMessagesId:
 
 @dataclass(frozen=True)
 class ModelCompactMessagesParams:
+    """Parameters of a message-compaction operation."""
+
     model_id: str | None = None
     _: KW_ONLY
     request_context: ModelRequestContext
@@ -104,6 +110,8 @@ class EventStreamHandlerId:
 
 @dataclass(frozen=True)
 class EventStreamHandlerParams:
+    """Parameters of one event-stream handler invocation."""
+
     event: AgentStreamEvent
     _: KW_ONLY
     run_context: RunContext[Any]
@@ -137,6 +145,8 @@ class ToolsetGetToolsId:
 
 @dataclass(frozen=True)
 class ToolsetGetToolsParams:
+    """Parameters of a tool-discovery or instruction operation."""
+
     ctx: RunContext[Any]
     _: KW_ONLY
 
@@ -178,6 +188,8 @@ class ToolsetCallToolId:
 
 @dataclass(frozen=True)
 class ToolsetCallToolParams:
+    """Parameters of a function or MCP tool call; `tool` is `None` when the call is rebuilt from its name worker-side."""
+
     name: str
     _: KW_ONLY
     tool_args: dict[str, Any]
@@ -187,6 +199,8 @@ class ToolsetCallToolParams:
 
 @dataclass(frozen=True)
 class DynamicToolsetCallToolParams:
+    """Parameters of a dynamic toolset tool call; `tool_def` carries the definition resolved at dispatch."""
+
     name: str
     _: KW_ONLY
     tool_args: dict[str, Any]
@@ -248,6 +262,11 @@ OperationConfigRole: TypeAlias = Literal['model', 'event', 'tool', 'capability']
 
 
 class DurableOperationConfig(Generic[ConfigT_co], Protocol):
+    """Resolve an engine's native config for an operation, implemented by [`RoleBasedOperationConfig`][pydantic_ai.durable_exec.RoleBasedOperationConfig].
+
+    `for_tool` may return `False` to run a function or dynamic tool outside a durable unit.
+    """
+
     @abstractmethod
     def base(self, role: OperationConfigRole, *, operation_id: DurableOperationId) -> ConfigT_co: ...
 
