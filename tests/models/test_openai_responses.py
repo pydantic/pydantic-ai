@@ -126,6 +126,7 @@ with try_import() as imports_successful:
     from openai.types.responses.response_output_text import (
         AnnotationContainerFileCitation,
         AnnotationURLCitation,
+        Logprob,
         ResponseOutputText,
     )
     from openai.types.responses.response_reasoning_item import (
@@ -291,6 +292,37 @@ async def test_openai_responses_leaves_out_annotations_it_cannot_rebuild() -> No
             'status': 'completed',
         }
     )
+
+
+def test_openai_citations_kept_with_logprobs():
+    """Citation data and logprobs both stay on the part. Unit test: no recording has logprobs with citations."""
+    annotation = AnnotationURLCitation(
+        type='url_citation', start_index=0, end_index=6, title='Example', url='https://example.com'
+    )
+    logprob = Logprob(token='answer', bytes=[], logprob=-0.1, top_logprobs=[])
+    response = response_message(
+        [
+            ResponseOutputMessage(
+                id='message-1',
+                content=[
+                    ResponseOutputText(text='answer', type='output_text', annotations=[annotation], logprobs=[logprob])
+                ],
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='not-used'))
+
+    result = model._process_response(  # pyright: ignore[reportPrivateUsage]
+        response, OpenAIResponsesModelSettings(), ModelRequestParameters()
+    )
+
+    [part] = result.parts
+    assert isinstance(part, TextPart)
+    assert part.provider_details is not None
+    assert part.provider_details.keys() == {'citations', 'logprobs'}
 
 
 async def test_openai_response_with_null_text_and_citation(allow_model_requests: None):

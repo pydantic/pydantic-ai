@@ -3470,7 +3470,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         )
                 elif is_multi_modal_content(item):
                     yield await AnthropicModel._map_file_to_content_block(
-                        cast(BinaryContent | ImageUrl | DocumentUrl | AudioUrl | VideoUrl, item),
+                        item,  # pyright: ignore[reportArgumentType]
                         'user prompts',
                         include_citations=include_citations,
                     )
@@ -4001,8 +4001,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                         continue
                     if isinstance(event.delta, BetaTextDelta):
                         for event_ in self._parts_manager.handle_text_delta(
-                            vendor_part_id=event.index,
-                            content=event.delta.text,
+                            vendor_part_id=event.index, content=event.delta.text
                         ):
                             yield event_
                     elif isinstance(event.delta, BetaThinkingDelta):

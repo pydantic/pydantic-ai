@@ -3129,25 +3129,23 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     # follows a generated image, or `text=null` from gateways like Bifrost) doesn't make a part.
                     elif isinstance(content, responses.ResponseOutputText) and content.text:
                         citations = _map_responses_citations(content.annotations, content.text)
-                        part_provider_details: dict[str, Any] | None = None
+                        part_provider_details: dict[str, Any] = {}
                         if citations:
-                            part_provider_details = _responses_citations_provider_details(content.annotations)
+                            part_provider_details.update(_responses_citations_provider_details(content.annotations))
                         if content.logprobs:
-                            part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
+                            part_provider_details['logprobs'] = _map_logprobs(content.logprobs)
                         if model_settings.get('openai_include_raw_annotations') and content.annotations:
-                            part_provider_details = part_provider_details or {}
                             part_provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
                                 list(content.annotations), warnings=False
                             )
                         if item.phase is not None:
-                            part_provider_details = part_provider_details or {}
                             part_provider_details['phase'] = item.phase
                         items.append(
                             TextPart(
                                 content.text,
                                 id=item.id,
                                 provider_name=self.system,
-                                provider_details=part_provider_details,
+                                provider_details=part_provider_details or None,
                                 citations=citations,
                             )
                         )
@@ -5749,21 +5747,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     # Add annotations to provider_details if available
                     provider_details: dict[str, Any] = {}
                     content_key = (chunk.item_id, chunk.content_index)
-                    raw_annotations = _annotations_by_item.pop(content_key, None)
-                    try:
-                        annotations = responses_output_text_annotations_ta.validate_python(raw_annotations or [])
-                    except ValidationError:
-                        citations = None
-                        citations_details = None
-                        serialized_annotations = raw_annotations
-                    else:
-                        citations = _map_responses_citations(annotations, chunk.text)
-                        citations_details = _responses_citations_provider_details(annotations)
-                        serialized_annotations = responses_output_text_annotations_ta.dump_python(
-                            annotations, warnings=False
-                        )
+                    raw_annotations = _annotations_by_item.pop(content_key, [])
                     if raw_annotations and self._model_settings.get('openai_include_raw_annotations'):
-                        provider_details['annotations'] = serialized_annotations
+                        provider_details['annotations'] = raw_annotations
+                    try:
+                        annotations = responses_output_text_annotations_ta.validate_python(raw_annotations)
+                    except ValidationError:
+                        annotations = []
                     if chunk.logprobs:
                         provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
                     if (
@@ -5773,19 +5763,22 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         provider_details['phase'] = phase
                         _phase_started_content.add(content_key)
                     existing_part = self._parts_manager.get_part_by_vendor_id(content_key)
-                    if not isinstance(existing_part, TextPart) or existing_part.content != chunk.text:
-                        # Annotation offsets address the done text, so they can't be placed on streamed text that
-                        # differs from it.
-                        citations = None
-                    if citations and citations_details:
-                        provider_details.update(citations_details)
+                    # Annotation offsets address the done text, so they can't be placed on streamed text that differs
+                    # from it.
+                    citations = (
+                        _map_responses_citations(annotations, chunk.text)
+                        if isinstance(existing_part, TextPart) and existing_part.content == chunk.text
+                        else None
+                    )
+                    if citations:
+                        provider_details.update(_responses_citations_provider_details(annotations))
                     # Empty text makes no part, as in `_process_response`.
-                    if (provider_details or citations) and chunk.text:
+                    if provider_details and chunk.text:
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id=content_key,
                             content='',
                             provider_name=self.provider_name,
-                            provider_details=provider_details or None,
+                            provider_details=provider_details,
                             citations=citations,
                         ):
                             yield event
