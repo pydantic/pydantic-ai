@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from pydantic_ai_harness.smart_file_search import _index
-from pydantic_ai_harness.smart_file_search._chunks import Chunk, source_chunks
+from pydantic_ai_harness.smart_search import _index
+from pydantic_ai_harness.smart_search._chunks import Chunk, source_chunks
 
 
 @dataclass

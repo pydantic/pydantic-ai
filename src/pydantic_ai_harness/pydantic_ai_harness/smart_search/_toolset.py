@@ -1,4 +1,4 @@
-"""The `smart_file_search` tool: plain-English code search over the run's workspace."""
+"""The `smart_search` tool: plain-English code search over the run's workspace."""
 
 from __future__ import annotations
 
@@ -8,36 +8,36 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._workspace import raise_tool_failure, require_workspace, supports_commands
-from pydantic_ai_harness.smart_file_search._index import MAX_CACHED_INDEXES, SnippetIndexes
-from pydantic_ai_harness.smart_file_search._judge import JudgeModel, resolve_judge_model
-from pydantic_ai_harness.smart_file_search._search import DEFAULT_CANDIDATES, SmartFileSearchResult, search_code
+from pydantic_ai_harness.smart_search._index import MAX_CACHED_INDEXES, SnippetIndexes
+from pydantic_ai_harness.smart_search._judge import JudgeModel, resolve_judge_model
+from pydantic_ai_harness.smart_search._search import DEFAULT_CANDIDATES, SmartSearchResult, search_code
 
-TOOL_NAME = 'smart_file_search'
+TOOL_NAME = 'smart_search'
 
 _INSTRUCTIONS = """\
-## Code discovery: smart_file_search first
-Use `smart_file_search` as your first tool for gathering code context about an unfamiliar implementation.
+## Code discovery: smart_search first
+Use `smart_search` as your first tool for gathering code context about an unfamiliar implementation.
 Describe the behavior you need to find in plain English, scoped to the relevant directory. Do this
 instead of guessing symbol names, running exploratory grep chains, or listing and reading many files
 just to locate the implementation.
 
 Use the returned excerpts and line ranges to decide which files need a targeted read. Do not
 automatically read every match or repeat searches when the excerpts already answer the question.
-Read the relevant code before editing; `smart_file_search` is discovery, not a substitute for
+Read the relevant code before editing; `smart_search` is discovery, not a substitute for
 understanding it.
 
 Use regular text search for exact symbols, regexes, and exhaustive references, and read a known file
 directly when its location is already established.
 
 The lexical shortlist is not exhaustive, and no matches do not prove absence. If results are weak,
-rephrase or narrow the query, or fall back to exact search. If `smart_file_search` fails, fall back to
-regular search and targeted reads rather than retrying. `smart_file_search` sends selected source, paths and
+rephrase or narrow the query, or fall back to exact search. If `smart_search` fails, fall back to
+regular search and targeted reads rather than retrying. `smart_search` sends selected source, paths and
 the query to the judge model's provider, so honor requests to keep code local by using local search
 instead."""
 
 
-class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
-    """Registers `smart_file_search`, which searches the run's workspace and judges snippets with a model.
+class SmartSearchToolset(FunctionToolset[AgentDepsT]):
+    """Registers `smart_search`, which searches the run's workspace and judges snippets with a model.
 
     Files are listed with `rg` and read through `ctx.workspace`, so the tool is only offered when the
     workspace can run commands. A run with no workspace fails at its start. With `cache_index`, each
@@ -60,23 +60,23 @@ class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
         self._threshold = threshold
         self._concurrency = concurrency
         self._indexes = SnippetIndexes(MAX_CACHED_INDEXES if cache_index else 0)
-        self.add_function(self.smart_file_search, name=TOOL_NAME)
+        self.add_function(self.smart_search, name=TOOL_NAME)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """Offer no tools when the workspace cannot execute commands; fail a run with no workspace."""
         if not ctx.workspace.attached:
-            require_workspace(ctx.workspace, 'SmartFileSearch', ctx.messages)
+            require_workspace(ctx.workspace, 'SmartSearch', ctx.messages)
         if not supports_commands(ctx.workspace):
             return {}
         return await super().get_tools(ctx)
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[InstructionPart] | None:
-        """The discovery policy, offered only with the tool: `smart_file_search` first, exact search for exact symbols."""
+        """The discovery policy, offered only with the tool: `smart_search` first, exact search for exact symbols."""
         if not self._guidance or not supports_commands(ctx.workspace):
             return None
         return [InstructionPart(self._guidance)]
 
-    async def smart_file_search(
+    async def smart_search(
         self,
         ctx: RunContext[AgentDepsT],
         query: str,
@@ -84,7 +84,7 @@ class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
         glob: str | None = None,
         limit: int = 5,
         candidates: int = DEFAULT_CANDIDATES,
-    ) -> SmartFileSearchResult:
+    ) -> SmartSearchResult:
         """Find code by what it DOES, described in plain English.
 
         Use for behaviour-based discovery when you don't know the symbol names,
@@ -124,4 +124,4 @@ class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
             raise_tool_failure(error)
         except (ModelAPIError, UnexpectedModelBehavior) as error:
             # Report the judge's failure to the model, which can fall back to regular search.
-            raise ToolFailed(f'smart_file_search failed: {type(error).__name__}: {error}') from error
+            raise ToolFailed(f'smart_search failed: {type(error).__name__}: {error}') from error

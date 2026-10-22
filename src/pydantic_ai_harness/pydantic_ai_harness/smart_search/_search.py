@@ -8,10 +8,10 @@ from typing import Literal
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.workspaces import Workspace
-from pydantic_ai_harness.smart_file_search._chunks import Chunk, searchable_root
-from pydantic_ai_harness.smart_file_search._index import SnippetIndexes, read_snippets
-from pydantic_ai_harness.smart_file_search._judge import JudgeModel, judge
-from pydantic_ai_harness.smart_file_search._retrieve import terms
+from pydantic_ai_harness.smart_search._chunks import Chunk, searchable_root
+from pydantic_ai_harness.smart_search._index import SnippetIndexes, read_snippets
+from pydantic_ai_harness.smart_search._judge import JudgeModel, judge
+from pydantic_ai_harness.smart_search._retrieve import terms
 
 MAX_QUERY_CHARS = 2000
 DEFAULT_CANDIDATES = 128
@@ -23,7 +23,7 @@ _TEST_PATH = re.compile(r'(^|/)(tests?|__tests__|spec)/|(^|/)test_[^/]*$|[._-](t
 
 
 @dataclass(kw_only=True)
-class SmartFileSearchMatch:
+class SmartSearchMatch:
     """One relevant snippet, with a short excerpt focused on the evidence."""
 
     file_path: str
@@ -47,7 +47,7 @@ class SmartFileSearchMatch:
 
 
 @dataclass(kw_only=True)
-class SmartFileSearchCoverage:
+class SmartSearchCoverage:
     """How much of the directory the search actually judged."""
 
     files: int = 0
@@ -63,12 +63,12 @@ class SmartFileSearchCoverage:
 
 
 @dataclass(kw_only=True)
-class SmartFileSearchResult:
-    """What one `smart_file_search` call found, and how thoroughly it looked."""
+class SmartSearchResult:
+    """What one `smart_search` call found, and how thoroughly it looked."""
 
-    matches: list[SmartFileSearchMatch] = field(default_factory=list[SmartFileSearchMatch])
+    matches: list[SmartSearchMatch] = field(default_factory=list[SmartSearchMatch])
     """Relevant snippets, best first, overlapping snippets collapsed into the best one."""
-    coverage: SmartFileSearchCoverage = field(default_factory=SmartFileSearchCoverage)
+    coverage: SmartSearchCoverage = field(default_factory=SmartSearchCoverage)
     """How much of the directory was judged."""
     omitted_matches: int = 0
     """Relevant snippets beyond `limit`."""
@@ -129,10 +129,10 @@ def _excerpt(chunk: Chunk, focus: Chunk | None, query: str) -> tuple[int, str]:
     return first, '\n'.join(lines)[:EXCERPT_CHARS]
 
 
-def _to_match(item: _Scored, passing: list[_Scored], query: str) -> SmartFileSearchMatch:
+def _to_match(item: _Scored, passing: list[_Scored], query: str) -> SmartSearchMatch:
     chunk = item.chunk
     first, text = _excerpt(chunk, _evidence(chunk, passing), query)
-    return SmartFileSearchMatch(
+    return SmartSearchMatch(
         file_path=chunk.path,
         start_line=first,
         end_line=first + text.count('\n'),
@@ -157,7 +157,7 @@ async def search_code(
     candidates: int = DEFAULT_CANDIDATES,
     threshold: float,
     concurrency: int,
-) -> SmartFileSearchResult:
+) -> SmartSearchResult:
     """Find the snippets under `directory` that `model` judges relevant to `query`."""
     query = query.strip()
     if not query or len(query) > MAX_QUERY_CHARS:
@@ -168,7 +168,7 @@ async def search_code(
     root = await searchable_root(workspace, directory)
     found = await indexes.shortlist(workspace, root, glob, query, candidates)
     selected = await read_snippets(workspace, root, directory, found.hits)
-    coverage = SmartFileSearchCoverage(
+    coverage = SmartSearchCoverage(
         files=found.files,
         snippets=found.snippets,
         evaluated=len(selected),
@@ -197,7 +197,7 @@ async def search_code(
     if found.skipped:
         warnings.append(f'{len(found.skipped)} files skipped (binary, non-UTF-8, minified or unreadable).')
 
-    return SmartFileSearchResult(
+    return SmartSearchResult(
         matches=[_to_match(item, passing, query) for item in kept[:limit]],
         coverage=coverage,
         omitted_matches=max(len(kept) - limit, 0),

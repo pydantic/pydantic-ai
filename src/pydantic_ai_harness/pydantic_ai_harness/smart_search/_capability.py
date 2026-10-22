@@ -1,4 +1,4 @@
-"""The `SmartFileSearch` capability: plain-English code search judged by a pluggable model."""
+"""The `SmartSearch` capability: plain-English code search judged by a pluggable model."""
 
 from __future__ import annotations
 
@@ -7,14 +7,14 @@ from dataclasses import dataclass
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai_harness.smart_file_search._toolset import SmartFileSearchToolset
+from pydantic_ai_harness.smart_search._toolset import SmartSearchToolset
 
 
 @dataclass
-class SmartFileSearch(AbstractCapability[AgentDepsT]):
+class SmartSearch(AbstractCapability[AgentDepsT]):
     """Plain-English code search: find code by what it does, described in plain English.
 
-    Adds a `smart_file_search` tool. A search lists the files under a directory in the
+    Adds a `smart_search` tool. A search lists the files under a directory in the
     run's workspace with `rg`, cuts them into snippets (overlapping line windows, or the
     functions, methods and long blocks of a Python file), shortlists the snippets with
     local BM25, and has a judge model score each shortlisted snippet's relevance.
@@ -33,11 +33,11 @@ class SmartFileSearch(AbstractCapability[AgentDepsT]):
     from pydantic_ai import Agent
     from pydantic_ai.capabilities import LocalWorkspace
 
-    from pydantic_ai_harness import SmartFileSearch
+    from pydantic_ai_harness import SmartSearch
 
     agent = Agent(
         'openai:gpt-6-luna',
-        capabilities=[LocalWorkspace('.'), SmartFileSearch(model='system-one:clm-latest')],
+        capabilities=[LocalWorkspace('.'), SmartSearch(model='system-one:clm-latest')],
     )
     ```
 
@@ -81,7 +81,7 @@ class SmartFileSearch(AbstractCapability[AgentDepsT]):
     """Custom discovery guidance for the system prompt, added whenever the tool is offered.
 
     Leave as `None` for the default, which tells the model to reach for
-    `smart_file_search` before exploratory text search, or set `''` to contribute no
+    `smart_search` before exploratory text search, or set `''` to contribute no
     instructions at all.
     """
 
@@ -92,13 +92,13 @@ class SmartFileSearch(AbstractCapability[AgentDepsT]):
         if not self.concurrency >= 1:
             raise ValueError(f'concurrency must be a positive integer, got {self.concurrency}')
 
-    def get_toolset(self) -> SmartFileSearchToolset[AgentDepsT]:
-        """Build the toolset providing `smart_file_search`."""
-        return SmartFileSearchToolset[AgentDepsT](
+    def get_toolset(self) -> SmartSearchToolset[AgentDepsT]:
+        """Build the toolset providing `smart_search`."""
+        return SmartSearchToolset[AgentDepsT](
             model=self.model,
             threshold=self.threshold,
             concurrency=self.concurrency,
             cache_index=self.cache_index,
             guidance=self.guidance,
-            id=self.id or 'smart_file_search',
+            id=self.id or 'smart_search',
         )

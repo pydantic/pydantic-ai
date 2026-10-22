@@ -1,17 +1,17 @@
-"""Edge cases of `SmartFileSearch`'s language-agnostic structural chunking, driven by a minimal `Syntax`."""
+"""Edge cases of `SmartSearch`'s language-agnostic structural chunking, driven by a minimal `Syntax`."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from pydantic_ai_harness.smart_file_search._chunks import (
+from pydantic_ai_harness.smart_search._chunks import (
     Chunk,
     _chunks_from_ranges as chunks_from_ranges,  # pyright: ignore[reportPrivateUsage]
     source_chunks,
     windows,
 )
-from pydantic_ai_harness.smart_file_search._structure import SPLIT_LINES, Range, structure_ranges
+from pydantic_ai_harness.smart_search._structure import SPLIT_LINES, Range, structure_ranges
 
 
 @dataclass

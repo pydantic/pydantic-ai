@@ -1,4 +1,4 @@
-"""Tests for `SmartFileSearch`'s index: discovery through the workspace, BM25, caching, and parallel searches."""
+"""Tests for `SmartSearch`'s index: discovery through the workspace, BM25, caching, and parallel searches."""
 
 from __future__ import annotations
 
@@ -10,14 +10,14 @@ import pytest
 
 from pydantic_ai.exceptions import ModelRetry, ToolFailed
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
-from pydantic_ai_harness.smart_file_search import _chunks, _index
-from pydantic_ai_harness.smart_file_search._chunks import Chunk, searchable_root
-from pydantic_ai_harness.smart_file_search._index import Shortlist, SnippetIndexes, read_snippets
-from pydantic_ai_harness.smart_file_search._retrieve import Bm25
+from pydantic_ai_harness.smart_search import _chunks, _index
+from pydantic_ai_harness.smart_search._chunks import Chunk, searchable_root
+from pydantic_ai_harness.smart_search._index import Shortlist, SnippetIndexes, read_snippets
+from pydantic_ai_harness.smart_search._retrieve import Bm25
 
 from ..filesystem.conftest import tools_path
 from .conftest import CountingChunker
-from .test_smart_file_search import PY_SOURCE, VanishingBackend
+from .test_smart_search import PY_SOURCE, VanishingBackend
 
 
 def _workspace(root: Path) -> Workspace:
