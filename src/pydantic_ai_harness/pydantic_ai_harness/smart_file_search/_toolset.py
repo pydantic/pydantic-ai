@@ -36,6 +36,15 @@ the query to the judge model's provider, so honor requests to keep code local by
 instead."""
 
 
+def validate_settings(threshold: float, concurrency: int) -> None:
+    """Reject a `threshold` outside `[0, 1]` and a `concurrency` that would never let a judgment start."""
+    if not 0 <= threshold <= 1:
+        raise ValueError(f'`threshold` must be between 0 and 1, got {threshold}')
+    # Negated so NaN, which an agent spec can pass through unvalidated, fails too instead of hanging the search.
+    if not concurrency >= 1:
+        raise ValueError(f'`concurrency` must be a positive integer, got {concurrency}')
+
+
 class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
     """Registers `smart_file_search`, which searches the run's workspace and judges snippets with a model.
 
@@ -54,6 +63,7 @@ class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
         guidance: str | None = None,
         id: str | None = None,
     ) -> None:
+        validate_settings(threshold, concurrency)
         super().__init__(id=id)
         self._guidance = _INSTRUCTIONS if guidance is None else guidance
         self._model = model
@@ -131,6 +141,7 @@ class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
                     candidates=candidates,
                     threshold=self._threshold,
                     concurrency=self._concurrency,
+                    span=span,
                 )
             except WorkspaceError as error:
                 raise_tool_failure(error)

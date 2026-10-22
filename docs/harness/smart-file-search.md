@@ -83,7 +83,7 @@ reads, chunks and indexes its directory from scratch.
 
 Set `cache_index=True` to keep each searched directory's index between searches, for the life of the agent:
 
-```python {test="skip"}
+```python
 from pydantic_ai_harness import SmartFileSearch
 
 capability = SmartFileSearch(model='system-one:clm-latest', cache_index=True)
@@ -134,27 +134,12 @@ have tuned `threshold` against it.
 ## Usage and limits
 
 Each judged snippet counts as one request in the run's [usage](../agent.md#usage-limits), and the judge's tokens
-are added to it, so `result.usage` and the run's `UsageLimits` cover the search. A search judges no more snippets
-than the run's `request_limit` leaves room for, keeping one request for the model to read the result: the lowest
-ranked are left unjudged, and a warning says so. With no room left at all, the search fails and the model is told
-to use regular search. The default `request_limit` is 50, so raise it, for example with
-`agent.run(..., usage_limits=UsageLimits(request_limit=500))`, for full 128-snippet searches.
-
-## Privacy
-
-`smart_file_search` sends the query, the shortlisted snippets and their paths to the judge model's provider.
-It only searches inside the workspace's working directory (symlinks followed), so the model can't send source
-from elsewhere on the machine. The default instructions tell the model to honor requests to keep code local by
-using local search instead. If no source may leave the machine, judge with a local model, such as a decision
-model [Ollama](../models/system-one.md#ollama) serves over the System One API.
-
-## Instructions
-
-Whenever the tool is offered, `SmartFileSearch` adds discovery guidance to the system prompt: reach for
-`smart_file_search` before exploratory text search when locating unfamiliar behavior, use exact search for
-known symbols and exhaustive references, and fall back to regular search when results are weak or the tool
-fails. Pass `guidance` to replace it, or
-`guidance=''` to add none.
+are added to it, so `result.usage` and the run's `UsageLimits` cover the search. So that one search cannot use up
+the run, it judges at most half of the requests the run's `request_limit` has left, after one kept for the model's
+next turn. The shortlist's best-ranked snippets are judged first, and a warning says how many were left unjudged.
+Under the default `request_limit` of 50, a run's first search judges 24 snippets. Raise the limit for full
+128-snippet searches, for example with `agent.run(..., usage_limits=UsageLimits(request_limit=500))`. When no
+request is left to spend, the search fails and the model is told to use regular search.
 
 ## Telemetry
 
@@ -163,6 +148,8 @@ attributes:
 
 - `smart_file_search.judge_model`: the judge model.
 - `smart_file_search.files`, `.skipped_files`, `.snippets` and `.evaluated`: the coverage figures.
+- `smart_file_search.indexed_files`: how many files the search chunked and indexed. With `cache_index`, only
+  new and changed files are, so this shows how much the cache saved.
 - `smart_file_search.selection_complete`: whether the coverage was complete.
 - `smart_file_search.matches` and `.omitted_matches`: how many matches were returned and cut.
 - `smart_file_search.query`: the query, only when the run includes content in traces.

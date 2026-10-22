@@ -6,11 +6,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from opentelemetry.trace import Span
+
 from pydantic_ai.exceptions import ModelRetry, ToolFailed
 from pydantic_ai.tools import RunContext
-from pydantic_ai_harness.smart_file_search._chunks import Chunk, searchable_root
+from pydantic_ai_harness.smart_file_search._chunks import Chunk, searchable_root, split_lines
 from pydantic_ai_harness.smart_file_search._index import SnippetIndexes, read_snippets
-from pydantic_ai_harness.smart_file_search._judge import JudgeModel, has_request_room, judge
+from pydantic_ai_harness.smart_file_search._judge import JudgeModel, judge, judgment_allowance
 from pydantic_ai_harness.smart_file_search._retrieve import terms
 
 MAX_QUERY_CHARS = 2000
@@ -118,7 +120,7 @@ def _evidence(match: Chunk, passing: list[_Scored]) -> Chunk | None:
 
 def _excerpt(chunk: Chunk, focus: Chunk | None, query: str) -> tuple[int, str]:
     """`(first_line, text)` of at most `EXCERPT_LINES` lines / `EXCERPT_CHARS` chars."""
-    lines = chunk.text.splitlines()
+    lines = split_lines(chunk.text)
     first = chunk.line
     if focus is not None:
         offset = focus.line - chunk.line
@@ -161,22 +163,27 @@ async def search_code(
     candidates: int = DEFAULT_CANDIDATES,
     threshold: float,
     concurrency: int,
+    span: Span,
 ) -> SmartFileSearchResult:
-    """Find the snippets under `directory` that `model` judges relevant to `query`."""
+    """Find the snippets under `directory` that `model` judges relevant to `query`, recording the indexing on `span`."""
     query = query.strip()
     if not query or len(query) > MAX_QUERY_CHARS:
         raise ModelRetry(f'Query must contain 1-{MAX_QUERY_CHARS} characters.')
     limit = max(1, min(limit, MAX_LIMIT))
     candidates = max(1, min(candidates, MAX_CANDIDATES))
-    if not has_request_room(ctx):
+    allowance = judgment_allowance(ctx)
+    if allowance == 0:
         raise ToolFailed(_NO_ROOM)
 
     workspace = ctx.workspace
     root = await searchable_root(workspace, directory)
     found = await indexes.shortlist(workspace, root, glob, query, candidates)
+    span.set_attribute('smart_file_search.indexed_files', found.indexed)
     selected = await read_snippets(workspace, root, directory, found.hits)
-    scores = await judge(ctx, model, query, selected, concurrency=concurrency) if selected else []
-    judged = [_Scored(c, s) for c, s in zip(selected, scores) if s is not None]
+    # The shortlist is ranked, so a search over its share of the request budget judges the best-ranked snippets.
+    to_judge = selected[:allowance]
+    scores = await judge(ctx, model, query, to_judge, concurrency=concurrency) if to_judge else []
+    judged = [_Scored(c, s) for c, s in zip(to_judge, scores) if s is not None]
     coverage = SmartFileSearchCoverage(
         files=found.files,
         snippets=found.snippets,
@@ -204,8 +211,8 @@ async def search_code(
         )
     if len(judged) < len(selected):
         warnings.append(
-            f"Judged {len(judged)} of the {len(selected)} shortlisted snippets: the run's `request_limit` left room "
-            'for no more, as each judged snippet counts as one request.'
+            f'Judged {len(judged)} of the {len(selected)} shortlisted snippets: each judged snippet counts as one '
+            "request, and a search spends at most half of what the run's `request_limit` has left."
         )
     if found.skipped:
         warnings.append(f'{len(found.skipped)} files skipped (binary, non-UTF-8, minified or unreadable).')

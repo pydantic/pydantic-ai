@@ -217,8 +217,9 @@ agent = Agent('test', capabilities=[LocalWorkspace('.'), SmartFileSearch(model='
   of one directory build it once. A search is capped at 200,000 files (after `glob`), 50M lines and 2 GiB
   (`ModelRetry`).
 - Each judged snippet is one request in the run's usage (tokens too), checked against its `UsageLimits`.
-  A search judges only what `request_limit` (default 50) leaves room for, keeping one for the model's next
-  turn, and warns; with no room it fails. Raise `request_limit` for full searches. A failed judgment fails
+  A search judges at most half of what `request_limit` (default 50) has left after one kept for the model's
+  next turn (24 on a first search), best-ranked first, and warns; with none left it fails. Raise
+  `request_limit` for full searches. A failed judgment fails
   the search as a tool failure the model sees.
 - Sends the query, snippets and paths to the judge's provider; `directory` must be inside the working
   directory (symlinks followed), else `ModelRetry`.

@@ -80,6 +80,19 @@ def build_agent(model: JudgeModel, query: str) -> Agent[None, Relevance]:
     return agent
 
 
+def judgment_allowance(ctx: RunContext[Any]) -> int | None:
+    """How many judgments one search may spend, or `None` when the run has no `request_limit`.
+
+    That is half of the requests the limit leaves after one kept for the model's next turn, rounded up, so one
+    search cannot use up the run: the model can still read files and search again.
+    """
+    limits = ctx.usage_limits
+    if limits is None or limits.request_limit is None:
+        return None
+    left = limits.request_limit - ctx.usage.requests - 1
+    return max(0, (left + 1) // 2)
+
+
 def has_request_room(ctx: RunContext[Any]) -> bool:
     """Whether the run's `request_limit` leaves room for one more judgment and still one for the model's next turn."""
     limits = ctx.usage_limits

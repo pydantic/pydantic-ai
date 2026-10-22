@@ -34,7 +34,8 @@ agent = Agent(
 The judge is required and pluggable: pass any model or model name as `model`. A decision model over the System One
 API, such as `'system-one:clm-latest'`, needs only `SYSTEM_ONE_BASE_URL` (and `SYSTEM_ONE_API_KEY` if the API needs
 a key); TypeSafe's Jev is `'typesafe:jev-latest'`. Each judged snippet counts as one request against the run's
-`request_limit` (50 by default), so raise it for full 128-snippet searches.
+`request_limit` (50 by default), and a search spends at most half of what is left, so raise it for full
+128-snippet searches.
 
 A search sends the query, the shortlisted snippets and their paths to the judge model's provider, and only searches
 inside the workspace's working directory. If no source may leave the machine, judge with a local model. With

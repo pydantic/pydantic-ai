@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 
 import anyio
@@ -154,10 +155,8 @@ class TestSmartFileSearchIndex:
         await search(agent, glob='b.py')
         assert _judged_paths(model) == ['b.py']
 
-    async def test_line_budget_counts_unicode_line_separators(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        (tmp_path / 'a.py').write_text('x = 1\u2028' * 50)  # 50 lines to the chunker, no newline at all
+    async def test_line_budget_counts_carriage_returns(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        (tmp_path / 'a.py').write_bytes(b'x = 1\r' * 50)  # 50 lines to the chunker, no newline at all
         monkeypatch.setattr('pydantic_ai_harness.smart_file_search._index.MAX_TOTAL_LINES', 10)
         assert 'lines of source' in await search_error(search_agent(tmp_path, FakeJev('')))
 
@@ -169,7 +168,7 @@ class TestSmartFileSearchIndex:
         assert 'GiB of source' in await search_error(agent)
 
     async def test_search_over_budget_keeps_no_index(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, chunked: list[str]
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, indexed: Callable[[], list[int | None]]
     ) -> None:
         (tmp_path / 'a.py').write_text('x = 1\n' * 50)
         agent = search_agent(tmp_path, FakeJev(''), cache_index=True)
@@ -178,7 +177,7 @@ class TestSmartFileSearchIndex:
             patch.setattr('pydantic_ai_harness.smart_file_search._index.MAX_TOTAL_LINES', 10)
             assert 'lines of source' in await search_error(agent)
         await search(agent)
-        assert chunked == ['a.py', 'a.py']  # the index cached by the first search was dropped, so it is rebuilt
+        assert indexed() == [1, None, 1]  # the index cached by the first search was dropped, so it is rebuilt
 
     # ------------------------------------------------------------ shortlist
 
@@ -204,31 +203,30 @@ class TestSmartFileSearchIndex:
 
     # ------------------------------------------------------------ caching
 
-    @pytest.mark.parametrize(('cache_index', 'chunks'), [(True, 1), (False, 2)])
+    @pytest.mark.parametrize(('cache_index', 'second'), [(True, 0), (False, 1)])
     async def test_cache_index_keeps_the_index_across_runs(
-        self, tmp_path: Path, chunked: list[str], cache_index: bool, chunks: int
+        self, tmp_path: Path, indexed: Callable[[], list[int | None]], cache_index: bool, second: int
     ) -> None:
         (tmp_path / 'a.py').write_text('expired = True\n')
         agent = search_agent(tmp_path, FakeJev('x'), cache_index=cache_index)
         await search(agent)
         await search(agent)
-        assert chunked == ['a.py'] * chunks
+        assert indexed() == [1, second]
 
-    async def test_cached_index_rechunks_only_changed_files(self, tmp_path: Path, chunked: list[str]) -> None:
+    async def test_cached_index_rechunks_only_changed_files(
+        self, tmp_path: Path, indexed: Callable[[], list[int | None]]
+    ) -> None:
         (tmp_path / 'a.py').write_text('def alpha():\n    return 1\n')
         (tmp_path / 'b.py').write_text('def beta():\n    return 2\n')
         (tmp_path / 'c.py').write_text('def gamma():\n    return 3\n')
         model = FakeJev('')
         agent = search_agent(tmp_path, model, cache_index=True)
         await search(agent)
-        assert sorted(chunked) == ['a.py', 'b.py', 'c.py']
-
-        chunked.clear()
         model.requests.clear()
         (tmp_path / 'b.py').write_text('def beta_renamed():\n    return 2\n')
         (tmp_path / 'c.py').unlink()
         result = await search(agent, query='beta renamed', candidates=1)
-        assert chunked == ['b.py']  # unchanged `a.py` is not chunked again
+        assert indexed() == [3, 1]  # only the edited `b.py` is chunked again
         assert (result.coverage.snippets, result.coverage.files) == (2, 2)  # `c.py`'s snippet is retired
         assert [snippet.symbol for snippet in judged(model)] == ['beta_renamed']
 
@@ -244,15 +242,19 @@ class TestSmartFileSearchIndex:
             assert [snippet.symbol for snippet in judged(model)] == [f'retry_{name}']
             assert result.coverage.snippets == 1
 
-    async def test_parallel_searches_build_the_index_once(self, tmp_path: Path, chunked: list[str]) -> None:
+    async def test_parallel_searches_build_the_index_once(
+        self, tmp_path: Path, indexed: Callable[[], list[int | None]]
+    ) -> None:
         for i in range(5):
             (tmp_path / f'm{i}.py').write_text(f'def f{i}():\n    return {i}\n')
         agent = search_agent(tmp_path, FakeJev(''), cache_index=True)
         results = await search_all(agent, *({'query': f'f{i}'} for i in range(3)))
-        assert sorted(chunked) == [f'm{i}.py' for i in range(5)]  # the first call builds, the others reuse
+        assert sorted(indexed(), key=str) == [0, 0, 5]  # the first call builds, the others reuse
         assert [result.coverage.snippets for result in results] == [5, 5, 5]
 
-    async def test_least_recently_searched_index_is_evicted(self, tmp_path: Path, chunked: list[str]) -> None:
+    async def test_least_recently_searched_index_is_evicted(
+        self, tmp_path: Path, indexed: Callable[[], list[int | None]]
+    ) -> None:
         for name in 'abcde':
             (tmp_path / name).mkdir()
             (tmp_path / name / f'{name}.py').write_text('x = 1\n')
@@ -260,9 +262,11 @@ class TestSmartFileSearchIndex:
         for name in 'abcdea':  # four indexes are kept: `a` was evicted by `e`, so it is rebuilt
             await search(agent, directory=name)
         await search(agent, directory='e')  # still cached
-        assert sorted(chunked) == ['a.py', 'a.py', 'b.py', 'c.py', 'd.py', 'e.py']
+        assert indexed() == [1, 1, 1, 1, 1, 1, 0]
 
-    async def test_an_index_being_searched_is_not_evicted(self, tmp_path: Path, chunked: list[str]) -> None:
+    async def test_an_index_being_searched_is_not_evicted(
+        self, tmp_path: Path, indexed: Callable[[], list[int | None]]
+    ) -> None:
         for name in 'abcde':
             (tmp_path / name).mkdir()
             (tmp_path / name / f'{name}.py').write_text('x = 1\n')
@@ -280,9 +284,11 @@ class TestSmartFileSearchIndex:
             backend.release['a'].set()
         await run('a')  # still cached
         await run('b')  # rebuilt
-        assert sorted(chunked) == ['a.py', 'b.py', 'b.py', 'c.py', 'd.py', 'e.py']
+        assert indexed() == [1, 1, 1, 1, 1, 0, 1]  # `b`-`e`, then the held `a`; `a` again cached, `b` rebuilt
 
-    async def test_parallel_searches_trim_the_cache_when_done(self, tmp_path: Path, chunked: list[str]) -> None:
+    async def test_parallel_searches_trim_the_cache_when_done(
+        self, tmp_path: Path, indexed: Callable[[], list[int | None]]
+    ) -> None:
         for name in 'abcde':
             (tmp_path / name).mkdir()
             (tmp_path / name / f'{name}.py').write_text('x = 1\n')
@@ -305,4 +311,4 @@ class TestSmartFileSearchIndex:
                 backend.release[name].set()
         for name in 'bcdea':
             await run(name)
-        assert sorted(chunked) == ['a.py', 'a.py', 'b.py', 'c.py', 'd.py', 'e.py']
+        assert indexed() == [1] * 5 + [0, 0, 0, 0, 1]  # `b`-`e` still cached, `a` rebuilt

@@ -38,6 +38,11 @@ class TestSmartFileSearchChunking:
         source = 'import os\n\n\n@cache\ndef load():\n    return os.environ\n'
         assert await _spans(tmp_path, 'a.py', source) == [(1, 1, None), (2, 6, 'load')]
 
+    async def test_line_numbers_match_the_file_past_a_form_feed(self, tmp_path: Path) -> None:
+        # `str.splitlines` would also split on the form feed and the U+2028 in the string, shifting later lines.
+        source = "def load():\n    return 1\n\x0c\ndef save():\n    return '2\u2028'\n"
+        assert await _spans(tmp_path, 'a.py', source) == [(1, 2, 'load'), (3, 5, 'save')]
+
     async def test_lines_after_the_last_python_statement_are_windowed(self, tmp_path: Path) -> None:
         source = 'def load():\n    return 1\n# trailing note\n'
         assert await _spans(tmp_path, 'a.py', source) == [(1, 2, 'load'), (3, 3, None)]

@@ -20,7 +20,7 @@ from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import ModelHTTPError, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.decision import NoulQuestion
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -142,9 +142,45 @@ class TestSmartFileSearch:
         result = await agent.run('find it', model=calls_smart_file_search(), usage_limits=UsageLimits(request_limit=6))
         [part] = tool_returns(result.all_messages())
         assert isinstance(part.content, SmartFileSearchResult)
-        # The model's first turn took one request; four judgments leave the sixth for its next turn.
-        assert part.content.coverage.evaluated == len(judge_model.requests) == 4
-        assert any('`request_limit` left room for no more' in w for w in part.content.warnings)
+        # The model's first turn took one request and one is kept for its next: the search spends half of the other four.
+        assert part.content.coverage.evaluated == len(judge_model.requests) == 2
+        assert any('at most half of what the run' in w for w in part.content.warnings)
+        assert result.output == 'done'
+
+    async def test_a_search_leaves_the_default_request_limit_room_to_keep_working(self, tmp_path: Path) -> None:
+        for i in range(60):
+            (tmp_path / f'm{i}.py').write_text('expired = True\n')
+        evaluated: list[int] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            returns = tool_returns(messages)
+            evaluated.extend(
+                r.content.coverage.evaluated
+                for r in returns[len(evaluated) :]
+                if isinstance(r.content, SmartFileSearchResult)
+            )
+            if len(returns) < 2:
+                return ModelResponse(parts=[ToolCallPart('smart_file_search', {'query': 'reject expired sessions'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        # Default `candidates` (128) and default `UsageLimits` (`request_limit=50`).
+        result = await search_agent(tmp_path, FakeJev('expired')).run('find it', model=FunctionModel(respond))
+        assert result.output == 'done'
+        # Each search spends half of what is left after one request kept for the next turn: (50 - 1 - 1) / 2,
+        # then (50 - 26 - 1) / 2 rounded up.
+        assert evaluated == [24, 12]
+        assert result.usage.requests == 3 + 24 + 12
+
+    async def test_parallel_searches_share_the_request_limit(self, tmp_path: Path) -> None:
+        for i in range(10):
+            (tmp_path / f'm{i}.py').write_text('expired = True\n')
+        agent = search_agent(tmp_path, FakeJev('expired'))
+        calls = calls_smart_file_search(*({'query': f'expired {i}'} for i in range(3)))
+        result = await agent.run('find it', model=calls, usage_limits=UsageLimits(request_limit=6))
+        results = [part.content for part in tool_returns(result.all_messages())]
+        assert all(isinstance(r, SmartFileSearchResult) for r in results)
+        # Each search alone may spend two of the four requests left, but together they stop at four.
+        assert sum(r.coverage.evaluated for r in results if isinstance(r, SmartFileSearchResult)) == 4
         assert result.output == 'done'
 
     async def test_a_judgment_is_exactly_one_request(self, tmp_path: Path) -> None:
@@ -365,6 +401,12 @@ def reject_expired(session):
         with pytest.raises(UserError, match='`SmartFileSearch` needs a workspace'):
             await agent.run('hi')
 
+    def test_toolset_validates_its_settings(self) -> None:
+        with pytest.raises(ValueError, match='concurrency'):
+            SmartFileSearchToolset[None](model=FakeJev('x'), threshold=0.5, concurrency=0)
+        with pytest.raises(ValueError, match='threshold'):
+            SmartFileSearchToolset[None](model=FakeJev('x'), threshold=-1, concurrency=1)
+
     def test_toolset_advertises_the_upstream_schema(self) -> None:
         toolset = SmartFileSearch[None](FakeJev('x')).get_toolset()
         assert isinstance(toolset, SmartFileSearchToolset)
@@ -397,6 +439,7 @@ def reject_expired(session):
         expected: dict[str, object] = {
             'smart_file_search.judge_model': 'fake:jev-fake',
             'smart_file_search.files': 1,
+            'smart_file_search.indexed_files': 1,
             'smart_file_search.skipped_files': 0,
             'smart_file_search.snippets': 1,
             'smart_file_search.evaluated': 1,
