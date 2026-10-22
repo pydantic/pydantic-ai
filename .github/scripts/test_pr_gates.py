@@ -216,6 +216,30 @@ def test_a_push_that_cannot_be_listed_voids_every_approval_the_pr_needs():
     assert github.removed == ['approved:ci-config', 'approved:dependencies']
 
 
+def test_reopening_voids_every_approval_the_pr_needs():
+    github = FakeGitHub(
+        files=['uv.lock'],
+        current_labels={'approved:dependencies', 'approved:ci-config'},
+        events=[_labeled('approved:dependencies'), _labeled('approved:ci-config')],
+    )
+
+    assert len(protected_paths(github, reopened=True).failures) == 1
+    # The PR touches no CI config, so that approval is not the PR's to void.
+    assert github.removed == ['approved:dependencies']
+
+
+def test_a_merge_of_main_that_changes_protected_files_the_pr_does_not_keeps_the_labels():
+    github = FakeGitHub(
+        files=['uv.lock'],
+        current_labels={'approved:dependencies'},
+        events=[_labeled('approved:dependencies')],
+        pushed_files=['pyproject.toml', '.github/workflows/ci.yml'],
+    )
+
+    assert protected_paths(github, pushed=('before', 'after')).failures == []
+    assert github.removed == []
+
+
 def test_a_pr_that_touches_no_protected_path_reads_nothing_else():
     github = FakeGitHub(files=['docs/index.md'], pushed_files=None)
 
@@ -271,7 +295,11 @@ def test_gh_cli_parses_github_responses(monkeypatch: pytest.MonkeyPatch):
     responses: dict[str, str | None] = {
         'repos/o/r/pulls/7': '{"changed_files": 2}',
         'repos/o/r/pulls/7/files?per_page=100': '[[{"filename": "a"}], [{"filename": "b", "previous_filename": "c"}]]',
-        'repos/o/r/compare/x...y': '{"merge_base_commit": {"sha": "m"}, "files": [{"filename": "uv.lock"}]}',
+        'repos/o/r/compare/x...y': '{"status": "ahead", "merge_base_commit": {"sha": "m"}, "files": [{"filename": "uv.lock"}]}',
+        # Moving the head back to an ancestor lists nothing, though the files changed.
+        'repos/o/r/compare/y...x': '{"status": "behind", "merge_base_commit": {"sha": "x"}, "files": []}',
+        'repos/o/r/compare/x...z': '{"status": "diverged", "merge_base_commit": {"sha": "m"}, "files": []}',
+        'repos/o/r/compare/gone...y': None,
         'repos/o/r/issues/7/labels?per_page=100': '[[{"name": "approved:ci-config"}]]',
         'repos/o/r/collaborators/someone/permission': '{"permission": "admin"}',
         'repos/o/r/collaborators/stranger/permission': None,
@@ -290,6 +318,9 @@ def test_gh_cli_parses_github_responses(monkeypatch: pytest.MonkeyPatch):
 
     assert github.changed_files() == [ChangedFile(filename='a'), ChangedFile(filename='b', previous_filename='c')]
     assert github.changed_files_between('x', 'y') == [ChangedFile(filename='uv.lock')]
+    assert github.changed_files_between('y', 'x') is None
+    assert github.changed_files_between('x', 'z') is None
+    assert github.changed_files_between('gone', 'y') is None
     assert github.merge_base('x', 'y') == 'm'
     assert github.labels() == {'approved:ci-config'}
     assert github.permission('someone') == 'admin'

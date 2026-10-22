@@ -16,7 +16,7 @@ import urllib.parse
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import Protocol
+from typing import Literal, Protocol
 
 from check_api_compatibility import Allowlist
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -68,6 +68,7 @@ class _Commit(BaseModel):
 
 
 class _Comparison(BaseModel):
+    status: Literal['ahead', 'behind', 'diverged', 'identical']
     merge_base_commit: _Commit
     files: list[ChangedFile] = []
 
@@ -125,29 +126,32 @@ def _scoped(paths: Iterable[str]) -> dict[str, list[str]]:
     return by_scope
 
 
-def protected_paths(github: GitHub, *, pushed: tuple[str, str] | None) -> Verdict:
+def protected_paths(github: GitHub, *, pushed: tuple[str, str] | None = None, reopened: bool = False) -> Verdict:
     """Require an `approved:<scope>` label, applied by a maintainer, for every protected scope touched.
 
-    `pushed` is the `(before, after)` pair of a `synchronize` event. A push that changes a
-    scope voids that scope's approval, so its label is removed before the verdict.
+    `pushed` is the `(before, after)` pair of a `synchronize` event. A push that changes the
+    PR's files in a scope voids that scope's approval, so its label is removed before the verdict.
     """
     verdict = Verdict()
-    touched = _scoped(_paths(github.changed_files()))
+    pr_paths = _paths(github.changed_files())
+    touched = _scoped(pr_paths)
     if not touched:
         verdict.summary.append('No protected path changed.')
         return verdict
 
     labels = github.labels()
-    if pushed is not None:
-        delta = github.changed_files_between(*pushed)
-        # A push whose changes can't be listed voids every approval the PR depends on.
-        voided = set(touched) if delta is None else set(_scoped(_paths(delta)))
+    if pushed is not None or reopened:
+        # A closed PR's branch takes pushes that fire no `synchronize`, so reopening it is treated
+        # like a push whose changes can't be listed: it voids every approval the PR depends on.
+        delta = None if pushed is None else github.changed_files_between(*pushed)
+        # Only the PR's own files count: a merge of `main` brings in protected changes the PR doesn't make.
+        voided = set(touched) if delta is None else set(_scoped(_paths(delta) & pr_paths))
         for scope in sorted(voided):
             label = f'approved:{scope}'
             if label in labels:
                 github.remove_label(label)
                 labels.discard(label)
-                verdict.summary.append(f'Removed `{label}`: a push changed this scope after it was applied.')
+                verdict.summary.append(f'Removed `{label}`: the PR changed this scope after it was applied.')
 
     # Events come oldest first, so the last `labeled` event for a label names who applied it now.
     appliers: dict[str, _Actor | None] = {}
@@ -245,8 +249,12 @@ class GhCli:
         except GateError:
             # A force-push can leave `base` unreachable from this repository.
             return None
-        # The compare API lists at most 300 files.
-        return None if len(comparison.files) >= 300 else comparison.files
+        # The comparison runs from the merge base, so it is the push itself only when `head`
+        # descends from `base`. A rollback (`behind`) or rewritten history (`diverged`) can hide a
+        # changed file. The compare API also lists at most 300 files.
+        if comparison.status not in ('ahead', 'identical') or len(comparison.files) >= 300:
+            return None
+        return comparison.files
 
     def labels(self) -> set[str]:
         pages = _LABEL_PAGES.validate_json(self._api('--paginate', '--slurp', f'{self._issue}/labels?per_page=100'))
@@ -283,8 +291,9 @@ def run(gate: str, github: GitHub, env: Mapping[str, str]) -> int:
     title = TITLES[gate]
     try:
         if gate == 'protected-paths':
-            pushed = (env['BEFORE_SHA'], env['AFTER_SHA']) if env.get('EVENT_ACTION') == 'synchronize' else None
-            verdict = protected_paths(github, pushed=pushed)
+            action = env.get('EVENT_ACTION')
+            pushed = (env['BEFORE_SHA'], env['AFTER_SHA']) if action == 'synchronize' else None
+            verdict = protected_paths(github, pushed=pushed, reopened=action == 'reopened')
         else:
             verdict = compatibility_waiver(github, base_sha=env['BASE_SHA'], head_sha=env['HEAD_SHA'])
     except (GateError, ValidationError) as error:
