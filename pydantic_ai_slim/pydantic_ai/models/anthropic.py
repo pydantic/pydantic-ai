@@ -2331,7 +2331,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         return tools, tool_choice
 
-    async def _map_message(  # noqa: C901
+    async def _map_message(
         self,
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
@@ -2339,15 +2339,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         messages = self._trim_before_compaction(messages)
-        # Cross-provider files are dropped silently here, not raised via
-        # `_validate_uploaded_file_provider`; intentional per https://github.com/pydantic/pydantic-ai/issues/4338 (ignore over raise).
-        pending_container_uploads = [
-            file.file_id
-            for tool in model_request_parameters.native_tools
-            if isinstance(tool, CodeExecutionTool) and tool.files
-            for file in tool.files
-            if file.provider_name == self.system
-        ]
         map_context = _MapMessagesContext(
             model_request_parameters=model_request_parameters,
             # Whenever this request withholds a tool's schema, render any local-shape `search_tools`
@@ -2405,21 +2396,48 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         _drop_unpaired_native_tool_calls(anthropic_messages)
         _place_system_messages_before_generation(anthropic_messages)
         _anchor_system_messages(anthropic_messages)
+        self._add_container_uploads(anthropic_messages, model_request_parameters)
+        system_prompt = self._build_system_prompt(
+            map_context.system_prompt_parts, messages, model_request_parameters, model_settings
+        )
+        return system_prompt, anthropic_messages
 
-        if pending_container_uploads:
-            for message in anthropic_messages:
-                if message['role'] == 'user':
-                    existing = message['content']
-                    assert isinstance(existing, list)
-                    if _is_tool_result_only(existing):
-                        continue
-                    extra: list[BetaContainerUploadBlockParam] = [
-                        {'type': 'container_upload', 'file_id': file_id} for file_id in pending_container_uploads
-                    ]
-                    message['content'] = [*existing, *extra]
+    def _add_container_uploads(
+        self, anthropic_messages: list[BetaMessageParam], model_request_parameters: ModelRequestParameters
+    ) -> None:
+        """Add each Anthropic-hosted `CodeExecutionTool` file to every user message that can carry a `container_upload`."""
+        # Cross-provider files are dropped silently here, not raised via
+        # `_validate_uploaded_file_provider`; intentional per https://github.com/pydantic/pydantic-ai/issues/4338 (ignore over raise).
+        pending_container_uploads = [
+            file.file_id
+            for tool in model_request_parameters.native_tools
+            if isinstance(tool, CodeExecutionTool) and tool.files
+            for file in tool.files
+            if file.provider_name == self.system
+        ]
+        if not pending_container_uploads:
+            return
+        for message in anthropic_messages:
+            if message['role'] == 'user':
+                existing = message['content']
+                assert isinstance(existing, list)
+                if _is_tool_result_only(existing):
+                    continue
+                extra: list[BetaContainerUploadBlockParam] = [
+                    {'type': 'container_upload', 'file_id': file_id} for file_id in pending_container_uploads
+                ]
+                message['content'] = [*existing, *extra]
 
+    def _build_system_prompt(
+        self,
+        system_prompt_parts: list[str],
+        messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+        model_settings: AnthropicModelSettings,
+    ) -> str | list[BetaTextBlockParam]:
+        """The top-level `system` parameter: the hoisted system prompt, then one block per instruction part."""
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
-        system_prompt = '\n\n'.join(map_context.system_prompt_parts)
+        system_prompt = '\n\n'.join(system_prompt_parts)
 
         # Build system prompt blocks: each instruction part becomes a separate text block.
         # When anthropic_cache_instructions is enabled, the cache point goes after the last
@@ -2463,9 +2481,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     system_prompt_blocks[cache_block_idx]['cache_control'] = self._build_cache_control(ttl)
 
             if system_prompt_blocks:
-                return system_prompt_blocks, anthropic_messages
+                return system_prompt_blocks
 
-        return system_prompt, anthropic_messages
+        return system_prompt
 
     async def _map_model_request(  # noqa: C901
         self, message: ModelRequest, standing_prompt_count: int, map_context: _MapMessagesContext
