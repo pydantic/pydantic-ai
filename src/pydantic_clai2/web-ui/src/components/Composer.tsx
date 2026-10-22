@@ -1,8 +1,10 @@
 import { forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { SessionContext, api, interrupt } from '../api'
 import { type Attachment, base64, imageFiles, readImages } from '../attachments'
-import type { CompletionInfo } from '../protocol'
-import { ArrowUpIcon, ChevronIcon, CheckIcon, CloseIcon, StopIcon } from './icons'
+import type { CompletionInfo, QueuedItem } from '../protocol'
+import { ArrowUpIcon, BoltIcon, ChevronIcon, CheckIcon, CloseIcon, StopIcon } from './icons'
+import { STEER_KEY } from '../platform'
+import { QueuePanel } from './QueuePanel'
 
 export interface ComposerHandle {
   focus: () => void
@@ -31,11 +33,19 @@ interface Props {
   chat?: { send: (text: string) => Promise<void>; interrupt: () => Promise<unknown> }
   /** Whether `/` completes commands and the model picker changes the model; the orchestrator chat has neither. */
   commands?: boolean
+  /**
+   * The shown session's queued input, listed above the box. With it, Alt+Enter steers the running turn, as in the
+   * terminal; the orchestrator chat has no queue to show or turn to steer.
+   */
+  queue?: QueuedItem[]
   label?: string
   onError: (message: string) => void
 }
 
-/** The prompt box: Enter sends, Shift+Enter adds a line, `/` completes commands from CLAI's own registry, and pasted or dropped images go with the prompt. */
+/**
+ * The prompt box: Enter sends, or queues while a turn runs; Alt+Enter steers the running turn; Shift+Enter adds a line;
+ * `/` completes commands from CLAI's own registry; pasted or dropped images go with the prompt.
+ */
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   {
     running,
@@ -52,6 +62,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     onAttachments,
     chat,
     commands = true,
+    queue,
     label = 'Message CLAI',
     onError,
   },
@@ -124,11 +135,19 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     area.current?.focus()
   }
 
+  const report = (error: unknown) => onError(error instanceof Error ? error.message : String(error))
+  const steers = queue !== undefined && !chat
   const empty = !text.trim() && attachments.length === 0
 
-  const send = async () => {
+  const send = async (steer = false) => {
     const value = text.trim()
-    if (empty || disabled) return
+    if (disabled) return
+    if (empty) {
+      // As in the terminal: Alt+Enter with nothing typed steers the oldest queued follow-up, which stays if it cannot.
+      const head = steer ? queue?.[0] : undefined
+      if (head?.kind === 'prompt') await session.steerQueued(head.id).catch(report)
+      return
+    }
     const images = attachments
     setText('')
     onAttachments?.(() => [])
@@ -142,13 +161,17 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     try {
       if (chat) await chat.send(value)
       else {
-        const entered = await session.send(value, images.map(base64))
+        // A prompt Alt+Enter cannot steer, such as any while no turn runs, is entered as Enter enters it.
+        // Steering takes text alone, so a prompt with images is entered as Enter enters it too.
+        const entered = await (steer && images.length === 0
+          ? session.steer(value)
+          : session.send(value, images.map(base64)))
         if (entered.menu !== null) onMenu?.(entered.menu)
       }
     } catch (error) {
       setText(value)
       onAttachments?.((current) => [...images, ...current])
-      onError(error instanceof Error ? error.message : String(error))
+      report(error)
     }
   }
 
@@ -211,7 +234,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault()
-      void send()
+      void send(steers && event.altKey)
     }
   }
 
@@ -238,6 +261,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
 
   return (
     <div className="composer-wrap">
+      {steers && <QueuePanel queue={queue} running={running} onError={onError} />}
       {suggestions.length > 0 && (
         <div className="suggestions" role="listbox" id="suggestions">
           {suggestions.map((suggestion, index) => (
@@ -329,6 +353,17 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           )}
           {controls}
           {running ? meter : <span className="hint">{commands ? '/ for commands' : 'Enter to send'}</span>}
+          {steers && running && text.trim() && attachments.length === 0 && (
+            <button
+              className="send steer"
+              onClick={() => void send(true)}
+              disabled={disabled}
+              title={`Steer now: send it to the running turn (${STEER_KEY})`}
+              aria-label="Steer now"
+            >
+              <BoltIcon size={15} />
+            </button>
+          )}
           {running && empty ? (
             <button
               className="send stop"
@@ -339,7 +374,12 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               <StopIcon size={14} />
             </button>
           ) : (
-            <button className="send" onClick={() => void send()} disabled={empty || disabled} title="Send (Enter)">
+            <button
+              className="send"
+              onClick={() => void send()}
+              disabled={empty || disabled}
+              title={running ? 'Queue for after this turn (Enter)' : 'Send (Enter)'}
+            >
               <ArrowUpIcon size={16} />
             </button>
           )}

@@ -62,7 +62,9 @@ documents, uploaded-file references, and model-generated files cannot be seeded.
     As in a standard run, `message_history` is treated as trusted server-side state: its system
     prompts become session instructions, and its image URLs are downloaded by your server
     according to the [download settings](../input.md#user-side-download-vs-direct-file-url) each URL
-    carries. If the history came from a browser or another untrusted client, pass it through
+    carries. Request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions] on
+    seeded history are ignored in favor of the agent's own.
+    If the history came from a browser or another untrusted client, pass it through
     [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] before seeding the session; see
     [Loading untrusted history](../message-history.md#loading-untrusted-history).
 
@@ -170,11 +172,11 @@ Retained audio is kept in the history
 from it: the conversation a tool sees as [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], and the input
 and output recorded on each response's [span](observability.md).
 
-Input retention follows provider-reported boundaries rather than locally trimming speech. OpenAI,
-Azure OpenAI, and xAI normally retain microphone input between reported speech-end boundaries.
-Gemini does not report those boundaries, so it retains input between response completions. Either
-form can include silence or other microphone input and should not be treated as a precisely trimmed
-utterance.
+Input retention follows provider-reported boundaries rather than locally trimming speech. OpenAI
+gpt-realtime, Azure OpenAI, xAI, and Eleven Realtime normally retain microphone input between reported
+speech-end boundaries. Gemini Live, GPT-Live, and ElevenLabs Agents don't report those boundaries,
+so they retain input between response completions. Either form can include silence or other
+microphone input and should not be treated as a precisely trimmed utterance.
 
 ## Retaining images
 
@@ -228,10 +230,18 @@ History follows the order of the provider's own conversation:
 - Nothing is inserted ahead of messages already returned, so each snapshot starts with the one before it.
   The one exception is a tool's return, which always directly follows the response that called it: a tool
   that finishes after later messages were recorded has its return inserted ahead of them.
+- With Gemini Live [asynchronous tool calls](gemini.md#asynchronous-tool-calls) on a model that keeps talking while
+  the tool runs, the model goes on in the turn that called the tool. That speech is recorded in the calling
+  response, after the [`ToolCallPart`][pydantic_ai.messages.ToolCallPart], since the model said it before it had
+  the result. The response ends when the model ends its turn, when the tool's result goes out, or when a spoken
+  user turn joins the conversation: whatever the model says after that is a response of its own, recorded after the
+  return. That includes the rest of a sentence the result cut into, and what the model says between the results of
+  several calls in one response, whose returns all directly follow it. A calling response the user cuts off while
+  its tool still runs is recorded as complete, as its tool round goes on.
 - A message already returned is never changed in place, but a later snapshot can hold an updated copy of it
   at the same position. A reply the user [barged in on](turns.md#barge-in) after it was recorded becomes an
-  interrupted copy (on models that support output truncation, and on ElevenLabs Agents, which reports what was
-  heard), and a speech part whose
+  interrupted copy (when the session tracks playback, with `interrupt(played_bytes=...)` or
+  `handle_barge_in=True`, and on ElevenLabs Agents, which reports what was heard), and a speech part whose
   [retained audio](#retaining-audio) is evicted loses its audio. If you persist history as it grows, store
   the latest snapshot rather than appending only the messages past the ones you stored.
 

@@ -202,7 +202,7 @@ An input guard rewrites the prompt in place, so the model receives the broken ve
 
 `iban` has the same problem and the same answer: a country code plus two digits is a shape ordinary text hits constantly, so spaces are allowed only where the printed form puts them and every match is checked against the ISO 7064 mod-97 digit an IBAN carries.
 
-An AWS *secret* access key is deliberately absent from the defaults. It is forty characters of base64 with no distinguishing prefix, so nothing in the value marks it as a key and a pattern for the shape alone would take ordinary base64 with it. Matching one means anchoring on the name written beside it -- `aws_secret_access_key = ...` -- which is what [`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields) does, and which finds the key only where it is written as an assignment. That narrower pattern is not shipped here; pass it through `extra=` if that is how keys reach your agent.
+An AWS *secret* access key is deliberately absent from the defaults. It is forty characters of base64 with no distinguishing prefix, so nothing in the value marks it as a key and a pattern for the shape alone would take ordinary base64 with it. Matching one means anchoring on the name written beside it -- `aws_secret_access_key = ...` -- which finds the key only where it is written as an assignment. That narrower pattern is not shipped here; pass it through `extra=` if that is how keys reach your agent.
 
 `only=` selects patterns; it does not reorder them. The application order is part of each mapping's contract -- `iban` runs before `credit_card` so a spaced account number is not labelled a card -- and it holds that order whatever order you list `only` in.
 
@@ -289,6 +289,8 @@ InputGuardrail(guard=slow_async_classifier, parallel=True)
 ```
 
 Parallel mode trades tokens for latency: sequential mode never calls the model when the guard blocks, but parallel mode has already started the model call -- if the guard trips only after the model has responded, those tokens were spent. For fast local checks (regex, keyword lookup) sequential is the better default. `replace` is not available under `parallel=True`.
+
+Normal tool dispatch starts after the model request, which the guard holds until it decides. That includes a request that raises before the guard decides, such as a `ModelRetry` from an `after_model_request` hook or a model error raised before the response streams: the exception waits for the verdict, and a block takes its place. In a streamed run, a block that lands after the whole response has streamed, as after a `ModelRetry` from `after_model_request`, is raised as `SkipModelRequest` (see [Streaming](#streaming)). [`CodeMode`](code-mode.md#eager-execution) with `eager=True` or `speculate` starts nested tool calls while the model is still streaming, so each of those calls waits for the verdict before it runs: a blocked prompt runs none of them, and an allowed one releases them as soon as the guard decides.
 
 ## Hard-fail path
 
@@ -475,11 +477,6 @@ Tool spans add a `guardrail.tool` attribute naming the tool. `approve` records `
 
 `OutputGuardrail` positions its block/redact spans so they are always captured by an enclosing `Instrumentation` span regardless of capability order, while `InputGuardrail` runs innermost so any capability that morphs messages (a prompt rewriter, a context manager) runs first and the guard sees the final prompt the model will receive. `ToolGuardrail` also runs innermost, which puts it last among argument hooks (it sees the arguments every other capability has finished modifying) and first among result hooks (it sees the raw tool result, before a capability such as [`ToolOutputLimits`](tool-output-limits.md) truncates or offloads it).
 
-## Relationship to `pydantic-ai-shields`
-
-[`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields) ships each detector as its own capability. The equivalents here are functions instead, which is what lets several run as one chain, share a redaction, and sit beside a guard you wrote.
-
-Two things it has that this deliberately does not. Its `PromptInjection` matches phrases like "ignore previous instructions": injection is ordinary language, so a pattern list catches the examples and misses the attack while flagging a pasted log, and a check that reads as protection without being it is worse than none. Its `NoRefusals` blocks the model from declining, which is a decision about what an agent may say rather than a guardrail on data, and not one to make a default.
 
 ## API
 
