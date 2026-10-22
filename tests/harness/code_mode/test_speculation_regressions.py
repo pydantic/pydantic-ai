@@ -188,6 +188,9 @@ async def test_streamed_backslashes_do_not_warn(eager: bool, literal: str) -> No
     )
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
+        # What the suite already ignores: a socket or coroutine another test leaked can warn here when collected.
+        warnings.filterwarnings('ignore', category=ResourceWarning)
+        warnings.filterwarnings('ignore', "coroutine '.*' was never awaited", RuntimeWarning)
         result = await agent.run('go')
     assert not caught
     assert result.output == 'done'
