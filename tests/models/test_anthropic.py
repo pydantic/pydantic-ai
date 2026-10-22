@@ -324,22 +324,71 @@ def test_anthropic_empty_cited_text_is_not_an_excerpt() -> None:
     ]
 
 
-async def test_anthropic_leaves_out_citations_it_cannot_check():
-    """Replay leaves out each citation it can't check against the request, and keeps the rest.
+_ANTHROPIC_REPLAY_CITATION: dict[str, Any] = {
+    'type': 'char_location',
+    'cited_text': 'thirty days',
+    'document_index': 0,
+    'document_title': None,
+    'start_char_index': 21,
+    'end_char_index': 32,
+}
 
-    The page citation is what Anthropic returns for a PDF, and without the `citations` setting documents are sent
-    without citations enabled, so nothing can be checked against them; the other entries only come from history edited
-    after Anthropic sent it. Citations that are sent back are covered by recordings in `test_citations.py`.
+
+@pytest.mark.parametrize(
+    'citation,provider_name,citations_setting,kept',
+    [
+        pytest.param(_ANTHROPIC_REPLAY_CITATION, 'anthropic', True, True, id='checked'),
+        pytest.param('not a citation', 'anthropic', True, False, id='not-a-dict'),
+        pytest.param(
+            {key: value for key, value in _ANTHROPIC_REPLAY_CITATION.items() if key != 'cited_text'},
+            'anthropic',
+            True,
+            False,
+            id='no-cited-text',
+        ),
+        pytest.param(
+            {**_ANTHROPIC_REPLAY_CITATION, 'start_char_index': 0, 'end_char_index': 11},
+            'anthropic',
+            True,
+            False,
+            id='range-misses-cited-text',
+        ),
+        # Slicing stops at the end of the document, so this range would select the cited text.
+        pytest.param(
+            {**_ANTHROPIC_REPLAY_CITATION, 'cited_text': 'thirty days from purchase.', 'end_char_index': 100},
+            'anthropic',
+            True,
+            False,
+            id='range-past-end',
+        ),
+        pytest.param(
+            {
+                'type': 'web_search_result_location',
+                'url': 'https://example.com',
+                'title': 'Example',
+                'cited_text': 'web excerpt',
+            },
+            'anthropic',
+            True,
+            False,
+            id='web-search-without-encrypted-index',
+        ),
+        # What Anthropic returns for a PDF, whose text isn't sent, so it can't be checked.
+        pytest.param({**_ANTHROPIC_REPLAY_CITATION, 'type': 'page_location'}, 'anthropic', True, False, id='pdf-page'),
+        pytest.param(_ANTHROPIC_REPLAY_CITATION, 'bedrock', True, False, id='other-provider'),
+        # Without the setting, documents are sent without citations enabled, so nothing can be checked against them.
+        pytest.param(_ANTHROPIC_REPLAY_CITATION, 'anthropic', False, False, id='citations-setting-off'),
+    ],
+)
+async def test_anthropic_leaves_out_citations_it_cannot_check(
+    citation: Any, provider_name: str, citations_setting: bool, kept: bool
+):
+    """Replay keeps a citation only when it can check it against a plain-text document in the request.
+
+    Unit test: apart from the PDF page, these citations only come from history edited after Anthropic sent it.
+    Citations that are sent back are covered by recordings in `test_citations.py`.
     """
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='mock-api-key'))
-    valid: dict[str, Any] = {
-        'type': 'char_location',
-        'cited_text': 'thirty days',
-        'document_index': 0,
-        'document_title': None,
-        'start_char_index': 21,
-        'end_char_index': 32,
-    }
     history: list[ModelMessage] = [
         ModelRequest(
             parts=[
@@ -352,72 +401,18 @@ async def test_anthropic_leaves_out_citations_it_cannot_check():
             ]
         ),
         ModelResponse(
-            parts=[
-                TextPart(
-                    'Thirty days.',
-                    provider_name='anthropic',
-                    provider_details={
-                        'citations': [
-                            valid,
-                            'not a citation',
-                            {key: value for key, value in valid.items() if key != 'cited_text'},
-                            {**valid, 'start_char_index': 0, 'end_char_index': 11},
-                            # The range runs past the end of the document, so only slicing makes it match.
-                            {**valid, 'cited_text': 'thirty days from purchase.', 'end_char_index': 100},
-                            {
-                                'type': 'web_search_result_location',
-                                'url': 'https://example.com',
-                                'title': 'Example',
-                                'cited_text': 'web excerpt',
-                            },
-                        ]
-                    },
-                ),
-                TextPart(
-                    'From the PDF.',
-                    provider_name='anthropic',
-                    provider_details={'citations': [{**valid, 'type': 'page_location'}]},
-                ),
-                TextPart('From another provider.', provider_name='bedrock', provider_details={'citations': [valid]}),
-            ],
-            provider_name='anthropic',
+            parts=[TextPart('Thirty days.', provider_name=provider_name, provider_details={'citations': [citation]})],
+            provider_name=provider_name,
         ),
         ModelRequest(parts=[UserPromptPart('Continue.')]),
     ]
 
-    async def replayed_answer(settings: AnthropicModelSettings) -> list[Any]:
-        _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
-            model.prepare_messages(history), ModelRequestParameters(), settings
-        )
-        return list(messages[1]['content'])
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), AnthropicModelSettings(citations=citations_setting)
+    )
 
-    assert await replayed_answer(AnthropicModelSettings(citations=True)) == snapshot(
-        [
-            {
-                'text': 'Thirty days.',
-                'type': 'text',
-                'citations': [
-                    {
-                        'type': 'char_location',
-                        'cited_text': 'thirty days',
-                        'document_index': 0,
-                        'document_title': None,
-                        'start_char_index': 21,
-                        'end_char_index': 32,
-                    }
-                ],
-            },
-            {'text': 'From the PDF.', 'type': 'text'},
-            {'text': 'From another provider.', 'type': 'text'},
-        ]
-    )
-    assert await replayed_answer(AnthropicModelSettings()) == snapshot(
-        [
-            {'text': 'Thirty days.', 'type': 'text'},
-            {'text': 'From the PDF.', 'type': 'text'},
-            {'text': 'From another provider.', 'type': 'text'},
-        ]
-    )
+    [replayed] = cast(list[dict[str, Any]], messages[1]['content'])
+    assert replayed.get('citations') == ([_ANTHROPIC_REPLAY_CITATION] if kept else None)
 
 
 @pytest.mark.parametrize('source', ['result-123', 'https://example.com/result'])
