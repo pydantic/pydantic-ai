@@ -873,7 +873,8 @@ NativeCitationReplayProvider = Literal[
         pytest.param('anthropic-messages', id='anthropic-messages'),
         pytest.param('anthropic-document', id='anthropic-document'),
         pytest.param('anthropic-tool-document', id='anthropic-tool-document'),
-        pytest.param('bedrock-converse', id='bedrock-converse'),
+        # Matching on the body would record the two turns sorted by body, out of order for the cache-prefix check.
+        pytest.param('bedrock-converse', id='bedrock-converse', marks=pytest.mark.vcr()),
         pytest.param('openai-responses', id='openai-responses'),
     ],
 )
@@ -1164,13 +1165,16 @@ def read_warranty_policy() -> BinaryContent:
 
 @contextmanager
 def _converse_request_bodies(model: BedrockConverseModel) -> Generator[list[dict[str, Any]]]:
-    """The Converse request bodies as sent, read off boto's `before-send` event, which fires on cassette replay too."""
+    """The Converse request bodies as sent, read off boto's `before-send` event, which fires on cassette replay too.
+
+    Both operations count: without `max_tokens`, a Claude request goes out as `ConverseStream`.
+    """
     bodies: list[dict[str, Any]] = []
 
     def capture(request: Any, **_: Any) -> None:
         bodies.append(json.loads(request.body))
 
-    event = 'before-send.bedrock-runtime.Converse'
+    event = 'before-send.bedrock-runtime'
     model.client.meta.events.register_last(event, capture)
     try:
         yield bodies
