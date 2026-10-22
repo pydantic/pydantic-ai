@@ -117,6 +117,7 @@ class LiveRuntime:
         live_id: str,
         host: PluginHost[None],
         running: Callable[[], bool],
+        queued: Callable[[], int] = lambda: 0,
         changed: Callable[[], None] = lambda: None,
         inputs: Callable[[], PromptInputs | None] = lambda: None,
     ) -> None:
@@ -124,10 +125,12 @@ class LiveRuntime:
 
         `changed` tells the process's `LiveSessions` that its state may have changed. `inputs` is the session's
         prompt, which holds the input waiting for its turn and steers that turn; `None` holds none and steers nothing.
+        `queued` counts the waiting input only while there is no prompt; with one, `queued` is its queue's length.
         """
         self._id = live_id
         self._host = host
         self._running = running
+        self._queued = queued
         self._inputs = inputs
         self._changed = changed
         self._watchers = 0
@@ -183,7 +186,8 @@ class LiveRuntime:
     @property
     def queued(self) -> int:
         """How many inputs wait for the session's running turn or command to end."""
-        return len(self.queue)
+        inputs = self._inputs()
+        return self._queued() if inputs is None else len(inputs.queue)
 
     @property
     def queue(self) -> list[QueuedInput]:

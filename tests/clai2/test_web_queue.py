@@ -253,7 +253,7 @@ def test_a_live_session_without_a_prompt_queues_nothing() -> None:
 
 
 def test_a_live_session_counts_the_queue_its_prompt_holds() -> None:
-    """`queued` counts the prompt's own queue, so the count and the list cannot disagree."""
+    """With a prompt, `queued` counts its queue, so the count and the list cannot disagree."""
 
     class Inputs:
         queue = [QueuedInput(id='q1', text='first'), QueuedInput(id='q2', text='/help')]
@@ -265,5 +265,7 @@ def test_a_live_session_counts_the_queue_its_prompt_holds() -> None:
         def steer(self, text: str) -> bool: ...  # pragma: no cover
 
     host = PluginHost[None](name='', console=Console(file=StringIO()), settings={})
-    session = LiveRuntime(live_id='x', host=host, running=lambda: True, inputs=Inputs)
+    session = LiveRuntime(live_id='x', host=host, running=lambda: True, queued=lambda: 5, inputs=Inputs)
     assert session.queued == len(session.queue) == 2
+    # Without a prompt, the count still comes from `queued`.
+    assert LiveRuntime(live_id='y', host=host, running=lambda: True, queued=lambda: 3).queued == 3
