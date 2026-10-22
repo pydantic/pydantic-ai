@@ -826,6 +826,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Explain?': 'This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
     'What is the weather in Tokyo?': 'As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloudy with a temperature of 53°F (12°C).',
     'What is the capital of France?': 'The capital of France is Paris.',
+    'Where is the Eiffel Tower?': ToolCallPart(tool_name='final_result', args={'city': 'Paris', 'country': 'France'}),
     'What is the capital of Italy?': 'The capital of Italy is Rome.',
     'What is the capital of the UK?': 'The capital of the UK is London.',
     'What is the capital of Mexico?': 'The capital of Mexico is Mexico City.',
@@ -1991,7 +1992,11 @@ def fast_batching(self: BatchModelRequests) -> None:
     """Keep batching, through the mocked model's in-memory batch API, without waiting on the example's intervals."""
     fast = timedelta(milliseconds=1)
     self._pool = BatchPool(  # pyright: ignore[reportPrivateUsage]
-        max_requests=self.max_requests, max_wait=fast, poll_interval=fast, max_poll_interval=fast
+        max_requests=self.max_requests,
+        max_wait=fast,
+        max_resubmissions=self.max_resubmissions,
+        poll_interval=fast,
+        max_poll_interval=fast,
     )
 
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
@@ -26,7 +26,7 @@ from pydantic_ai import (
     ToolCallPart,
     UsageLimitExceeded,
 )
-from pydantic_ai.capabilities import BatchModelRequests
+from pydantic_ai.capabilities import BatchModelRequests, SelectModel
 from pydantic_ai.direct import model_request_batch
 from pydantic_ai.exceptions import (
     ModelAPIError,
@@ -41,11 +41,12 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models._batch_codec import BatchJobError
 from pydantic_ai.models._batch_model import BatchedModel, BatchPool
 from pydantic_ai.models._in_memory_batch import _State  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.models.batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import UsageLimits
@@ -615,3 +616,37 @@ async def test_model_request_batch_splits_batches_by_bytes_and_count() -> None:
     wrapped = SizedBatchModel()
     await model_request_batch(wrapped, requests, max_requests=1, **FAST_POLLING)
     assert [batch.request_count for batch in wrapped.created] == [1] * 5
+
+
+@dataclass(init=False)
+class _NoBatchModel(TestModel):
+    @property
+    def batch_max_requests(self) -> int | None:
+        return None
+
+
+async def test_a_model_without_a_batch_api_selected_mid_run_raises_at_its_request() -> None:
+    """Each request is batched with the model serving it, so switching mid-run to one without a batch API raises then."""
+    batched = SlowBatchTestModel()
+
+    def select(ctx: ModelSelectionContext[None]) -> Model:
+        return batched if ctx.run_step <= 1 else _NoBatchModel()
+
+    agent = Agent(batched, capabilities=[SelectModel(select), BatchModelRequests(**FAST_BATCH_SETTINGS)])
+
+    @agent.tool_plain
+    def get_city() -> str:
+        return 'Paris'
+
+    with pytest.raises(UserError, match=r"`_NoBatchModel` 'test' has no batch API\."):
+        await agent.run('Where?')
+    assert len(batched.created) == 1
+
+
+def test_a_fallback_model_is_not_batched() -> None:
+    agent = Agent(
+        FallbackModel(SlowBatchTestModel(), SlowBatchTestModel()),
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)],
+    )
+    with pytest.raises(UserError, match=r'`FallbackModel` .* has no batch API\.'):
+        agent.run_sync('Hello')
