@@ -82,6 +82,7 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.toolsets import FunctionToolset
 
 from ..conftest import try_import
 from .conftest import HERE, JSDriver
@@ -303,6 +304,8 @@ class Scenario:
     script: Script
     agent_kwargs: dict[str, Any] = field(default_factory=dict[str, Any])
     setup: Callable[[Agent[None, str]], None] = lambda agent: None
+    toolsets: Callable[[], Sequence[FunctionToolset[None]]] = lambda: ()
+    """Toolsets to build each agent with, made fresh per agent since a tool can change its toolset."""
     adapter_kwargs: dict[str, Any] = field(default_factory=dict[str, Any])
     seed: list[ModelMessage] = field(default_factory=list[ModelMessage])
     """History the conversation continues, hydrated into the client on both paths.
@@ -331,7 +334,7 @@ class Scenario:
 
         script_model = FunctionModel(self.script, stream_function=stream_function)
         model: Model = script_model if provider is None else _ProviderWire(provider, script_model, calls)
-        agent = Agent(model, **self.agent_kwargs)
+        agent = Agent(model, toolsets=self.toolsets(), **self.agent_kwargs)
         self.setup(agent)
         return agent, calls
 
@@ -411,6 +414,28 @@ def _reveal_tools(agent: Agent[None, str]) -> None:
     @agent.tool_plain(defer_loading=True)
     def secret() -> str:
         return 'the secret'
+
+
+def _mid_run_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    results = _results_since_question(messages)
+    if results == 0:
+        return ModelResponse(parts=[ToolCallPart('add_tool', {}, tool_call_id=f'add-{len(messages)}')])
+    if results == 1:
+        return ModelResponse(parts=[ToolCallPart('added_tool', {}, tool_call_id=f'added-{len(messages)}')])
+    return ModelResponse(parts=[TextPart('The added tool ran.')])
+
+
+def _growing_toolset() -> list[FunctionToolset[None]]:
+    """A toolset whose tool adds another tool to it partway through the run."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def add_tool() -> str:
+        if 'added_tool' not in toolset.tools:
+            toolset.add_function(lambda: 'added tool ran', name='added_tool')
+        return 'added'
+
+    return [toolset]
 
 
 def _enqueue_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -629,6 +654,18 @@ SCENARIOS = [
         id='tool_availability_delta',
         script=_reveal_script,
         setup=_reveal_tools,
+        gaps=_gaps(
+            _AGUI_ACTIVITY,
+            ('load', 'dump', 'agui'),
+            ('load', 'stream', 'agui'),
+            ('wire', 'dump', 'agui'),
+            ('wire', 'stream', 'agui'),
+        ),
+    ),
+    Scenario(
+        id='mid_run_tool_addition',
+        script=_mid_run_script,
+        toolsets=_growing_toolset,
         gaps=_gaps(
             _AGUI_ACTIVITY,
             ('load', 'dump', 'agui'),

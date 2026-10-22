@@ -91,6 +91,7 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import UsageLimits
 
@@ -11958,6 +11959,103 @@ async def test_tool_availability_delta_round_trips_through_client_rebuilt_stream
 
     assert deltas(loaded) == snapshot([ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='reveal-1')])
     assert deltas(loaded) == deltas(server_history)
+
+
+async def test_mid_run_tool_delta_round_trips_through_client_rebuilt_stream() -> None:
+    """A tool that joins mid-run keeps its delta when the client rebuilds history from the event stream.
+
+    Without the delta, the next run over that history would take the tool for one it started with and
+    declare it in `tools`, moving the cached prefix, instead of keeping it on the tool-addition channel.
+    """
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        returned = [part.tool_name for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)]
+        if not returned:
+            yield {0: DeltaToolCall(name='unlock', json_args='{}', tool_call_id='c1')}
+        elif returned == ['unlock']:
+            yield {0: DeltaToolCall(name='later', json_args='{}', tool_call_id='c2')}
+        else:
+            yield 'done'
+
+    toolset = FunctionToolset[Any]()
+
+    @toolset.tool_plain
+    def unlock() -> str:
+        toolset.add_function(lambda: 'later ran', name='later')
+        return 'unlocked'
+
+    agent = Agent(FunctionModel(stream_function=stream_function), toolsets=[toolset])
+    user_message = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='go')])
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat-1', messages=[user_message]))
+    server_history: list[ModelMessage] = []
+    chunks = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+        if '[DONE]' not in encoded
+    ]
+    loaded = VercelAIAdapter.load_messages([user_message, _reduce_assistant_message(chunks, 'assistant-1')])
+
+    def deltas(messages: list[ModelMessage]) -> list[ToolAvailabilityDeltaPart]:
+        return [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolAvailabilityDeltaPart)
+        ]
+
+    assert deltas(loaded) == snapshot([ToolAvailabilityDeltaPart(tools_added=['later'])])
+    assert deltas(loaded) == deltas(server_history)
+
+    seen: list[ModelRequestParameters] = []
+
+    def record(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.model_request_parameters)
+        return ModelResponse(parts=[TextPart('again')])
+
+    next_model = FunctionModel(record, profile={'tool_addition_mode': 'with_definitions'})
+    await agent.run('again', message_history=loaded, model=next_model)
+
+    assert [params.tool_visibility for params in seen] == [{'unlock': 'visible', 'later': 'via_history'}]
+
+
+def _reduce_assistant_message(chunks: list[dict[str, Any]], message_id: str) -> UIMessage:
+    """The assistant message the AI SDK's `processUIMessageStream` builds from these chunks.
+
+    A minimal port covering the chunk types the enqueued-messages tests produce: text, tool input and
+    output, step boundaries and non-transient data parts, each appended at its stream position.
+    """
+    parts: list[dict[str, Any]] = []
+    texts: dict[str, dict[str, Any]] = {}
+    tools: dict[str, dict[str, Any]] = {}
+    for chunk in chunks:
+        match chunk['type']:
+            case 'start-step':
+                parts.append({'type': 'step-start'})
+            case 'text-start':
+                texts[chunk['id']] = {'type': 'text', 'text': '', 'state': 'streaming'}
+                parts.append(texts[chunk['id']])
+            case 'text-delta':
+                texts[chunk['id']]['text'] += chunk['delta']
+            case 'text-end':
+                texts[chunk['id']]['state'] = 'done'
+            case 'tool-input-available':
+                tools[chunk['toolCallId']] = {
+                    'type': f'tool-{chunk["toolName"]}',
+                    'toolCallId': chunk['toolCallId'],
+                    'state': 'input-available',
+                    'input': chunk['input'],
+                }
+                parts.append(tools[chunk['toolCallId']])
+            case 'tool-output-available':
+                tools[chunk['toolCallId']].update(state='output-available', output=chunk['output'])
+            case str(data_type) if data_type.startswith('data-') and not chunk.get('transient'):
+                parts.append({'type': data_type, 'id': chunk.get('id'), 'data': chunk['data']})
+            case _:
+                pass
+    return UIMessage.model_validate({'id': message_id, 'role': 'assistant', 'parts': parts})
 
 
 def _model_visible(messages: Sequence[ModelMessage]) -> list[tuple[str, list[tuple[str, Any]]]]:
