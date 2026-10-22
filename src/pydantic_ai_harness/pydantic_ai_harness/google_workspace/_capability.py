@@ -34,7 +34,12 @@ _MCP_URLS: dict[str, str] = {
     'people': 'https://people.googleapis.com/mcp/v1',
 }
 
-_DEFAULT_DESCRIPTION = 'Use Gmail, Calendar, Drive, and the other Google Workspace products.'
+
+class _DefaultDescription(str):
+    """The released default text, a distinct object so a caller passing an equal string keeps it verbatim."""
+
+
+_DEFAULT_DESCRIPTION = _DefaultDescription('Use Gmail, Calendar, Drive, and the other Google Workspace products.')
 
 
 @dataclass
@@ -54,6 +59,9 @@ class GoogleWorkspace(AbstractCapability[AgentDepsT]):
 
     Instances whose products overlap register the same tool names, so wrap one in `PrefixTools`. When their products
     are the same, also give it a distinct `id`, since their default ones collide.
+
+    The id is derived once, at construction: `dataclasses.replace` with different `services` keeps the old one unless
+    you also pass `id=None`.
     """
 
     description: str | None = _DEFAULT_DESCRIPTION
@@ -85,7 +93,7 @@ class GoogleWorkspace(AbstractCapability[AgentDepsT]):
 
     def get_description(self) -> str | None:
         """Return `description`, or one naming the selected products while it is left at its default."""
-        if self.description != _DEFAULT_DESCRIPTION:
+        if self.description is not _DEFAULT_DESCRIPTION:
             return self.description
         return f'Use these Google Workspace products: {", ".join(service.title() for service in self.services)}.'
 

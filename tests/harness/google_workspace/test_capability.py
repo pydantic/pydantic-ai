@@ -105,6 +105,8 @@ class TestGoogleWorkspace:
         )
         assert GoogleWorkspace('gmail', description='Read mail.').get_description() == 'Read mail.'
         assert GoogleWorkspace('gmail', description=None).get_description() is None
+        released_default = 'Use Gmail, Calendar, Drive, and the other Google Workspace products.'
+        assert GoogleWorkspace('gmail', description=released_default).get_description() == released_default
 
     def test_missing_token_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv('GOOGLE_ACCESS_TOKEN', raising=False)
