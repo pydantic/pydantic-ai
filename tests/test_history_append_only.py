@@ -186,8 +186,8 @@ ALLOWED: dict[str, Allowed] = {
         )
         for name in ('tool-retry', 'output-validation-retry')
     },
-    # #10938 leaves a request-scoped prompt no user message would clear out from a `no_output` retry on, so
-    # there Anthropic drops it from the tail like the OpenAI APIs.
+    # Since #10938, a `no_output` retry leaves out the request-scoped prompt no user message would clear, so
+    # Anthropic drops it from the tail like the OpenAI APIs.
     'retry:no-output-retry+request-scoped': Allowed(
         'A request-scoped system prompt (#9711) is sent for one request, as the tail, and left out of the next '
         'one, retried steps included',

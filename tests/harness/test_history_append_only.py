@@ -451,7 +451,7 @@ def test_every_capability_has_a_case():
     tables = (
         FIXTURES.keys() | EXEMPT.keys() | SCENARIOS.keys() | KNOWN.keys() | ALLOWED.keys() | ENV.keys()
     ) | OPTIONAL_DEPENDENCIES.keys()
-    stale = tables - CAPABILITIES.keys() - VARIANTS.keys()
+    stale = (tables | CONVERSATIONS.keys()) - CAPABILITIES.keys() - VARIANTS.keys()
     assert not stale, f'entries for capabilities that no longer exist: {sorted(stale)}'
 
 
