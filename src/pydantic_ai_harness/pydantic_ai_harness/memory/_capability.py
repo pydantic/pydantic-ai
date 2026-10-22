@@ -25,6 +25,8 @@ from pydantic_ai_harness.memory._sqlite import SqliteMemoryStore
 from pydantic_ai_harness.memory._store import MemoryFile, MemoryStore, encode_metadata, validate_store_path
 from pydantic_ai_harness.memory._toolset import (
     MAIN_FILENAME,
+    MEMORY_DATA_PREFIX,
+    MEMORY_DATA_SUFFIX,
     MemoryDeleteResult,
     MemorySearchResponse,
     MemoryToolOperations,
@@ -34,6 +36,7 @@ from pydantic_ai_harness.memory._toolset import (
     read_call,
     require_metadata_store,
     run_as_operation,
+    snapshot_content_budget,
 )
 
 _DEFAULT_GUIDANCE = (
@@ -49,8 +52,6 @@ _DEFAULT_GUIDANCE = (
     'in this turn.'
 )
 
-_MEMORY_DATA_PREFIX = '<memory>\n'
-_MEMORY_DATA_SUFFIX = '\n</memory>'
 # The slash is inside the optional group so the two `\s*` never compete for one run of spaces.
 _MEMORY_TAG_RE = re.compile(r'<(?=(?:\s*/)?\s*memory\b)', re.IGNORECASE)
 """The `<` of a `<memory>` or `</memory>` tag in stored content, which could otherwise close the block early."""
@@ -303,9 +304,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             main_content = '' if main is None else _MEMORY_TAG_RE.sub('&lt;', main.content)
             rendered = ''
             guidance = self._render_guidance()
-            content_budget = (
-                self.max_tokens * 4 - len(guidance or '') - len(_MEMORY_DATA_PREFIX) - len(_MEMORY_DATA_SUFFIX)
-            )
+            content_budget = snapshot_content_budget(self.max_tokens, guidance)
             has_memory = bool(main_content or subfiles or files_truncated)
             if content_budget > 0 and has_memory:
                 reader = file_reader(ctx, store, scope)
@@ -321,7 +320,7 @@ class Memory(AbstractCapability[AgentDepsT]):
                     read_main=read_call(reader, MAIN_FILENAME),
                     location=None if reader is None else reader[1],
                 )[:content_budget]
-                rendered = f'{_MEMORY_DATA_PREFIX}{rendered}{_MEMORY_DATA_SUFFIX}'
+                rendered = f'{MEMORY_DATA_PREFIX}{rendered}{MEMORY_DATA_SUFFIX}'
                 part = UserPromptPart([TextContent(rendered, metadata=marker)])
                 index = _snapshot_index(ctx.messages, request_context.messages)
                 target = request_context.messages[index]

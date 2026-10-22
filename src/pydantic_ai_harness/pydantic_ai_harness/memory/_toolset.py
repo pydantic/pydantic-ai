@@ -60,6 +60,15 @@ _READ_TRUNCATION_MARKER = (
 )
 
 
+MEMORY_DATA_PREFIX = '<memory>\n'
+MEMORY_DATA_SUFFIX = '\n</memory>'
+
+
+def snapshot_content_budget(max_tokens: int, guidance: str | None) -> int:
+    """Characters left for the injected snapshot once the guidance and its delimiters are counted."""
+    return max_tokens * 4 - len(guidance or '') - len(MEMORY_DATA_PREFIX) - len(MEMORY_DATA_SUFFIX)
+
+
 def run_workspace_directory(store: MemoryStore, scope: str) -> str | None:
     """Where this scope's files are in the run's workspace, or `None` when the run's file tools cannot see them.
 
@@ -262,9 +271,15 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
     async def _prepare_read_memory(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition:
         """Step aside for a tool of `FileSystem`'s `READ_FILE_KIND` when it can read this run's memory files.
 
-        Only the injected snapshot tells the model where the files are, so without injection `read_memory` stays.
+        Only the injected snapshot tells the model where the files are, so `read_memory` stays when nothing is
+        injected: with `inject_memory=False`, or when the guidance leaves no room for the snapshot.
         """
-        if not self._capability.inject_memory:
+        capability = self._capability
+        guidance = capability.get_instructions()
+        if (
+            not capability.inject_memory
+            or snapshot_content_budget(capability.max_tokens, guidance if isinstance(guidance, str) else None) <= 0
+        ):
             return tool_def
         store, scope = self._resolve_scope(ctx)
         if run_workspace_directory(store, scope) is None:
