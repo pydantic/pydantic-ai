@@ -415,8 +415,6 @@ class Workspace(WorkspaceBackend):
     def has_display(self) -> bool:
         """Whether the backend has a display to control, so `screenshot` and `act` can work. Does no I/O."""
         backend = self._backend
-        if isinstance(backend, Workspace):
-            return backend.has_display
         return isinstance(backend, SupportsComputerUse) and backend.has_display
 
     @property

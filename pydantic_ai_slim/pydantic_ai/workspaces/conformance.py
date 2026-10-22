@@ -604,7 +604,7 @@ class WorkspaceBackendSuite:
             MouseDown(),
             MouseUp(),
             TypeText(text='a'),
-            PressKeys(keys=('backspace',), repeat=1),
+            PressKeys(keys=('backspace',)),
             HoldKeys(keys=('shift',), seconds=0.1),
         ]
         for action in actions:
