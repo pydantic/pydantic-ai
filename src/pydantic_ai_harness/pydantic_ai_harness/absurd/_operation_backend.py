@@ -124,9 +124,11 @@ async def _run_holding_claim(task_ctx: AsyncTaskContext, body: Callable[[], Awai
                 error = exc
             tg.cancel_scope.cancel()
     except BaseExceptionGroup as group:
-        # Usually just `extend_claim`'s failure, or a `BaseException` the body raised.
+        # Usually just `extend_claim`'s failure, or a `BaseException` the body raised. The SDK's worker
+        # expects a bare `CancelledTask` or `FailedTask`, so it isn't regrouped with an error the body
+        # raised meanwhile (often its reaction to being cancelled); that error is kept as the cause.
         if len(group.exceptions) == 1:
-            raise group.exceptions[0] from None
+            raise group.exceptions[0] from error
         # Both failed at once: raise them together rather than lose either.
         raise
     if error is not None:
