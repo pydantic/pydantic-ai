@@ -1873,3 +1873,35 @@ class TestTaskControlBoundaries:
             with owner.receiving(conversation_id='root', parent_id=None, enqueue=lambda part: 'e1'):
                 assert owner.questions(conversation_id='root') == []
                 assert owner.answer(task_id, question_id='q1', answer='yes')
+
+    async def test_a_failing_observer_does_not_fail_the_question(self, caplog: pytest.LogCaptureFixture) -> None:
+        owner: DelegationTasks
+
+        async def observe(event: DelegationTaskEvent) -> None:
+            if owner.pending_question(event.task.id) is not None:
+                raise RuntimeError('observer broke')
+
+        owner = DelegationTasks(observer=observe)
+        async with owner.opened():
+
+            async def run(record: DelegationTask) -> str:
+                return await owner.ask(record.id, question_id='q1', question='Which?')
+
+            receipt = await owner.delegate(
+                agent_name='worker',
+                prompt='p',
+                conversation_id='root',
+                model=None,
+                background=True,
+                resume=None,
+                run=run,
+            )
+            task_id = task_id_in(receipt)
+            with anyio.fail_after(WAIT):
+                while owner.pending_question(task_id) is None:
+                    await anyio.sleep(0)
+                assert owner.answer(task_id, question_id='q1', answer='yes')
+                while owner.records[task_id].status == 'running':
+                    await anyio.sleep(0)
+            assert owner.records[task_id].output == 'yes'
+        assert 'Task question observer failed' in caplog.text

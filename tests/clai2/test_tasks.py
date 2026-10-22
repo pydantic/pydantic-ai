@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from rich.cells import cell_len
 from rich.console import Console
+from rich.text import Text
 from termflow.tui import MenuItem
 from termflow.tui.menu import Menu, MenuResult
 
@@ -387,6 +388,33 @@ async def test_promote_all_foreground_siblings() -> None:
         assert 'not a result' in await pending
 
 
+async def test_a_question_shows_once() -> None:
+    """Shown as the asking task's own event, unless the main run's turn renders it from its own stream."""
+    output = io.StringIO()
+    ui = Tasks(console=Console(file=output, width=200), conversation_id=lambda: 'root', directory=None)
+    record = task()
+    ui.owner.records[record.id] = record
+    question = TaskQuestionEvent(task_id=record.id, agent_name='self', question_id='q', question='Which?')
+    received: list[object] = []
+
+    async def sink(event: object) -> None:
+        received.append(event)
+
+    ui.sink = sink
+    await ui.observe(DelegationTaskEvent(task=record, event=question))
+    assert received == [], 'the main run shows it'
+    child = task(task_id='b' * 32, parent_id=record.id)
+    ui.owner.records[child.id] = child
+    nested = TaskQuestionEvent(task_id=child.id, agent_name='self', question_id='q', question='Which?')
+    await ui.observe(DelegationTaskEvent(task=record, event=nested))
+    assert received == [], 'the copy in its parent task stream'
+    await ui.observe(DelegationTaskEvent(task=child, event=nested))
+    assert received == [nested]
+    ui.sink = None
+    await ui.observe(DelegationTaskEvent(task=record, event=question))
+    assert 'asks: Which?' in output.getvalue()
+
+
 def test_question_row() -> None:
     event = TaskQuestionEvent(task_id='a' * 32, agent_name='self', question_id='q', question='Which\nflavour?')
     row = task_row(event)
@@ -763,6 +791,7 @@ async def test_consumed_background_report_does_not_start_another_turn(
 async def test_a_background_task_question_wakes_the_idle_parent_which_answers_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The question shows once, and an idle parent wakes for it, as for a report."""
     import asyncio
     import re
 
@@ -790,6 +819,16 @@ async def test_a_background_task_question_wakes_the_idle_parent_which_answers_it
         return await original_read(live)
 
     monkeypatch.setattr(LivePrompt, 'read', read)
+    questions = 0
+
+    def counted(event: AgentStreamEvent) -> Text | None:
+        nonlocal questions
+        questions += isinstance(event, TaskQuestionEvent)
+        return task_row(event)
+
+    # The task panel's rows and the main run's stream both render through it.
+    monkeypatch.setattr('pydantic_clai2.runtime.tasks.task_row', counted)
+    monkeypatch.setattr('pydantic_clai2.runtime.session_runtime.task_row', counted)
 
     def system_texts(request: ModelMessage) -> list[str]:
         """What the request says, including queued system messages, which reach the model as user content."""
@@ -849,6 +888,7 @@ async def test_a_background_task_question_wakes_the_idle_parent_which_answers_it
     (record,) = shell.tasks.owner.records.values()
     assert (record.outcome, record.output) == ('ok', 'Chose cheddar')
     assert 'asks: Which flavour?' in output.getvalue()
+    assert questions == 1
     prompts = [
         part.content
         for message in shell.session.messages

@@ -1833,7 +1833,7 @@ The model also manages its tasks: `list_tasks` lists them, `message_task` steers
 running one, and `cancel_task` stops one. A child that needs a decision calls
 `ask_parent` and waits; the question shows as a `?` task row, and the parent
 answers it with `answer_task`. Like a report, a question continues an idle parent
-without a user prompt.
+without a user prompt, and one queued on a turn you cancel waits for your next prompt.
 
 - **Ctrl+B** moves foreground children of the main run to the background without
   restarting them. The hint appears only while a foreground child can be

@@ -676,8 +676,11 @@ class DelegationTasks:
         self._asked = asyncio.Event()
         self.queue_reports(conversation_id=record.conversation_id, parent_id=record.parent_id)
         try:
-            # The observer learns the task waits, so an application can start its idle parent's next run.
-            await self.notify(record)
+            try:
+                # The observer learns the task waits, so an application can start its idle parent's next run.
+                await self.notify(record)
+            except Exception:
+                logging.getLogger(__name__).exception('Task question observer failed for %s', record.id)
             return await pending.answer
         finally:
             if self._questions.get(task_id) is pending:

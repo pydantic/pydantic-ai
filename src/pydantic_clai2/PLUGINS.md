@@ -2412,9 +2412,11 @@ the terminal; the shell has already printed them.
 `on_task_event` receives a `TaskEvent` for everything a task the agent delegated does, and its
 descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the
 event from the task's own run (text, thinking, tool calls and results), its
-`DelegationStartEvent` or `DelegationEndEvent`, or `None` when only the task changed, such as when
-it started or finished. These events never reach the main run's hooks: they are the feed `/tasks`
-shows. It fires for every stream event of every running task, down to each text and thinking
+`DelegationStartEvent` or `DelegationEndEvent`, one of its `sub_agents` task events, such as
+`TaskQuestionEvent` when it asks its parent, or `None` when only the task changed, such as when it
+started, finished, or began waiting for an answer. Its own run's events never reach the main run's
+hooks: they are the feed `/tasks` shows. Its `sub_agents` task events also go into the stream of
+the run that delegated it, which is the main run for a task the agent delegated directly. It fires for every stream event of every running task, down to each text and thinking
 delta, and the task waits for it, so keep the handler cheap, such as queueing the event for
 elsewhere. A failure is printed and the task goes on.
 
