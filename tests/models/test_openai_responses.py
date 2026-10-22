@@ -220,75 +220,51 @@ def test_openai_invalid_url_citation_range_is_unanchored():
     assert part.citations == [Citation(sources=[WebCitationSource(url='https://example.com', title='Example')])]
 
 
-def _responses_history_with_citations(provider_name: str) -> list[ModelMessage]:
-    """Message history as it comes back from JSON storage, with a cited answer."""
-    return ModelMessagesTypeAdapter.validate_json(
-        ModelMessagesTypeAdapter.dump_json(
-            [
-                ModelRequest(parts=[UserPromptPart('Research the topic.')]),
-                ModelResponse(
-                    parts=[
-                        TextPart(
-                            'The source supports this claim.',
-                            id='msg-historical',
-                            provider_name=provider_name,
-                            provider_details={
-                                'citations': [
-                                    {
-                                        'type': 'url_citation',
-                                        'url': 'https://example.com/source',
-                                        'title': 'Source',
-                                        'start_index': 0,
-                                        'end_index': 10,
-                                    },
-                                    {
-                                        'type': 'file_citation',
-                                        'file_id': 'file-123',
-                                        'filename': 'report.pdf',
-                                        'index': 3,
-                                    },
-                                    # Not replayed: the range is past the end of the text, the file citation has no
-                                    # filename, the annotation type has no replay, or the entry isn't an annotation.
-                                    {
-                                        'type': 'url_citation',
-                                        'url': 'https://example.com/other',
-                                        'title': 'Other',
-                                        'start_index': 20,
-                                        'end_index': 40,
-                                    },
-                                    {'type': 'file_citation', 'file_id': 'file-123', 'index': 3},
-                                    {'type': 'file_path', 'file_id': 'file-123', 'index': 3},
-                                    'not an annotation',
-                                ]
-                            },
-                            citations=[
-                                Citation(
-                                    sources=[WebCitationSource(url='https://example.com/source', title='Source')],
-                                    anchor=MarkerCitationAnchor(start=0, end=10),
-                                ),
-                                Citation(sources=[DocumentCitationSource(document_id='file-123', title='report.pdf')]),
-                            ],
-                        )
-                    ],
-                    provider_name=provider_name,
-                ),
-                ModelRequest(parts=[UserPromptPart('Continue.')]),
-            ]
-        )
+async def test_openai_responses_leaves_out_annotations_it_cannot_rebuild() -> None:
+    """Replay leaves out each annotation it can't rebuild from the raw data, and keeps the rest.
+
+    These only come from history edited after OpenAI sent it. Annotations that are sent back are covered by the
+    recorded `test_native_citation_replay_after_persisted_history[openai-responses]` and
+    `test_openai_responses_file_citation_context_replay`.
+    """
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='not-used'))
+    url_citation = {
+        'type': 'url_citation',
+        'url': 'https://example.com/source',
+        'title': 'Source',
+        'start_index': 0,
+        'end_index': 10,
+    }
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Research the topic.')]),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'The source supports this claim.',
+                    id='msg-historical',
+                    provider_name='openai',
+                    provider_details={
+                        'citations': [
+                            url_citation,
+                            'not an annotation',
+                            # The range is past the end of the text, which a history processor may have shortened.
+                            {**url_citation, 'start_index': 20, 'end_index': 40},
+                            {'type': 'file_citation', 'file_id': 'file-123', 'index': 3},
+                            {'type': 'file_path', 'file_id': 'file-123', 'index': 3},
+                        ]
+                    },
+                )
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        history, OpenAIResponsesModelSettings(openai_send_reasoning_ids=True), ModelRequestParameters()
     )
 
-
-async def test_openai_responses_replays_own_citations(allow_model_requests: None):
-    mock_client = MockOpenAIResponses.create_mock(response_message([]))
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
-
-    await model.request(
-        _responses_history_with_citations('openai'),
-        OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
-        ModelRequestParameters(),
-    )
-
-    assert get_mock_responses_kwargs(mock_client)[0]['input'][1] == snapshot(
+    assert items[1] == snapshot(
         {
             'role': 'assistant',
             'id': 'msg-historical',
@@ -303,8 +279,7 @@ async def test_openai_responses_replays_own_citations(allow_model_requests: None
                             'title': 'Source',
                             'start_index': 0,
                             'end_index': 10,
-                        },
-                        {'type': 'file_citation', 'file_id': 'file-123', 'filename': 'report.pdf', 'index': 3},
+                        }
                     ],
                 }
             ],
@@ -312,31 +287,6 @@ async def test_openai_responses_replays_own_citations(allow_model_requests: None
             'status': 'completed',
         }
     )
-
-
-@pytest.mark.parametrize(
-    ('provider_name', 'send_item_ids'),
-    [
-        pytest.param('openrouter', True, id='other-provider'),
-        pytest.param('openai', False, id='item-ids-not-sent'),
-    ],
-)
-async def test_openai_responses_sends_citations_as_text_without_item_id(
-    allow_model_requests: None, provider_name: str, send_item_ids: bool
-):
-    mock_client = MockOpenAIResponses.create_mock(response_message([]))
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
-
-    await model.request(
-        _responses_history_with_citations(provider_name),
-        OpenAIResponsesModelSettings(openai_send_reasoning_ids=send_item_ids),
-        ModelRequestParameters(),
-    )
-
-    assert get_mock_responses_kwargs(mock_client)[0]['input'][1] == {
-        'role': 'assistant',
-        'content': 'The source supports this claim.',
-    }
 
 
 async def test_openai_response_with_null_text_and_citation(allow_model_requests: None):

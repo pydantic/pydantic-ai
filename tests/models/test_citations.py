@@ -1032,6 +1032,47 @@ async def test_anthropic_document_citation_replay_after_history_trimmed(
     assert _replayed_document_indices(request_capture.bodies('/v1/messages')[-1]) == snapshot([[0]])
 
 
+# Body matching would sort this conversation's turns out of order; the requests are pinned by `request_capture`.
+@pytest.mark.vcr()
+async def test_anthropic_document_citation_replay_counts_fetched_pages(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+) -> None:
+    """A page fetched by Web Fetch is numbered like any other document, so later citations are replayed past it.
+
+    The returns policy, the fetched license page and the shipping policy are documents 0, 1 and 2 when Anthropic cites
+    them. Replaying all three citations with those indices shows our numbering of the request matches Anthropic's.
+    """
+    if not anthropic_available():
+        pytest.skip('anthropic dependencies not installed')
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
+        settings=ModelSettings(max_tokens=4096, citations=True),
+    )
+    agent = Agent(model, capabilities=[NativeTool(WebFetchTool(max_uses=1))])
+
+    # The license is a plain-text page with no trailing whitespace or smart characters, which recording would rewrite.
+    license_and_returns = await agent.run(
+        [
+            'What is the return window? Then fetch https://raw.githubusercontent.com/pydantic/pydantic-ai/main/LICENSE '
+            'and say which license Pydantic AI uses. Answer in two sentences, citing the document and the page.',
+            RETURNS_POLICY,
+        ]
+    )
+    shipping = await agent.run(
+        ['How long does shipping take? Cite the document.', SHIPPING_POLICY],
+        message_history=license_and_returns.all_messages(),
+    )
+    await agent.run('Thanks. Reply only OK.', message_history=shipping.all_messages())
+
+    cited = [
+        [citation['document_index'] for citation in (part.provider_details or {})['citations']]
+        for part in _cited_text_parts(shipping.all_messages())
+    ]
+    assert cited == snapshot([[0], [1], [2]])
+    assert _replayed_document_indices(request_capture.bodies('/v1/messages')[-1]) == cited
+
+
 def read_shipping_policy() -> BinaryContent:
     """Read the shipping policy document."""
     return BinaryContent(data=b'Orders ship within two business days.', media_type='text/plain')
