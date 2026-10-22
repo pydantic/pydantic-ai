@@ -1409,131 +1409,116 @@ async def test_xai_web_search_user_location_recorded(allow_model_requests: None,
     )
 
 
-async def test_xai_inline_citation_mapping(allow_model_requests: None) -> None:
-    """xAI maps web, X, and collection inline citations to the public response shape."""
-    text = 'See [1], [2], [3], and [4].'
-    response = create_response(content=text)
-    response.proto.outputs[0].message.citations.extend(
-        [
-            chat_pb2.InlineCitation(
-                start_index=4,
-                end_index=7,
-                web_citation=chat_pb2.WebCitation(url='https://example.com'),
-            ),
-            chat_pb2.InlineCitation(
-                start_index=9,
-                end_index=12,
-                x_citation=chat_pb2.XCitation(url='https://x.com/example/status/1'),
-            ),
-            chat_pb2.InlineCitation(
-                start_index=14,
-                end_index=17,
-                collections_citation=chat_pb2.CollectionsCitation(
-                    file_id='file-1',
-                    chunk_id='chunk-1',
-                    chunk_content='provider-selected supporting excerpt',
-                    collection_ids=['collection-1'],
-                    score=0.8,
-                ),
-            ),
-            chat_pb2.InlineCitation(
-                start_index=23,
-                end_index=26,
-                collections_citation=chat_pb2.CollectionsCitation(
-                    chunk_content='collection chunk with no IDs',
-                    score=0.4,
-                ),
-            ),
-            chat_pb2.InlineCitation(web_citation=chat_pb2.WebCitation()),
-            chat_pb2.InlineCitation(x_citation=chat_pb2.XCitation()),
-            chat_pb2.InlineCitation(collections_citation=chat_pb2.CollectionsCitation()),
-            chat_pb2.InlineCitation(start_index=2, end_index=1),
-            chat_pb2.InlineCitation(
-                start_index=2,
-                end_index=1,
-                web_citation=chat_pb2.WebCitation(url='https://example.com/unanchored'),
-            ),
-        ]
+_CITED_TEXT = 'See [1].'
+_START = _CITED_TEXT.index('[1]')
+_END = _START + len('[1]')
+_MARKER: dict[str, Any] = {'start_index': _START, 'end_index': _END}
+_COLLECTION_CITATION = {
+    'file_id': 'file-1',
+    'chunk_id': 'chunk-1',
+    'chunk_content': 'provider-selected supporting excerpt',
+    'collection_ids': ['collection-1'],
+    'score': 0.8,
+}
+
+
+@pytest.mark.parametrize(
+    ('inline_citation', 'expected'),
+    [
+        pytest.param(
+            {**_MARKER, 'collections_citation': _COLLECTION_CITATION},
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(document_id='file-1', excerpts=['provider-selected supporting excerpt'])
+                    ],
+                    anchor=MarkerCitationAnchor(start=_START, end=_END),
+                )
+            ],
+            id='collection',
+        ),
+        pytest.param(
+            {**_MARKER, 'collections_citation': {'chunk_content': 'collection chunk with no IDs', 'score': 0.4}},
+            [
+                Citation(
+                    sources=[DocumentCitationSource(excerpts=['collection chunk with no IDs'])],
+                    anchor=MarkerCitationAnchor(start=_START, end=_END),
+                )
+            ],
+            id='collection-without-ids',
+        ),
+        pytest.param({**_MARKER, 'web_citation': {}}, None, id='web-without-url'),
+        pytest.param({**_MARKER, 'x_citation': {}}, None, id='x-without-url'),
+        pytest.param({**_MARKER, 'collections_citation': {}}, None, id='collection-without-content'),
+        pytest.param(_MARKER, None, id='without-source'),
+        pytest.param(
+            {'start_index': 2, 'end_index': 1, 'web_citation': {'url': 'https://example.com/unanchored'}},
+            [Citation(sources=[WebCitationSource(url='https://example.com/unanchored')])],
+            id='invalid-range-is-unanchored',
+        ),
+    ],
+)
+async def test_xai_inline_citation_mapping(
+    allow_model_requests: None, inline_citation: dict[str, Any], expected: list[Citation] | None
+) -> None:
+    """xAI maps collection inline citations, drops those without a source, and leaves bad ranges unanchored.
+
+    Unit test: no recorded xAI answer has these citations; web and X citations are recorded in `test_web_citations`.
+    """
+    response = create_response(content=_CITED_TEXT)
+    response.proto.outputs[0].message.citations.append(chat_pb2.InlineCitation(**inline_citation))
+    mock_client = MockXai.create_mock([response])
+    agent = Agent(XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client)))
+
+    result = await agent.run('Cite a source.')
+
+    response_message = result.all_messages()[-1]
+    assert isinstance(response_message, ModelResponse)
+    text_part = next(part for part in response_message.parts if isinstance(part, TextPart))
+    assert text_part.citations == expected
+
+
+async def test_xai_collection_citation_ids_stay_in_raw_data(allow_model_requests: None) -> None:
+    """The chunk and collection IDs and the score of a collection citation stay in the raw citation data.
+
+    Unit test: no recorded xAI answer has a collection citation.
+    """
+    response = create_response(content=_CITED_TEXT)
+    response.proto.outputs[0].message.citations.append(
+        chat_pb2.InlineCitation(start_index=_START, end_index=_END, collections_citation=_COLLECTION_CITATION)
     )
     mock_client = MockXai.create_mock([response])
     agent = Agent(XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client)))
 
-    result = await agent.run('Cite several sources.')
+    result = await agent.run('Cite a source.')
+
     response_message = result.all_messages()[-1]
     assert isinstance(response_message, ModelResponse)
     text_part = next(part for part in response_message.parts if isinstance(part, TextPart))
-
-    # The chunk and collection IDs and the score stay in the raw citation data.
-    assert text_part.provider_name == 'xai'
-    assert text_part.provider_details is not None
-    assert text_part.provider_details['citations'][2] == {
-        'id': '',
-        'start_index': 14,
-        'end_index': 17,
-        'collections_citation': {
-            'file_id': 'file-1',
-            'chunk_id': 'chunk-1',
-            'chunk_content': 'provider-selected supporting excerpt',
-            'score': pytest.approx(0.8),
-            'collection_ids': ['collection-1'],
-        },
+    assert text_part.provider_details == {
+        'citations': [
+            {
+                'id': '',
+                'start_index': _START,
+                'end_index': _END,
+                'collections_citation': {**_COLLECTION_CITATION, 'score': pytest.approx(0.8)},
+            }
+        ]
     }
 
-    assert text_part.citations == [
-        Citation(
-            sources=[WebCitationSource(url='https://example.com')],
-            anchor=MarkerCitationAnchor(start=4, end=7),
-        ),
-        Citation(
-            sources=[WebCitationSource(url='https://x.com/example/status/1')],
-            anchor=MarkerCitationAnchor(start=9, end=12),
-        ),
-        Citation(
-            sources=[
-                DocumentCitationSource(
-                    document_id='file-1',
-                    excerpts=['provider-selected supporting excerpt'],
-                )
-            ],
-            anchor=MarkerCitationAnchor(start=14, end=17),
-        ),
-        Citation(
-            sources=[
-                DocumentCitationSource(
-                    excerpts=['collection chunk with no IDs'],
-                )
-            ],
-            anchor=MarkerCitationAnchor(start=23, end=26),
-        ),
-        Citation(sources=[WebCitationSource(url='https://example.com/unanchored')]),
-    ]
 
+async def test_xai_stream_citation_without_url_is_dropped(allow_model_requests: None) -> None:
+    """xAI streaming drops an inline citation without a URL, as non-streaming responses do.
 
-@pytest.mark.parametrize(
-    ('url', 'expected'),
-    [
-        pytest.param(
-            'https://example.com',
-            [
-                Citation(
-                    sources=[WebCitationSource(url='https://example.com')], anchor=MarkerCitationAnchor(start=4, end=7)
-                )
-            ],
-            id='cited',
-        ),
-        pytest.param('', None, id='citation-without-url'),
-    ],
-)
-async def test_xai_stream_inline_citations(
-    allow_model_requests: None, url: str, expected: list[Citation] | None
-) -> None:
-    """xAI streaming emits the same inline citation shape as non-streaming responses."""
-    text = 'See [1].'
-    response = create_response(content=text)
+    Unit test: no recorded xAI stream has a citation without a URL.
+    """
+    response = create_response(content=_CITED_TEXT)
     response.proto.outputs[0].message.citations.append(
-        chat_pb2.InlineCitation(start_index=4, end_index=7, web_citation=chat_pb2.WebCitation(url=url))
+        chat_pb2.InlineCitation(start_index=_START, end_index=_END, web_citation={'url': ''})
     )
-    mock_client = MockXai.create_mock_stream([[(response, create_stream_chunk(content=text, finish_reason='stop'))]])
+    mock_client = MockXai.create_mock_stream(
+        [[(response, create_stream_chunk(content=_CITED_TEXT, finish_reason='stop'))]]
+    )
     agent = Agent(XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client)))
 
     async with agent.run_stream('Cite a source.') as result:
@@ -1542,11 +1527,14 @@ async def test_xai_stream_inline_citations(
     response_message = result.all_messages()[-1]
     assert isinstance(response_message, ModelResponse)
     text_part = next(part for part in response_message.parts if isinstance(part, TextPart))
-    assert text_part.citations == expected
+    assert text_part.citations is None
 
 
 async def test_xai_stream_inline_citations_multiple_outputs(allow_model_requests: None) -> None:
-    """Offsets from several outputs can't be matched to one streamed text part, so no citations are attached."""
+    """Offsets from several outputs can't be matched to one streamed text part, so no citations are attached.
+
+    Unit test: no recorded xAI stream has several outputs.
+    """
     first_text = 'First [1].'
     second_text = 'Second [2].'
     first_citation = chat_pb2.InlineCitation(
@@ -1589,7 +1577,10 @@ async def test_xai_stream_inline_citations_multiple_outputs(allow_model_requests
 
 
 async def test_xai_stream_x_search_inventory_is_not_a_text_citation(allow_model_requests: None) -> None:
-    """X Search URLs remain a tool-result inventory, not citations for assistant text."""
+    """X Search URLs remain a tool-result inventory, not citations for assistant text.
+
+    Unit test: every X Search recording also has inline citations, so none shows the inventory alone.
+    """
     source_urls = [
         'https://x.com/pydantic/status/1',
         'https://x.com/pydantic/status/2',
@@ -1626,23 +1617,10 @@ async def test_xai_stream_x_search_inventory_is_not_a_text_citation(allow_model_
 
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
-    assert response.parts == [
-        NativeToolCallPart(
-            tool_name='x_search',
-            args={'query': 'Pydantic AI'},
-            tool_call_id='x_search_001',
-            provider_name='xai',
-            provider_details={'function_name': 'x_keyword_search'},
-        ),
-        NativeToolReturnPart(
-            tool_name='x_search',
-            content={'citations': source_urls},
-            tool_call_id='x_search_001',
-            timestamp=IsDatetime(),
-            provider_name='xai',
-        ),
-        TextPart(content='I found recent posts from @pydantic.'),
-    ]
+    tool_return = next(part for part in response.parts if isinstance(part, NativeToolReturnPart))
+    assert tool_return.content == {'citations': source_urls}
+    text_part = next(part for part in response.parts if isinstance(part, TextPart))
+    assert text_part.citations is None
 
 
 async def test_xai_stream_text(allow_model_requests: None):
@@ -5196,7 +5174,10 @@ async def test_xai_citations_setting(
     settings_kind: Literal['shared', 'provider-disabled'],
     expect_inline_citations: bool,
 ) -> None:
-    """The shared setting maps to xAI's inline-citation include option."""
+    """The shared setting maps to xAI's inline-citation include option.
+
+    Unit test: pins the `include` option sent, including the provider override no recording uses.
+    """
     settings = (
         ModelSettings(citations=True)
         if settings_kind == 'shared'
