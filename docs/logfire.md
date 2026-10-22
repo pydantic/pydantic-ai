@@ -264,7 +264,7 @@ Only an `unexpected` collapse — one that happens while the provider's document
 |-------------------|---------|-----------------|
 | `unexpected` | The retention window should still have been active, so the cached prefix most likely changed. Check for prefix changes and the provider's cache diagnostics. | Yes |
 | `ttl_expired` | The gap since the last request exceeded the provider's retention window. | No |
-| `compacted` | Provider-native compaction replaced the history before a [`CompactionPart`][pydantic_ai.messages.CompactionPart] with its summary, which shrinks the prefix by design. | No |
+| `compacted` | A [`CompactionPart`][pydantic_ai.messages.CompactionPart] (from provider-native compaction, or a summary the application or `SummarizingCompaction` wrote) replaced the history before it, which shrinks the prefix by design. A summary that replaces one with the same text and `metadata` can't be told apart from it, so give each summary you write distinct `metadata`, as `SummarizingCompaction` does. | No |
 | `unknown` | The provider publishes no retention window, so the collapse can't be attributed. | No |
 | `unreported` | The response reported no cache usage at all (see below). | No |
 
