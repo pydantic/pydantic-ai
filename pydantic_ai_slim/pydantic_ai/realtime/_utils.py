@@ -79,8 +79,10 @@ def wrap_seeded_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMe
     has been answered is left out: what `Model.prepare_messages` does for a model without inline or
     request-scoped system prompts.
     """
-    messages = _drop_superseded_request_scoped_prompts(list(messages))
+    # Counted on the history as authored, as `prepare_messages` does: dropping a leading request-scoped
+    # prompt mustn't promote the system prompt after it into the standing one `session_instructions` skips.
     standing_prompt_count = len(_standing_system_prompt(messages))
+    messages = _drop_superseded_request_scoped_prompts(list(messages))
     return _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
 
 

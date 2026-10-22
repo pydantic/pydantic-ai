@@ -4495,7 +4495,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     retain_images_max=retain_images_max,
                     retain_audio_max_seconds=retain_audio_max_seconds,
                     message_history=resolved.message_history,
-                    system_prompt=resolved.system_prompt,
+                    _opening_request=(
+                        _messages.ModelRequest(parts=[*resolved.system_prompt]) if resolved.system_prompt else None
+                    ),
                     conversation_id=resolved.conversation_id,
                     run_id=resolved.run_id,
                     instructions=resolved.instructions,

@@ -91,6 +91,7 @@ from pydantic_ai.realtime._openai_protocol import (
     seed_items,
     server_vad_from_turn_detection,
 )
+from pydantic_ai.realtime._utils import session_instructions
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     CancelResponse,
@@ -1727,6 +1728,22 @@ async def test_seed_items_drop_answered_request_scoped_system_prompts() -> None:
             ]
         )
     )
+
+    # A system prompt after a leading request-scoped one isn't the standing prompt, so dropping the
+    # request-scoped one doesn't make it one: it's seeded in place rather than lost.
+    history[0] = ModelRequest(
+        parts=[
+            SystemPromptPart(content='Answered note.', scope='request'),
+            SystemPromptPart(content='Later prompt.'),
+            UserPromptPart(content='hi'),
+        ]
+    )
+    assert session_instructions(history, ModelRequestParameters()) == ''
+    items = await seed_items(history, profile=RealtimeModelProfile(), provider_name='openai')
+    assert [(item['role'], [content['text'] for content in item['content']]) for item in items][:2] == [
+        ('user', ['<system>Later prompt.</system>']),
+        ('user', ['hi']),
+    ]
 
 
 async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) -> None:
