@@ -109,7 +109,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     images.
 
     Under durable execution the tool runs in workflow code, so each action and screenshot is its own durable
-    workspace operation: a retry repeats only the operation that failed.
+    workspace operation: a retry repeats only that operation, not the whole batch.
     """
 
     _: KW_ONLY
