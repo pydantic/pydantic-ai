@@ -124,6 +124,7 @@ This wait strategy:
 
 - Automatically parses `Retry-After` headers from HTTP 429 responses
 - Supports both seconds format (`"30"`) and HTTP date format (`"Wed, 21 Oct 2015 07:28:00 GMT"`)
+- Prefers the `retry-after-ms` header (milliseconds) that OpenAI and Anthropic send, like their SDKs do
 - Falls back to your chosen strategy when the header is absent or cannot be parsed
 - Respects the `max_wait` limit to prevent excessive delays
 
@@ -219,7 +220,7 @@ client = create_rate_limit_client()
 # Client is now ready to use with any HTTP requests and will respect Retry-After headers
 ```
 
-The `wait_retry_after` function automatically detects `Retry-After` headers in 429 (rate limit) responses and waits for the specified time. If no header is present, it falls back to exponential backoff.
+The `wait_retry_after` function automatically detects `Retry-After` (or `retry-after-ms`) headers in 429 (rate limit) responses and waits for the specified time. If no header is present, it falls back to exponential backoff.
 
 #### Network error handling
 
