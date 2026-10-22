@@ -1,10 +1,9 @@
-"""Discovery and chunking: turn a workspace directory into judgeable source snippets.
+"""Discovery and chunking: turn a workspace directory into judgeable snippets.
 
-Source files are split along their syntax tree (see `_structure.py`): functions and methods stay whole,
-long declarations split into the blocks inside them. Python uses the stdlib `ast`; fifteen more languages
-use tree-sitter (`_treesitter.py`), where regions that do not parse fall back to overlapping line windows.
-Other file types, and Python that does not parse, are cut into line windows entirely. Line coverage is
-exact: every non-blank line lands in at least one snippet.
+Every file is plain text cut into overlapping line windows, except Python, which is split along its stdlib
+`ast` (see `_structure.py`): functions and methods stay whole, long declarations split into the blocks inside
+them. Python that does not parse is cut into line windows too. Line coverage is exact: every non-blank line
+lands in at least one snippet.
 
 Files are listed with `rg --files` and read through the run's workspace (see `_index.py`), so a sandboxed
 workspace is searched where it lives, never on the host.
@@ -21,7 +20,6 @@ from pydantic_ai.exceptions import ModelRetry, ToolFailed
 from pydantic_ai.workspaces import Workspace, WorkspaceError
 from pydantic_ai_harness.filesystem._ripgrep import RipgrepMissing, run_ripgrep
 from pydantic_ai_harness.smart_file_search._structure import Range, python_ranges
-from pydantic_ai_harness.smart_file_search._treesitter import treesitter_ranges
 
 # A search is bounded by files, lines and bytes, sized to fit the Linux kernel (~96k files, ~39M lines,
 # ~1.1 GiB). Snippet count is not capped: only the ranked shortlist is judged, and the index only reads the
@@ -86,7 +84,7 @@ def _chunks_from_ranges(lines: list[str], path: str, ranges: list[Range]) -> lis
         if end < start:
             continue
         part = lines[start - 1 : end]
-        whole = not r.window and end - start < WHOLE_DECLARATION_LINES and len('\n'.join(part)) <= MAX_CHUNK_CHARS
+        whole = end - start < WHOLE_DECLARATION_LINES and len('\n'.join(part)) <= MAX_CHUNK_CHARS
         size, overlap = (len(part), 0) if whole else (WINDOW, OVERLAP)
         out.extend(windows(part, path, first_line=start, size=size, overlap=overlap, symbol=r.symbol))
         next_line = end + 1
@@ -95,27 +93,17 @@ def _chunks_from_ranges(lines: list[str], path: str, ranges: list[Range]) -> lis
     return out
 
 
-def source_chunks(text: str, path: str) -> tuple[list[Chunk], str]:
-    """Chunk one file's text. Returns `(chunks, parser name)`."""
+def source_chunks(text: str, path: str) -> list[Chunk]:
+    """Cut one file's text into snippets: along its declarations for Python that parses, else line windows."""
     lines = text.splitlines()
-    try:
-        parsed = _parse(text, path)
-    except RecursionError:  # nested deeper than the stack allows, in either parser's tree walk
-        parsed = None
-    if parsed:
-        ranges, parser = parsed
-        return _chunks_from_ranges(lines, path, ranges), parser
-    return windows(lines, path), 'overlapping-lines'
-
-
-def _parse(text: str, path: str) -> tuple[list[Range], str] | None:
-    if not path.endswith('.py'):
-        return treesitter_ranges(text, path)
-    try:
-        ranges = python_ranges(text)
-    except (SyntaxError, ValueError):
-        return None
-    return (ranges, 'python') if ranges else None
+    if path.endswith('.py'):
+        try:
+            ranges = python_ranges(text)
+        except (SyntaxError, ValueError, RecursionError):  # unparsable, or nested deeper than the stack allows
+            ranges = None
+        if ranges:
+            return _chunks_from_ranges(lines, path, ranges)
+    return windows(lines, path)
 
 
 async def list_files(workspace: Workspace, root: str, glob: str | None) -> tuple[list[str], list[tuple[str, str]]]:

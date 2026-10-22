@@ -1,28 +1,10 @@
 # Smart File Search
 
 Plain-English code search: the agent describes the behavior it is looking for in plain English and gets back ranked
-source excerpts with file and line ranges, judged by any Pydantic AI model, with TypeSafe's Jev decision model
-as the recommended judge.
+source excerpts with file and line ranges, judged by any Pydantic AI model, with a decision model served over the
+System One API, or TypeSafe's Jev, as the recommended judge.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/smart_file_search/)
-
-## Installation
-
-uv:
-
-```bash
-uv add "pydantic-ai-harness[smart-file-search]"
-```
-
-pip:
-
-```bash
-pip install "pydantic-ai-harness[smart-file-search]"
-```
-
-The extra adds tree-sitter grammars for syntax-aware chunking of fifteen languages beyond Python; without it,
-those files are cut into overlapping line windows. Add `pydantic-ai-slim[typesafe]` and set `TYPESAFE_API_KEY`
-to judge with Jev.
 
 ## The problem
 
@@ -32,23 +14,25 @@ only finds what you can already name.
 
 ## The solution
 
-`SmartFileSearch` adds a `smart_file_search` tool that lists the files in the run's workspace with `rg`, cuts them into
-syntax-aware snippets, shortlists them with local BM25, and has a judge model rate each shortlisted snippet's
-relevance to the query.
+`SmartFileSearch` adds a `smart_file_search` tool that lists the files in the run's workspace with `rg`, cuts them
+into snippets (overlapping line windows, or the functions and methods of a Python file), shortlists them with
+local BM25, and has a judge model rate each shortlisted snippet's relevance to the query.
 
-```python {test="skip"}
+```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import SmartFileSearch
 
 agent = Agent(
     'openai:gpt-6-luna',
-    capabilities=[LocalWorkspace('.'), SmartFileSearch(model='typesafe:jev-latest')],
+    capabilities=[LocalWorkspace('.'), SmartFileSearch(model='system-one:clm-latest')],
 )
 ```
 
-The judge is pluggable: pass any model or model name as `model`. Left unset, it is `'typesafe:jev-latest'`
-when the `typesafe` SDK is installed and `TYPESAFE_API_KEY` is set, and the run's own model otherwise.
+The judge is pluggable: pass any model or model name as `model`. A decision model over the System One API, such
+as `'system-one:clm-latest'`, needs only `SYSTEM_ONE_BASE_URL` (and `SYSTEM_ONE_API_KEY` if the API needs a key).
+Left unset, the judge is `'typesafe:jev-latest'` when the `typesafe` SDK is installed and `TYPESAFE_API_KEY` is
+set, and the run's own model otherwise.
 
 See the [Smart File Search docs](https://pydantic.dev/docs/ai/harness/smart-file-search/) for the search
 pipeline, the result shape, choosing the judge and tuning `threshold`.

@@ -1,19 +1,15 @@
-"""Language-agnostic structural chunking: declarations -> line ranges.
+"""Structural chunking: declarations -> line ranges.
 
-One algorithm for every parser. A language plugs in by implementing
-`Syntax` (Python via the stdlib `ast` here, others via tree-sitter in
-`_treesitter.py`):
+The algorithm reads a syntax tree through `Syntax`, which `PythonSyntax`
+implements over the stdlib `ast`:
 
-* containers (classes, impls, modules) are split into a header plus one
+* containers (classes) are split into a header plus one
   range per member, named `Container.member`;
 * declarations of `SPLIT_LINES` or more are split into the blocks inside
   them, so each range is one behaviour. Splits cover every line of the
   original range, so coverage is unchanged;
 * runs of short neighbours (imports, one-liners) merge into one range,
-  since each range costs a relevance judgment;
-* a node the parser could not read cleanly is not split or trusted: it
-  becomes a `window` range, cut into overlapping line windows like an
-  unparsed file. One bad macro costs its own region, not the whole file.
+  since each range costs a relevance judgment.
 """
 
 from __future__ import annotations
@@ -36,8 +32,6 @@ class Range:
     start: int
     end: int
     symbol: str | None
-    window: bool = False
-    """The parser could not read this region cleanly: cut it into line windows, not one blob."""
 
 
 class Syntax(Protocol[NodeT]):
@@ -57,10 +51,6 @@ class Syntax(Protocol[NodeT]):
 
     def statements(self, node: NodeT) -> Sequence[NodeT] | None:
         """The statements of `node`'s body, if it has one."""
-        ...
-
-    def broken(self, node: NodeT) -> bool:
-        """Whether the parser could not read `node` cleanly."""
         ...
 
 
@@ -118,13 +108,6 @@ def structure_ranges(nodes: Sequence[NodeT], syntax: Syntax[NodeT]) -> list[Rang
                 ranges.append(Range(start=start, end=header_end, symbol=symbol))
             for member in members:
                 walk(member, symbol or 'body')
-            # The container's tail (a closing brace) joins its last member
-            # rather than becoming a judgment-costing snippet of its own.
-            if ranges and ranges[-1].end < end:
-                ranges[-1].end = end
-            return
-        if syntax.broken(node):
-            ranges.append(Range(start=start, end=end, symbol=symbol, window=True))
             return
         ranges.extend(_partition(node, start, end, symbol, syntax) or [Range(start=start, end=end, symbol=symbol)])
 
@@ -157,7 +140,7 @@ def _merge_short_neighbours(ranges: list[Range]) -> list[Range]:
             names = dict.fromkeys(s for s in (last.symbol, r.symbol) if s)
             last.end, last.symbol = r.end, ', '.join(names) or None
         else:
-            merged.append(Range(start=r.start, end=r.end, symbol=r.symbol, window=r.window))
+            merged.append(Range(start=r.start, end=r.end, symbol=r.symbol))
     return merged
 
 
@@ -182,9 +165,6 @@ class PythonSyntax:
         if not isinstance(body, list):
             return None
         return [s for s in body if isinstance(s, ast.stmt)]
-
-    def broken(self, node: ast.stmt) -> bool:
-        return False  # `ast.parse` either succeeds for the whole file or raises
 
 
 def python_ranges(text: str) -> list[Range]:

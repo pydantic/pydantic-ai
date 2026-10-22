@@ -40,18 +40,19 @@ class SmartFileSearch(AbstractCapability[AgentDepsT]):
     """Plain-English code search: find code by what it does, described in plain English.
 
     Adds a `smart_file_search` tool. A search lists the files under a directory in the
-    run's workspace with `rg`, cuts them into syntax-aware snippets (functions,
-    methods, and the blocks of long ones), shortlists the snippets with local
-    BM25, and has a judge model score each shortlisted snippet's relevance.
+    run's workspace with `rg`, cuts them into snippets (overlapping line windows, or the
+    functions, methods and long blocks of a Python file), shortlists the snippets with
+    local BM25, and has a judge model score each shortlisted snippet's relevance.
     Matches come back ranked, with file and line ranges and a focused excerpt,
     plus coverage figures so an empty result is never mistaken for absence.
 
-    The judge is any Pydantic AI model. TypeSafe's Jev decision model
-    (`'typesafe:jev-latest'`) is the recommended judge, since it answers each
-    relevance question with a calibrated probability, and is the default when
-    the `typesafe` SDK is installed and `TYPESAFE_API_KEY` is set. Otherwise the
-    judge defaults to the run's own model; pass a small, fast `model` instead,
-    as one search makes up to `candidates` (default 128) judge requests.
+    The judge is any Pydantic AI model. A decision model is the recommended kind,
+    since it answers each relevance question with a probability: any one served
+    over the System One API (`'system-one:<name>'`), or TypeSafe's Jev
+    (`'typesafe:jev-latest'`), which is the default when the `typesafe` SDK is
+    installed and `TYPESAFE_API_KEY` is set. Otherwise the judge defaults to the
+    run's own model; pass a small, fast `model` instead, as one search makes up
+    to `candidates` (default 128) judge requests.
 
     ```python
     from pydantic_ai import Agent
@@ -61,7 +62,7 @@ class SmartFileSearch(AbstractCapability[AgentDepsT]):
 
     agent = Agent(
         'openai:gpt-6-luna',
-        capabilities=[LocalWorkspace('.'), SmartFileSearch(model='typesafe:jev-latest')],
+        capabilities=[LocalWorkspace('.'), SmartFileSearch(model='system-one:clm-latest')],
     )
     ```
 
@@ -69,18 +70,17 @@ class SmartFileSearch(AbstractCapability[AgentDepsT]):
     that can run commands and has `rg` on its `PATH` (the `coder` extra
     installs it for a local workspace); the tool is not offered on one that
     cannot run commands, and a run without a workspace fails at its start.
-    Install the `smart-file-search` extra for syntax-aware chunking of fifteen
-    languages beyond Python; without it, those files are cut into overlapping
-    line windows.
     """
 
     model: Model | KnownModelName | str | None = None
     """The model that judges each snippet's relevance: any Pydantic AI model or model name.
 
-    `None` (the default) picks TypeSafe's Jev (`'typesafe:jev-latest'`) when the
-    `typesafe` SDK is installed and `TYPESAFE_API_KEY` is set, and the run's own
-    model otherwise. Pin a Jev version (e.g. `'typesafe:jev-1.13.0'`) once you
-    have tuned `threshold` against it.
+    A decision model served over the System One API, such as
+    `'system-one:clm-latest'`, or a `SystemOneModel`, answers each judgment with a
+    probability. `None` (the default) picks TypeSafe's Jev (`'typesafe:jev-latest'`)
+    when the `typesafe` SDK is installed and `TYPESAFE_API_KEY` is set, and the
+    run's own model otherwise. Pin a model version (e.g. `'typesafe:jev-1.13.0'`)
+    once you have tuned `threshold` against it.
     """
 
     threshold: float = 0.5

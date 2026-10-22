@@ -2,9 +2,9 @@
 
 Relevance is scored as the product of two independent judgments -- the snippet acts on the requested
 *entity*, and it performs the requested *operation* -- so mentioning a concept is not enough; the code must
-do the thing. On a decision model such as TypeSafe's Jev, a bounded `float` field is answered with the raw
-probability of yes, so there is no confidence-margin math to undo. Any other model fills the same fields as
-structured output.
+do the thing. On a decision model, such as one served over the System One API or TypeSafe's Jev, a bounded
+`float` field is answered with the raw probability of yes, so there is no confidence-margin math to undo. Any
+other model fills the same fields as structured output.
 
 Every snippet is judged in its own run, so neighbouring snippets never lend each other evidence.
 """

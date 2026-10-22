@@ -124,7 +124,7 @@ class SnippetIndex:
         # Counted the way chunking splits lines, so separators like U+2028 cannot slip past the line budget.
         file.lines = len(text.splitlines())
         try:
-            chunks = source_chunks(text, path)[0]
+            chunks = source_chunks(text, path)
         except LineTooLong as exc:
             file.skipped = str(exc)
             return file

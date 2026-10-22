@@ -36,9 +36,6 @@ class NodeSyntax:
     def statements(self, node: Node) -> Sequence[Node] | None:
         return node.body
 
-    def broken(self, node: Node) -> bool:
-        return False
-
 
 def _spans(nodes: list[Node]) -> list[tuple[int, int, str | None]]:
     return [(r.start, r.end, r.symbol) for r in structure_ranges(nodes, NodeSyntax())]
@@ -79,4 +76,4 @@ def test_ranges_past_the_last_line_are_ignored() -> None:
 
 
 def test_python_without_statements_uses_windows() -> None:
-    assert source_chunks('# only a comment\n', 'empty.py')[1] == 'overlapping-lines'
+    assert source_chunks('# only a comment\n', 'empty.py') == windows(['# only a comment'], 'empty.py')

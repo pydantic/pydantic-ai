@@ -7,13 +7,16 @@ takes), and a plain `FunctionModel` filling the same fields as structured output
 
 from __future__ import annotations
 
+import json
 import textwrap
 from dataclasses import dataclass, field
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import httpx2
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
@@ -31,7 +34,10 @@ from pydantic_ai.models.decision import (
     NoulQuestion,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.system_one import SystemOneModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.providers import system_one as system_one_provider
+from pydantic_ai.providers.system_one import SystemOneProvider
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceTimeoutError
 from pydantic_ai_harness import SmartFileSearch
 from pydantic_ai_harness.smart_file_search import (
@@ -162,8 +168,7 @@ class VanishingBackend(LocalWorkspaceBackend):
 
 
 def test_python_chunks_follow_declarations() -> None:
-    chunks, parser = source_chunks(PY_SOURCE, 'a.py')
-    assert parser == 'python'
+    chunks = source_chunks(PY_SOURCE, 'a.py')
     by_symbol = {c.symbol: c for c in chunks}
     imports = by_symbol[None]  # adjacent one-liners merge into one target
     assert (imports.line, imports.end_line) == (1, 2)
@@ -174,8 +179,13 @@ def test_python_chunks_follow_declarations() -> None:
 
 
 def test_decorated_python_declaration_starts_at_its_decorator() -> None:
-    chunks, _ = source_chunks('import os\n\n\n@cache\ndef load():\n    return os.environ\n', 'a.py')
+    chunks = source_chunks('import os\n\n\n@cache\ndef load():\n    return os.environ\n', 'a.py')
     assert [(c.line, c.end_line, c.symbol) for c in chunks] == [(1, 1, None), (2, 6, 'load')]
+
+
+def test_lines_after_the_last_python_statement_are_windowed() -> None:
+    chunks = source_chunks('def load():\n    return 1\n# trailing note\n', 'a.py')
+    assert [(c.line, c.end_line, c.symbol) for c in chunks] == [(1, 2, 'load'), (3, 3, None)]
 
 
 def test_long_function_is_split_into_blocks_covering_every_line() -> None:
@@ -184,7 +194,7 @@ def test_long_function_is_split_into_blocks_covering_every_line() -> None:
         for i in range(6)
     )
     src = f'def router(x):\n{body}\n'
-    chunks, _ = source_chunks(src, 'r.py')
+    chunks = source_chunks(src, 'r.py')
     assert len(chunks) > 1
     assert all(c.symbol == 'router' for c in chunks)
     covered = {n for c in chunks for n in range(c.line, c.end_line + 1)}
@@ -195,7 +205,7 @@ def test_deeply_nested_single_statement_bodies_stop_splitting() -> None:
     src = 'def f():\n  with a:\n    with b:\n      with c:\n        with d:\n' + ''.join(
         f'          x{i} = {i}\n' for i in range(30)
     )
-    chunks, _ = source_chunks(src, 'nested.py')
+    chunks = source_chunks(src, 'nested.py')
     assert [(c.line, c.end_line) for c in chunks] == [(1, 35)]
 
 
@@ -203,8 +213,8 @@ def test_non_python_and_broken_python_fall_back_to_windows() -> None:
     text = '\n'.join(f'line {i}' for i in range(130))
     for path in ('x.txt', 'broken.py'):
         src = text if path == 'x.txt' else 'def (:\n' + text
-        chunks, parser = source_chunks(src, path)
-        assert parser == 'overlapping-lines'
+        chunks = source_chunks(src, path)
+        assert chunks == windows(src.splitlines(), path)
         assert chunks[0].line == 1 and chunks[0].end_line == 60
         assert chunks[1].line == 51  # 10-line overlap
 
@@ -357,8 +367,8 @@ async def test_excerpt_focuses_on_a_narrower_passing_block(monkeypatch: pytest.M
     block = Chunk(path='a.py', line=28, end_line=32, text='\n'.join(lines[27:32]), symbol='f')
     other = Chunk(path='a.py', line=2, end_line=3, text='\n'.join(lines[1:3]), symbol='f')
 
-    def nested(text: str, path: str) -> tuple[list[Chunk], str]:
-        return [whole, block, other], 'python'
+    def nested(text: str, path: str) -> list[Chunk]:
+        return [whole, block, other]
 
     (tmp_path / 'a.py').write_text('\n'.join(lines))
     monkeypatch.setattr(_index, 'source_chunks', nested)
@@ -440,6 +450,87 @@ async def test_agent_judges_with_its_own_model_when_typesafe_is_unavailable(
     agent = Agent(FunctionModel(respond), capabilities=[LocalWorkspace(tmp_path), SmartFileSearch()])
     await agent.run('find it')
     assert len(judged) == 1 and 'a.py:1-1' in judged[0]
+
+
+@dataclass
+class SystemOneServer:
+    """A `/v1/systemone` endpoint that answers P(yes)=0.9 when `needle` is in the state, else 0.1."""
+
+    needle: str
+    bodies: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
+
+    def __call__(self, request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        self.bodies.append(body)
+        p = 0.9 if self.needle in body['state'] else 0.1
+        answers = {name: {'type': 'noul', 'noul': p} for name in body['questions']}
+        usage = {'billing_units': len(answers), 'input_tokens': 42, 'output_tokens': 0}
+        return httpx2.Response(200, json={'model': body['model'], 'answers': answers, 'usage': usage})
+
+    def client(self) -> httpx2.AsyncClient:
+        return httpx2.AsyncClient(transport=httpx2.MockTransport(self))
+
+
+@pytest.mark.parametrize('by_name', [False, True], ids=['instance', 'name'])
+async def test_system_one_judge_answers_relevance_as_probabilities(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, by_name: bool
+) -> None:
+    _repo(tmp_path)
+    server = SystemOneServer('raise PermissionError')
+    monkeypatch.setenv('SYSTEM_ONE_BASE_URL', 'https://decisions.example.com')
+    monkeypatch.delenv('SYSTEM_ONE_API_KEY', raising=False)
+    if by_name:  # `infer_model` builds the provider, so give it the mocked client
+        monkeypatch.setattr(system_one_provider, 'create_async_httpx2_client', server.client)
+        judge_model: Model | str = 'system-one:clm-latest'
+    else:
+        judge_model = SystemOneModel('clm-latest', provider=SystemOneProvider(http_client=server.client()))
+    agent = Agent(
+        _calls_smart_file_search(), capabilities=[LocalWorkspace(tmp_path), SmartFileSearch(model=judge_model)]
+    )
+
+    result = await agent.run('find it')
+
+    content = _tool_return(result.all_messages()).content
+    assert isinstance(content, SmartFileSearchResult)
+    [match] = content.matches
+    assert (match.file_path, match.symbol, match.score) == ('auth.py', 'reject_expired', 0.81)  # 0.9 * 0.9
+    assert len(server.bodies) == content.coverage.evaluated
+    body = next(body for body in server.bodies if 'reject_expired' in str(body['state']))
+    assert body == snapshot(
+        {
+            'state': """\
+auth.py:3-8 (reject_expired)
+
+
+
+def reject_expired(session):
+    if session.expires_at < now():
+        raise PermissionError("expired")
+    return session\
+""",
+            'model': 'clm-latest',
+            'questions': {
+                'entity': {
+                    'type': 'noul',
+                    'instructions': {
+                        'field': 'entity',
+                        'question': 'Does this code act on the thing the search is about (the data, object, resource or concept it names)?',
+                        'goal': 'Decide whether this source code is what a developer searching the codebase wants to find.',
+                        'background': 'The text is a snippet of source code from a repository. A developer is searching the codebase for: reject expired sessions',
+                    },
+                },
+                'operation': {
+                    'type': 'noul',
+                    'instructions': {
+                        'field': 'operation',
+                        'question': 'Does this code itself perform the action or behaviour the search describes, rather than only mentioning it, importing it, or calling something with a similar name?',
+                        'goal': 'Decide whether this source code is what a developer searching the codebase wants to find.',
+                        'background': 'The text is a snippet of source code from a repository. A developer is searching the codebase for: reject expired sessions',
+                    },
+                },
+            },
+        }
+    )
 
 
 async def test_judge_failure_is_reported_to_the_model(tmp_path: Path) -> None:
