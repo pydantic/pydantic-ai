@@ -134,13 +134,14 @@ class RealtimeModelSettings(TypedDict, total=False):
 
     `None` turns transcription off on every provider that can disable it; ElevenLabs Agents cannot (ASR
     drives its agent pipeline) and rejects `None` with a [`UserError`][pydantic_ai.exceptions.UserError].
-    Eleven Realtime always transcribes too, with no model to choose: `None` leaves transcription on, and a
-    pinned id raises a `UserError`.
+    Eleven Realtime and OpenAI GPT-Live always transcribe too, with no model to choose: `None` leaves
+    transcription on, and a pinned id raises a `UserError`.
     A *pinned* id applies only to the providers that
     transcribe with a separate model — Gemini transcribes natively, with no model to point at, and
     ignores it (`google_input_transcription` configures Gemini's own transcription).
 
-    Supported by: OpenAI, Azure OpenAI, Gemini (`None` only), xAI, and Eleven Realtime (`'auto'` only).
+    Supported by: OpenAI, Azure OpenAI, Gemini (`None` only), xAI, Eleven Realtime (`'auto'` only), and
+    OpenAI GPT-Live (`'auto'` only).
     """
 
     output_modality: Literal['audio', 'text']

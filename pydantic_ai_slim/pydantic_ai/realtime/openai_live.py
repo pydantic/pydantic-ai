@@ -108,6 +108,7 @@ from ..usage import RequestUsage
 from ._inferred_lifecycle import InferredLifecycle
 from ._lifecycle import AnswersRevised, InputId, LifecycleEvent, RealtimeFrame, ResponseStatus, ToolCallsAbandoned
 from ._openai_protocol import (
+    AUTO_TRANSCRIPTION_MODEL,
     RealtimeHandshakeError,
     _without_media as without_media,  # pyright: ignore[reportPrivateUsage]
     expect_event,
@@ -2172,10 +2173,15 @@ class OpenAILiveModel(RealtimeModel):
         for setting, feature in (
             ('turn_detection', 'turn detection: Live owns turn-taking and exposes no VAD configuration'),
             ('max_tokens', 'a token limit on the spoken conversation'),
-            ('input_transcription_model', 'choosing a transcription model'),
         ):
             if settings.get(setting) is not None:
                 raise UserError(f'OpenAI GPT-Live does not support {feature}, so `{setting}` cannot be set.')
+        # Live always transcribes with its own model, which is what the `'auto'` default asks for.
+        if (transcription_model := settings.get('input_transcription_model')) not in (AUTO_TRANSCRIPTION_MODEL, None):
+            raise UserError(
+                'OpenAI GPT-Live does not support choosing a transcription model, so `input_transcription_model` '
+                f"can only be `'auto'`; got {transcription_model!r}."
+            )
 
     def _live_url(self) -> str:
         return realtime_websocket_url(self._provider.base_url, path=_LIVE_WEBSOCKET_PATH)
