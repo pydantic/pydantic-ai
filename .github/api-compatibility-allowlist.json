@@ -26,18 +26,6 @@
     },
     {
       "against": "v2.59.0",
-      "fingerprint": "775d472840669f04dd4c3c224fea3901f6eb77a6cd47d415f78448118e4900e7",
-      "reason": "`WebFetchTool.enable_citations` defaults to `None`, which follows the new `citations` model setting (off by default), so existing code sends the same request; an explicit `True` or `False` still wins.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/7434"
-    },
-    {
-      "against": "v2.59.0",
-      "fingerprint": "195b5efa9062d045ffc966d3a9099843483f2297ca438de3a0aa7db98d2b6243",
-      "reason": "The `WebFetchTool(enable_citations=...)` parameter defaults to `None` for the same reason as the field: it follows the `citations` setting, which is off by default.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/7434"
-    },
-    {
-      "against": "v2.59.0",
       "fingerprint": "6cb62e895d59e4833ada607bf2b29b5f945b323505351947e51eaa9f601b6056",
       "reason": "Adds the new `citations` model setting to `ModelSettingName`; every existing name is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/7434"
