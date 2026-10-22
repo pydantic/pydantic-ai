@@ -49,7 +49,7 @@ sandbox:
     token-steering: false
 engine:
   id: pydantic-ai
-  version: '0.56.0'
+  version: '0.59.0'
   env:
     ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
     ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}

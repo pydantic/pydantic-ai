@@ -535,8 +535,8 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
         if step.get('id') == 'agentic_execution':
             executions.append(step)
     missing: list[str] = []
-    if _as_mapping(agent.get('env')).get('GH_AW_ENGINE_VERSION') != '0.56.0':
-        missing.append('the published 0.56.0 runtime pin')
+    if _as_mapping(agent.get('env')).get('GH_AW_ENGINE_VERSION') != '0.59.0':
+        missing.append('the published 0.59.0 runtime pin')
     if len(executions) != 1:
         missing.append('exactly one public engine execution')
     else:

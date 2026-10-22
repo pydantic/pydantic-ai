@@ -16,7 +16,14 @@ import logfire
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, RunContext, UsageLimitExceeded
-from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ProcessHistory, ResolveModelId, WrapRunHandler
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    LocalWorkspace,
+    PrepareTools,
+    ProcessHistory,
+    ResolveModelId,
+    WrapRunHandler,
+)
 from pydantic_ai.models import Model, ModelResolutionContext
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.run import AgentRunResult
@@ -147,6 +154,7 @@ def build_agent() -> Agent[None, str]:
             ResolveModelId(workflow_model),
             WorkflowPolicy(),
             cli.RecoverMCPToolErrors(),
+            PrepareTools(cli.hold_time_reserve_for_safe_output),
             ProcessHistory(partial(cli.compact_history, preserve_prompt=True)),
             LocalWorkspace('.', env=env, read_only=attention),
             # Checkout guidance accompanies file traversal, as in the read-only

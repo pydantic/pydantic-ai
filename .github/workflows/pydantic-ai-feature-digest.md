@@ -145,11 +145,6 @@ pre-agent-steps:
       path: feature-candidates.json
       retention-days: 1
       overwrite: true
-# Keep the existing conclusion token permissions across compiler upgrades.
-jobs:
-  conclusion:
-    permissions:
-      actions: write
 engine:
   model: anthropic/${{ vars.GH_AW_MODEL }}
 # Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.

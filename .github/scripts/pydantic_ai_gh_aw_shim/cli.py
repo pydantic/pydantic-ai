@@ -92,6 +92,7 @@ from pydantic_ai.messages import (
     ModelResponsePart,
     NativeToolCallPart,
     NativeToolSearchCallPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     ToolAvailabilityDeltaPart,
     ToolCallEvent,
     ToolCallPart,
@@ -513,8 +514,9 @@ def time_budget_notice() -> str | None:
     return TIME_BUDGET_NOTICE
 
 
-# gh-aw's `safeoutputs` MCP server, under the shim's Claude Code tool-name prefix.
-SAFE_OUTPUT_TOOL_PREFIX = 'mcp__safeoutputs__'
+# gh-aw's `safeoutputs` MCP server: the shim's Claude Code tool-name prefix, then the
+# `<server>_` prefix `load_mcp_toolsets` gives it in the CLAI 2 engine.
+SAFE_OUTPUT_TOOL_PREFIXES = ('mcp__safeoutputs__', 'safeoutputs_')
 
 
 def hold_time_reserve_for_safe_output(
@@ -528,7 +530,7 @@ def hold_time_reserve_for_safe_output(
     """
     if time_budget_notice() is None:
         return tool_defs
-    return [tool_def for tool_def in tool_defs if tool_def.name.startswith(SAFE_OUTPUT_TOOL_PREFIX)]
+    return [tool_def for tool_def in tool_defs if tool_def.name.startswith(SAFE_OUTPUT_TOOL_PREFIXES)]
 
 
 class RunTimeLimitExceeded(Exception):
@@ -1206,7 +1208,11 @@ async def _stream_events(_ctx: RunContext[object], events: AsyncIterable[AgentSt
         elif isinstance(event, ToolResultEvent):
             # `outcome='retried'` means the call didn't work and pydantic-ai is asking the model to
             # make it again. Tag it so gh-aw doesn't read it as success.
-            is_retry = event.part.outcome == 'retried'
+            # TODO(v3): remove RetryPromptPart; the pinned runtime still emits it for a tool retry
+            is_retry = (
+                isinstance(event.part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+                or event.part.outcome == 'retried'
+            )
             content = str(event.part.content)
             if len(content) > MAX_LIVE_TOOL_RESULT_CHARS:
                 content = (

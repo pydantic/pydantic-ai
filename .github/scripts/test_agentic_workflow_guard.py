@@ -763,7 +763,7 @@ _PUBLIC_ENGINE_LOCK = """
 jobs:
   agent:
     env:
-      GH_AW_ENGINE_VERSION: '0.56.0'
+      GH_AW_ENGINE_VERSION: '0.59.0'
     steps:
       - id: agentic_execution
         run: >-

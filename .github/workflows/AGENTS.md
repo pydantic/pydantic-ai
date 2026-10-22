@@ -182,7 +182,7 @@ Two consequences of the trigger, both easy to get backwards:
 The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://github.com/githubnext/gh-aw) authored as human-editable `<name>.md` sources (frontmatter + prompt) that **compile** to a generated `<name>.lock.yml`. GitHub Actions runs the `.lock.yml`, never the `.md`.
 
 Use gh-aw v0.91.1 to compile these workflows. `shared/engine-zai.md` imports the
-public Pydantic AI engine and explicitly pins runtime 0.56.0. Keep each workflow's
+public Pydantic AI engine and explicitly pins runtime 0.59.0. Keep each workflow's
 root engine block model-only; the shared import owns identity and credentials.
 `stage-gh-aw-agent.sh` configures the existing request limits in an isolated CLAI
 settings store. Workflow `engine.args` is ignored by this compiler's public-engine path.
