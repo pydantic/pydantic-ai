@@ -635,28 +635,32 @@ async def test_request_timeout_covers_sdk_retries(
 # model request of its own.
 
 
-async def test_model_fallback_gives_each_candidate_a_fresh_deadline():
-    timeout = 0.2
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+async def test_model_fallback_gives_each_candidate_a_fresh_deadline(anyio_backend: str, clock: Clock):
     time_left: list[float] = []
+
+    async def hang_past_the_deadline(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        clock.advance()
+        return await hang(messages, info)
 
     async def record_time_left(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         time_left.append(anyio.current_effective_deadline() - anyio.current_time())
         return ModelResponse(parts=[TextPart('fallback answer')])
 
     agent = Agent(
-        FunctionModel(hang, model_name='primary'),
-        model_settings={'request_timeout': timeout},
+        FunctionModel(hang_past_the_deadline, model_name='primary'),
+        model_settings={'request_timeout': LONG_TIMEOUT},
         capabilities=[ModelFallback(FunctionModel(record_time_left, model_name='fallback'))],
     )
 
     result = await agent.run('hello')
 
     assert result.output == 'fallback answer'
-    assert time_left[0] > timeout / 2
+    assert time_left[0] > LONG_TIMEOUT / 2
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert [(attempt.model_name, attempt.outcome, attempt.error) for attempt in response.failed_attempts or []] == (
-        snapshot([('primary', 'error', "ModelRequestTimeout: Request to model 'primary' timed out after 0.2 seconds")])
+        snapshot([('primary', 'error', "ModelRequestTimeout: Request to model 'primary' timed out after 10 seconds")])
     )
 
 
