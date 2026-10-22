@@ -864,11 +864,12 @@ class BedrockConverseModel(Model[BaseClient]):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> StructuredOutputMode:
         profile = cast(BedrockModelProfile, self.profile)
-        # Extended thinking, and thinking on the non-Anthropic variants, reject the forced tool choice Tool Output
-        # relies on.
+        # Extended thinking, and thinking on the non-Anthropic variants other than GPT-5.6 and GPT-6, reject the forced
+        # tool choice Tool Output relies on.
         if (
             model_request_parameters.output_tools
             and _effective_thinking_type(model_settings, model_request_parameters, profile) == 'enabled'
+            and not _thinking_allows_tool_forcing(profile)
         ):
             return 'native' if profile.get('supports_json_schema_output', False) else 'prompted'
         return super()._default_structured_output_mode(model_settings, model_request_parameters)
@@ -888,6 +889,7 @@ class BedrockConverseModel(Model[BaseClient]):
             model_request_parameters.output_mode == 'tool'
             and not model_request_parameters.allow_text_output
             and profile.get('bedrock_thinking_variant') not in (None, 'anthropic')
+            and not _thinking_allows_tool_forcing(profile)
             and _effective_thinking_type(settings, model_request_parameters, profile) is not None
         ):
             # This would result in `toolChoice: any`, which isn't available here.
@@ -2285,6 +2287,14 @@ def _add_anthropic_thinking_fields(existing: dict[str, Any], thinking: ThinkingL
         existing['thinking'] = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
 
 
+def _thinking_allows_tool_forcing(profile: BedrockModelProfile) -> bool:
+    """Whether the model takes output tools and a forced `toolChoice` while it thinks.
+
+    GPT-5.6 and GPT-6 do (verified with `any` and `tool` choices), unlike the other non-Anthropic variants.
+    """
+    return profile.get('bedrock_thinking_variant') == 'openai_responses'
+
+
 def _effective_thinking_type(
     model_settings: ModelSettings | None,
     model_request_parameters: ModelRequestParameters | None,
@@ -2295,9 +2305,6 @@ def _effective_thinking_type(
     Explicit `bedrock_additional_model_requests_fields` take precedence over unified thinking,
     matching `_build_additional_model_request_fields`.
     """
-    if profile.get('bedrock_thinking_variant') == 'openai_responses':
-        # GPT-5.6 and GPT-6 accept a forced `toolChoice` while they reason, so none of these guards apply.
-        return None
     if model_settings and profile.get('bedrock_thinking_variant') == 'anthropic':
         additional_fields = model_settings.get('bedrock_additional_model_requests_fields')
         if additional_fields is not None and 'thinking' in additional_fields:
@@ -2344,7 +2351,7 @@ def _support_tool_forcing(
         )
     else:
         unavailable_reason = FORCING_UNSUPPORTED_REASON
-    if unavailable_reason is None and thinking_type == 'enabled':
+    if unavailable_reason is None and thinking_type == 'enabled' and not _thinking_allows_tool_forcing(profile):
         if profile.get('bedrock_thinking_variant') != 'anthropic':
             unavailable_reason = (
                 "Bedrock doesn't support forcing tool use with thinking enabled for this model. "

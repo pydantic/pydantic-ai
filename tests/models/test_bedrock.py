@@ -87,8 +87,6 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import (
-    get_bedrock_tool_names_from_cassette,
-    get_first_post_body,
     request_json,
     single_request_body,
 )
@@ -4110,12 +4108,12 @@ async def test_bedrock_thinking_openai_responses_variant(
     """
     model = BedrockConverseModel('us.openai.gpt-5.6-luna', provider=bedrock_provider)
     agent = Agent(model, model_settings=ModelSettings(thinking=thinking))
-    result = await agent.run(
-        'How many positive integers below 10000 have a digit sum of exactly 20? Reply with only the number.'
-    )
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result = await agent.run(
+            'How many positive integers below 10000 have a digit sum of exactly 20? Reply with only the number.'
+        )
 
-    sent = single_request_body(vcr)
-    assert sent['additionalModelRequestFields'] == {'reasoning': reasoning}
+    assert [sent['additionalModelRequestFields'] for sent in sent_requests] == [{'reasoning': reasoning}]
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert any(isinstance(part, ThinkingPart) for part in response.parts) is (thinking is not False)
@@ -4124,9 +4122,10 @@ async def test_bedrock_thinking_openai_responses_variant(
 async def test_bedrock_thinking_openai_responses_variant_keeps_tool_output(
     allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
 ) -> None:
-    """GPT-5.6 and GPT-6 accept a forced tool choice while they reason, so `thinking` leaves Tool Output in place.
+    """GPT-5.6 and GPT-6 accept output tools while they reason, so `thinking` leaves Tool Output in place.
 
-    The guards for the other non-Anthropic variants would raise a `UserError` here or switch to prompted output.
+    The guards for the other non-Anthropic variants would raise a `UserError` here or switch to prompted output. The
+    profile doesn't enable forced tool choice for these models, so the output tool is offered without forcing it.
     """
 
     class DigitCount(BaseModel):
@@ -4134,11 +4133,23 @@ async def test_bedrock_thinking_openai_responses_variant_keeps_tool_output(
 
     model = BedrockConverseModel('us.openai.gpt-5.6-luna', provider=bedrock_provider)
     agent = Agent(model, output_type=ToolOutput(DigitCount), model_settings=ModelSettings(thinking='low'))
-    result = await agent.run('How many positive integers below 10000 have a digit sum of exactly 20?')
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result = await agent.run('How many positive integers below 10000 have a digit sum of exactly 20?')
 
     assert result.output == snapshot(DigitCount(count=633))
-    assert get_first_post_body(vcr)['additionalModelRequestFields'] == {'reasoning': {'effort': 'low'}}
-    assert get_bedrock_tool_names_from_cassette(vcr) == snapshot(['final_result'])
+    assert [
+        (
+            sent['additionalModelRequestFields'],
+            [tool['toolSpec']['name'] for tool in sent['toolConfig']['tools']],
+            sent['toolConfig'].get('toolChoice'),
+        )
+        for sent in sent_requests
+    ] == snapshot(
+        [
+            ({'reasoning': {'effort': 'low'}}, ['final_result'], None),
+            ({'reasoning': {'effort': 'low'}}, ['final_result'], None),
+        ]
+    )
 
 
 async def test_bedrock_thinking_false_openai_responses_variant_always_on(
@@ -4147,10 +4158,11 @@ async def test_bedrock_thinking_false_openai_responses_variant_always_on(
     """GPT-6 Astra rejects `effort='none'`, so `thinking=False` is dropped rather than sent."""
     model = BedrockConverseModel('global.openai.gpt-6-astra', provider=bedrock_provider)
     agent = Agent(model, model_settings=ModelSettings(thinking=False))
-    await agent.run('Reply with the single word: ok')
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        await agent.run('Reply with the single word: ok')
 
-    sent = single_request_body(vcr)
-    assert 'additionalModelRequestFields' not in sent
+    assert len(sent_requests) == 1
+    assert 'additionalModelRequestFields' not in sent_requests[0]
 
 
 async def test_bedrock_thinking_high_qwen_variant(
