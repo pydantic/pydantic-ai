@@ -19,7 +19,12 @@ from pydantic_ai._instrumentation import (
     open_request_policy,
     span_include_content,
 )
-from pydantic_ai._model_request_attempts import AttemptStart, failed_attempt, record_attempt_span
+from pydantic_ai._model_request_attempts import (
+    AttemptStart,
+    commit_failed_attempt,
+    failed_attempt,
+    record_attempt_span,
+)
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import PeekableAsyncStream, await_maybe, get_first_param_type
 
@@ -610,6 +615,8 @@ class FallbackModel(Model):
             attempts.extend(failure.attempts)
         attempt = failed_attempt(model, failure, start=start, duration=duration)
         attempts.append(attempt)
+        # A nested `FallbackModel` committed the attempts it made itself, so only this one is committed here.
+        commit_failed_attempt(attempt)
         # Only under the `chat` span instrumentation opened for this request, and on its tracer provider.
         if (span := self._fallback_span()) and (policy := open_request_policy()):
             record_attempt_span(

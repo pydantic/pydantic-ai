@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
@@ -29,6 +30,8 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestAttempt,
     ModelResponse,
+    RunCancelled,
+    RunTimedOut,
     TextPart,
     ToolCallPart,
     ToolDefinition,
@@ -2123,6 +2126,76 @@ async def test_rejected_usage_counts_towards_token_limits() -> None:
 
     with pytest.raises(UsageLimitExceeded, match='Exceeded the input_tokens_limit of 100 \\(input_tokens=120\\)'):
         await Agent(model).run('test', usage_limits=UsageLimits(input_tokens_limit=100))
+
+
+@pytest.mark.parametrize('stop', ['timeout', 'cancel'])
+async def test_rejected_usage_survives_a_stopped_run(stop: str) -> None:
+    """A rejected response's usage counts towards the run as soon as it's rejected, not once another model answers.
+
+    So a run that times out or is cancelled while the next model is still running keeps it.
+    """
+    backup_started = asyncio.Event()
+
+    def rejected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(input_tokens=1000, output_tokens=500))
+
+    async def never_returns(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        backup_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'primary'
+
+    agent = Agent(
+        FallbackModel(
+            FunctionModel(rejected, model_name='primary'),
+            FunctionModel(never_returns, model_name='backup'),
+            fallback_on=reject_primary,
+        )
+    )
+
+    with pytest.raises(RunCancelled) as exc_info:
+        if stop == 'timeout':
+            await agent.run('test', timeout=0.05)
+        else:
+            async with agent.iter('test') as run:
+                cancel = asyncio.create_task(backup_started.wait())
+                cancel.add_done_callback(lambda _: run.cancel())
+                async for _ in run:
+                    pass
+    assert isinstance(exc_info.value, RunTimedOut) == (stop == 'timeout')
+    assert exc_info.value.usage == snapshot(RunUsage(input_tokens=1000, output_tokens=500))
+
+
+async def test_rejected_usage_is_not_counted_twice_before_a_continuation() -> None:
+    """The limit checked before a suspended response is continued counts a rejected response's usage once."""
+    backup_calls = 0
+
+    def rejected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(cost=Decimal('0.006')))
+
+    def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal backup_calls
+        backup_calls += 1
+        return ModelResponse(
+            parts=[TextPart(f'part {backup_calls}')],
+            usage=RequestUsage(cost=Decimal('0.001')),
+            state='suspended' if backup_calls == 1 else 'complete',
+        )
+
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'primary'
+
+    model = FallbackModel(
+        FunctionModel(rejected, model_name='primary'),
+        FunctionModel(backup, model_name='backup'),
+        fallback_on=reject_primary,
+    )
+
+    result = await Agent(model).run('test', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
+    assert result.usage == snapshot(RunUsage(cost=Decimal('0.008'), requests=1))
+    assert backup_calls == 2
 
 
 @pytest.mark.parametrize('inner_outcome', ['answered', 'failed'])

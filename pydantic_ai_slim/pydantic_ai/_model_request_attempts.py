@@ -8,7 +8,9 @@ that makes more than one attempt at a request records them the same way.
 
 from __future__ import annotations as _annotations
 
-from contextlib import suppress
+from collections.abc import Callable, Generator
+from contextlib import contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from time import perf_counter_ns
@@ -30,7 +32,13 @@ from .messages import ModelRequestAttempt, ModelResponse
 if TYPE_CHECKING:
     from .models import Model
 
-__all__ = ('AttemptStart', 'failed_attempt', 'record_attempt_span')
+__all__ = (
+    'AttemptStart',
+    'commit_failed_attempt',
+    'committing_failed_attempts',
+    'failed_attempt',
+    'record_attempt_span',
+)
 
 ATTEMPT_ATTRIBUTE = 'pydantic_ai.model_request.attempt'
 """The zero-based position of an attempt among the attempts at its request."""
@@ -46,6 +54,32 @@ class AttemptStart:
     def elapsed(self) -> timedelta:
         """How long it has been since the attempt started, unaffected by changes to the system clock."""
         return timedelta(microseconds=(perf_counter_ns() - self._monotonic_ns) / 1e3)
+
+
+_failed_attempt_committer: ContextVar[Callable[[ModelRequestAttempt], None] | None] = ContextVar(
+    'pydantic_ai.failed_attempt_committer', default=None
+)
+
+
+@contextmanager
+def committing_failed_attempts(commit: Callable[[ModelRequestAttempt], None]) -> Generator[None]:
+    """Hand every attempt that fails in this context to `commit`, as soon as it fails.
+
+    The agent graph uses this to count a rejected response's usage towards the run when it's rejected,
+    rather than once the request has answered, so a run that's cancelled or times out while a later
+    attempt is still running keeps it.
+    """
+    token = _failed_attempt_committer.set(commit)
+    try:
+        yield
+    finally:
+        _failed_attempt_committer.reset(token)
+
+
+def commit_failed_attempt(attempt: ModelRequestAttempt) -> None:
+    """Hand an attempt that just failed to the agent run making the request, if any: see `committing_failed_attempts`."""
+    if (commit := _failed_attempt_committer.get()) is not None:
+        commit(attempt)
 
 
 def failed_attempt(

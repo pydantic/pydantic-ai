@@ -30,6 +30,7 @@ from pydantic_ai._instrumentation import (
     mcp_telemetry_url_tool_names,
     mcp_telemetry_url_toolset_ids,
 )
+from pydantic_ai._model_request_attempts import committing_failed_attempts
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, is_str_dict, now_utc
 from pydantic_ai._uuid import uuid7
@@ -1152,15 +1153,48 @@ def _split_resume_seed(
     return list(messages), None
 
 
-def _record_attempts_usage(usage: _usage.RunUsage, attempts: Sequence[_messages.ModelRequestAttempt] | None) -> None:
+def _record_attempts_usage(
+    usage: _usage.RunUsage,
+    attempts: Sequence[_messages.ModelRequestAttempt] | None,
+    *,
+    committed: Sequence[_messages.ModelRequestAttempt] = (),
+) -> None:
     """Record the usage of attempts that failed before a response, such as responses a `FallbackModel` rejected.
 
     Only their tokens and cost are recorded: a failed attempt isn't a response the agent acted on, so it
     doesn't count as a request towards [`UsageLimits.request_limit`][pydantic_ai.usage.UsageLimits.request_limit].
+    `committed` are attempts whose usage was already recorded when they failed, so they're left out.
     """
-    for attempt in attempts or ():
+    for attempt in _uncommitted_attempts(attempts, committed):
         if attempt.usage is not None:
             _usage_attribution.record_usage(usage, attempt.usage)
+
+
+def _uncommitted_attempts(
+    attempts: Sequence[_messages.ModelRequestAttempt] | None, committed: Sequence[_messages.ModelRequestAttempt]
+) -> list[_messages.ModelRequestAttempt]:
+    """`attempts`, less those whose usage was committed when they failed: see `_FailedAttemptCommits`."""
+    return [attempt for attempt in attempts or () if not any(attempt is counted for counted in committed)]
+
+
+@dataclasses.dataclass
+class _FailedAttemptCommits:
+    """The attempts at a request that failed while it ran, such as responses a `FallbackModel` rejected.
+
+    Their usage is recorded on the run's usage as soon as they fail, so a run that's cancelled or times
+    out while a later attempt is still running keeps it. The response or `FallbackExceptionGroup` the
+    request ends with still lists them, but only describes that usage, so it isn't recorded again.
+    """
+
+    usage: _usage.RunUsage
+    attempts: list[_messages.ModelRequestAttempt] = dataclasses.field(
+        default_factory=list[_messages.ModelRequestAttempt]
+    )
+
+    def commit(self, attempt: _messages.ModelRequestAttempt) -> None:
+        if attempt.usage is not None:
+            _usage_attribution.record_usage(self.usage, attempt.usage)
+        self.attempts.append(attempt)
 
 
 def _billed_by_request(
@@ -1178,10 +1212,15 @@ def _billed_by_request(
     return billed_beyond(response, resumed)
 
 
-def _record_billed_usage(usage: _usage.RunUsage, billed: _messages.ModelResponse) -> None:
-    """Record a response's billed usage, and that of the attempts that failed before it."""
+def _record_billed_usage(
+    usage: _usage.RunUsage,
+    billed: _messages.ModelResponse,
+    *,
+    committed: Sequence[_messages.ModelRequestAttempt] = (),
+) -> None:
+    """Record a response's billed usage, and that of the attempts that failed before it, unless `committed`."""
     # Attempts that failed before the response, such as responses a `FallbackModel` rejected, were billed too.
-    _record_attempts_usage(usage, billed.failed_attempts)
+    _record_attempts_usage(usage, billed.failed_attempts, committed=committed)
     _usage_attribution.record_usage(usage, billed.usage)
 
 
@@ -1223,6 +1262,7 @@ async def model_request(
     request_context: ModelRequestContext,
     run_context: RunContext[Any],
     on_progress: Callable[[_messages.ModelResponse], None],
+    committed_attempts: Sequence[_messages.ModelRequestAttempt] = (),
 ) -> _messages.ModelResponse:
     """Run the innermost non-streaming model request, resolving any continuation chain.
 
@@ -1247,6 +1287,8 @@ async def model_request(
         on_progress: Callback invoked with the merged response after each segment, so the
             caller can preserve partial progress when a later segment's error is converted
             to a retry.
+        committed_attempts: Failed attempts whose usage the run already counts, left out of the limits
+            checked between segments.
 
     Returns:
         The (merged) model response.
@@ -1325,7 +1367,11 @@ async def model_request(
                 if response.state == 'suspended':
                     fill_response_cost(response)
                     try:
-                        _check_continuation_usage(run_context, response.usage, response.failed_attempts)
+                        _check_continuation_usage(
+                            run_context,
+                            response.usage,
+                            _uncommitted_attempts(response.failed_attempts, committed_attempts),
+                        )
                     except BaseException:
                         await cancel_suspended_job(model, response)
                         raise
@@ -1343,7 +1389,9 @@ async def model_request(
                 # `seed` was counted by the run that suspended it, so only what this run billed counts.
                 billed = billed_beyond(response, seed)
                 try:
-                    _check_continuation_usage(run_context, billed.usage, billed.failed_attempts)
+                    _check_continuation_usage(
+                        run_context, billed.usage, _uncommitted_attempts(billed.failed_attempts, committed_attempts)
+                    )
                 except BaseException:
                     # The limit tripped on a still-suspended merge: cancel the live
                     # server-side job before propagating so it doesn't leak (mirrors the
@@ -1817,6 +1865,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         _handler_called = False
         _handler_usage_recorded = False
         accounted_responses: list[_messages.ModelResponse] = []
+        failed_attempts = _FailedAttemptCommits(ctx.state.usage)
 
         async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
             nonlocal _handler_called, _handler_response, _handler_usage_recorded
@@ -1839,21 +1888,32 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
             capture_model_request_span_context(req_ctx)
             try:
-                response = await model_request(
-                    req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
-                )
+                with committing_failed_attempts(failed_attempts.commit):
+                    response = await model_request(
+                        req_ctx.model,
+                        request_context=req_ctx,
+                        run_context=run_context,
+                        on_progress=on_progress,
+                        committed_attempts=failed_attempts.attempts,
+                    )
                 _handler_response = response
                 _handler_usage_recorded = True
-                self._record_response_usage(ctx, response, request_context=req_ctx)
+                self._record_response_usage(
+                    ctx, response, request_context=req_ctx, committed_attempts=failed_attempts.attempts
+                )
                 accounted_responses.append(response)
             except exceptions.ModelRetry:
                 raise
             except Exception as e:
                 if _handler_response is not None:
                     _handler_usage_recorded = True
-                    self._record_response_usage(ctx, _handler_response, request_context=req_ctx)
+                    self._record_response_usage(
+                        ctx, _handler_response, request_context=req_ctx, committed_attempts=failed_attempts.attempts
+                    )
                     accounted_responses.append(_handler_response)
-                response = await self._recover_model_request_error(ctx, run_context, req_ctx, e)
+                response = await self._recover_model_request_error(
+                    ctx, run_context, req_ctx, e, committed_attempts=failed_attempts.attempts
+                )
             _handler_response = response
             capture_model_response_span_context(req_ctx, response)
             return await ctx.deps.root_capability.after_model_request(
@@ -1880,11 +1940,21 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # `ModelRetry` from any model lifecycle hook retries the model request.
             # If the handler was called, preserve the response in history for context.
             if _handler_response is not None:
-                self._append_response(ctx, _handler_response, record_usage=not _handler_usage_recorded)
+                self._append_response(
+                    ctx,
+                    _handler_response,
+                    record_usage=not _handler_usage_recorded,
+                    committed_attempts=failed_attempts.attempts,
+                )
             return await self._build_retry_node(ctx, e)
 
         self._enforce_usage_limits(ctx, accounted_responses)
-        return await self._finish_handling(ctx, model_response, record_usage=not _handler_usage_recorded)
+        return await self._finish_handling(
+            ctx,
+            model_response,
+            record_usage=not _handler_usage_recorded,
+            committed_attempts=failed_attempts.attempts,
+        )
 
     async def _prepare_request(
         self,
@@ -2251,9 +2321,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response: _messages.ModelResponse,
         *,
         record_usage: bool = True,
+        committed_attempts: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
         # Append the model response to state.message_history
-        self._append_response(ctx, response, record_usage=record_usage)
+        self._append_response(ctx, response, record_usage=record_usage, committed_attempts=committed_attempts)
 
         # Set the `_result` attribute since we can't use `return` in an async iterator
         self._result = CallToolsNode(response)
@@ -2266,11 +2337,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         run_context: RunContext[DepsT],
         request_context: ModelRequestContext,
         error: Exception,
+        *,
+        committed_attempts: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> _messages.ModelResponse:
         if isinstance(error, exceptions.FallbackExceptionGroup):
             # No response reaches history, but a response a `FallbackModel` rejected was still billed,
             # so it counts towards the run's usage and its token and cost limits.
-            _record_attempts_usage(ctx.state.usage, error.attempts)
+            _record_attempts_usage(ctx.state.usage, error.attempts, committed=committed_attempts)
             # No response carries them either, so `wrap_model_request` finds them on the request context.
             request_context._usage_response_ledger.attempts.extend(error.attempts)  # pyright: ignore[reportPrivateUsage]
         root_capability = ctx.deps.root_capability
@@ -2295,6 +2368,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response: _messages.ModelResponse,
         *,
         record_usage: bool = True,
+        committed_attempts: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> None:
         """Commit a step's model response to history, counting the step and updating usage tracking.
 
@@ -2307,7 +2381,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response.workspace_ref = ctx.deps.workspace_ref
         _usage_attribution.record_request(ctx.state.usage)
         if record_usage:
-            ModelRequestNode._record_response_usage(ctx, response)
+            ModelRequestNode._record_response_usage(ctx, response, committed_attempts=committed_attempts)
             ModelRequestNode._enforce_usage_limits(ctx, [response])
         ctx.state.message_history.append(response)
 
@@ -2317,18 +2391,20 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response: _messages.ModelResponse,
         *,
         request_context: ModelRequestContext | None = None,
+        committed_attempts: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> None:
         """Commit billed usage at the provider-response boundary.
 
         A request that resumed a suspended response from history counts only what it billed beyond it,
-        and records that in the request's billed-response record too: see `billed_beyond`.
+        and records that in the request's billed-response record too: see `billed_beyond`. Its
+        `committed_attempts` were counted when they failed, so they aren't counted again.
         """
         fill_response_cost(response)
         billed = response
         if request_context is not None:
             billed = _billed_by_request(response, request_context.messages)
             request_context._usage_response_ledger.responses.append(billed)  # pyright: ignore[reportPrivateUsage]
-        _record_billed_usage(ctx.state.usage, billed)
+        _record_billed_usage(ctx.state.usage, billed, committed=committed_attempts)
 
     @staticmethod
     def _enforce_usage_limits(
