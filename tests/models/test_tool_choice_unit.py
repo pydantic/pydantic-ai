@@ -576,7 +576,7 @@ def test_bedrock_xai_grok_forces_tools_with_thinking(tool_choice_value: Any, exp
     model = BedrockConverseModel('us.xai.grok-4.6', provider=provider)
     params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], thinking='high')
 
-    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice=tool_choice_value))  # pyright: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice=tool_choice_value), [])  # pyright: ignore[reportPrivateUsage]
 
     assert tool_config is not None
     assert tool_config.get('toolChoice') == expected_tool_choice

@@ -1048,7 +1048,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=thinking)
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         assert result == {'reasoning': {'effort': expected_effort}}
 
     def test_xai_variant_thinking_false(self):
@@ -1062,7 +1062,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=False)
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         assert result is None
 
     def test_xai_variant_user_reasoning_wins(self):
@@ -1076,7 +1076,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning': {'effort': 'low'}})
         params = ModelRequestParameters(thinking='high')
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         assert result == {'reasoning': {'effort': 'low'}}
 
     def test_no_variant_thinking_passthrough(self):
