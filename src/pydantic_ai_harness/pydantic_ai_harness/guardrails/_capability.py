@@ -110,10 +110,9 @@ def _find_prompt_part(
     When a capability replaced the prompt with a copy, the copy is the part at the prompt's
     position: the same part index in the message the same distance from the end. Parts appended
     after it and earlier turns are not taken for it. The copy is returned with the history part it
-    was made from, so a redaction can overwrite both; the history then gets the redacted text of
-    the part sent to the model. Only when that position holds no user prompt,
-    because the request was rebuilt, is the most recent part in `messages` used, with no original:
-    nothing ties that part to a part of the history.
+    was made from, so a redaction can overwrite both when the copy still has the original's text.
+    Only when that position holds no user prompt, because the request was rebuilt, is the most
+    recent part in `messages` used, with no original: nothing ties that part to the history.
     """
     for from_end, message in enumerate(reversed(ctx.messages), start=1):
         prompts = [(index, part) for index, part in enumerate(message.parts) if isinstance(part, UserPromptPart)]
@@ -183,12 +182,13 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
 
     The `guard` callable receives the prompt text and returns one of the
     outcomes (see the module docstring). `replace` rewrites the prompt sent to
-    the model and also overwrites the original in the run's message history, so
-    a redacted secret is not retained. When an outer capability sent the model a
-    copy of the prompt part, the copy and the original are both rewritten. A
-    request rebuilt with a new prompt part is not tied to the history, so only
-    the part sent to the model is rewritten. A later guard in a chain that
-    blocks ends the chain before any rewrite happens.
+    the model. When that is the history's own prompt part, or a copy of it with
+    the same text, the original in the run's message history is rewritten too,
+    so a redacted secret is not retained. When an outer capability changed the
+    copy's text, or rebuilt the request with a new prompt part, only the part
+    sent to the model is rewritten: the history keeps the original prompt,
+    including anything the guard redacted from it. A later guard in a chain
+    that blocks ends the chain before any rewrite happens.
 
     `retry` is not valid for an input guardrail, and neither is `replace` on a
     multimodal prompt: the guard sees the whole prompt rendered as text, and
@@ -271,8 +271,8 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
 
         `allow` returns; `block` raises `SkipModelRequest`; `replace` rewrites
         the prompt `part` sent to the model and its `original` in the run's
-        history when that is a different object; `retry` and `replace` under
-        `parallel=True` raise `UserError`.
+        history when that is a different object with the same text; `retry`
+        and `replace` under `parallel=True` raise `UserError`.
         """
         verdict, position = await evaluate_all(
             as_guards(self.guard, capability='InputGuardrail'),
@@ -306,11 +306,14 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
                 replacement = _require_prompt_text(verdict.replacement, position)
                 if part is None:
                     raise UserError('InputGuardrail could not find a user prompt to redact in the request.')
+                # A copy with the original's text puts the same secret in the run's history, so the
+                # redaction goes there too. A copy whose text a capability changed for this request
+                # says nothing about what the original should become, so the history is left alone.
+                same_text = original is not None and original is not part and original.content == part.content
+                history_part = original if same_text else None
                 _replace_prompt(part, replacement)
-                if original is not None and original is not part:
-                    # The model gets the copy, but the run's history keeps the original, so the
-                    # secret would otherwise survive in `all_messages()` and any stored history.
-                    _replace_prompt(original, replacement)
+                if history_part is not None:
+                    _replace_prompt(history_part, replacement)
                 trace_redaction(ctx, direction='input', replacement=replacement)
             case _:  # pragma: no cover - assert_never exhaustiveness guard
                 assert_never(verdict.action)

@@ -574,18 +574,10 @@ class TestInputGuardrailRedaction:
         seen, model = _request_prompts_model()
         agent = Agent(model, capabilities=[_AppendSecretToPrompt(), InputGuardrail(guard=redact_secrets)])
 
-        await agent.run('hello')
-
-        assert seen == [['hello\ncontext: [redacted:anthropic_key]']]
-
-    async def test_replace_of_an_in_place_rewrite_leaves_no_secret_in_the_history(self):
-        """A prompt rewritten in place is the history's own part, so one rewrite clears it everywhere."""
-        seen, model = _request_prompts_model()
-        agent = Agent(model, capabilities=[_AppendSecretToPrompt(), InputGuardrail(guard=redact_secrets)])
-
         result = await agent.run('hello')
 
         assert seen == [['hello\ncontext: [redacted:anthropic_key]']]
+        # Rewritten in place, the prompt is the history's own part, so one rewrite clears it everywhere.
         assert _SECRET not in str(result.all_messages())
 
     async def test_replace_of_a_copied_prompt_also_redacts_the_history(self):
@@ -600,6 +592,32 @@ class TestInputGuardrailRedaction:
         part = result.all_messages()[0].parts[0]
         assert isinstance(part, UserPromptPart)
         assert part.content == 'my key is [redacted:anthropic_key]'
+
+    async def test_replace_of_a_changed_copy_leaves_the_history_prompt_alone(self):
+        """The verdict is about the copy's text, so it says nothing about what the user's own prompt becomes."""
+        seen, model = _request_prompts_model()
+        agent = Agent(
+            model, capabilities=[_CopyPrompt(suffix=f'\ncontext: {_SECRET}'), InputGuardrail(guard=redact_secrets)]
+        )
+
+        result = await agent.run('hello')
+
+        assert seen == [['hello\ncontext: [redacted:anthropic_key]']]
+        part = result.all_messages()[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert part.content == 'hello'
+
+    async def test_a_secret_in_the_prompt_stays_in_the_history_when_the_copy_was_changed(self):
+        """Documented limit: only the changed copy is redacted, so the user's own prompt keeps its secret."""
+        seen, model = _request_prompts_model()
+        agent = Agent(model, capabilities=[_CopyPrompt(suffix='\nctx'), InputGuardrail(guard=redact_secrets)])
+
+        result = await agent.run(f'my key is {_SECRET}')
+
+        assert seen == [['my key is [redacted:anthropic_key]\nctx']]
+        part = result.all_messages()[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert part.content == f'my key is {_SECRET}'
 
     async def test_a_later_block_rewrites_neither_a_copied_prompt_nor_the_history(self):
         """A block ends the chain before any rewrite, so the redaction an earlier guard proposed is not applied."""
@@ -1466,7 +1484,12 @@ class _AppendSecretToPrompt(AbstractCapability[Any]):
 
 @dataclasses.dataclass
 class _CopyPrompt(AbstractCapability[Any]):
-    """Replaces the user prompt part of this request with a copy, as a capability that rebuilds parts would."""
+    """Replaces the user prompt part of this request with a copy, as a capability that rebuilds parts would.
+
+    A `suffix` is added to the copy's text only, for request-only context.
+    """
+
+    suffix: str = ''
 
     async def wrap_model_request(
         self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
@@ -1475,7 +1498,12 @@ class _CopyPrompt(AbstractCapability[Any]):
         assert isinstance(last, ModelRequest)
         request_context.messages[-1] = dataclasses.replace(
             last,
-            parts=[dataclasses.replace(part) if isinstance(part, UserPromptPart) else part for part in last.parts],
+            parts=[
+                dataclasses.replace(part, content=f'{part.content}{self.suffix}')
+                if isinstance(part, UserPromptPart)
+                else part
+                for part in last.parts
+            ],
         )
         return await handler(request_context)
 
