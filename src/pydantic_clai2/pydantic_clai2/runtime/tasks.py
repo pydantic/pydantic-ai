@@ -45,6 +45,9 @@ from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import Status
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
+PromptTask = Callable[[DelegationTask, str], Coroutine[object, object, object]]
+"""Runs a finished task again with the user's message, apart from the conversation, for `Tasks.prompt`."""
+
 
 def specialists() -> dict[str, SubAgent[object]]:
     """Read-only agents have neither parent plugin tools nor an executable-code escape."""
@@ -226,13 +229,12 @@ class Tasks:
         fire: Callable[[TaskEvent], Awaitable[None]] | None = None,
         listening: Callable[[], bool] = lambda: True,
         send_input: Callable[[str], None] | None = None,
-        prompt_task: Callable[[DelegationTask, str], Coroutine[object, object, str]] | None = None,
+        prompt_task: PromptTask | None = None,
     ) -> None:
         """`fire` tells plugins about the current conversation's tasks, while `listening` says one handles them.
 
         Without a `router`, it gets one of its own over `directory` and `step_store`. `send_input` enters
-        `resume`'s prompt, and `prompt_task` runs a task again with the user's message for `prompt`, returning
-        its report.
+        `resume`'s prompt, and `prompt_task` runs a task again with the user's message for `prompt`.
         """
         self.presentation = TaskPresentation()
         self.console = console
@@ -243,7 +245,7 @@ class Tasks:
         self.listening = listening
         self.send_input = send_input
         self.prompt_task = prompt_task
-        self._prompts: dict[str, asyncio.Task[str]] = {}
+        self._prompts: dict[str, asyncio.Task[None]] = {}
         """The runs `prompt` started, by task ID: nothing else waits for these tasks."""
         self._starting: dict[str, asyncio.Event] = {}
         self.sink: Callable[[AgentStreamEvent], Awaitable[None]] | None = None
@@ -481,9 +483,8 @@ class Tasks:
             # Prompting it is the user's leave to resume it, as asking the agent to is.
             await self.owner.allow_resume(record.id)
             run = self._prompts[record.id] = asyncio.create_task(
-                self.prompt_task(record, text), name=f'clai2-task-prompt-{record.id}'
+                self._run_prompt(self.prompt_task, record, text, starting), name=f'clai2-task-prompt-{record.id}'
             )
-            run.add_done_callback(lambda done: self._prompted(record.id, done, started=starting.is_set()))
             started = asyncio.create_task(starting.wait())
             try:
                 await asyncio.wait((run, started), return_when=asyncio.FIRST_COMPLETED)
@@ -502,13 +503,24 @@ class Tasks:
             await self.owner.save(record)
             raise
 
-    def _prompted(self, task_id: str, run: asyncio.Task[str], *, started: bool) -> None:
-        """Forget a finished run; a failure after its task started has no caller left to hear it."""
-        if self._prompts.get(task_id) is run:
-            del self._prompts[task_id]
-        error = None if run.cancelled() else run.exception()
-        if started and error is not None:
-            logging.getLogger(__name__).error('Prompting task %s failed', task_id, exc_info=error)
+    async def _run_prompt(
+        self,
+        prompt_task: PromptTask,
+        record: DelegationTask,
+        text: str,
+        starting: asyncio.Event,
+    ) -> None:
+        """Prompt `record`, then forget this run; a failure after its task started has no caller left to hear it."""
+        try:
+            await prompt_task(record, text)
+        except Exception:
+            if not starting.is_set():
+                raise
+            logging.getLogger(__name__).exception('Prompting task %s failed', record.id)
+        finally:
+            # The task may have been prompted again meanwhile, by a run that is still going.
+            if self._prompts.get(record.id) is asyncio.current_task():
+                del self._prompts[record.id]
 
     async def stop_prompts(self) -> None:
         """Stop the runs `prompt` started, which stops their tasks, before this session closes."""

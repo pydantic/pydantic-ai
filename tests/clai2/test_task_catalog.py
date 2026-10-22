@@ -234,11 +234,20 @@ async def test_resume_keeps_the_task_stopped_when_the_prompt_refuses() -> None:
     assert record.user_stopped, "the user's stop holds when the request cannot be entered"
 
 
-async def settled(ui: Tasks) -> None:
-    """Wait for the runs `prompt` started to end."""
-    await asyncio.gather(*ui._prompts.values())  # pyright: ignore[reportPrivateUsage]
-    await asyncio.sleep(0)  # Their done callbacks run on the next loop iteration.
-    assert not ui._prompts  # pyright: ignore[reportPrivateUsage]
+READINESS_WAIT_TIMEOUT = 10
+
+
+def this_run(runs: list[asyncio.Task[object]]) -> None:
+    """Keep the run `Tasks.prompt` started, called from its `prompt_task`, so the test can wait for it to end."""
+    run = asyncio.current_task()
+    assert run is not None
+    runs.append(run)
+
+
+async def settled(ui: Tasks, record: DelegationTask, runs: list[asyncio.Task[object]]) -> None:
+    """Wait for the runs `prompt` started to end, after which nothing holds the task back from `background`."""
+    await asyncio.gather(*runs)
+    ui.background(record.id)  # A no-op on a finished task; refused while a prompt's run holds it.
 
 
 def finished(ui: Tasks) -> DelegationTask:
@@ -250,6 +259,7 @@ def finished(ui: Tasks) -> DelegationTask:
 
 async def test_prompt_runs_a_finished_task_on_its_own() -> None:
     gates: list[asyncio.Event] = []
+    runs: list[asyncio.Task[object]] = []
 
     async def work(record: DelegationTask) -> str:
         gates.append(asyncio.Event())
@@ -257,6 +267,7 @@ async def test_prompt_runs_a_finished_task_on_its_own() -> None:
         return 'again'
 
     async def prompt_task(record: DelegationTask, text: str) -> str:
+        this_run(runs)
         return await ui.owner.delegate(
             agent_name=record.agent_name,
             prompt=text,
@@ -283,7 +294,7 @@ async def test_prompt_runs_a_finished_task_on_its_own() -> None:
         with pytest.raises(ValueError, match='resumable'):
             await ui.prompt(record.id, 'not while it runs')
         gates[-1].set()
-        await settled(ui)
+        await settled(ui, record, runs)
         assert (record.status, record.outcome) == ('finished', 'ok')
 
         # Closing the session stops a prompted task with the run that prompted it.
@@ -309,24 +320,30 @@ async def test_prompt_refuses_what_it_cannot_run(caplog: pytest.LogCaptureFixtur
         await ui.prompt(record.id, 'hello')
     assert record.user_stopped, "the user's stop holds when the task never ran"
     assert not caplog.records, 'the caller heard it'
+    ui.background(record.id)  # The run that never started it is forgotten too.
+
+    runs: list[asyncio.Task[object]] = []
 
     async def fail_after_starting(record: DelegationTask, text: str) -> str:
+        this_run(runs)
         record.status = 'running'
         await ui.observe(DelegationTaskEvent(task=record))
+        record.status = 'finished'
         raise RuntimeError('broke after it started')
 
     ui.prompt_task = fail_after_starting
-    record.status = 'finished'
     await ui.prompt(record.id, 'hello')
-    await settled(ui)
+    await settled(ui, record, runs)
     assert [entry.getMessage() for entry in caplog.records] == [f'Prompting task {record.id} failed']
 
 
 async def test_a_run_prompted_again_is_not_forgotten_by_the_one_before() -> None:
     """A task may settle before the run that prompted it ends, and be prompted again meanwhile."""
     ending: list[asyncio.Event] = []
+    runs: list[asyncio.Task[object]] = []
 
     async def prompt_task(record: DelegationTask, text: str) -> str:
+        this_run(runs)
         record.status = 'running'
         await ui.observe(DelegationTaskEvent(task=record))
         record.status = 'finished'
@@ -340,26 +357,26 @@ async def test_a_run_prompted_again_is_not_forgotten_by_the_one_before() -> None
     record = finished(ui)
     await ui.prompt(record.id, 'first')
     await ui.prompt(record.id, 'second')
-    first, second = ending
+    (first, second), (first_run, second_run) = ending, runs
     first.set()
-    for _ in range(2):  # The first run ends, then its done callback runs.
-        await asyncio.sleep(0)
+    await first_run
     with pytest.raises(ValueError, match='Nothing waits'):
         ui.background(record.id)  # Still the second run's.
     second.set()
-    await settled(ui)
+    await settled(ui, record, [second_run])
 
 
 async def test_a_task_starting_from_a_prompt_takes_no_second_one() -> None:
     """It reads `finished` until its run starts it, as an agent run does after a model request."""
     gate = asyncio.Event()
+    runs: list[asyncio.Task[object]] = []
 
     async def work(record: DelegationTask) -> str:
         await gate.wait()
         return 'again'
 
     async def prompt_task(record: DelegationTask, text: str) -> str:
-        await asyncio.sleep(0)
+        this_run(runs)
         return await ui.owner.delegate(
             agent_name=record.agent_name,
             prompt=text,
@@ -375,7 +392,8 @@ async def test_a_task_starting_from_a_prompt_takes_no_second_one() -> None:
     )
     record = finished(ui)
     async with ui.router.opened(view=ui):
-        with anyio.fail_after(5):  # Before the fix, the first prompt waited for the whole task.
+        # The first prompt returns once the task starts, not once it ends, which waits on `gate`.
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             first, second = await asyncio.gather(
                 ui.prompt(record.id, 'first'), ui.prompt(record.id, 'second'), return_exceptions=True
             )
@@ -385,7 +403,7 @@ async def test_a_task_starting_from_a_prompt_takes_no_second_one() -> None:
         with pytest.raises(ValueError, match='Nothing waits'):
             ui.background(record.id)
         gate.set()
-        await settled(ui)
+        await settled(ui, record, runs)
         assert (record.status, record.outcome) == ('finished', 'ok')
 
 
