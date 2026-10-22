@@ -3,30 +3,19 @@ name: UI round trip
 # Runs `tests/ui_roundtrip` against the real JavaScript clients of the Vercel AI SDK and AG-UI,
 # pinned in `tests/ui_roundtrip/package-lock.json`. Those tests check that a conversation held by a
 # frontend comes back to the server as the history the server had, which no Python stand-in for
-# the clients can show. Node stays out of `ci.yml`: this job runs on changes to the library and to
-# these tests, and nightly against `main` for changes anywhere else that affect it.
-# The scheduled run opens an issue when it fails.
+# the clients can show. Node stays out of `ci.yml`, so this is its own job. It runs on every pull
+# request and every push to `main`: the histories under test come from the whole library, and the
+# tests import shared helpers and depend on the locked dependencies, while the suite only takes
+# seconds. It also runs nightly against `main`, and the scheduled run opens an issue when it fails.
 #
 # The `ci.yml` test jobs collect these tests too and skip them, since they have no `node_modules`;
 # `UI_ROUNDTRIP_REQUIRED` makes this job fail instead.
 
 on:
-  pull_request:
-    paths:
-      # The histories under test come from the agent loop, capabilities and models as much as from
-      # the UI adapters, and the suite takes seconds, so any library change runs it.
-      - pydantic_ai_slim/pydantic_ai/**
-      - tests/ui_roundtrip/**
-      - .github/workflows/ui-roundtrip.yml
+  pull_request: {}
   push:
     branches:
       - main
-    paths:
-      # The histories under test come from the agent loop, capabilities and models as much as from
-      # the UI adapters, and the suite takes seconds, so any library change runs it.
-      - pydantic_ai_slim/pydantic_ai/**
-      - tests/ui_roundtrip/**
-      - .github/workflows/ui-roundtrip.yml
   schedule:
     - cron: "41 5 * * *"
   workflow_dispatch:
@@ -113,7 +102,7 @@ jobs:
           cat > "${RUNNER_TEMP}/nightly.md" <<EOF
           The scheduled run of \`tests/ui_roundtrip\` failed on \`main\`: ${RUN_URL}
 
-          These tests send conversations through the real Vercel AI and AG-UI JavaScript clients and check that what the clients send back loads as the history the server had. A change to \`main\` outside the paths that trigger the job on pull requests can break that round trip; so can a known gap that is now fixed, or that now differs from its recorded diff in \`tests/ui_roundtrip/known_gaps\`.
+          These tests send conversations through the real Vercel AI and AG-UI JavaScript clients and check that what the clients send back loads as the history the server had. Two pull requests that each passed can still break that round trip together once both are on \`main\`; so can a known gap that is now fixed, or that now differs from its recorded diff in \`tests/ui_roundtrip/known_gaps\`.
 
           Close this issue once a nightly run passes.
           EOF
