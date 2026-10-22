@@ -26,6 +26,12 @@
     },
     {
       "against": "v2.59.0",
+      "fingerprint": "679024394731649b9cd4c4300679de05df481ee1512142e772055756302b9541",
+      "reason": "Adds the xAI Grok 4.6 and 4.7 Bedrock ids to `LatestBedrockModelNames`; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8639"
+    },
+    {
+      "against": "v2.59.0",
       "fingerprint": "76c8e5b469f66ad102b2cdd3261834ead76190074752af9a971cd8ac9e6c4c4e",
       "reason": "Changes the value of `AbsurdDurability.engine_spec`, a class-level engine configuration: it adds a `serialization_failure` mapping and keeps one MCP session per run (`'enter-in-durable-unit'`). Users don't set or read it, so no code changes.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10732"
