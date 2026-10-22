@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import time
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -39,7 +40,6 @@ from pydantic_ai.messages import (
     PartStartEvent,
     RetryFeedbackPart,
     RetryInfo,
-    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -1073,6 +1073,14 @@ class TestCompaction:
         ) as warned:
             SummarizingCompaction(model='test', max_messages=10, summary_prompt=summary_prompt)
         assert warned[0].filename == __file__
+
+    def test_focusing_an_invalid_summary_prompt_does_not_warn_again(self):
+        with pytest.warns(HarnessDeprecationWarning):
+            comp = SummarizingCompaction(model='test', max_messages=10, summary_prompt='Summarize the conversation.')
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            focused = comp.with_focus('the deploy plan')
+        assert focused.summary_prompt == 'Summarize the conversation.\n\nGive particular weight to: the deploy plan'
 
     def test_summary_prompt_with_escaped_braces_is_accepted(self):
         comp = SummarizingCompaction(
@@ -2180,9 +2188,9 @@ def _orphan_free(messages: list[ModelMessage]) -> bool:
                     call_ids.add(p.tool_call_id)
         else:
             for p in m.parts:
+                # TODO(v3): drop the legacy `RetryPromptPart` case
                 if isinstance(p, ToolReturnPart) or (
-                    isinstance(p, RetryPromptPart)  # pyright: ignore[reportDeprecated]
-                    and p.tool_name is not None
+                    p.part_kind == 'retry-prompt' and getattr(p, 'tool_name', None) is not None
                 ):
                     return_ids.add(p.tool_call_id)
     return return_ids <= call_ids

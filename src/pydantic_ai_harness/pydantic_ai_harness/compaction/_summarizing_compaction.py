@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import html
 import re
 import warnings
@@ -714,7 +715,11 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         model-supplied focus are escaped to survive it.
         """
         escaped = focus.replace('{', '{{').replace('}', '}}')
-        return replace(self, summary_prompt=f'{self.summary_prompt}\n\nGive particular weight to: {escaped}')
+        focused = copy.copy(self)
+        # Not `replace`, which reruns `__post_init__` and would repeat an invalid prompt's warning from
+        # inside `dataclasses`; appending escaped text cannot change whether the prompt is valid.
+        focused.summary_prompt = f'{self.summary_prompt}\n\nGive particular weight to: {escaped}'
+        return focused
 
     async def compact(
         self,
