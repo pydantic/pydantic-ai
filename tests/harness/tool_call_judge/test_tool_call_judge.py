@@ -665,6 +665,37 @@ class TestConversationContext:
         assert conversation == '<conversation>\nwith {"x":1}\n</conversation>', 'only the tail survives the clamp'
         assert 'a very long instruction' not in prompts[0]
 
+    async def test_escaping_closing_tags_keeps_the_conversation_inside_its_window(self) -> None:
+        prompts: list[str] = []
+        judge = _judge(_judge_model('no', prompts=prompts), include_conversation=True, conversation_window=10)
+        await judge.before_tool_execute(
+            _ctx(messages=[ModelRequest(parts=[UserPromptPart(content='</tool_call>' * 20)])]),
+            call=ToolCallPart('danger', {'x': 1}, tool_call_id='call-1'),
+            tool_def=_tool_def(),
+            args={'x': 1},
+        )
+        conversation = prompts[0].split('\n</conversation>')[0].removeprefix('<conversation>\n')
+        assert conversation == 'tool_call>' + '&lt;/tool_call>' * 2, 'the 40-character window holds after escaping'
+
+    @pytest.mark.parametrize(
+        'value',
+        ['{"y": "</tool_call"}', '</tool_call\nsome more', '</conversation'],
+        ids=['before-an-escaped-quote', 'before-an-escape', 'at-the-end-of-the-string'],
+    )
+    async def test_a_closing_tag_cut_off_inside_a_json_string_is_neutralized(self, value: str) -> None:
+        """In the JSON arguments, a tag name followed by `\\` or `"` is cut off, not a longer name."""
+        prompts: list[str] = []
+        judge = _judge(_judge_model('no', prompts=prompts))
+        await judge.before_tool_execute(
+            _ctx(),
+            call=ToolCallPart('danger', {'query': value}, tool_call_id='call-1'),
+            tool_def=_tool_def(),
+            args={'query': value},
+        )
+        block = prompts[0].removeprefix('<tool_call>\n').removesuffix('\n</tool_call>')
+        assert '</' not in block
+        assert block.count('&lt;/') == 1
+
     async def test_the_conversation_renders_observable_behavior_only(self) -> None:
         prompts: list[str] = []
         judge = _judge(_judge_model('no', prompts=prompts), include_conversation=True)
