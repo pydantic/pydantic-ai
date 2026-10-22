@@ -6,6 +6,7 @@ Most use a fake `bwrap` that records its arguments, so they run anywhere; the la
 from __future__ import annotations
 
 import base64
+import contextlib
 import os
 import shlex
 import shutil
