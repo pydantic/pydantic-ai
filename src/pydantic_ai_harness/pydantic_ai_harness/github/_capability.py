@@ -31,9 +31,8 @@ class GitHub(AbstractCapability[AgentDepsT]):
     id: str | None = _ID
     """Stable capability and toolset ID, so `defer_loading=True` needs none.
 
-    Each `GitHub` is one connection to one GitHub account. Two with the same `id` and settings are one connection, and
-    two with the same `id` but different settings raise. Give each its own `id` to keep both. `None` or `''` means
-    the default, `github`.
+    One `GitHub` is one connection to one account, like `StackOne`'s linked account. Two sharing this `id` are
+    one connection stated twice when they agree, and an error when they differ; give each its own `id` to keep both.
     """
     description: str | None = 'Use GitHub repositories, issues, and pull requests.'
     auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
@@ -57,8 +56,6 @@ class GitHub(AbstractCapability[AgentDepsT]):
     """GitHub tool groups to offer, such as `'repos'`. `None` keeps the server's defaults."""
 
     def __post_init__(self) -> None:
-        # The toolset always needs an id, so normalize here and let `combine` see the id the toolset uses.
-        self.id = self.id or _ID
         if self.client is not None and (
             self.auth is not None or self.url != GITHUB_MCP_URL or self.toolsets is not None
         ):
@@ -91,7 +88,7 @@ class GitHub(AbstractCapability[AgentDepsT]):
         """Return the GitHub tools."""
         toolset: AbstractToolset[AgentDepsT]
         if self.client is not None:
-            toolset = MCPToolset(self.client, id=self.id, include_instructions=self.include_instructions)
+            toolset = MCPToolset(self.client, id=self.id or _ID, include_instructions=self.include_instructions)
         elif callable(auth := self.auth):
 
             def connect_for_run(ctx: RunContext[AgentDepsT]) -> MCPToolset[AgentDepsT] | None:
@@ -99,7 +96,7 @@ class GitHub(AbstractCapability[AgentDepsT]):
                 return self._connect(token) if token else None
 
             # Registered once under a fixed `id`, as durable execution requires; filled per run.
-            toolset = DynamicToolset(connect_for_run, per_run_step=False, id=self.id)
+            toolset = DynamicToolset(connect_for_run, per_run_step=False, id=self.id or _ID)
         else:
             toolset = self._connect(auth)
         # The hosted connection also sends `X-MCP-Readonly`; filtering here keeps write tools out when the header is
@@ -118,7 +115,7 @@ class GitHub(AbstractCapability[AgentDepsT]):
             headers['X-MCP-Toolsets'] = ','.join(self.toolsets)
         return MCPToolset(
             self.url,
-            id=self.id,
+            id=self.id or _ID,
             auth=token,
             headers=headers,
             include_instructions=self.include_instructions,

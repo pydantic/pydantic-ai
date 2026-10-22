@@ -148,13 +148,18 @@ class TestGitHub:
             Agent(TestModel(), capabilities=[GitHub(auth='a'), GitHub(auth='b', read_only=True)])
 
     @pytest.mark.parametrize('unset', [None, ''])
-    def test_unset_id_means_the_default(self, unset: str | None) -> None:
-        capability = GitHub[str | None](id=unset, auth='token')
-        assert (capability.id, capability.get_toolset().id) == ('github', 'github')
+    def test_unset_id_connects_under_the_default_id(self, unset: str | None) -> None:
+        assert GitHub[str | None](id=unset, auth='token').get_toolset().id == 'github'
 
-    def test_unset_ids_that_differ_raise_when_the_agent_is_built(self) -> None:
-        with pytest.raises(UserError, match="Capability id 'github' is used by multiple GitHub capabilities"):
-            Agent(TestModel(), capabilities=[GitHub(id=None, auth='a'), GitHub(id=None, auth='b')])
+    def test_unset_ids_are_not_combined(self) -> None:
+        # Without an id there is nothing to combine on, so differing settings keep working as separate connections.
+        Agent(
+            TestModel(),
+            capabilities=[
+                GitHub(id=None, auth='token', toolsets=['repos'], include_instructions=False),
+                GitHub(id=None, auth='token', toolsets=['issues'], include_instructions=False),
+            ],
+        )
 
     @pytest.mark.parametrize(
         ('capability', 'include'),
