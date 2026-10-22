@@ -1077,10 +1077,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             thinking_value = model_settings['thinking']
             supports_thinking = self.profile.get('supports_thinking', False)
             thinking_always_enabled = self.profile.get('thinking_always_enabled', False)
+            # `thinking=False` reaches the adapter even on a model that can't turn thinking off, which then sends
+            # the least thinking the model accepts.
             if supports_thinking or thinking_always_enabled:
-                # A model that can't turn thinking off thinks as little as it can instead.
-                if thinking_value is False and thinking_always_enabled:
-                    thinking_value = 'minimal'
                 params = replace(params, thinking=thinking_value)
             stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
             model_settings = cast(ModelSettings, stripped) if stripped else None
