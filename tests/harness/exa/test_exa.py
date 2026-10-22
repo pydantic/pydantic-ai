@@ -14,6 +14,7 @@ from typing import Literal
 import anyio
 import httpx
 import pytest
+from exa_py import AsyncExa
 from exa_py.api import (
     ContentsOptions,
     DeepOutputSchema,
@@ -356,6 +357,17 @@ class TestRecoverableErrors:
         client = _FakeExaClient(error=ValueError('Request failed with status code 429: rate limited'))
         with pytest.raises(ModelRetry, match=r'Exa request failed: .*429'):
             await _toolset(client).web_search('q')
+
+    @pytest.mark.parametrize(('status', 'error'), [(429, ModelRetry), (401, ValueError)])
+    async def test_exa_py_status_errors_are_classified(
+        self, monkeypatch: pytest.MonkeyPatch, status: int, error: type[Exception]
+    ) -> None:
+        """Reads the status from the installed exa-py's own error, so a rewording there fails here."""
+        exa = AsyncExa(api_key='test-key')
+        transport = httpx.MockTransport(lambda request: httpx.Response(status, json={'error': 'refused'}))
+        monkeypatch.setattr(exa, '_client', httpx.AsyncClient(transport=transport))
+        with pytest.raises(error, match=str(status)):
+            await ExaSearch[None](client=exa).get_toolset().web_search('q')
 
     async def test_auth_failure_propagates(self) -> None:
         client = _FakeExaClient(error=ValueError('Request failed with status code 401: invalid API key'))
