@@ -2,6 +2,18 @@
   "allowed_breakages": [
     {
       "against": "v2.59.0",
+      "fingerprint": "76520a1d72c942b8eb02abe397ea2689d7b6f204ebd765e4f5a1875b1e4b260c",
+      "reason": "False positive: adds Cloudflare model-name literals to `KnownEmbeddingModelName`; every existing string remains accepted and existing embedding result contracts are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10557"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "bb310599e0fd09b883e15e1d93f5c4464d3c1b33752ed72bf847d5b734b26f3f",
+      "reason": "False positive: adds Cloudflare model-name literals to `KnownImageGenerationModelName`; every existing string remains accepted and existing image result contracts are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10557"
+    },
+    {
+      "against": "v2.59.0",
       "fingerprint": "b881938683d7a5ced698e9551495f8a1098fce10d9c64642076231d15d211336",
       "reason": "Adds `RunInstructionSource` to the `InstructionSource` union; every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10789"
