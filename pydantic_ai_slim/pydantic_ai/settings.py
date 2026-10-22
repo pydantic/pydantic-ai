@@ -596,7 +596,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic (documents, including those returned by tools, and Web Fetch)
+    * Anthropic (documents, including those returned by tools, and Web Fetch), for text output only
 
     Providers that always return citations ignore this setting.
     """
