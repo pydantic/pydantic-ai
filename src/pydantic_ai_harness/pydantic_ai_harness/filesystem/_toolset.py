@@ -291,9 +291,14 @@ def _ripgrep_hidden(glob: str | None) -> list[str]:
 
     Unlike `_explicit_hidden`, a `.` or `..` component, as in `./src/*.py`, names nothing hidden.
     """
-    named = glob is not None and any(
-        (part.startswith('.') and part not in ('.', '..')) or _HIDDEN_ALTERNATIVE.search(part)
-        for part in glob.split('/')
+    # A leading `!` excludes what the glob names, so it selects nothing hidden either.
+    named = (
+        glob is not None
+        and not glob.startswith('!')
+        and any(
+            (part.startswith('.') and part not in ('.', '..')) or _HIDDEN_ALTERNATIVE.search(part)
+            for part in glob.split('/')
+        )
     )
     return ['--hidden'] if named else []
 
@@ -640,6 +645,14 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             )
         return resolved, real
 
+    def _too_large_to_read(self, path: str, size: int) -> str:
+        """What `read_file` returns for a file over `_MAX_READ_FILE_BYTES` instead of its lines."""
+        return (
+            f'[{self._path_label(path)} | {size} bytes]\n'
+            f'Too large to read: the limit is {_MAX_READ_FILE_BYTES} bytes. Find the lines you need with a '
+            'search tool, or read a byte range with a shell tool if you have one.\n'
+        )
+
     async def _read_target(self, scope: _Scope, resolved: str) -> bytes:
         """The bytes of the file a tool call names, refusing a socket the way core refuses a FIFO."""
         try:
@@ -758,11 +771,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if entry is None or entry.is_dir:
             return f'Path not found: {path}'
         if entry.size is not None and entry.size > _MAX_READ_FILE_BYTES:
-            return (
-                f'[{self._path_label(path)} | {entry.size} bytes]\n'
-                f'Too large to read: the limit is {_MAX_READ_FILE_BYTES} bytes. Find the lines you need with a '
-                'search tool, or read a byte range with a shell tool if you have one.\n'
-            )
+            return self._too_large_to_read(path, entry.size)
 
         # The whole file: the header reports its line count and the hash write_file and
         # edit_file verify against, and both need every byte.
@@ -770,6 +779,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             raw = await self._read_target(scope, resolved)
         except (FileNotFoundError, NotADirectoryError, IsADirectoryError):
             return f'Path not found: {path}'
+        # A workspace that reports no size, or a file that grew after `stat`, is only measured once read.
+        if len(raw) > _MAX_READ_FILE_BYTES:
+            return self._too_large_to_read(path, len(raw))
         content_hash = bytes_hash(raw)
         media_type = sniff_media_type(raw)
         if media_type is not None or is_binary(raw):

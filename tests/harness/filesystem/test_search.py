@@ -500,6 +500,14 @@ async def test_a_brace_alternative_naming_a_hidden_directory_searches_it_with_rg
     assert await tools.search_files('needle', include_glob=glob, workspace=workspace) == found
     assert await tools.grep('needle', glob=glob, workspace=workspace) == found
     assert await tools.list_files(glob=glob, workspace=workspace) == '.github/x.yml\nsrc/x.yml'
+    # Excluding the same directories leaves the other hidden ones out, as without the glob.
+    (tmp_path / '.git').mkdir()
+    (tmp_path / '.git' / 'config').write_text('needle\n')
+    excluded = '!{.github,src}'
+    assert await tools.search_files('needle', include_glob=excluded, workspace=workspace) == 'No matches found.'
+    assert await tools.grep('needle', glob=excluded, workspace=workspace) == 'No matches found.'
+    vendored = '!**/{.venv,node_modules}/**'
+    assert await tools.grep('needle', glob=vendored, workspace=workspace) == 'src/x.yml:1:needle'
 
 
 async def test_a_glob_naming_a_hidden_directory_searches_it_with_rg(tmp_path: Path) -> None:

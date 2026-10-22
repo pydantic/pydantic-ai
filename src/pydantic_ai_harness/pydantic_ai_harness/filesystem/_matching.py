@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fnmatch
 import functools
+import math
 import re
 from collections.abc import Sequence
 
@@ -31,14 +32,27 @@ def matching_lines(text: str, compiled: re.Pattern[str], rel_str: str, limit: in
 _QUANTIFIER = re.compile(r'[*+]|\{(?P<count>\d+)\}|\{(?P<low>\d*),(?P<high>\d*)\}')
 
 
-def _repeats_at(pattern: str, index: int) -> bool:
-    """Whether a quantifier that can repeat what precedes it more than once starts at `index`."""
+def _quantifier_at(pattern: str, index: int) -> tuple[int, float, int] | None:
+    """The fewest and most repetitions of a quantifier starting at `index`, and the index after it."""
     if (quantifier := _QUANTIFIER.match(pattern, index)) is None:
-        return False
+        return None
+    if quantifier[0] in '*+':
+        return int(quantifier[0] == '+'), math.inf, quantifier.end()
     if (count := quantifier['count']) is not None:
-        return int(count) > 1
+        return int(count), int(count), quantifier.end()
     high = quantifier['high']
-    return high is None or not high or int(high) > 1
+    return int(quantifier['low'] or 0), int(high) if high else math.inf, quantifier.end()
+
+
+_MAX_BOUNDED_PATHS = 64
+"""Most ways the bounded repeated groups of a pattern may match a text, together, before they count as nested repetition."""
+
+
+def _power(base: float, exponent: float) -> float:
+    """`base ** exponent`, as infinity where that would overflow a float."""
+    if base > 1 and exponent * math.log(base) > 700:
+        return math.inf
+    return base**exponent
 
 
 _SCOPED_FLAGS = re.compile(r'\(\?(?P<on>[a-zA-Z]*)(?:-(?P<off>[a-zA-Z]*))?:')
@@ -72,15 +86,19 @@ def has_nested_quantifier(pattern: str, *, verbose: bool) -> bool:
 
     That shape can make a backtracking engine such as Python's `re` take exponential or high
     polynomial time on a short line, and `re` has no timeout, so a search run in Python refuses it.
+    A group repeated a bounded number of times whose inside is bounded too, such as
+    `([0-9]{1,3}[.]){3}`, is allowed while the ways all such groups can match, together, stay within `_MAX_BOUNDED_PATHS`.
     This is a heuristic for the common shape: it also refuses some harmless patterns, such as
     `([a-z]+,)+x`, and misses overlapping alternatives, such as `(a|a)+`. `verbose` says whether
     the compiled pattern is verbose as a whole; a scoped `(?x:...)` group is tracked here. Where
     verbose mode applies, whitespace and comments are skipped as `re` skips them, so they cannot
     hide a quantifier from the check.
     """
-    # Each open group saves the enclosing group's `repeats` and verbose mode, restored when it closes.
-    enclosing: list[tuple[bool, bool]] = []
+    # Each open group saves the enclosing group's state and verbose mode, restored when it closes.
+    enclosing: list[tuple[bool, float, bool]] = []
     repeats = False  # whether the innermost open group repeats anything so far
+    paths = 1.0  # a bound on the ways the innermost open group can match a given text so far
+    allowed = 1.0  # the product of the ways every bounded repeated group allowed so far can match
     index = 0
     while (index := _skip_insignificant(pattern, index, verbose)) < len(pattern):
         char = pattern[index]
@@ -95,21 +113,35 @@ def has_nested_quantifier(pattern: str, *, verbose: bool) -> bool:
             while index < len(pattern) and pattern[index] != ']':
                 index += 2 if pattern[index] == '\\' else 1
         elif char == '(':
-            enclosing.append((repeats, verbose))
-            repeats = False
+            enclosing.append((repeats, paths, verbose))
+            repeats, paths = False, 1.0
             if (flags := _SCOPED_FLAGS.match(pattern, index)) is not None:
                 if 'x' in flags['on']:
                     verbose = True
                 elif 'x' in (flags['off'] or ''):
                     verbose = False
+        elif char == '|':
+            paths = math.inf  # Alternatives can overlap, which this does not track.
         elif char == ')':  # the pattern compiled, and comments are skipped, so a group is open
-            outer_repeats, verbose = enclosing.pop()
+            outer_repeats, outer_paths, verbose = enclosing.pop()
             # The quantifier after `)` is read in the enclosing group's verbose mode.
-            if repeats and _repeats_at(pattern, _skip_insignificant(pattern, index + 1, verbose)):
-                return True
-            repeats = outer_repeats or repeats
-        elif _repeats_at(pattern, index):
-            repeats = True
+            quantifier = _quantifier_at(pattern, _skip_insignificant(pattern, index + 1, verbose))
+            if quantifier is not None:
+                low, high, index = quantifier
+                index -= 1
+                if repeats and high > 1:
+                    # Groups one after another multiply, so they share one budget.
+                    allowed *= _power(paths, high) * (high - low + 1)
+                    if allowed > _MAX_BOUNDED_PATHS:
+                        return True
+                repeats = repeats or high > 1
+                paths = _power(paths, high) * (high - low + 1)
+            repeats, paths = outer_repeats or repeats, outer_paths * paths
+        elif (quantifier := _quantifier_at(pattern, index)) is not None:
+            low, high, index = quantifier
+            index -= 1
+            repeats = repeats or high > 1
+            paths *= high - low + 1
         index += 1
     return False
 

@@ -166,6 +166,7 @@ as under Coder.
 `read_file` returns `[header, BinaryContent]` for a PNG, JPEG, GIF, WebP or PDF up to 5 MB (detected
 from its leading bytes, not its extension), and a text description (size, media type, and for other
 binary files the first 64 bytes in hex) for any other binary file; text files come back as a string.
+A file over 64 MiB is described by its size instead of read: find the lines with `search_files` or `grep`.
 
 Parameters: `root_dir` (default the working directory; must be the working directory or an **ancestor**
 of it, so `FileSystem(root_dir='data')` under `LocalWorkspace('.')` raises `UserError`: attach

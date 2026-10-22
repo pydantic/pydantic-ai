@@ -861,6 +861,22 @@ class TestReadFile:
             await toolset.read_file('small.txt', workspace=unreadable) == '[small.txt | 1 lines]\n     1\txxxxxxxxxx\n'
         )
 
+    async def test_oversized_file_without_a_reported_size_is_described(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Without a size from `stat`, the file has to be read to be measured, but it is still not shown.
+        monkeypatch.setattr('pydantic_ai_harness.filesystem._toolset._MAX_READ_FILE_BYTES', 10)
+        (tmp_path / 'huge.log').write_text('x' * 11)
+
+        class SizelessWorkspace(LocalWorkspaceBackend):
+            async def stat(self, path: str) -> FileEntry:
+                return replace(await super().stat(path), size=None)
+
+        assert await _unhashed_toolset().read_file('huge.log', workspace=SizelessWorkspace(tmp_path)) == (
+            '[huge.log | 11 bytes]\nToo large to read: the limit is 10 bytes. Find the lines you need with a search '
+            'tool, or read a byte range with a shell tool if you have one.\n'
+        )
+
     @pytest.mark.skipif(not hasattr(os, 'mkfifo'), reason='needs FIFOs')
     async def test_special_file_is_a_retry(self, tmp_path: Path) -> None:
         os.mkfifo(tmp_path / 'pipe')
@@ -1487,6 +1503,16 @@ class TestSearchFiles:
             ('(a+){1,30}$', True),
             ('(.*a){12}$', True),
             ('(a{2})+', True),
+            (r'(?:\d{1,3}\.){3}\d{1,3}', False),
+            (r'(?:\d{4}){2}', False),
+            ('(?:[A-Fa-f0-9]{2}){1,8}', False),
+            ('(a{1,2}){50}$', True),
+            (r'((\d{1,3}){3}){3}', True),
+            ('(a{2}|a){3}', True),
+            (r'(\d{1,3}){1000}', True),
+            (r'(?:a{1,2}){10}(?:a{1,2}){10}$', True),
+            (r'(a{1,2}){10}$', True),
+            (r'(?:\d{1,3}\.){3}(?:\d{1,3}\.){1}\d', False),
             ('(a+){0,1}', False),
             ('(a+){1}', False),
             ('(a?)+', False),
