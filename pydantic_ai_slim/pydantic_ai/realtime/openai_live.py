@@ -600,6 +600,11 @@ Returns the new socket and the new session's id.
 #: frames included, that Live sends again to a sideband that re-attaches.
 _REPLAYED_EVENTS_REMEMBERED = 2048
 
+
+class _SessionGone(Exception):
+    """A sideband's re-attach found no session: the call has ended, so no later attempt can succeed."""
+
+
 _LiveReattach = Callable[[], Awaitable['ClientConnection']]
 """Attach a new sideband to the WebRTC call's Live session, which carries on while no sideband is attached."""
 
@@ -791,6 +796,9 @@ class OpenAILiveConnection(RealtimeConnection):
         # The ids of the events a sideband handled most recently, to skip those Live sends again on a re-attach.
         self._recent_event_ids: deque[str] = deque(maxlen=_REPLAYED_EVENTS_REMEMBERED)
         self._seen_event_ids: set[str] = set()
+        # Set when a re-attach replaces the socket or is given up on, for the sends waiting on it (see `_send_event`).
+        self._socket_changed = asyncio.Event()
+        self._sending_from_receive_loop = False
         self._reconnect = reconnect
         self._forks = forks
         self._message_history: Callable[[], Sequence[ModelMessage]] | None = None
@@ -1077,9 +1085,18 @@ class OpenAILiveConnection(RealtimeConnection):
         return True
 
     async def _send_due_continuations(self) -> None:
-        """Continue each delegation whose asking response just ended with every result already in."""
-        while self._continuations_due:
-            await self._continue(self._continuations_due.pop(0))
+        """Continue each delegation whose asking response just ended with every result already in.
+
+        Sent from the receive loop, which is what re-attaches a dropped sideband, so a send that fails is not waited
+        out: the delegation stays due, and goes out again after the next frame, on the sideband that replaces this one.
+        """
+        self._sending_from_receive_loop = True
+        try:
+            while self._continuations_due:
+                await self._continue(self._continuations_due[0])
+                self._continuations_due.pop(0)
+        finally:
+            self._sending_from_receive_loop = False
 
     async def _continue(self, delegation: _Delegation) -> None:
         """Resume a delegated response that has every tool result it asked for.
@@ -1092,7 +1109,36 @@ class OpenAILiveConnection(RealtimeConnection):
         await self._send_event({'type': 'response.create'})
 
     async def _send_event(self, event: dict[str, Any]) -> None:
-        await self._ws.send(to_json(event).decode())
+        """Send one event; on a sideband that dropped, on the one that re-attaches in its place.
+
+        The session runs on while a sideband is away, so what it is sent then (a tool result that came in during the
+        drop, say) still belongs to it. A send that fails waits for the receive loop to re-attach, and goes out again
+        on the new sideband, unless no re-attach is coming, or this is the receive loop itself, which would be
+        waiting on itself.
+        """
+        data = to_json(event).decode()
+        while True:
+            ws, socket_changed = self._ws, self._socket_changed
+            try:
+                await ws.send(data)
+                return
+            except self.transport_errors as e:
+                if self._sending_from_receive_loop or not self._may_reattach:
+                    raise
+                await socket_changed.wait()
+                if self._ws is ws:
+                    # No re-attach came: the sideband is gone for good.
+                    raise e
+
+    @property
+    def _may_reattach(self) -> bool:
+        """Whether a dropped sideband can still be replaced by one that re-attaches to the same session."""
+        return self._reattach is not None and self._can_reconnect and not self._closed and not self._session_end.ended
+
+    def _socket_change_settled(self) -> None:
+        """Wake the sends waiting for a re-attach: the sideband was replaced, or won't be."""
+        self._socket_changed.set()
+        self._socket_changed = asyncio.Event()
 
     async def _end_session(self) -> AsyncIterator[SessionUsage]:
         """Send `session.close`, and read on until `session.closed` reports the session's final usage.
@@ -1133,6 +1179,7 @@ class OpenAILiveConnection(RealtimeConnection):
     async def aclose(self) -> None:
         """Cancel the read in flight so closing the socket doesn't strand its exception."""
         self._closed = True
+        self._socket_change_settled()
         task = self._recv_task
         self._cancel_read()
         if self._idle_audio_task is not None:
@@ -1184,6 +1231,7 @@ class OpenAILiveConnection(RealtimeConnection):
                         # so without this the last reply would be settled as interrupted even though the
                         # model had finished speaking and the session closed normally.
                         settled = self._frame(self._settle_open_turns())
+                        self._socket_change_settled()
                         yield [*settled, *self._lifecycle.connection_lost()]
                         return
                     dropped = e
@@ -1207,6 +1255,7 @@ class OpenAILiveConnection(RealtimeConnection):
                         # error and end the stream, as the other providers do, rather than raising the
                         # `websockets` exception. The read started above is on the dead socket.
                         self._cancel_read()
+                        self._socket_change_settled()
                         error = RealtimeSessionErrorEvent(
                             message=f'OpenAI GPT-Live connection closed: {dropped}', recoverable=False
                         )
@@ -1223,6 +1272,7 @@ class OpenAILiveConnection(RealtimeConnection):
                     lost += self._lifecycle.take_pending()
                     if not reconnected:
                         self._gave_up = True
+                        self._socket_change_settled()
                         error = RealtimeSessionErrorEvent(
                             message=f'OpenAI GPT-Live connection dropped; reconnect failed: {dropped}',
                             recoverable=False,
@@ -1250,9 +1300,15 @@ class OpenAILiveConnection(RealtimeConnection):
     async def _try_reconnect(self) -> bool:
         """Re-open the session with exponential backoff; return whether a replacement is connected."""
         assert self._reconnect is not None
-        if not await reconnect_with_backoff(
-            self._reconnect, self._attempt_reconnect, reconnects_used=self._reconnects_used
-        ):
+        try:
+            reconnected = await reconnect_with_backoff(
+                self._reconnect, self._attempt_reconnect, reconnects_used=self._reconnects_used
+            )
+        except _SessionGone:
+            # Nothing left to end either.
+            self._session_end.ended = True
+            return False
+        if not reconnected:
             return False
         self._reconnects_used += 1
         return True
@@ -1292,21 +1348,25 @@ class OpenAILiveConnection(RealtimeConnection):
         """
         try:
             ws = await reattach()
+        except websockets.InvalidStatus as e:
+            if e.response.status_code == 404:
+                # The call ended while the sideband was away (Live: `session_id_not_found`): no attempt can succeed.
+                raise _SessionGone from e
+            return False
         except (websockets.WebSocketException, OSError, TimeoutError):
-            # A failed attach: a later attempt may still succeed, unless the call has ended in the meantime.
+            # A failed attach: a later attempt may still succeed.
             return False
         self._ws = ws
         self._restored = True
+        self._socket_change_settled()
         return True
 
-    def _seen_before(self, event_id: object) -> bool:
+    def _seen_before(self, event_id: str) -> bool:
         """Whether this sideband already handled the event with this id, and remember it if not.
 
         A re-attached sideband is sent the session's last few seconds of events again, under their original ids
         (checked live): those it read before the drop must not count twice.
         """
-        if not isinstance(event_id, str):
-            return False
         if event_id in self._seen_event_ids:
             return True
         if len(self._recent_event_ids) == self._recent_event_ids.maxlen:
@@ -1427,7 +1487,11 @@ class OpenAILiveConnection(RealtimeConnection):
             event_type = data.get('type')
             if not isinstance(event_type, str) or event_type not in _ACTED_ON_EVENT_TYPES:
                 return []
-            if self._reattach is not None and self._seen_before(data.get('event_id')):
+            if (
+                self._reattach is not None
+                and isinstance(event_id := data.get('event_id'), str)
+                and self._seen_before(event_id)
+            ):
                 return []
             try:
                 event = _acted_on_event_adapter.validate_python(data)

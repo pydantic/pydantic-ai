@@ -99,7 +99,9 @@ with try_import() as imports_successful:
     from openai.types.live import SessionConfig
     from openai.types.shared import ReasoningEffort
     from pydantic import TypeAdapter
+    from websockets.datastructures import Headers
     from websockets.frames import Close
+    from websockets.http11 import Response
 
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers import Provider
@@ -3744,19 +3746,125 @@ async def test_a_reattached_sideband_skips_the_events_live_sends_again() -> None
     ]
 
 
-def test_a_sideband_remembers_only_its_latest_events(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_sideband_remembers_only_its_latest_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An event older than what the sideband remembers counts as new when Live sends it again."""
     monkeypatch.setattr(live_module, '_REPLAYED_EVENTS_REMEMBERED', 2)
-    connection = _connection(reattach=object())
-    seen = connection._seen_before  # pyright: ignore[reportPrivateUsage]
-    assert [seen('e1'), seen('e2'), seen('e1'), seen('e3'), seen('e1'), seen(None), seen(None)] == [
-        False,
-        False,
-        True,
-        False,
-        False,  # forgotten once `e3` came in
-        False,
-        False,  # an event without an id is never a repeat
+    attached = _FakeWebSocket([_output_transcript(' first again', 'e1'), _output_transcript(' third again', 'e3')])
+
+    async def reattach() -> Any:
+        return attached
+
+    dropping = _DroppingWebSocket(
+        [_output_transcript('First', 'e1'), _output_transcript(' second', 'e2'), _output_transcript(' third', 'e3')]
+    )
+    connection = OpenAILiveConnection(
+        dropping,  # pyright: ignore[reportArgumentType]
+        reattach=reattach,
+        reconnect={'base_delay': 0.0},
+        turn_silence_ms=100,
+    )
+    events = await _first_events(connection, 6)
+    assert events == [
+        OutputTranscript('First'),
+        OutputTranscript(' second'),
+        OutputTranscript(' third'),
+        RealtimeSessionReconnectEvent(state_restored=True),
+        # Forgotten once `e3` came in; `e3` itself is still remembered, and skipped.
+        OutputTranscript(' first again'),
+        ResponseDone(),
     ]
+
+
+class _DeadWebSocket(_FakeWebSocket):
+    """A sideband that has dropped: reads and sends both fail."""
+
+    async def recv(self) -> str:
+        raise websockets.ConnectionClosedError(None, None)
+
+    async def send(self, data: str) -> None:
+        raise websockets.ConnectionClosedError(None, None)
+
+
+async def test_a_tool_result_ready_while_the_sideband_is_away_goes_out_on_the_new_one() -> None:
+    """The session runs on without a sideband, so a result sent before the re-attach lands waits for it."""
+    reattaching, release = asyncio.Event(), asyncio.Event()
+    attached = _FakeWebSocket([])
+
+    async def reattach() -> Any:
+        reattaching.set()
+        await release.wait()
+        return attached
+
+    connection = OpenAILiveConnection(_DeadWebSocket([]), reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
+    events = asyncio.create_task(_first_events(connection, 1))
+    await reattaching.wait()
+    sending = asyncio.create_task(connection.send(ToolResult('call_1', output='14C')))
+    await asyncio.sleep(0)
+    assert not sending.done()
+    release.set()
+    await sending
+    assert await events == [RealtimeSessionReconnectEvent(state_restored=True)]
+    assert [json.loads(frame)['type'] for frame in attached.sent] == ['response.item.create', 'response.create']
+
+
+async def test_a_send_that_fails_with_no_reattach_coming_raises() -> None:
+    async def reattach() -> Any:
+        raise OSError('unreachable')
+
+    connection = OpenAILiveConnection(_DeadWebSocket([]), reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
+    sending = asyncio.create_task(connection.send(ToolResult('call_1', output='14C')))
+    events = await _first_events(connection, 1)
+    assert isinstance(events[0], RealtimeSessionErrorEvent)
+    with pytest.raises(websockets.ConnectionClosedError):
+        await sending
+    # Once the session is past re-attaching, a failed send raises right away.
+    with pytest.raises(websockets.ConnectionClosedError):
+        await connection.send(ToolResult('call_2', output='14C'))
+
+
+async def test_a_continuation_a_drop_cut_off_goes_out_on_the_reattached_sideband() -> None:
+    """A delegation's continuation that failed to send stays due, and goes out after the re-attach."""
+    attached = _FakeWebSocket([_output_transcript(' still checking', 'e2')])
+
+    async def reattach() -> Any:
+        return attached
+
+    ws = _SendDroppingWebSocket([_output_transcript('Checking.', 'e1')])
+    connection = OpenAILiveConnection(
+        ws,  # pyright: ignore[reportArgumentType]
+        reattach=reattach,
+        reconnect={'base_delay': 0.0},
+        turn_silence_ms=100,
+    )
+    connection._continuations_due.append(live_module._Delegation('d1'))  # pyright: ignore[reportPrivateUsage]
+    events = await _first_events(connection, 4)
+    assert events == [
+        OutputTranscript('Checking.'),
+        RealtimeSessionReconnectEvent(state_restored=True),
+        OutputTranscript(' still checking'),
+        ResponseDone(),
+    ]
+    assert [json.loads(frame)['type'] for frame in attached.sent] == ['response.create']
+
+
+@pytest.mark.parametrize('status', [404, 503])
+async def test_a_reattach_that_finds_no_session_gives_up_at_once(status: int) -> None:
+    """Live answers 404 once the call has ended: no later attempt can succeed, unlike after any other failure."""
+    attempts: list[int] = []
+
+    async def reattach() -> Any:
+        attempts.append(status)
+        raise websockets.InvalidStatus(Response(status, 'Error', Headers(), b'{}'))
+
+    dropping = _DroppingWebSocket([])
+    connection = OpenAILiveConnection(
+        dropping,  # pyright: ignore[reportArgumentType]
+        reattach=reattach,
+        reconnect={'base_delay': 0.0, 'max_attempts': 3},
+    )
+    events = await _first_events(connection, 1)
+    assert isinstance(events[0], RealtimeSessionErrorEvent) and not events[0].recoverable
+    assert len(attempts) == (1 if status == 404 else 3)
 
 
 async def test_a_sideband_that_cannot_reattach_ends_the_session() -> None:
