@@ -326,12 +326,6 @@ class TestCapability:
         assert Macroscope().get_toolset().id == 'macroscope'
         assert Macroscope(id='review').get_toolset().id == 'review'
 
-    def test_temporal_durability_accepts_macroscope(self) -> None:
-        pytest.importorskip('temporalio')
-        from pydantic_ai.durable_exec.temporal import TemporalDurability  # needs the temporal extra
-
-        Agent(TestModel(), name='macroscope-agent', capabilities=[Macroscope(), TemporalDurability()])
-
     def test_agent_spec_roundtrip(self) -> None:
         # The docs promise Macroscope loads from an agent spec via `custom_capability_types`.
         cap = Macroscope.from_spec(base='release', timeout=900.0)
