@@ -202,6 +202,7 @@ async def test_a_cancelled_run_stops_the_command(client: daytona.AsyncDaytona) -
         if await backend.exists(pid_file):
             with anyio.fail_after(60):
                 pid = (await backend.read_bytes(pid_file)).decode().strip()
+                assert pid.isdigit()
                 while (await backend.run(['kill', '-0', pid], timeout=30)).exit_code == 0:
                     await anyio.sleep(0.2)
         else:

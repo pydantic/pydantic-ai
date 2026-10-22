@@ -547,16 +547,15 @@ async def test_capability_keeps_the_wrapped_policy_and_declines_foreign_refs(tmp
         await agent.run('go', workspace=WorkspaceRef(provider='local', id=str(tmp_path / 'elsewhere')))
 
 
-@pytest.fixture
-def host_dir() -> Iterator[Path]:
-    """A host directory outside `/tmp`, which the sandbox replaces with its own, so only the read-only root guards it."""
-    directory = Path(tempfile.mkdtemp(prefix='pydantic-ai-bwrap-', dir='/var/tmp'))
-    yield directory
-    shutil.rmtree(directory)
-
-
 @pytest.mark.skipif(not BWRAP_WORKS, reason='needs a working `bwrap` (Linux with user namespaces)')
 class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
+    @pytest.fixture
+    def host_dir(self) -> Iterator[Path]:
+        """A host directory outside `/tmp`, which the sandbox replaces with its own, so only the read-only root guards it."""
+        directory = Path(tempfile.mkdtemp(prefix='pydantic-ai-bwrap-', dir='/var/tmp'))
+        yield directory
+        shutil.rmtree(directory)
+
     async def test_commands_write_only_to_the_working_dir(self, tmp_path: Path, host_dir: Path) -> None:
         workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path / 'work')))
         (tmp_path / 'work').mkdir()
