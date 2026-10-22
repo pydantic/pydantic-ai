@@ -193,10 +193,11 @@ class Simulation(ABC):
         """Each `RealtimeTurnCompleteEvent` the session streamed, as a wait that returned as it was queued."""
         self.consumer_errors: list[BaseException] = []
         """What iterating the session raised, in order: a failure the session goes on receiving after, then the last."""
-        self.failures_parked_at: list[int] = []
+        self.exchanges_abandoned_at: list[int] = []
         """When the session parked each failure that ends the exchange in progress (a tool that raised, a usage limit a
         tool's result would pass, a tool result that failed to send), on the shared clock: the moment the exchange
-        ended, which is before the failure is raised from `async for`."""
+        ended, which is before the failure is raised from `async for`. Not a tool failure whose result went out anyway
+        (GPT-Live): the model answers it, so the exchange goes on."""
         self.close_error: BaseException | None = None
         self.close_requested: int | None = None
         self.closed = False
@@ -307,9 +308,10 @@ class Simulation(ABC):
     def _record_parked_failures(self, session: RealtimeSession) -> None:
         park = session._park_error  # pyright: ignore[reportPrivateUsage]
 
-        def park_and_record(error: BaseException) -> None:
-            self.failures_parked_at.append(self._now())
-            park(error)
+        def park_and_record(error: BaseException, *, abandons_exchange: bool = True) -> None:
+            if abandons_exchange:
+                self.exchanges_abandoned_at.append(self._now())
+            park(error, abandons_exchange=abandons_exchange)
 
         session._park_error = park_and_record  # pyright: ignore[reportPrivateUsage]
 
@@ -645,7 +647,9 @@ class Simulation(ABC):
 
         try:
             self.loop.run_until_complete(handoff())
-        except Exception as e:  # pragma: no cover (only when a standard run rejects the history)
+        # Only when a standard run rejects the history, which fails the scenario. `lax`: Python 3.11's tracer has
+        # recorded stray arcs onto this line in CI, with other arcs past the end of `_loop.py` in the same data.
+        except Exception as e:  # pragma: lax no cover
             self.checker.report('history.handoff', [(f'a standard run rejected the history: {e!r}', {})])
 
     # --- views for the invariants -------------------------------------------------------------------

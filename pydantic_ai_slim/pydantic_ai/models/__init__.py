@@ -9,13 +9,14 @@ from __future__ import annotations as _annotations
 import base64
 import hashlib
 import json
+import reprlib
 import time
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from copy import copy
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timedelta
 from difflib import get_close_matches
 from functools import cache, cached_property
@@ -131,6 +132,7 @@ from ..profiles import (
     _translate_legacy_profile_keys,  # pyright: ignore[reportPrivateUsage]
     merge_profile,
 )
+from ..profiles.decision import decision_model_profile
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import CacheSetting, ModelSettingName, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
@@ -720,8 +722,37 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Get the model settings."""
         return self._settings
 
+    def __eq__(self, other: object) -> bool:
+        """Compare `settings`, `profile`, and the subclass's dataclass fields; a subclass that hashes by identity compares by identity."""
+        if not isinstance(other, type(self)) or other.__class__ is not self.__class__:
+            return NotImplemented
+        return (self._settings, self._profile) == (other._settings, other._profile) and _utils.dataclass_fields_equal(
+            self, other
+        )
+
+    # Defining `__eq__` would otherwise set `__hash__` to `None`, making non-dataclass subclasses unhashable.
+    __hash__ = AbstractModel.__hash__
+
+    @reprlib.recursive_repr()
+    def __repr__(self) -> str:
+        shown = [f'model_name={self.model_name!r}']
+        if is_dataclass(self):
+            shown.extend(f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr)
+        if self._settings is not None:
+            shown.append(f'settings={self._settings!r}')
+        if self._profile is not None:
+            shown.append(f'profile={self._profile!r}')
+        return f'{self.__class__.__qualname__}({", ".join(shown)})'
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
+        # `@dataclass` generates `__eq__` and `__repr__` from the subclass's own fields, which leaves out the
+        # `settings` and `profile` stored on this base, so two models configured differently would compare
+        # equal and print the same. `@dataclass` keeps a method the class already defines.
+        if '__eq__' not in cls.__dict__ and cls.__eq__ is Model.__eq__:
+            cls.__eq__ = Model.__eq__
+        if '__repr__' not in cls.__dict__ and cls.__repr__ is Model.__repr__:
+            cls.__repr__ = Model.__repr__
         # TODO(v3): remove along with `resolve_prompt_cache_retention`.
         legacy = cls.__dict__.get('resolve_prompt_cache_retention')
         if legacy is not None and 'resolve_cache_retention' not in cls.__dict__:
@@ -1432,7 +1463,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Resolution order (later layers override earlier ones):
           1. `DEFAULT_PROFILE` — base values for every key in `ModelProfile`.
           2. The provider's `model_profile(model_name)` result — provider-specific defaults
-             for this model.
+             for this model — or what `_provider_model_profile()` returns in its place.
           3. A best-effort `context_window` value from
              [genai-prices](https://github.com/pydantic/genai-prices), unless the provider or a
              partial user profile explicitly set the field (including to `None`).
@@ -1448,9 +1479,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         same way, to the kinds of file the model class's message mapping can send.
         """
         # Step 1+2: provider default merged with base default
-        provider_profile: ModelProfile = {}
-        if (provider := self.provider) is not None:
-            provider_profile = provider.model_profile(self.model_name) or {}
+        provider_profile = self._provider_model_profile()
         resolved = merge_profile(DEFAULT_PROFILE, provider_profile)
 
         # Step 3: fill `context_window` from genai-prices when no provider or partial user layer set it.
@@ -1507,6 +1536,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
 
         return resolved
+
+    def _provider_model_profile(self) -> ModelProfile:
+        """The provider's profile for this model's name, the second layer of [`profile`][pydantic_ai.models.Model.profile].
+
+        Override this for a model class whose endpoint the provider's profile doesn't describe, because the provider
+        also serves the model name on another API.
+        """
+        if (provider := self.provider) is None:
+            return {}
+        return provider.model_profile(self.model_name) or {}
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Adjust the provider's profile defaults for this model instance, before the user's `profile=` is applied.
@@ -2188,7 +2227,13 @@ def infer_model_profile(model: str) -> ModelProfile:
         return DEFAULT_PROFILE
 
     try:
-        provider_profile = provider_class.model_profile(model_name)
+        # `OpenAIProvider` profiles a name such as `gpt-6-luna` for the Responses API, so the Decisions API's model
+        # class brings its own profile, as `OpenAIDecisionsModel._provider_model_profile` does.
+        provider_profile = (
+            decision_model_profile(model_name)
+            if provider == 'openai-decisions'
+            else provider_class.model_profile(model_name)
+        )
     except (ValueError, UserError):
         return DEFAULT_PROFILE
     profile = provider_profile or DEFAULT_PROFILE
@@ -2328,11 +2373,11 @@ def infer_model(  # noqa: C901
             raise UserError('System One models require a `SystemOneProvider`.')
         return SystemOneModel(model_name, provider=provider)
     elif model_kind == 'openai-decisions':
-        from ..providers.openai_decisions import OpenAIDecisionsProvider
+        from ..providers.openai import OpenAIProvider
         from .openai_decisions import OpenAIDecisionsModel
 
-        if not isinstance(provider, OpenAIDecisionsProvider):
-            raise UserError('OpenAI Decisions models require an `OpenAIDecisionsProvider`.')
+        if not isinstance(provider, OpenAIProvider):
+            raise UserError('OpenAI Decisions models require an `OpenAIProvider`.')
         return OpenAIDecisionsModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
