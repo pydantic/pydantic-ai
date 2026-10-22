@@ -516,9 +516,9 @@ class TestLocalStackCapability:
         with pytest.raises(ValueError, match=r"`endpoint_url` 'http://localhost:port' has an invalid port"):
             LocalStack(manage_container=True, endpoint_url='http://localhost:port')
 
-    def test_managed_endpoint_port_zero_raises_at_construction(self) -> None:
-        with pytest.raises(ValueError, match=r"`endpoint_url` 'http://localhost:0' has an invalid port: 0"):
-            LocalStack(manage_container=True, endpoint_url='http://localhost:0')
+    def test_managed_endpoint_port_zero_keeps_the_edge_port(self) -> None:
+        cap = LocalStack(manage_container=True, endpoint_url='http://localhost:0')
+        assert 'http://localhost.localstack.cloud:4566' in (cap.get_instructions() or '')
 
     def test_managed_scoped_ipv6_host_address_raises_at_construction(self) -> None:
         with pytest.raises(ValueError, match=r"`host_address` 'fe80::1%eth0' is a scoped IPv6 address"):
@@ -730,10 +730,6 @@ class TestContainerManagement:
     def test_invalid_managed_endpoint_port_rejected(self) -> None:
         with pytest.raises(ValueError, match=r"`endpoint_url` 'http://localhost:port' has an invalid port"):
             _toolset(endpoint_url='http://localhost:port', manage_container=True)
-
-    def test_managed_endpoint_port_zero_rejected(self) -> None:
-        with pytest.raises(ValueError, match=r"`endpoint_url` 'http://localhost:0' has an invalid port: 0"):
-            _toolset(endpoint_url='http://localhost:0', manage_container=True)
 
     def test_managed_scoped_ipv6_host_address_rejected(self) -> None:
         with pytest.raises(ValueError, match=r"`host_address` 'fe80::1%eth0' is a scoped IPv6 address"):

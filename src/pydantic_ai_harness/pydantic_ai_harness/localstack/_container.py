@@ -61,16 +61,12 @@ def managed_endpoint_url(host_address: str, host_port: int) -> str:
 
 
 def endpoint_port(endpoint_url: str) -> int:
-    """Return the port of `endpoint_url`, or LocalStack's edge port when it names none."""
+    """Return the port of `endpoint_url`, or LocalStack's edge port when it names none or port 0."""
     try:
         port = urlsplit(endpoint_url).port
     except ValueError as e:
         raise ValueError(f'`endpoint_url` {endpoint_url!r} has an invalid port: {e}') from e
-    if port is None:
-        return _EDGE_PORT
-    if port == 0:
-        raise ValueError(f'`endpoint_url` {endpoint_url!r} has an invalid port: 0')
-    return port
+    return port or _EDGE_PORT
 
 
 class LocalStackContainer:
