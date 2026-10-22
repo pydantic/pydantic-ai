@@ -324,7 +324,7 @@ Key facts for building realtime agents:
   reply on Gemini 3.1. On OpenAI GPT-Live a string goes to the delegated backend as the user's message and
   runs it (tools included), and Live speaks the answer, often after a filler line; `respond=False` is context only
   (which Live may still mention), Live only speaks while audio is flowing (set `openai_live_idle_audio=True` for a
-  session with no microphone), and text over about 500 tokens raises `UserError`. Gemini speech models reject text output before connect, except the Vertex
+  session with no microphone), and `respond=False` text over 500 tokens raises `UserError` (a longer typed turn still runs the backend, but Live isn't told what was typed). Gemini speech models reject text output before connect, except the Vertex
   `gemini-live-2.5-flash` half-cascade, which answers in text.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`, or with

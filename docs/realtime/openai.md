@@ -251,11 +251,12 @@ and in our testing the model usually acknowledged it out loud anyway ("Welcome b
 background ("Internal note: ...") and say in `openai_live_instructions` what the model should keep to
 itself.
 
-Live caps the context it takes at 500 tokens, which applies to typed turns too, as Live hears them as
-context (less the few tokens that say the user typed it). Longer text raises
-[`UserError`][pydantic_ai.exceptions.UserError] before anything is sent, so it is neither recorded in
-history nor waited for by [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply];
-split it, or give long material to the backend as a tool result instead.
+Live caps the context it takes at 500 tokens. A typed turn of any length still goes to the backend,
+but one too long for that context (about 496 tokens, with the words that say the user typed it) goes
+without telling Live what was typed, so Live may leave a terse answer to it unsaid. Context sent with
+`respond=False` over the cap raises [`UserError`][pydantic_ai.exceptions.UserError] before anything is
+sent, so it is not recorded in history; split it, or give long material to the backend as a tool
+result instead.
 [`enqueue()`](tools.md#enqueuing-prompts) delivers text the same way once the model is idle. The
 [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] it produces marks when the text
 was sent, not when the model took it in. Live speaks to text in the reply it is giving, if it is giving one, rather
@@ -507,7 +508,7 @@ the provider-agnostic workflows.
 | Feature | Support | Notes |
 | --- | --- | --- |
 | Audio format | Limited parameter support | Mono PCM16 at 24 kHz by default, input and output; 16 kHz by setting both `audio_input_sample_rate` and `audio_output_sample_rate` to `16000` through [`profile=`](overview.md#provider-support). The API also offers 8 kHz G.711, which Pydantic AI does not expose |
-| Text input | Limited parameter support | [Runs the backend](#typed-text-runs-the-backend) as the user's message; capped at 500 tokens, spoken only while audio flows (see `openai_live_idle_audio`), and `respond=False` context possibly spoken anyway |
+| Text input | Limited parameter support | [Runs the backend](#typed-text-runs-the-backend) as the user's message; any length (Live is told what was typed up to its 500-token context cap), spoken only while audio flows (see `openai_live_idle_audio`), and `respond=False` context possibly spoken anyway |
 | Text output | Unsupported | Live always speaks; read the answer from the transcript on the [`SpeechPart`][pydantic_ai.messages.SpeechPart] |
 | Image input | Limited parameter support | [For the backend, with `respond=True`](#images-go-to-the-backend) |
 | Manual turns and interruption | Unsupported | Live owns turn-taking and handles barge-in itself, but reports nothing when it does, so a reply the user cut off is recorded as complete, not interrupted. The [turn boundary is inferred](#the-turn-boundary-is-inferred) from silence |
@@ -530,7 +531,7 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   [`clear_audio()`][pydantic_ai.realtime.RealtimeSession.clear_audio],
   [`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response], and
   [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt].
-- An image sent without `respond=True`, text over the 500-token cap, and seeded history that contains
+- An image sent without `respond=True`, `respond=False` text over the 500-token cap, and seeded history that contains
   audio or images.
 - A WebRTC sideband whose `message_history` differs from what the offer seeded, including none at all
   when the offer seeded some.

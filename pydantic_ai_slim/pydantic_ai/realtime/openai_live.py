@@ -7,9 +7,9 @@ the WebSocket URL, resolving authentication, and mapping handshake failures). Th
 shape the adapter:
 
 - **Audio drives the session.** Live has no user-turn event for text: a typed turn goes to the
-  Responses backend as the user's message, with `response.create` to run it, and to the Live model
-  as silent context (`session.thinking.append`, capped at 500 tokens), which is also how context
-  sent without asking for a reply arrives. Context is placed on the session's audio timeline, and
+  Responses backend as the user's message, with `response.create` to run it, and, if it fits, to the
+  Live model as silent context (`session.thinking.append`, capped at 500 tokens), which is also how
+  context sent without asking for a reply arrives. Context is placed on the session's audio timeline, and
   Live only speaks onto it, which only advances while audio flows — so a session whose microphone
   isn't streaming says nothing, unless `openai_live_idle_audio` has the connection stream silence in
   the microphone's place.
@@ -917,14 +917,17 @@ class OpenAILiveConnection(RealtimeConnection):
             # user's message and the backend is run on it, the way Live takes typed input. Live itself hears what
             # was asked as silent context: without it, it often leaves a terse answer unsaid, not knowing the
             # question (checked live: a bare "20" was spoken in none of six runs without it, and all six with it).
-            await _check_context_length(content, prefix=_TYPED_TEXT_PREFIX)
+            # The backend takes text of any length, so text too long for that context goes without it.
+            thinking = _TYPED_TEXT_PREFIX + content
+            tells_live = await _context_tokens_over_cap(thinking) is None
             # Live opens the delegation that answers it under this id (`session.delegation.created`).
             event_id = f'pydantic_ai.text.{input_index}'
             self._unacknowledged_text[event_id] = input_index
             try:
-                await self._send_event(
-                    {'type': 'session.thinking.append', 'delegation_id': None, 'content': _TYPED_TEXT_PREFIX + content}
-                )
+                if tells_live:
+                    await self._send_event(
+                        {'type': 'session.thinking.append', 'delegation_id': None, 'content': thinking}
+                    )
                 await self._send_event(
                     {
                         'type': 'response.item.create',
@@ -1869,28 +1872,32 @@ def _is_audio_or_video_url(item: DocumentUrl) -> bool:
     return media_type.startswith(('audio/', 'video/'))
 
 
-async def _check_context_length(text: str, *, prefix: str = '') -> None:
-    """Refuse context text over Live's cap before it is sent, rather than after Live rejects it.
+async def _context_tokens_over_cap(text: str) -> int | None:
+    """How many tokens context text is, in the tokenizer Live counts with, if that is over Live's cap; else `None`.
 
-    A rejected append arrives as a recoverable error well after `send()` has returned and the text has
-    been recorded as sent, so it is checked here, in the tokenizer Live counts with. A token spans at
-    least one byte, so text that short can't be over and skips loading it. `prefix` is what the context
-    is sent with ahead of `text`: it counts against the cap, which the error then gives for `text` alone.
+    A token spans at least one byte, so text that short can't be over and skips loading the tokenizer.
     """
-    context = f'{prefix}{text}'
-    if len(context.encode()) <= _CONTEXT_TOKEN_LIMIT:
-        return
+    if len(text.encode()) <= _CONTEXT_TOKEN_LIMIT:
+        return None
     # Loading an encoding can download it on first use, so it stays off the event loop. tiktoken caches
     # the loaded encoding under a lock, so concurrent first sends load it once.
     encoding = await _utils.run_in_executor(tiktoken.get_encoding, _CONTEXT_ENCODING)
     # Special-token text such as `<|endoftext|>` is counted as the one token it is, as Live counts it
     # (checked live), rather than refused as tiktoken does by default.
-    if (tokens := len(encoding.encode(context, allowed_special='all'))) > _CONTEXT_TOKEN_LIMIT:
-        text_tokens = len(encoding.encode(text, allowed_special='all'))
+    tokens = len(encoding.encode(text, allowed_special='all'))
+    return tokens if tokens > _CONTEXT_TOKEN_LIMIT else None
+
+
+async def _check_context_length(text: str) -> None:
+    """Refuse context text over Live's cap before it is sent, rather than after Live rejects it.
+
+    A rejected append arrives as a recoverable error well after `send()` has returned and the text has
+    been recorded as sent, so it is checked here.
+    """
+    if (tokens := await _context_tokens_over_cap(text)) is not None:
         raise UserError(
-            f'OpenAI GPT-Live accepts at most {_CONTEXT_TOKEN_LIMIT - (tokens - text_tokens)} tokens of text per '
-            f'`send()`, and this is {text_tokens}. Send it in shorter pieces, or give longer material to the agent '
-            'as a tool result.'
+            f'OpenAI GPT-Live accepts at most {_CONTEXT_TOKEN_LIMIT} tokens of text per `send()`, and this is '
+            f'{tokens}. Send it in shorter pieces, or give longer material to the agent as a tool result.'
         )
 
 
