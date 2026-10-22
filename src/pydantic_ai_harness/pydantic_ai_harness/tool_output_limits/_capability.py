@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
+import posixpath
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, TypeGuard
 
-from pydantic_ai import FunctionToolset
+from pydantic_ai import FunctionToolset, Tool, ToolKind
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
@@ -22,7 +23,9 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelect
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
 from pydantic_ai_harness._usage import reserved_usage_limits
-from pydantic_ai_harness._workspace import raise_tool_failure
+from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
+from pydantic_ai_harness.filesystem import READ_FILE_KIND
+from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.tool_output_limits._bands import (
     Action,
     Band,
@@ -41,14 +44,15 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     to_text,
     truncate_text,
 )
-from pydantic_ai_harness.tool_output_limits._store import OverflowStore, WorkspaceStore
+from pydantic_ai_harness.tool_output_limits._store import SPILL_DIR, OverflowStore, WorkspaceStore
 
 logger = logging.getLogger(__name__)
 
 READ_TOOL_NAME = 'read_tool_result'
-"""Name of the registered read-back tool. Its own returns are exempt from reduction."""
+"""Default name of the registered read-back tool."""
 
-_READ_TOOL_HINT = f'Read it with {READ_TOOL_NAME}('
+READ_TOOL_RESULT_KIND = ToolKind('tool_output_limits', 'read_tool_result')
+"""The kind of the `read_tool_result` tool, whatever it is named. Its returns are exempt from reduction."""
 
 _DEFAULT_THRESHOLD = 10_000
 """Default band threshold (characters) -- below this, returns pass through untouched."""
@@ -104,8 +108,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     Three reduction modes, freely combined through an ordered list of size `bands`:
 
     - `Truncate`: clamp to a character budget. Lossy, zero-cost.
-    - `Spill`: persist the full payload, hand the model a `read_tool_result` handle plus a
-      preview. Lossless.
+    - `Spill`: persist the full payload, hand the model a handle plus a preview. Lossless.
+      The model reads it back with `read_tool_result`, or, when the spill is in the run's
+      workspace and `FileSystem` is on the agent, with its `read_file`.
     - `Summarize`: size-gated LLM summary. Inherits the run's model by default.
 
     The first band whose `over` threshold the measured size meets wins; smaller returns pass
@@ -218,6 +223,15 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 'to keep spills on this machine.'
             )
 
+    @property
+    def _spills_to_run_workspace(self) -> bool:
+        """Whether spills are files in the run's workspace, which the run's file tools can read.
+
+        Known from configuration: the default `WorkspaceStore` without a `workspace` of its own.
+        """
+        store = self._store
+        return isinstance(store, WorkspaceStore) and store.workspace is None
+
     def _store_for(self, ctx: RunContext[AgentDepsT]) -> OverflowStore:
         store = self._store
         return store.bind(ctx.workspace) if isinstance(store, WorkspaceStore) else store
@@ -227,7 +241,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Register the `read_tool_result` tool for reading spilled payloads on demand.
 
-        Built once, so durable execution sees the toolset it registered.
+        When spills are files in the run's workspace, the tool steps aside for a tool of
+        `FileSystem`'s `READ_FILE_KIND`, which reads them too. Built once, so durable execution
+        sees the toolset it registered.
         """
         if self._toolset is None:
             self._toolset = self._make_toolset()
@@ -255,7 +271,12 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             """
             return await _read_slice(self._store_for(ctx).read, handle, offset, limit, from_end, pattern)
 
-        return FunctionToolset([read_tool_result], id=self.id or 'tool_output_limits')
+        tool = Tool(
+            read_tool_result,
+            tool_kind=READ_TOOL_RESULT_KIND,
+            prepare=step_aside_for_read_file if self._spills_to_run_workspace else None,
+        )
+        return FunctionToolset([tool], id=self.id or 'tool_output_limits')
 
     # --- reduction ---
 
@@ -270,7 +291,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     ) -> Any:
         """Reduce the tool result -- both `return_value` and model-visible `content`."""
         original: object = result
-        if call.tool_name == READ_TOOL_NAME:
+        if tool_def.tool_kind == READ_TOOL_RESULT_KIND.id or await _reads_a_spill(ctx, tool_def, args):
             return original
         if not await matches_tool_selector(self.tool_filter, ctx, tool_def):
             return original
@@ -469,8 +490,17 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             _log_fallback('Spilling', call.tool_name, action.then, exc)
             return await self._fallback(ctx, call, action.then, unit)
 
-        preview = _build_spill_preview(handle, unit, action.preview_chars, over_tokens=self.over_tokens)
+        preview = _build_spill_preview(
+            handle, unit, action.preview_chars, over_tokens=self.over_tokens, read_hint=self._read_hint(ctx, handle)
+        )
         return preview, handle
+
+    def _read_hint(self, ctx: RunContext[AgentDepsT], handle: str) -> str:
+        """How the model reads a spill back, naming the tools by the names they have in this run."""
+        if self._spills_to_run_workspace and (reader := ctx.tool_name_for_kind(READ_FILE_KIND)) is not None:
+            return f' Read it with {reader}(path={handle!r}).'
+        reader = ctx.tool_name_for_kind(READ_TOOL_RESULT_KIND) or READ_TOOL_NAME
+        return f' Read it with {reader}(handle={handle!r}, offset=0, limit=200, from_end=False, pattern=None).'
 
     async def _summarize_action(
         self,
@@ -567,6 +597,22 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         return action
 
 
+async def _reads_a_spill(ctx: RunContext[Any], tool_def: ToolDefinition, args: dict[str, Any]) -> bool:
+    """Whether this is a `READ_FILE_KIND` read of a file under the run workspace's spill directory.
+
+    Its result is the spill itself, or a page of it, so reducing it again would spill the spill.
+    Only the path is compared, so a spill written by an earlier run, or another configuration, counts too.
+    """
+    if tool_def.tool_kind != READ_FILE_KIND.id or not isinstance(path := args.get('path'), str):
+        return False
+    # Ordinary reads are told apart without asking the workspace for its working directory.
+    workspace = ctx.workspace
+    if f'{METADATA_DIR}/{SPILL_DIR}/' not in posixpath.normpath(path) or not workspace.attached:
+        return False
+    spill_dir = posixpath.join(await workspace.working_dir(), METADATA_DIR, SPILL_DIR)
+    return (await workspace.resolve(path)).startswith(spill_dir + '/')
+
+
 def _next_action(action: Action) -> Action | None:
     if isinstance(action, (Truncate, Spill, Summarize)):
         return action.then
@@ -649,7 +695,7 @@ def _copy_mapping(source: Mapping[object, object]) -> dict[str, object]:
     return {str(key): source[key] for key in source}
 
 
-def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool) -> str:
+def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool, read_hint: str) -> str:
     """Compose the model-visible spill stand-in: marker, sketch, and a head/tail preview."""
     if unit.binary:
         size_desc = f'{len(unit.data):,} bytes (binary)'
@@ -663,10 +709,7 @@ def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_t
         body = _head_tail_preview(text, preview_chars)
         sketch = json_sketch(unit.value)
 
-    header = (
-        f'[Tool output too large ({size_desc}); stored to handle {handle!r}. '
-        f'{_READ_TOOL_HINT}handle={handle!r}, offset=0, limit=200, from_end=False, pattern=None).]'
-    )
+    header = f'[Tool output too large ({size_desc}); stored to handle {handle!r}.{read_hint}]'
     parts = [header]
     if sketch:
         parts.append(f'shape: {sketch}')
