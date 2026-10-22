@@ -3782,7 +3782,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 thinking=self._request_thinks(model_settings, model_request_parameters),
             )
             if tool_choice_mode == 'required' and len(tool_names) == 1 and supports:
-                (name,) = tool_names
+                name = next(iter(tool_names))
                 tool_choice = (
                     ToolChoiceTypesParam(type='computer')
                     if name == native_computer_name
@@ -6905,7 +6905,7 @@ def _map_computer_action(action: dict[str, Any]) -> dict[str, Any]:
     position = {'x': action.get('x'), 'y': action.get('y')}
     match action.get('type'):
         case 'click':
-            button = action.get('button', 'left')
+            button = action['button']
             return {
                 'type': 'click',
                 **position,
@@ -6920,7 +6920,7 @@ def _map_computer_action(action: dict[str, Any]) -> dict[str, Any]:
             return {'type': 'move', **position, 'modifiers': modifiers}
         case 'scroll':
             # OpenAI scrolls by pixels on both axes; the tool scrolls one way, in wheel clicks.
-            dx, dy = action.get('scroll_x', 0), action.get('scroll_y', 0)
+            dx, dy = action['scroll_x'], action['scroll_y']
             if not dx and not dy:
                 return {'type': 'move', **position, 'modifiers': modifiers}
             if abs(dx) > abs(dy):
@@ -6929,13 +6929,7 @@ def _map_computer_action(action: dict[str, Any]) -> dict[str, Any]:
                 direction, pixels = ('down' if dy >= 0 else 'up'), abs(dy)
             amount = min(50, max(1, round(pixels / _SCROLL_PIXELS_PER_CLICK)))
             return {'type': 'scroll', **position, 'direction': direction, 'amount': amount, 'modifiers': modifiers}
-        case 'keypress':
-            return {'type': 'keypress', 'keys': modifiers}
-        case 'type':
-            return {'type': 'type', 'text': action.get('text', '')}
-        case 'wait':
-            return {'type': 'wait'}
-        case _:
+        case _:  # `keypress`, `type` and `wait` have the tool's own shape; anything else fails validation.
             return action
 
 
@@ -6979,15 +6973,15 @@ def _map_computer_call_output(
         'call_id': call_id,
         'output': {'type': 'computer_screenshot', 'image_url': screenshot},
     }
-    if part.outcome == 'success':
-        if call is not None and (checks := (call.provider_details or {}).get('safety_checks')):
-            output['acknowledged_safety_checks'] = checks
-        metadata: Any = part.metadata
-        failed = isinstance(metadata, dict) and 'error' in metadata
-    else:
-        failed = True
+    if (
+        part.outcome == 'success'
+        and call is not None
+        and (checks := (call.provider_details or {}).get('safety_checks'))
+    ):
+        output['acknowledged_safety_checks'] = checks
+    metadata: Any = part.metadata
     items: list[responses.ResponseInputItemParam] = [output]
-    if failed:
+    if part.outcome != 'success' or (isinstance(metadata, dict) and 'error' in metadata):
         # The screenshot can't carry text, and the model needs to know what didn't run.
         items.append(responses.EasyInputMessageParam(role='user', content=part.model_response_str(wrap_if_error=False)))
     return items

@@ -25,7 +25,6 @@ from .computer import (
 from .protocol import (
     CommandResult,
     SupportsCommands,
-    SupportsComputerUse,
     UnsupportedComputerActionError,
     WorkspaceError,
 )
@@ -135,8 +134,6 @@ _SCREENSHOT = 'd=$(mktemp -d) && scrot "$d/screen.png" && base64 "$d/screen.png"
 """Captures into a fresh directory (scrot picks the format from the `.png` name) and prints it as base64."""
 
 _PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
-_PNG_END = b'IEND\xaeB`\x82'
-"""The final chunk of every PNG, so a truncated capture is caught."""
 
 
 def _keysym(key: str) -> str:
@@ -151,7 +148,7 @@ def _move(x: int | None, y: int | None) -> list[str]:
     return [] if x is None or y is None else ['mousemove', str(x), str(y)]
 
 
-class X11Computer(SupportsComputerUse):
+class X11Computer:
     """Controls an X display with `xdotool` and captures it with `scrot`, through a backend's commands.
 
     The X server must already be running: starting it is the environment's job (for example an image that runs
@@ -172,11 +169,6 @@ class X11Computer(SupportsComputerUse):
         self._backend = backend
         self._display = display
 
-    @property
-    def has_display(self) -> bool:
-        """Always `True`: an `X11Computer` is created for an environment that runs an X server."""
-        return True
-
     async def _run(self, command: list[str] | str) -> CommandResult:
         result = await self._backend.run(
             command, shell=isinstance(command, str), env={'DISPLAY': self._display}, timeout=_COMMAND_TIMEOUT
@@ -188,22 +180,17 @@ class X11Computer(SupportsComputerUse):
             )
         return result
 
-    async def _xdotool(self, args: list[str], *, release: list[str] | None = None) -> None:
-        """Run one `xdotool` command chain; if it fails or is cancelled, run `release` to let go of what it held."""
-        try:
-            await self._run(['xdotool', *args])
-        except BaseException:
-            if release:
-                with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
-                    await self._run(['xdotool', *release])
-            raise
-
-    async def _holding(self, keys: tuple[str, ...], args: list[str], *, release: list[str] | None = None) -> None:
-        """Run `args` with `keys` held down, released in reverse order, and `release` run as well on failure."""
-        keysyms = [_keysym(key) for key in keys]
+    async def _xdotool(self, args: list[str], *, hold: tuple[str, ...] = (), release: tuple[str, ...] = ()) -> None:
+        """Run one `xdotool` command chain with `hold` held down; if it fails or is cancelled, let go of everything."""
+        keysyms = [_keysym(key) for key in hold]
         keyup = ['keyup', *reversed(keysyms)] if keysyms else []
-        chain = ['keydown', *keysyms, *args, *keyup] if keysyms else args
-        await self._xdotool(chain, release=[*(release or []), *keyup])
+        try:
+            await self._run(['xdotool', *(['keydown', *keysyms] if keysyms else []), *args, *keyup])
+        except BaseException:
+            if release or keyup:
+                with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
+                    await self._run(['xdotool', *release, *keyup])
+            raise
 
     async def display_size(self) -> tuple[int, int]:
         output = (await self._run(['xdotool', 'getdisplaygeometry'])).stdout.split()
@@ -219,23 +206,23 @@ class X11Computer(SupportsComputerUse):
             data = base64.b64decode(''.join(output.split()), validate=True)
         except (binascii.Error, ValueError):
             data = b''
-        if not (data.startswith(_PNG_SIGNATURE) and data.endswith(_PNG_END)):
-            raise WorkspaceError('The screenshot command did not print a complete base64-encoded PNG.')
+        if not data.startswith(_PNG_SIGNATURE):
+            raise WorkspaceError('The screenshot command did not print a base64-encoded PNG.')
         return data
 
     async def act(self, action: ComputerAction) -> None:
         match action:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
-                await self._holding(modifiers, [*_move(x, y), 'click', '--repeat', str(count), _BUTTONS[button]])
+                await self._xdotool([*_move(x, y), 'click', '--repeat', str(count), _BUTTONS[button]], hold=modifiers)
             case MoveMouse(x=x, y=y, modifiers=modifiers):
-                await self._holding(modifiers, _move(x, y))
+                await self._xdotool(_move(x, y), hold=modifiers)
             case Drag(path=path, modifiers=modifiers):
                 start, *rest = path
                 steps = [arg for point in rest for arg in _move(point.x, point.y)]
-                await self._holding(
-                    modifiers,
+                await self._xdotool(
                     [*_move(start.x, start.y), 'mousedown', '1', *steps, 'mouseup', '1'],
-                    release=['mouseup', '1'],
+                    hold=modifiers,
+                    release=('mouseup', '1'),
                 )
             case MouseDown(button=button):
                 await self._xdotool(['mousedown', _BUTTONS[button]])
@@ -243,12 +230,12 @@ class X11Computer(SupportsComputerUse):
                 await self._xdotool(['mouseup', _BUTTONS[button]])
             case Scroll(x=x, y=y, direction=direction, amount=amount, modifiers=modifiers):
                 wheel = _WHEEL_BUTTONS[direction]
-                await self._holding(modifiers, [*_move(x, y), 'click', '--repeat', str(amount), wheel])
+                await self._xdotool([*_move(x, y), 'click', '--repeat', str(amount), wheel], hold=modifiers)
             case TypeText(text=text):
                 await self._xdotool(['type', '--', text])
             case PressKeys(keys=keys, repeat=repeat):
                 await self._xdotool(['key', '--repeat', str(repeat), '--', '+'.join(_keysym(key) for key in keys)])
             case HoldKeys(keys=keys, seconds=seconds):
-                await self._holding(keys, ['sleep', str(seconds)])
+                await self._xdotool(['sleep', str(seconds)], hold=keys)
             case _:
                 raise UnsupportedComputerActionError(f'X11Computer cannot perform {action!r}.')

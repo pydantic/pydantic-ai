@@ -365,15 +365,11 @@ def test_openai_actions_map_onto_the_computer_tool(action: dict[str, Any], mappe
 @pytest.mark.parametrize(
     'model_name, native',
     [
-        ('gpt-5.4', True),
+        # The profile resolution matrix covers the rest.
         ('gpt-5.4-mini', True),
-        ('gpt-5.5', True),
-        ('gpt-5.6', True),
         ('gpt-6-luna', True),
         ('gpt-6.1-sol', True),
-        ('gpt-5.4-nano', False),
         ('gpt-5.2', False),
-        ('gpt-4.1', False),
     ],
 )
 def test_the_native_tool_goes_to_the_models_that_accept_it(model_name: str, native: bool) -> None:
