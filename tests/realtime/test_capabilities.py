@@ -1163,7 +1163,7 @@ def _uncalled_hooks_warning(name: str, hooks: str) -> str:
 async def test_capability_with_uncalled_hook_warns() -> None:
     """A capability relying on `before_model_request` does nothing in a session, so opening one says so."""
     with pytest.warns(UserWarning) as record:
-        await _drain(Agent(capabilities=[_ModelRequestCap()]), _RecordingModel())
+        await _drain(Agent[None, str](capabilities=[_ModelRequestCap()], deps_type=type(None)), _RecordingModel())
     assert [str(warning.message) for warning in record] == [
         _uncalled_hooks_warning('`_ModelRequestCap`', '`before_model_request`')
     ]
@@ -1172,13 +1172,14 @@ async def test_capability_with_uncalled_hook_warns() -> None:
 async def test_one_uncalled_hooks_warning_per_capability() -> None:
     """Each capability warns once per session, naming all of its uncalled hooks; nested ones are reached too."""
     graph_cap = _GraphCap()
-    agent = Agent(
+    agent = Agent[None, str](
         capabilities=[
             graph_cap,
             CombinedCapability([graph_cap, Hooks(model_request_error=_on_model_request_error, id='errors')]),
             PrefixTools(wrapped=_ModelRequestCap(), prefix='x'),
             _ModelRequestWrapper(wrapped=_ToolHookCap()),
-        ]
+        ],
+        deps_type=type(None),
     )
     for _ in range(2):
         with pytest.warns(UserWarning) as record:
@@ -1209,4 +1210,4 @@ async def test_capability_with_only_session_hooks_does_not_warn(capabilities: li
     The default agent auto-injects `ToolSearch` and the pending-message drain, which both implement
     `before_model_request`; `filterwarnings = error` turns any warning into a failure here.
     """
-    await _drain(Agent(capabilities=capabilities), _RecordingModel())
+    await _drain(Agent[None, str](capabilities=capabilities, deps_type=type(None)), _RecordingModel())
