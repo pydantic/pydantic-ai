@@ -1708,6 +1708,27 @@ def test_live_text_sent_while_a_tool_round_is_half_answered_gets_a_delegation_of
     run_clean(LiveSimulation(), scenario)
 
 
+def test_live_tool_result_content_goes_with_the_result_not_as_a_typed_turn() -> None:
+    """A `ToolReturn`'s content follows its result as a message item, which isn't a typed turn of its own.
+
+    Taken for one, it was queued for the next typed turn's `response.create`, which then took it for its own.
+    """
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.delegate()
+        sim.backend_call()
+        sim.backend_finish()
+        sim.finish_tool(outcome='media')
+        sim.settle()
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.settle()
+
+    sim = LiveSimulation()
+    run_clean(sim, scenario)
+    assert [input_.kind for input_ in sim.server.truth.inputs] == ['tool_output', 'text']
+
+
 def test_live_image_sent_for_a_response_is_answered_by_its_delegation() -> None:
     """`send(image, respond=True)` queues the image for the backend, and its `response.create` has Live run it."""
 

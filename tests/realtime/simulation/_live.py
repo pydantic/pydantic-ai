@@ -103,6 +103,9 @@ class LiveServer:
         in the reply under way (seen live), and the next reply otherwise."""
         self.typed: list[str] = []
         """Typed text (or an image) queued for the backend, which the next `response.create` runs it on."""
+        self._after_output = False
+        """The client's last frame was a tool result, which its content can follow as a message item (a typed turn
+        starts with the note telling the model what was typed, or the request to run the backend comes first)."""
         self.queued_texts: list[tuple[list[str], str | None]] = []
         """Text turns whose `response.create` came while a backend response ran: Live runs each once that one ends."""
         self.delegations: dict[str, _Delegation] = {}
@@ -143,6 +146,7 @@ class LiveServer:
 
     def on_client_frame(self, socket: FakeWebSocket, frame: dict[str, Any]) -> None:
         kind = frame.get('type')
+        follows_output, self._after_output = self._after_output, False
         if kind == 'session.start':
             self._emit(
                 {'type': 'session.started', 'session': {'id': 'live_simulated', 'model': 'gpt-live-1'}},
@@ -155,7 +159,11 @@ class LiveServer:
                 self.truth.add_input(content, 'context')
         elif kind == 'response.item.create':
             item = frame.get('item', {})
-            if item.get('type') == 'message':
+            self._after_output = item.get('type') == 'function_call_output'
+            if item.get('type') == 'message' and follows_output:
+                # The content of the tool result just sent (`ToolReturn.content`), which goes with it.
+                pass
+            elif item.get('type') == 'message':
                 part = item['content'][0]
                 if part['type'] == 'input_image':
                     # `send(image, respond=True)`: the image is for the backend, and its `response.create` follows.
