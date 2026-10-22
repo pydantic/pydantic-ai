@@ -23,8 +23,9 @@ from typing import Any, Literal
 from uuid import uuid4
 
 import pytest
+from pydantic import TypeAdapter
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRetry, RunContext, TextOutput
 from pydantic_ai.capabilities import (
     MCP,
     AbstractCapability,
@@ -55,6 +56,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    SystemPromptPart,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -76,6 +78,7 @@ from .append_only import (
     Known,
     Provider,
     Scenario,
+    Turn,
     build_capabilities,
     check_conversation,
     discover_capabilities,
@@ -172,6 +175,26 @@ ALLOWED: dict[str, Allowed] = {
         (('system', 'instruction:anonymous@1'),),
         max_moves=4,
     ),
+    **{
+        f'retry:{name}+request-scoped': Allowed(
+            'A request-scoped system prompt (#9711) is sent for one request, as the tail, and left out of the next '
+            'one, retried steps included; Anthropic clears it natively',
+            (('messages', 'system-prompt'),),
+            tail=True,
+            records=('request-scoped system prompt',),
+            providers=('openai-responses', 'openai-chat'),
+        )
+        for name in ('tool-retry', 'output-validation-retry')
+    },
+    # Since #10938, a `no_output` retry leaves out the request-scoped prompt no user message would clear, so
+    # Anthropic drops it from the tail like the OpenAI APIs.
+    'retry:no-output-retry+request-scoped': Allowed(
+        'A request-scoped system prompt (#9711) is sent for one request, as the tail, and left out of the next '
+        'one, retried steps included',
+        (('messages', 'system-prompt'),),
+        tail=True,
+        records=('request-scoped system prompt',),
+    ),
 }
 """Documented prefix movers, checked exactly."""
 
@@ -194,18 +217,101 @@ AGENT_FEATURES: dict[str, Scenario] = {
 }
 """Agent features, not capabilities, that render state into the prompt, run through the same checks."""
 
+
+def _flaky_tool(agent: Agent[Any, Any], clock: Clock) -> None:
+    attempts = 0
+
+    @agent.tool_plain
+    def check_forecast(city: str) -> str:
+        """Check the forecast for a city."""
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ModelRetry('The forecast service is busy, try again.')
+        return f'Sunny in {city}.'
+
+
+def _count(text: str) -> int:
+    """Read the answer as a count; anything else fails validation, so the model is asked again."""
+    return TypeAdapter(int).validate_python(text)
+
+
+@dataclass
+class _RequestScopedNudge(AbstractCapability[Any]):
+    """Add a request-scoped system prompt (#9711) to every request, the way `WarnNearLimits` does."""
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(SystemPromptPart('Keep it short.', scope='request'))
+        return request_context
+
+
+_LOOK_UP = ('look_up', {'topic': 'weather'})
+
+RETRY_SCENARIOS: dict[str, Scenario] = {
+    # A tool raises `ModelRetry`, so its result is a `ToolReturnPart(outcome='retried')` and the call is made again.
+    'tool-retry': Scenario(
+        configure=_flaky_tool,
+        turns=(
+            Turn(calls=(_LOOK_UP,)),
+            Turn(calls=(('check_forecast', {'city': 'Paris'}),)),
+            Turn(calls=(('check_forecast', {'city': 'Paris'}),)),
+            Turn(text='Sunny in Paris.'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text='Here is more.'),
+        ),
+        serialize_history=True,
+    ),
+    # Text output fails validation, so `RetryFeedbackPart(cause='validation_error')` asks for it again.
+    'output-validation-retry': Scenario(
+        output_type=TextOutput(_count),
+        turns=(
+            Turn(calls=(_LOOK_UP,)),
+            Turn(text='several'),
+            Turn(text='3'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text='a few'),
+            Turn(text='4'),
+        ),
+        serialize_history=True,
+        replay_text='5',
+    ),
+    # A response with nothing usable as output gets `RetryFeedbackPart(cause='no_output')`.
+    'no-output-retry': Scenario(
+        turns=(
+            Turn(calls=(_LOOK_UP,)),
+            Turn(text=''),
+            Turn(text='Here is the weather.'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text=''),
+            Turn(text='Here is more.'),
+        ),
+        serialize_history=True,
+    ),
+}
+"""Conversations that retry, continued from stored history. Each also runs with a request-scoped system prompt
+on every request, which a retried step must still leave out of the next request."""
+
+RETRY_CASES: dict[str, tuple[Scenario, bool]] = {
+    **{f'retry:{name}': (scenario, False) for name, scenario in RETRY_SCENARIOS.items()},
+    **{f'retry:{name}+request-scoped': (scenario, True) for name, scenario in RETRY_SCENARIOS.items()},
+}
+
 CAPABILITIES = discover_capabilities(('pydantic_ai.capabilities', 'pydantic_ai.models'))
 
 
 def test_every_capability_has_a_case():
     """Every table entry names a capability that still exists, so renames and removals don't leave dead rows."""
     tables = FIXTURES.keys() | EXEMPT.keys() | KNOWN.keys() | ALLOWED.keys() | {name for name, _ in UNSUPPORTED}
-    stale = tables - CAPABILITIES.keys() - AGENT_FEATURES.keys()
+    stale = tables - CAPABILITIES.keys() - AGENT_FEATURES.keys() - RETRY_CASES.keys()
     assert not stale, f'entries for capabilities that no longer exist: {sorted(stale)}'
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
-@pytest.mark.parametrize('name', sorted(CAPABILITIES.keys() - EXEMPT.keys()) + sorted(AGENT_FEATURES))
+@pytest.mark.parametrize(
+    'name', sorted(CAPABILITIES.keys() - EXEMPT.keys()) + sorted(AGENT_FEATURES) + sorted(RETRY_CASES)
+)
 async def test_conversation_only_appends(
     name: str, provider: Provider, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
 ):
@@ -215,6 +321,9 @@ async def test_conversation_only_appends(
         pytest.skip('mcp not installed')
     if name in AGENT_FEATURES:
         capabilities, scenario = [], AGENT_FEATURES[name]
+    elif name in RETRY_CASES:
+        scenario, nudged = RETRY_CASES[name]
+        capabilities = [_RequestScopedNudge()] if nudged else []
     else:
         capabilities = build_capabilities(name, CAPABILITIES[name].load, FIXTURES.get(name), tmp_path)
         scenario = Scenario()
@@ -704,3 +813,22 @@ def test_instruction_parts_sharing_an_id_are_told_apart():
         'anthropic', [body('First.'), body('First.')], (b'', b''), [parameters('First.'), parameters('First.')]
     )
     assert result.changes() == []
+
+
+def test_a_request_scoped_prompt_left_visible_fails():
+    """A request-scoped prompt still visible after its request fails the `request-scope` check.
+
+    A unit test of the check on hand-built Anthropic requests, since #10938 fixed the one case the matrix had:
+    the earlier request's prompt is marked `clear_at: next_user_message`, and no user message follows it.
+    """
+    nudge = {'role': 'system', 'content': [{'type': 'text', 'text': 'Keep it short.'}], 'clear_at': 'next_user_message'}
+    first = [{'role': 'user', 'content': 'Hi'}, nudge]
+    second = [
+        *first,
+        {'role': 'assistant', 'content': [{'type': 'text', 'text': ''}]},
+        {'role': 'system', 'content': [{'type': 'text', 'text': 'Please return text or call a tool.'}]},
+    ]
+    bodies = [json.dumps({'model': 'claude-opus-5-5', 'messages': messages}).encode() for messages in (first, second)]
+    result = ConversationResult('anthropic', bodies, (b'', b''), [])
+    with pytest.raises(pytest.fail.Exception, match=re.escape('request 1 still shows')):
+        check_conversation('example', result)
