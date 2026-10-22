@@ -29,7 +29,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool, XSearchTool
+from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool, WebSearchTool, XSearchTool
 from pydantic_ai.profiles import ModelProfile, ToolAdditionMode, ToolDeferralMode
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import ToolDefinition
@@ -975,3 +975,57 @@ async def test_no_channel_announces_the_newcomer():
     last_part = seen[1][-1].parts[-1]
     assert isinstance(last_part, SystemPromptPart)
     assert last_part.content == 'The following tool(s) are now available: `later`'
+
+
+@pytest.mark.parametrize(
+    ('supported_native_tools', 'announced'),
+    [
+        pytest.param(frozenset({WebSearchTool}), [], id='native-tool-supported'),
+        pytest.param(
+            frozenset[type[AbstractNativeTool]](),
+            ['The following tool(s) are now available: `local_search`'],
+            id='native-tool-unsupported',
+        ),
+    ],
+)
+async def test_newcomer_left_out_for_its_native_tool_is_not_announced(
+    supported_native_tools: frozenset[type[AbstractNativeTool]], announced: list[str]
+):
+    """A newcomer that only stands in for a native tool is announced only where the native tool isn't sent.
+
+    Where the model supports the native tool, the local fallback is left out of the request, so naming it
+    would tell the model about a tool it never receives.
+    """
+    web_search = WebSearchTool(optional=True)
+    seen: list[list[ModelMessage]] = []
+
+    def record(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        if len(seen) == 1:
+            return ModelResponse(parts=[ToolCallPart('unlock', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def admit_fallback_later(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return [
+            replace(tool_def, unless_native=web_search.unique_id) if tool_def.name == 'local_search' else tool_def
+            for tool_def in tool_defs
+            if tool_def.name != 'local_search' or ctx.run_step > 1
+        ]
+
+    model = FunctionModel(
+        record, profile={'supports_inline_system_prompts': True, 'supported_native_tools': supported_native_tools}
+    )
+    agent = Agent(model, capabilities=[PrepareTools(admit_fallback_later), NativeTool(web_search)])
+    agent.tool_plain(name='unlock')(lambda: 'unlocked')
+    agent.tool_plain(name='local_search')(lambda: 'results')
+
+    result = await agent.run('go')
+
+    assert _deltas(result.all_messages()) == [['local_search']]
+    assert [
+        part.content
+        for message in seen[1]
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, SystemPromptPart)
+    ] == announced

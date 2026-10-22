@@ -1294,14 +1294,21 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # a forged-but-well-shaped name must not reach system voice, and an always-visible
             # tool named by a delta has no "now available" news and no exchange to fabricate:
             # the delta is a no-op for it on this channel just as on the native ones. A mid-run
-            # newcomer is the exception: it wasn't in `tools` before, so its arrival is news.
+            # newcomer is the exception: it wasn't in `tools` before, so its arrival is news. The tools are
+            # the ones resolved for this model, which may drop one, like a local fallback for a native tool
+            # it supports, that the model must not be told about.
+            served_params = (
+                self._tools_resolved_for_messages(model_request_parameters)
+                if model_request_parameters is not None
+                else None
+            )
             deferred_tool_names = (
                 {
                     tool.name
-                    for tool in model_request_parameters.function_tools
-                    if tool.defer_loading or tool.name in model_request_parameters.introduced_tool_names
+                    for tool in served_params.function_tools
+                    if tool.defer_loading or tool.name in served_params.introduced_tool_names
                 }
-                if model_request_parameters is not None
+                if served_params is not None
                 else None
             )
             # Two different jobs hide behind "render the delta", and which applies turns on whether this
@@ -1380,14 +1387,20 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Whether this request puts a tool on the wire with its schema withheld."""
         if params is None:
             return self.tool_deferral_mode == 'standalone'
-        # Mirrors `prepare_request`'s guard so this can't raise where that wouldn't: with nothing
-        # native and nothing deferred there is no schema to withhold anyway.
-        if not _needs_tool_resolution(params):
-            return False
+        resolved = self._tools_resolved_for_messages(params)
+        return any(visibility == 'deferred' for visibility in (resolved.tool_visibility or {}).values())
+
+    def _tools_resolved_for_messages(self, params: ModelRequestParameters) -> ModelRequestParameters:
+        """`params` with its tools resolved for this model, for message projection that runs before `prepare_request`.
+
+        Mirrors `prepare_request`'s guard so this can't raise where that wouldn't: with nothing native and
+        nothing deferred, every function tool is sent as it stands.
+        """
         # TODO(#7196): reorder the stages so message projection always receives resolved
         # parameters, at which point this on-demand resolution can be removed.
-        resolved = params if params.tool_visibility is not None else self._resolve_request_tools(params)
-        return any(visibility == 'deferred' for visibility in (resolved.tool_visibility or {}).values())
+        if params.tool_visibility is not None or not _needs_tool_resolution(params):
+            return params
+        return self._resolve_request_tools(params)
 
     def _resolve_request_tools(self, params: ModelRequestParameters) -> ModelRequestParameters:
         """Resolve native tools, their local fallbacks, and deferred-tool visibility for this model."""
