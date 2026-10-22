@@ -172,9 +172,10 @@ Retained audio is kept in the history
 from it: the conversation a tool sees as [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], and the input
 and output recorded on each response's [span](observability.md).
 
-Input retention follows provider-reported boundaries rather than locally trimming speech. OpenAI,
-Azure OpenAI, and xAI normally retain microphone input between reported speech-end boundaries.
-Gemini does not report those boundaries, so it retains input between response completions. Either
+Input retention follows provider-reported boundaries rather than locally trimming speech. OpenAI
+gpt-realtime, Azure OpenAI, xAI, and Eleven Realtime normally retain microphone input between reported
+speech-end boundaries. Gemini Live, GPT-Live, and ElevenLabs Agents don't report those boundaries, so they
+retain input between response completions. Either
 form can include silence or other microphone input and should not be treated as a precisely trimmed
 utterance.
 
