@@ -70,7 +70,7 @@ sent, no answer to a tool's result, and no response still under way.
 Only the response that answers an input settles its reply: a response already under way when the input reached
 the provider never saw it, so it doesn't. Text sent while the model is answering therefore usually gets a reply of
 its own, and the event comes once that reply ends too. How a provider answers such text varies: GPT-Live speaks to
-it in the reply it is giving (see [OpenAI](openai.md#text-is-context-not-a-user-turn)), and some Gemini Live models
+it in the reply it is giving (see [OpenAI](openai.md#typed-text-runs-the-backend)), and some Gemini Live models
 cut their reply off for it (see [Gemini](gemini.md#provider-specific-quirks)).
 
 A response the user cuts off by speaking ends the exchange, as does a response the provider started on its own
