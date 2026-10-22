@@ -45,6 +45,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     DialogOpened,
     Item,
     ItemAdded,
+    LiveChanged,
     Notice,
     OrchestratorEvent,
     OrchestratorMessage,
@@ -569,6 +570,30 @@ async def test_without_the_workspaces_plugin(tmp_path: Path) -> None:
     assert await checkouts(None) == []
     with pytest.raises(RuntimeError, match='plugin is off'):
         enabled(None)
+
+
+async def test_a_live_change_queued_before_a_switch_does_not_end_the_stream(tmp_path: Path) -> None:
+    """A `LiveChanged` queued before `/new` names the old conversation, but the session is still live."""
+    async with parent(tmp_path, workspaces=False) as made:
+        service = made.service
+        channel = service.default()
+        before = channel.id
+        async with LocalClient(service, channel.session.id).messages() as received:
+            assert isinstance(await anext(received), Snapshot)
+            with service.hub.subscribe() as page:
+                service.watch(page, [before])
+                await published(page.queue, Snapshot)
+                service.hub.publish(service.live_message())
+                channel.send('/new')
+                # Switched before the client reads what was queued for it earlier.
+                switched = await published(page.queue, Snapshot)
+            assert isinstance(switched, Snapshot) and switched.session.id != before
+            async for message in received:
+                if isinstance(message, LiveChanged):
+                    break
+            else:
+                pytest.fail('the stream ended while the session was still live')
+        assert [entry.id for entry in message.sessions] == [before]
 
 
 async def test_commands_are_not_forwarded(tmp_path: Path, repository: Path) -> None:

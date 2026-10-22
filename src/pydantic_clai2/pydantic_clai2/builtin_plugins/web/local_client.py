@@ -38,6 +38,13 @@ class LocalClient:
     def _channel(self) -> SessionChannel:
         return self.service.channel(self.service.live.get(self.live_id))
 
+    def _closed(self) -> bool:
+        try:
+            self.service.live.get(self.live_id)
+        except LookupError:
+            return True
+        return False
+
     async def send(self, text: str) -> None:
         """Enter a prompt or `/command`; a bare command that opens a menu in the page raises `ValueError`."""
         if (menu := self._channel().send(text)) is not None:
@@ -71,8 +78,8 @@ class LocalClient:
             message = _MESSAGE.validate_json(text)
             if isinstance(message, DialogOpened | DialogClosed):
                 continue
-            # The conversation it watches follows the session through `/new` and `/resume`, as `Hub.rename` keeps it.
-            watching = client.watching or set[str]()
-            if isinstance(message, LiveChanged) and not any(entry.id in watching for entry in message.sessions):
+            # Asked by live ID, which `/new` and `/resume` keep: a `LiveChanged` queued before a switch names the
+            # old conversation, which the client no longer watches.
+            if isinstance(message, LiveChanged) and self._closed():
                 return
             yield replace(message, dialogs=[]) if isinstance(message, Snapshot) else message
