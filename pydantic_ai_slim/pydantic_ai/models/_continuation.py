@@ -413,6 +413,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
     _detached: bool = field(default=False, init=False)
     # Whether the stream ended on a pending response because of `return_pending`, so `get()` reports it as suspended.
     _ended_pending: bool = field(default=False, init=False)
+    # Set once a failed continuation has cancelled the suspended server-side job, so `get()` no longer
+    # reports it as a resumable detach and the graph doesn't cancel it a second time.
+    _job_cancelled: bool = field(default=False, init=False)
     # The inner segment stream owns each segment's `async with request_stream(...)`; keep it
     # separately because the outer cancel-guard's `async for` does not forward `aclose()`.
     _segment_stream: _utils.PeekableAsyncStream[ModelResponseStreamEvent] | None = field(default=None, init=False)
@@ -719,8 +722,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 self._merged_response = merged
                 self._current_sub = None
                 self._usage = merged.usage
-                self.check_usage(self.usage)
+                # Advance before checking usage so a limit trip cancels the newest suspended job, not the previous one.
                 response = merged
+                self.check_usage(self.usage)
 
             self._merged_response = response
         except GeneratorExit:
@@ -740,6 +744,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 and not (self._cancelled or self._stopped or self._detached)
             ):
                 await cancel_suspended_job(self.model, response)
+                self._job_cancelled = True
             raise
         finally:
             # Finalize an interrupted segment only after its generator has unwound, as teardown can stamp
@@ -823,7 +828,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
         elif self._cancelled:
             # A real `cancel()` tore down the server-side job too, so this is not resumable.
             state = 'interrupted'
-        elif self._detached and snapshot is not None and snapshot.state == 'suspended':
+        elif self._detached and not self._job_cancelled and snapshot is not None and snapshot.state == 'suspended':
             # Detached with a still-pending suspended job in hand (and not cancelled): resumable.
             state = 'suspended'
         else:
