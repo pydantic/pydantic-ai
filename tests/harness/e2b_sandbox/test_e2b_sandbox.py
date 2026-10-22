@@ -152,10 +152,32 @@ async def test_native_handle_is_exposed_without_creation(fake_e2b: FakeE2B) -> N
 
 
 @pytest.mark.parametrize('anyio_backend', ['trio'])
-async def test_a_passed_in_sandbox_is_returned_on_trio(fake_e2b: FakeE2B, anyio_backend: str) -> None:
-    # Handing back a sandbox the caller already has makes no E2B request, so Trio is not refused.
+@pytest.mark.parametrize(
+    'operation', ['run', 'read_bytes', 'write_bytes', 'stat', 'list_dir', 'make_dir', 'remove', 'exists', 'working_dir']
+)
+async def test_a_passed_in_sandbox_is_returned_on_trio_but_not_used(
+    fake_e2b: FakeE2B, anyio_backend: str, operation: str
+) -> None:
+    # Handing back a sandbox the caller already has makes no E2B request, so `get_sandbox()` is not
+    # refused on Trio; the backend's own operations make requests, so they are.
     native = fake_e2b.new_sandbox('sbx-1', None)
-    assert await E2BSandboxBackend(sandbox=native).get_sandbox() is native  # pyright: ignore[reportArgumentType]
+    backend = E2BSandboxBackend(sandbox=native)  # pyright: ignore[reportArgumentType]
+    assert await backend.get_sandbox() is native
+    operations: dict[str, Callable[[], Awaitable[object]]] = {
+        'run': lambda: backend.run(['true']),
+        'read_bytes': lambda: backend.read_bytes('/file'),
+        'write_bytes': lambda: backend.write_bytes('/file', b'data'),
+        'stat': lambda: backend.stat('/file'),
+        'list_dir': lambda: backend.list_dir('/'),
+        'make_dir': lambda: backend.make_dir('/dir'),
+        'remove': lambda: backend.remove('/file'),
+        'exists': lambda: backend.exists('/file'),
+        'working_dir': backend.working_dir,
+    }
+    with pytest.raises(UserError, match='E2B needs the asyncio event loop'):
+        await operations[operation]()
+    assert not native.files.users
+    assert not native.commands.calls
 
 
 async def test_agent_without_workspace_use_does_not_create(fake_e2b: FakeE2B) -> None:
