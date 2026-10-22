@@ -200,10 +200,10 @@ unplayed audio before interrupting, and flush buffered playback yourself — `in
 
 On a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) there is a third buffer between those two: the
 provider generates audio well ahead of playback and keeps streaming what it already produced, so
-stopping the model is not enough to stop the voice. On gpt-realtime and Azure OpenAI, `interrupt()` drops
-that outbound buffer too, which is what actually ends the turn for the listener. GPT-Live handles barge-in
-itself and doesn't support `interrupt()`. The browser still owns its own playback buffer
-and should flush it on barge-in, as above.
+stopping the model is not enough to stop the voice. On gpt-realtime and Azure OpenAI, `interrupt()`
+drops that outbound buffer too, which is what actually ends the turn for the listener. GPT-Live
+handles barge-in itself and doesn't support `interrupt()`. The browser still owns its own playback
+buffer and should flush it on barge-in, as above.
 
 History records a known cutoff on
 [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms] and marks the
@@ -300,8 +300,8 @@ async def main():
         await session.create_response()
 ```
 
-Gemini, ElevenLabs Agents, and OpenAI GPT-Live do not expose manual turn verbs through Pydantic AI; `turn_detection=False` raises
-[`UserError`][pydantic_ai.exceptions.UserError] before connecting.
+Gemini, ElevenLabs Agents, and OpenAI GPT-Live do not expose manual turn verbs through Pydantic AI;
+`turn_detection=False` raises [`UserError`][pydantic_ai.exceptions.UserError] before connecting.
 
 ## Checking what the model supports
 
