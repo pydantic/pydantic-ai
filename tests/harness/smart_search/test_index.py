@@ -1,279 +1,308 @@
-"""Tests for `SmartSearch`'s index: discovery through the workspace, BM25, caching, and parallel searches."""
+"""Tests for `SmartSearch`'s index: discovery through the workspace, budgets, the lexical shortlist, and caching."""
 
 from __future__ import annotations
 
-import asyncio
-from dataclasses import dataclass
+from collections import Counter
 from pathlib import Path
 
+import anyio
 import pytest
 
-from pydantic_ai.exceptions import ModelRetry, ToolFailed
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
-from pydantic_ai_harness.smart_search import _chunks, _index
-from pydantic_ai_harness.smart_search._chunks import Chunk, searchable_root
-from pydantic_ai_harness.smart_search._index import Shortlist, SnippetIndexes, read_snippets
-from pydantic_ai_harness.smart_search._retrieve import Bm25
 
 from ..filesystem.conftest import tools_path
-from .conftest import CountingChunker
-from .test_smart_search import PY_SOURCE, VanishingBackend
+from .conftest import PY_SOURCE, FakeJev, VanishingBackend, judged, search, search_agent, search_all, search_error
+
+pytestmark = pytest.mark.usefixtures('allow_model_requests')  # `FakeJev` is a real `DecisionModel`
 
 
-def _workspace(root: Path) -> Workspace:
-    return Workspace(LocalWorkspaceBackend(root))
+class GatedBackend(LocalWorkspaceBackend):
+    """Holds reads under the directories named in `held` until `release[name]` is set.
+
+    A search holds its index while it reads, so this keeps that index busy for as long as a test needs.
+    """
+
+    def __init__(self, root: Path, held: str) -> None:
+        super().__init__(root)
+        self.reading = {name: anyio.Event() for name in held}
+        self.release = {name: anyio.Event() for name in held}
+
+    async def read_bytes(self, path: str) -> bytes:
+        name = Path(path).parent.name
+        if name in self.release:
+            self.reading[name].set()
+            await self.release[name].wait()
+        return await super().read_bytes(path)
 
 
-@dataclass
-class Found:
-    shortlist: Shortlist
-    chunks: list[Chunk]
+class EditingBackend(LocalWorkspaceBackend):
+    """Serves every file as it is for indexing, then edits `edited.py` and deletes `deleted.py` before a re-read."""
 
-    @property
-    def files(self) -> int:
-        return self.shortlist.files
+    def __init__(self, root: Path) -> None:
+        super().__init__(root)
+        self.reads = Counter[str]()
 
-    @property
-    def skipped(self) -> list[tuple[str, str]]:
-        return self.shortlist.skipped
-
-
-async def _discover(
-    workspace: Workspace,
-    directory: str,
-    glob: str | None = None,
-    *,
-    indexes: SnippetIndexes | None = None,
-    query: str = 'x',
-) -> Found:
-    """Every snippet under `directory`, through the same steps `search_code` takes before judging."""
-    root = await searchable_root(workspace, directory)
-    found = await (indexes or SnippetIndexes(0)).shortlist(workspace, root, glob, query, 10_000)
-    return Found(found, await read_snippets(workspace, root, directory, found.hits))
+    async def read_bytes(self, path: str) -> bytes:
+        name = Path(path).name
+        self.reads[name] += 1
+        if self.reads[name] > 1 and name == 'edited.py':
+            return b'x = 2\n'
+        if self.reads[name] > 1 and name == 'deleted.py':
+            raise FileNotFoundError(2, 'No such file or directory', path)
+        return await super().read_bytes(path)
 
 
-# ---------------------------------------------------------------- discovery
+def _judged_paths(model: FakeJev) -> list[str]:
+    return [snippet.path for snippet in judged(model)]
 
 
-async def test_discover_skips_binary_non_utf8_and_minified(tmp_path: Path) -> None:
-    (tmp_path / 'good.py').write_text(PY_SOURCE)
-    (tmp_path / 'bin.dat').write_bytes(b'abc\0def')
-    (tmp_path / 'latin.txt').write_bytes('caf\xe9'.encode('latin-1'))
-    (tmp_path / 'min.js').write_text('x' * 13_000)
-    found = await _discover(_workspace(tmp_path), '.')
-    assert found.files == 4
-    assert sorted(reason.split(':')[0] for _, reason in found.skipped) == [
-        'binary',
-        'line exceeds 12000 characters',
-        'not UTF-8',
-    ]
-    assert {c.path for c in found.chunks} == {'good.py'}
+class TestSmartSearchIndex:
+    # ------------------------------------------------------------ discovery
 
+    async def test_skips_binary_non_utf8_and_minified_files(self, tmp_path: Path) -> None:
+        (tmp_path / 'good.py').write_text(PY_SOURCE)
+        (tmp_path / 'bin.dat').write_bytes(b'abc\0def')
+        (tmp_path / 'latin.txt').write_bytes('caf\xe9'.encode('latin-1'))
+        (tmp_path / 'min.js').write_text('x' * 13_000)
+        model = FakeJev('')
+        result = await search(search_agent(tmp_path, model))
+        assert (result.coverage.files, result.coverage.skipped_files) == (4, 3)
+        assert result.warnings == ['3 files skipped (binary, non-UTF-8, minified or unreadable).']
+        assert set(_judged_paths(model)) == {'good.py'}
 
-async def test_discover_respects_gitignore_and_reports_paths_as_spelled(tmp_path: Path) -> None:
-    (tmp_path / 'src').mkdir()
-    (tmp_path / 'src' / 'a.py').write_text('x = 1\n')
-    (tmp_path / 'src' / 'ignored.py').write_text('y = 2\n')
-    (tmp_path / '.gitignore').write_text('src/ignored.py\n')
-    (tmp_path / '.git').mkdir()
-    found = await _discover(_workspace(tmp_path), 'src')
-    assert [c.path for c in found.chunks] == ['src/a.py']
-    found = await _discover(_workspace(tmp_path), str(tmp_path / 'src'))
-    assert [c.path for c in found.chunks] == [str(tmp_path / 'src' / 'a.py')]
-    assert (await _discover(_workspace(tmp_path), 'src', glob='*.txt')).chunks == []
+    async def test_respects_gitignore_and_reports_paths_as_spelled(self, tmp_path: Path) -> None:
+        (tmp_path / 'src').mkdir()
+        (tmp_path / 'src' / 'a.py').write_text('x = 1\n')
+        (tmp_path / 'src' / 'ignored.py').write_text('y = 2\n')
+        (tmp_path / '.gitignore').write_text('src/ignored.py\n')
+        (tmp_path / '.git').mkdir()
+        model = FakeJev('')
+        agent = search_agent(tmp_path, model)
 
+        [match] = (await search(agent, directory='src')).matches
+        assert match.file_path == 'src/a.py'
+        [match] = (await search(agent, directory=str(tmp_path / 'src'))).matches
+        assert match.file_path == str(tmp_path / 'src' / 'a.py')
+        model.requests.clear()
+        assert (await search(agent, directory='src', glob='*.txt')).coverage.files == 0
+        assert model.requests == []
 
-async def test_glob_cannot_reach_ignored_or_hidden_files(tmp_path: Path) -> None:
-    (tmp_path / '.git').mkdir()
-    (tmp_path / '.gitignore').write_text('ignored.py\n.env\n')
-    (tmp_path / '.env').write_text('SECRET=1\n')
-    (tmp_path / 'ignored.py').write_text('x = 1\n')
-    (tmp_path / 'kept.py').write_text('y = 2\n')
-    workspace = _workspace(tmp_path)
-    assert (await _discover(workspace, '.', glob='.env')).chunks == []  # ripgrep's `--glob` alone would list it
-    assert [c.path for c in (await _discover(workspace, '.', glob='*.py')).chunks] == ['kept.py']
+    async def test_glob_cannot_reach_ignored_or_hidden_files(self, tmp_path: Path) -> None:
+        (tmp_path / '.git').mkdir()
+        (tmp_path / '.gitignore').write_text('ignored.py\n.env\n')
+        (tmp_path / '.env').write_text('SECRET=1\n')
+        (tmp_path / 'ignored.py').write_text('x = 1\n')
+        (tmp_path / 'kept.py').write_text('y = 2\n')
+        model = FakeJev('')
+        agent = search_agent(tmp_path, model)
+        # ripgrep's `--glob` alone would list `.env` and send it to the judge
+        assert (await search(agent, glob='.env')).coverage.files == 0
+        assert model.requests == []
+        await search(agent, glob='*.py')
+        assert _judged_paths(model) == ['kept.py']
 
+    async def test_stays_inside_the_working_directory(self, tmp_path: Path) -> None:
+        project, outside = tmp_path / 'project', tmp_path / 'outside'
+        project.mkdir()
+        outside.mkdir()
+        (outside / 'secret.py').write_text('token = 1\n')
+        (project / 'link').symlink_to(outside)
+        model = FakeJev('')
+        agent = search_agent(project, model)
+        for directory in ('..', str(outside), 'link'):
+            assert 'outside the working directory' in await search_error(agent, directory=directory)
+        assert model.requests == []
 
-async def test_discover_stays_inside_the_working_directory(tmp_path: Path) -> None:
-    project, outside = tmp_path / 'project', tmp_path / 'outside'
-    project.mkdir()
-    outside.mkdir()
-    (outside / 'secret.py').write_text('token = 1\n')
-    (project / 'link').symlink_to(outside)
-    workspace = _workspace(project)
-    for directory in ('..', str(outside), 'link'):
-        with pytest.raises(ModelRetry, match='outside the working directory'):
-            await _discover(workspace, directory)
+    async def test_without_ripgrep_the_failure_is_reported(self, tmp_path: Path) -> None:
+        bin_dir = tmp_path / 'bin'
+        bin_dir.mkdir()
+        workspace = Workspace(LocalWorkspaceBackend(tmp_path, env={'PATH': tools_path(bin_dir)}))
+        assert 'needs ripgrep' in await search_error(search_agent(None, FakeJev('')), workspace=workspace)
 
+    async def test_skips_files_that_vanish_after_listing(self, tmp_path: Path) -> None:
+        (tmp_path / 'gone.py').write_text('x = 1\n')
+        (tmp_path / 'odd.py').write_text('x = 1\n')
+        (tmp_path / 'kept.py').write_text('y = 2\n')
+        model = FakeJev('')
+        result = await search(search_agent(None, model), workspace=Workspace(VanishingBackend(tmp_path)))
+        assert (result.coverage.files, result.coverage.skipped_files) == (3, 2)
+        assert _judged_paths(model) == ['kept.py']
 
-async def test_discover_enforces_line_and_file_budgets(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    (tmp_path / 'a.py').write_text('x = 1\n' * 50)
-    (tmp_path / 'b.py').write_text('y = 1\n')
-    monkeypatch.setattr(_index, 'MAX_TOTAL_LINES', 10)
-    with pytest.raises(ModelRetry, match='exceeds 10 lines of source'):
-        await _discover(_workspace(tmp_path), '.')
-    monkeypatch.setattr(_chunks, 'MAX_FILES', 1)
-    with pytest.raises(ModelRetry, match=r'exceeds 1 files\. Narrow the directory\.$'):
-        await _discover(_workspace(tmp_path), '.')
-    with pytest.raises(ModelRetry, match=r'exceeds 1 files\. Narrow the directory or glob\.$'):
-        await _discover(_workspace(tmp_path), '.', glob='*.py')
-    # The file cap applies after the glob: one matching file is searchable in a larger workspace.
-    assert [c.path for c in (await _discover(_workspace(tmp_path), '.', glob='b.py')).chunks] == ['b.py']
+    async def test_files_changed_after_shortlisting_are_left_out(self, tmp_path: Path) -> None:
+        for name in ('edited.py', 'deleted.py', 'kept.py'):
+            (tmp_path / name).write_text('x = 1\n')
+        model = FakeJev('')
+        result = await search(search_agent(None, model), workspace=Workspace(EditingBackend(tmp_path)))
+        assert _judged_paths(model) == ['kept.py']
+        assert (result.coverage.snippets, result.coverage.evaluated) == (3, 1)
 
+    # ------------------------------------------------------------ budgets
 
-async def test_discover_enforces_byte_budget(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    (tmp_path / 'a.py').write_text('x = 1\n' * 50)
-    monkeypatch.setattr(_index, 'MAX_TOTAL_BYTES', 100 << 30)
-    assert (await _discover(_workspace(tmp_path), '.')).chunks
-    monkeypatch.setattr(_index, 'MAX_TOTAL_BYTES', 100)
-    with pytest.raises(ModelRetry, match='GiB of source'):
-        await _discover(_workspace(tmp_path), '.')
+    async def test_enforces_line_and_file_budgets(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        (tmp_path / 'a.py').write_text('x = 1\n' * 50)
+        (tmp_path / 'b.py').write_text('y = 1\n')
+        model = FakeJev('')
+        agent = search_agent(tmp_path, model)
+        # The real budgets (50M lines, 200k files) are too large to reach in a test.
+        monkeypatch.setattr('pydantic_ai_harness.smart_search._index.MAX_TOTAL_LINES', 10)
+        assert await search_error(agent) == 'Search exceeds 10 lines of source. Narrow the directory or glob.'
+        monkeypatch.setattr('pydantic_ai_harness.smart_search._chunks.MAX_FILES', 1)
+        assert await search_error(agent) == 'Search exceeds 1 files. Narrow the directory.'
+        assert await search_error(agent, glob='*.py') == 'Search exceeds 1 files. Narrow the directory or glob.'
+        assert model.requests == []
+        # The file cap applies after the glob: one matching file is searchable in a larger workspace.
+        await search(agent, glob='b.py')
+        assert _judged_paths(model) == ['b.py']
 
+    async def test_line_budget_counts_unicode_line_separators(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        (tmp_path / 'a.py').write_text('x = 1\u2028' * 50)  # 50 lines to the chunker, no newline at all
+        monkeypatch.setattr('pydantic_ai_harness.smart_search._index.MAX_TOTAL_LINES', 10)
+        assert 'lines of source' in await search_error(search_agent(tmp_path, FakeJev('')))
 
-async def test_discover_without_ripgrep(tmp_path: Path) -> None:
-    bin_dir = tmp_path / 'bin'
-    bin_dir.mkdir()
-    workspace = Workspace(LocalWorkspaceBackend(tmp_path, env={'PATH': tools_path(bin_dir)}))
-    with pytest.raises(ToolFailed, match='needs ripgrep'):
-        await _discover(workspace, '.')
+    async def test_enforces_byte_budget(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        (tmp_path / 'a.py').write_text('x = 1\n' * 50)
+        agent = search_agent(tmp_path, FakeJev(''))
+        assert (await search(agent)).matches
+        monkeypatch.setattr('pydantic_ai_harness.smart_search._index.MAX_TOTAL_BYTES', 100)  # really 2 GiB
+        assert 'GiB of source' in await search_error(agent)
 
+    async def test_search_over_budget_keeps_no_index(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, chunked: list[str]
+    ) -> None:
+        (tmp_path / 'a.py').write_text('x = 1\n' * 50)
+        agent = search_agent(tmp_path, FakeJev(''), cache_index=True)
+        await search(agent)
+        with monkeypatch.context() as patch:
+            patch.setattr('pydantic_ai_harness.smart_search._index.MAX_TOTAL_LINES', 10)
+            assert 'lines of source' in await search_error(agent)
+        await search(agent)
+        assert chunked == ['a.py', 'a.py']  # the index cached by the first search was dropped, so it is rebuilt
 
-async def test_discover_skips_files_that_vanish_after_listing(tmp_path: Path) -> None:
-    (tmp_path / 'gone.py').write_text('x = 1\n')
-    (tmp_path / 'odd.py').write_text('x = 1\n')
-    (tmp_path / 'kept.py').write_text('y = 2\n')
-    found = await _discover(Workspace(VanishingBackend(tmp_path)), '.')
-    assert found.skipped == [('gone.py', 'No such file or directory'), ('odd.py', 'OSError')]
-    assert [c.path for c in found.chunks] == ['kept.py']
+    # ------------------------------------------------------------ shortlist
 
+    async def test_shortlist_prefers_lexical_and_synonym_hits(self, tmp_path: Path) -> None:
+        (tmp_path / 'a.py').write_text('def render(): pass\n')  # no overlap at all
+        (tmp_path / 'b.py').write_text('def backoff(): attempt()\n')  # synonyms of `retry`
+        (tmp_path / 'retry.py').write_text('x = 1\n')  # the path is boosted metadata
+        model = FakeJev('')
+        await search(search_agent(tmp_path, model), query='retry the request', candidates=2)
+        assert _judged_paths(model) == ['b.py', 'retry.py']
 
-# ---------------------------------------------------------------- caching
+    @pytest.mark.parametrize(
+        'query',
+        ['where is the token', 'where is the value', 'where is the httpserver'],
+        ids=['camel-case', 'snake-case', 'acronym'],
+    )
+    async def test_shortlist_splits_identifiers_and_drops_stopwords(self, tmp_path: Path, query: str) -> None:
+        (tmp_path / 'a.txt').write_text('where is the where is the\n')  # only stopwords
+        (tmp_path / 'z.txt').write_text('refreshToken_value HTTPServer\n')
+        model = FakeJev('')
+        await search(search_agent(tmp_path, model), query=query, candidates=1)
+        assert _judged_paths(model) == ['z.txt']
 
+    # ------------------------------------------------------------ caching
 
-async def test_cached_index_rechunks_only_changed_files(tmp_path: Path, chunker: CountingChunker) -> None:
-    (tmp_path / 'a.py').write_text('def alpha():\n    return 1\n')
-    (tmp_path / 'b.py').write_text('def beta():\n    return 2\n')
-    (tmp_path / 'c.py').write_text('def gamma():\n    return 3\n')
-    workspace, indexes = _workspace(tmp_path), SnippetIndexes()
-    await _discover(workspace, '.', indexes=indexes)
-    assert sorted(chunker.paths) == ['a.py', 'b.py', 'c.py']
+    @pytest.mark.parametrize(('cache_index', 'chunks'), [(True, 1), (False, 2)])
+    async def test_cache_index_keeps_the_index_across_runs(
+        self, tmp_path: Path, chunked: list[str], cache_index: bool, chunks: int
+    ) -> None:
+        (tmp_path / 'a.py').write_text('expired = True\n')
+        agent = search_agent(tmp_path, FakeJev('x'), cache_index=cache_index)
+        await search(agent)
+        await search(agent)
+        assert chunked == ['a.py'] * chunks
 
-    chunker.paths.clear()
-    (tmp_path / 'b.py').write_text('def beta_renamed():\n    return 2\n')
-    (tmp_path / 'c.py').unlink()
-    found = await _discover(workspace, '.', indexes=indexes, query='beta renamed')
-    assert chunker.paths == ['b.py']  # unchanged `a.py` is not chunked again
-    assert found.shortlist.snippets == 2 and found.files == 2  # `c.py`'s snippet is retired
-    assert found.chunks[0].symbol == 'beta_renamed'
+    async def test_cached_index_rechunks_only_changed_files(self, tmp_path: Path, chunked: list[str]) -> None:
+        (tmp_path / 'a.py').write_text('def alpha():\n    return 1\n')
+        (tmp_path / 'b.py').write_text('def beta():\n    return 2\n')
+        (tmp_path / 'c.py').write_text('def gamma():\n    return 3\n')
+        model = FakeJev('')
+        agent = search_agent(tmp_path, model, cache_index=True)
+        await search(agent)
+        assert sorted(chunked) == ['a.py', 'b.py', 'c.py']
 
+        chunked.clear()
+        model.requests.clear()
+        (tmp_path / 'b.py').write_text('def beta_renamed():\n    return 2\n')
+        (tmp_path / 'c.py').unlink()
+        result = await search(agent, query='beta renamed', candidates=1)
+        assert chunked == ['b.py']  # unchanged `a.py` is not chunked again
+        assert (result.coverage.snippets, result.coverage.files) == (2, 2)  # `c.py`'s snippet is retired
+        assert [snippet.symbol for snippet in judged(model)] == ['beta_renamed']
 
-async def test_uncached_index_rebuilds_every_search(tmp_path: Path, chunker: CountingChunker) -> None:
-    (tmp_path / 'a.py').write_text('x = 1\n')
-    workspace, indexes = _workspace(tmp_path), SnippetIndexes(0)
-    await _discover(workspace, '.', indexes=indexes)
-    await _discover(workspace, '.', indexes=indexes)
-    assert chunker.paths == ['a.py', 'a.py']
+    async def test_retired_snippets_are_compacted(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        # Compaction waits for 10,000 retired snippets; indexing that many takes seconds, so compact at once.
+        monkeypatch.setattr('pydantic_ai_harness.smart_search._index.COMPACT_AFTER', 0)
+        model = FakeJev('')
+        agent = search_agent(tmp_path, model, cache_index=True)
+        for name in ('alpha', 'beta', 'gamma'):  # each edit retires the last version's snippet
+            (tmp_path / 'a.py').write_text(f'def retry_{name}():\n    return {name!r}\n')
+            model.requests.clear()
+            result = await search(agent, query=f'retry {name}', candidates=1)
+            assert [snippet.symbol for snippet in judged(model)] == [f'retry_{name}']
+            assert result.coverage.snippets == 1
 
+    async def test_parallel_searches_build_the_index_once(self, tmp_path: Path, chunked: list[str]) -> None:
+        for i in range(5):
+            (tmp_path / f'm{i}.py').write_text(f'def f{i}():\n    return {i}\n')
+        agent = search_agent(tmp_path, FakeJev(''), cache_index=True)
+        results = await search_all(agent, *({'query': f'f{i}'} for i in range(3)))
+        assert sorted(chunked) == [f'm{i}.py' for i in range(5)]  # the first call builds, the others reuse
+        assert [result.coverage.snippets for result in results] == [5, 5, 5]
 
-async def test_parallel_searches_build_the_index_once(tmp_path: Path, chunker: CountingChunker) -> None:
-    for i in range(5):
-        (tmp_path / f'm{i}.py').write_text(f'def f{i}():\n    return {i}\n')
-    workspace, indexes = _workspace(tmp_path), SnippetIndexes()
-    results = await asyncio.gather(*(_discover(workspace, '.', indexes=indexes, query=f'f{i}') for i in range(3)))
-    assert sorted(chunker.paths) == [f'm{i}.py' for i in range(5)]  # the first call builds, the others reuse
-    assert [found.shortlist.snippets for found in results] == [5, 5, 5]
+    async def test_least_recently_searched_index_is_evicted(self, tmp_path: Path, chunked: list[str]) -> None:
+        for name in 'abcde':
+            (tmp_path / name).mkdir()
+            (tmp_path / name / f'{name}.py').write_text('x = 1\n')
+        agent = search_agent(tmp_path, FakeJev(''), cache_index=True)
+        for name in 'abcdea':  # four indexes are kept: `a` was evicted by `e`, so it is rebuilt
+            await search(agent, directory=name)
+        await search(agent, directory='e')  # still cached
+        assert sorted(chunked) == ['a.py', 'a.py', 'b.py', 'c.py', 'd.py', 'e.py']
 
+    async def test_an_index_being_searched_is_not_evicted(self, tmp_path: Path, chunked: list[str]) -> None:
+        for name in 'abcde':
+            (tmp_path / name).mkdir()
+            (tmp_path / name / f'{name}.py').write_text('x = 1\n')
+        backend = GatedBackend(tmp_path, held='a')
+        agent = search_agent(None, FakeJev(''), cache_index=True)
 
-async def test_least_recently_searched_index_is_evicted(tmp_path: Path, chunker: CountingChunker) -> None:
-    for name in 'abc':
-        (tmp_path / name).mkdir()
-        (tmp_path / name / 'x.py').write_text('x = 1\n')
-    workspace, indexes = _workspace(tmp_path), SnippetIndexes(2)
-    for name in 'abca':  # `a` was evicted by `c`, so it is rebuilt
-        await _discover(workspace, name, indexes=indexes)
-    await _discover(workspace, 'c', indexes=indexes)  # still cached
-    assert chunker.paths == ['x.py'] * 4
+        async def run(directory: str) -> None:
+            await search(agent, workspace=Workspace(backend), directory=directory)
 
+        async with anyio.create_task_group() as group:
+            group.start_soon(run, 'a')
+            await backend.reading['a'].wait()
+            for name in 'bcde':  # the fifth index evicts the least recently searched idle one: `b`, not `a`
+                await run(name)
+            backend.release['a'].set()
+        await run('a')  # still cached
+        await run('b')  # rebuilt
+        assert sorted(chunked) == ['a.py', 'b.py', 'b.py', 'c.py', 'd.py', 'e.py']
 
-async def test_an_index_being_searched_is_not_evicted() -> None:
-    indexes = SnippetIndexes(1)
-    slots = indexes._slots  # pyright: ignore[reportPrivateUsage]
-    busy = indexes._slot(('a', None))  # pyright: ignore[reportPrivateUsage]
-    async with busy.lock:
-        indexes._slot(('b', None))  # pyright: ignore[reportPrivateUsage]
-        assert list(slots) == [('a', None), ('b', None)]  # over the limit while `a` is searched
-    indexes._slot(('c', None))  # pyright: ignore[reportPrivateUsage]
-    assert list(slots) == [('c', None)]
+    async def test_parallel_searches_trim_the_cache_when_done(self, tmp_path: Path, chunked: list[str]) -> None:
+        for name in 'abcde':
+            (tmp_path / name).mkdir()
+            (tmp_path / name / f'{name}.py').write_text('x = 1\n')
+        backend = GatedBackend(tmp_path, held='abcde')
+        agent = search_agent(None, FakeJev(''), cache_index=True)
 
+        async def run(directory: str) -> None:
+            await search(agent, workspace=Workspace(backend), directory=directory)
 
-async def test_parallel_searches_trim_the_cache_when_done(tmp_path: Path) -> None:
-    for name in ('a', 'b', 'c'):
-        (tmp_path / name).mkdir()
-        (tmp_path / name / 'm.py').write_text('expired = True\n')
-    indexes = SnippetIndexes(1)
-    workspace = _workspace(tmp_path)
-    await asyncio.gather(*(indexes.shortlist(workspace, name, None, 'expired', 5) for name in ('a', 'b', 'c')))
-    assert len(indexes._slots) == 1  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_line_budget_counts_unicode_line_separators(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    (tmp_path / 'a.py').write_text('x = 1\u2028' * 50)  # 50 lines to the chunker, no newline at all
-    monkeypatch.setattr(_index, 'MAX_TOTAL_LINES', 10)
-    with pytest.raises(ModelRetry, match='lines of source'):
-        await _discover(_workspace(tmp_path), '.')
-
-
-async def test_retired_snippets_are_compacted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(_index, 'COMPACT_AFTER', 0)
-    workspace, indexes = _workspace(tmp_path), SnippetIndexes()
-    for version in range(3):
-        (tmp_path / 'a.py').write_text(f'def retry_{version}():\n    return {version}\n')
-        found = await _discover(workspace, '.', indexes=indexes, query=f'retry {version}')
-        assert [c.symbol for c in found.chunks] == [f'retry_{version}']
-
-
-async def test_files_changed_after_shortlisting_are_left_out(tmp_path: Path) -> None:
-    for name in ('edited.py', 'deleted.py', 'kept.py'):
-        (tmp_path / name).write_text('x = 1\n')
-    workspace = _workspace(tmp_path)
-    root = await searchable_root(workspace, '.')
-    found = await SnippetIndexes(0).shortlist(workspace, root, None, 'x', 10)
-    (tmp_path / 'edited.py').write_text('x = 2\n')
-    (tmp_path / 'deleted.py').unlink()
-    assert [c.path for c in await read_snippets(workspace, root, '.', found.hits)] == ['kept.py']
-
-
-async def test_search_over_budget_keeps_no_index(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    (tmp_path / 'a.py').write_text('x = 1\n' * 50)
-    workspace, indexes = _workspace(tmp_path), SnippetIndexes()
-    await _discover(workspace, '.', indexes=indexes)
-    monkeypatch.setattr(_index, 'MAX_TOTAL_LINES', 10)
-    with pytest.raises(ModelRetry, match='lines of source'):
-        await _discover(workspace, '.', indexes=indexes)
-    assert indexes._slots == {}  # pyright: ignore[reportPrivateUsage]
-
-
-# ---------------------------------------------------------------- BM25
-
-
-def test_bm25_prefers_lexical_and_synonym_hits() -> None:
-    index = Bm25()
-    a = index.add('def render(): pass', 'a.py')
-    b = index.add('def backoff(): attempt()', 'b.py')
-    c = index.add('x = 1', 'retry.py')  # the path is boosted metadata
-    scores = index.scores('retry the request')
-    assert a not in scores  # no overlap at all
-    assert set(scores) == {b, c}
-    assert Bm25().scores('anything') == {}
-
-
-def test_bm25_retires_and_compacts() -> None:
-    index = Bm25()
-    gone = index.add('unique retry', 'a.py')
-    kept = index.add('retry again', 'b.py')
-    index.retire(gone)
-    assert (index.size, index.retired) == (1, 1)
-    assert set(index.scores('unique retry')) == {kept}
-    renumber = index.compact()
-    assert (list(renumber), index.retired) == ([-1, 0], 0)
-    assert set(index.scores('unique retry')) == {0}  # `unique` had no live postings left, and is dropped
+        async with anyio.create_task_group() as others:
+            for name in 'bcde':
+                others.start_soon(run, name)
+            async with anyio.create_task_group() as first:
+                first.start_soon(run, 'a')
+                for name in 'abcde':  # five indexes held at once: one more than are kept
+                    await backend.reading[name].wait()
+                backend.release['a'].set()
+            # `a` finished while the others were busy, so it was the one dropped to get back to four.
+            for name in 'bcde':
+                backend.release[name].set()
+        for name in 'bcdea':
+            await run(name)
+        assert sorted(chunked) == ['a.py', 'a.py', 'b.py', 'c.py', 'd.py', 'e.py']

@@ -28,6 +28,7 @@ TYPESAFE_MODEL = 'typesafe:jev-latest'
 """The recommended judge, used by default when TypeSafe is installed and `TYPESAFE_API_KEY` is set."""
 
 REQUEST_TIMEOUT_SECONDS = 30
+"""The request timeout of a judge given by name; a model instance keeps its own `settings`."""
 
 JudgeModel = Model | KnownModelName | str
 """A judge model as `Agent` accepts one: an instance or a `provider:model` name."""
@@ -74,7 +75,7 @@ def resolve_judge_model(model: JudgeModel | None, run_model: object) -> JudgeMod
         return TYPESAFE_MODEL
     if _is_request_response_model(run_model):
         return run_model
-    raise UserError(
+    raise UserError(  # pragma: no cover
         '`SmartSearch` could not pick a judge model: the run model is not a request-response `Model`. '
         'Pass `SmartSearch(model=...)`.'
     )
@@ -94,7 +95,8 @@ def build_agent(model: JudgeModel, query: str) -> Agent[None, Relevance]:
         name='smart_search',
         output_type=Relevance,
         instructions=f'The text is a snippet of source code from a repository. A developer is searching the codebase for: {query}',
-        model_settings={'timeout': REQUEST_TIMEOUT_SECONDS},
+        # Agent settings override the model's own, so only bound a judge whose settings the user could not set.
+        model_settings={'timeout': REQUEST_TIMEOUT_SECONDS} if isinstance(model, str) else None,
     )
     # The judge's prompt carries source snippets, so it must not inherit global instrumentation that could
     # ignore the host agent's content or opt-out settings.

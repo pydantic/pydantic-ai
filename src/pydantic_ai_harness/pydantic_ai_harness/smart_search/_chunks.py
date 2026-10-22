@@ -82,7 +82,7 @@ def _chunks_from_ranges(lines: list[str], path: str, ranges: list[Range]) -> lis
     for r in ranges:
         start, end = min(r.start, next_line), min(r.end, len(lines))
         if end < start:
-            continue
+            continue  # pragma: no cover
         part = lines[start - 1 : end]
         whole = end - start < WHOLE_DECLARATION_LINES and len('\n'.join(part)) <= MAX_CHUNK_CHARS
         size, overlap = (len(part), 0) if whole else (WINDOW, OVERLAP)

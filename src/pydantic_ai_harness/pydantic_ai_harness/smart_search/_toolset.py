@@ -113,7 +113,11 @@ class SmartSearchToolset(FunctionToolset[AgentDepsT]):
         if ctx.trace_include_content:
             attributes['smart_search.query'] = query
         # The judge runs are not instrumented (their prompts carry source), so this span is what a trace shows.
-        with ctx.tracer.start_as_current_span('smart search', attributes=attributes) as span:
+        # Failures are left to the enclosing tool span, which redacts them by `include_content`: an exception
+        # message here can carry the arguments or a judge's error body.
+        with ctx.tracer.start_as_current_span(
+            'smart search', attributes=attributes, record_exception=False, set_status_on_exception=False
+        ) as span:
             try:
                 result = await search_code(
                     ctx.workspace,
