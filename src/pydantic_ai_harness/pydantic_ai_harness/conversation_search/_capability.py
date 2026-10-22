@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import KW_ONLY, dataclass
 
 from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._warn import warn_default_changed
 from pydantic_ai_harness.conversation_search._source import HistorySource
 from pydantic_ai_harness.conversation_search._toolset import (
@@ -127,6 +129,16 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
     add_instructions: bool = True
     """Emit a short instruction telling the model the recall tool exists."""
 
+    _: KW_ONLY
+    id: str | None = 'conversation_search'
+    """Stable capability ID, so its instructions are addressable and `defer_loading=True` needs none.
+
+    Separate from `tool_id`, which identifies the toolset. Two `ConversationSearch` sharing this `id` are one
+    search stated twice when they agree, and an error when they differ, since a merge could widen the corpus
+    one of them was given. To keep two, give each its own `id` and `tool_id` and wrap them in `PrefixTools`,
+    since their tool names are the same.
+    """
+
     def __post_init__(self) -> None:
         """Warn once, at construction, when the caller left `scope` to the changed default.
 
@@ -141,6 +153,11 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
                 new='conversation',
                 impact=SCOPE_DEFAULT_CHANGE_IMPACT,
             )
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one search stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities)
 
     @property
     def effective_scope(self) -> SearchScope:

@@ -1577,30 +1577,25 @@ async def test_image_is_prepared_once_for_route_then_fill(allow_model_requests: 
     ('source', 'unsupported'),
     [
         pytest.param('prompt', BinaryContent(b'audio', media_type='audio/mpeg'), id='audio-prompt'),
+        pytest.param('prompt', AudioUrl('https://example.com/audio.mp3'), id='audio-url-prompt'),
         pytest.param('assistant-file', BinaryContent(b'%PDF', media_type='application/pdf'), id='document-assistant'),
-        pytest.param('tool-return', BinaryContent(b'video', media_type='video/mp4'), id='video-tool-return'),
     ],
 )
 async def test_unsupported_files_fail_before_a_decisions_request(
-    source: Literal['prompt', 'assistant-file', 'tool-return'],
-    unsupported: BinaryContent,
+    source: Literal['prompt', 'assistant-file'],
+    unsupported: BinaryContent | AudioUrl,
     allow_model_requests: None,
 ):
-    """Audio, documents, and video remain unsupported across user, assistant, and tool history."""
+    """Audio, documents, and video the user sent, or the model produced, fail before a request is sent."""
     history: list[ModelMessage] = []
-    prompt: str | list[BinaryContent] = 'Classify this content.'
+    prompt: str | list[BinaryContent | AudioUrl] = 'Classify this content.'
     if source == 'prompt':
         prompt = [unsupported]
-    elif source == 'assistant-file':
+    else:
+        assert isinstance(unsupported, BinaryContent)
         history = [
             ModelRequest.user_text_prompt('Earlier prompt.'),
             ModelResponse(parts=[FilePart(content=unsupported)]),
-        ]
-    else:
-        history = [
-            ModelRequest.user_text_prompt('Look up the attachment.'),
-            ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
-            ModelRequest(parts=[ToolReturnPart('lookup', unsupported, tool_call_id='tool-1')]),
         ]
     captured = Captured(boolean_answers)
 
@@ -1611,28 +1606,37 @@ async def test_unsupported_files_fail_before_a_decisions_request(
     assert captured.requests == []
 
 
-@pytest.mark.parametrize('source', ['prompt', 'tool-return'])
-async def test_unsupported_audio_urls_fail_before_a_decisions_request(
-    source: Literal['prompt', 'tool-return'], allow_model_requests: None
+@pytest.mark.parametrize(
+    ('unsupported', 'note'),
+    [
+        pytest.param(
+            BinaryContent(b'video', media_type='video/mp4', identifier='clip'),
+            'File clip (video/mp4, 5 bytes) was not sent: this model cannot read video.',
+            id='video',
+        ),
+        pytest.param(
+            AudioUrl('https://example.com/audio.mp3', identifier='clip'),
+            'File clip (audio/mpeg) was not sent: this model cannot read audio files.',
+            id='audio-url',
+        ),
+    ],
+)
+async def test_unsupported_tool_return_files_are_named_in_a_note(
+    unsupported: BinaryContent | AudioUrl, note: str, allow_model_requests: None
 ):
-    """Audio URLs are rejected in user prompts and tool returns before a Decisions request is sent."""
-    audio_url = AudioUrl('https://example.com/audio.mp3')
-    history: list[ModelMessage] = []
-    prompt: str | list[AudioUrl] = 'Classify this content.'
-    if source == 'prompt':
-        prompt = [audio_url]
-    else:
-        history = [
-            ModelRequest.user_text_prompt('Look up the attachment.'),
-            ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
-            ModelRequest(parts=[ToolReturnPart('lookup', audio_url, tool_call_id='tool-1')]),
-        ]
+    """Audio or video a tool returned reaches the Decisions request as a note naming it, rather than failing the run."""
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Look up the attachment.'),
+        ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
+        ModelRequest(parts=[ToolReturnPart('lookup', unsupported, tool_call_id='tool-1')]),
+    ]
     captured = Captured(boolean_answers)
     agent = Agent(mock_model(captured), output_type=bool, instructions='Does this contain an image?')
 
-    with pytest.raises(UserError, match='unsupported file: this model accepts text and images only'):
-        await agent.run(prompt, message_history=history)
-    assert captured.requests == []
+    result = await agent.run('Classify this content.', message_history=history)
+
+    assert result.output is True
+    assert note in captured.requests[0].content.decode()
 
 
 async def test_image_download_error_prevents_a_decisions_request(allow_model_requests: None):

@@ -54,9 +54,8 @@ class ToolResult:
 
     Built and sent by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] after it settles a
     call: the string-only realtime tool channel and the retry/failure error-key wrapping mean the
-    session renders the [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] or
-    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] it records in history down to this flat
-    shape, so every provider sends exactly the same rendering.
+    session renders the [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] it records in history
+    down to this flat shape, so every provider sends exactly the same rendering.
     """
 
     tool_call_id: str
@@ -261,6 +260,15 @@ class ToolCall:
     Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
     as one cut off by a dropped connection or by closing the session.
     """
+    response_continues: bool = False
+    """Whether the model goes on with the same response while this call runs.
+
+    Gemini Live's `NON_BLOCKING` calls do on the models that take `INTERRUPT` scheduling (the native-audio models
+    and `gemini-3.8-live`): the model keeps talking ("this might take a moment") in the turn that made the call.
+    An [`InferredLifecycle`][pydantic_ai.realtime.lifecycle.InferredLifecycle] then keeps that response going past
+    the call, whatever `response_usage_follows` says, so what the model says before the call's result goes back is
+    recorded with the call, ahead of the result. A message the call's tool enqueues `asap` goes out ahead of the
+    result without waiting for that response to end, as the result ends it."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -636,11 +644,29 @@ class RealtimeConnection(ABC):
 
         For the session's reply accounting only. The built-in connections make it so (Gemini Live answers
         a tool-call frame once; the OpenAI-protocol connection asks for one response per calling
-        response), and the session then counts one reply per tool-calling response against `request_limit`,
-        and none once one of its calls settles without a result. Defaults to `False`, which counts one per
-        result, as a connection that asks for a response after each one needs.
+        response; GPT-Live continues its delegated backend once per round of calls), and the session then
+        counts one reply per tool-calling response against `request_limit`, and none once one of its calls
+        settles without a result. Defaults to `False`, which counts one per result, as a connection that
+        asks for a response after each one needs.
         """
         return False
+
+    @property
+    def _sends_failed_tool_results(self) -> bool:
+        """Whether a call whose tool raised still needs a result sent, saying it failed, for the model to move on.
+
+        For a provider that can't continue, or drop, a round of calls missing one of its results. The session then
+        sends the failure history records (unless a usage limit stopped the call). Defaults to `False`: the model
+        gets nothing for the call, and the exchange it was part of ends. Private until the realtime refactor settles.
+        """
+        return False
+
+    def _tool_call_unanswered(self, tool_call_id: str) -> None:
+        """The session settled this call without sending its result (the tool raised, or a usage limit stopped it).
+
+        For a connection that holds state until a round's results are all in. Does nothing by default.
+        Private until the realtime refactor settles.
+        """
 
     @property
     def reconnect_restores_in_flight_state(self) -> bool:

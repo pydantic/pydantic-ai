@@ -142,8 +142,9 @@ spoken turn starts, joins the conversation, and gets the last of its audio and t
 [`UserTurnClosed`][pydantic_ai.realtime.lifecycle.UserTurnClosed]), where each input joins it
 ([`InputAdded`][pydantic_ai.realtime.lifecycle.InputAdded]), and which inputs no response will answer
 ([`InputLost`][pydantic_ai.realtime.lifecycle.InputLost] /
-[`ResponseRequestRefused`][pydantic_ai.realtime.lifecycle.ResponseRequestRefused]). The session builds history,
-usage, and [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] from them.
+[`ResponseRequestRefused`][pydantic_ai.realtime.lifecycle.ResponseRequestRefused]), and which tool calls' results
+it won't answer either ([`ToolCallsAbandoned`][pydantic_ai.realtime.lifecycle.ToolCallsAbandoned]). The session
+builds history, usage, and [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] from them.
 
 **Implementing a connection** — subclass [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection]
 and implement [`send()`][pydantic_ai.realtime.codec.RealtimeConnection.send] and
@@ -234,6 +235,12 @@ turned out not to answer to a later one, as `InferredLifecycle` does for a respo
 `RealtimeInputSpeechStartEvent` says so), and `claimed`
 settles inputs sent while a response was under way that it answers after all, as GPT-Live does by speaking to text
 in the reply it is giving. Neither moves anything in history.
+
+A provider can also give up on tool calls before their results are in: Eleven Realtime does once another response
+starts, and GPT-Live when its delegated backend fails. The connection then names them in a
+[`ToolCallsAbandoned`][pydantic_ai.realtime.lifecycle.ToolCallsAbandoned]: the tools keep running and their results
+are recorded, but no reply to them is waited for, so the exchange ends with the reply that is under way. Unlike a
+[`ToolCallCancelled`][pydantic_ai.realtime.codec.ToolCallCancelled], it doesn't stop them.
 
 **Session events** — [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent], yielded by a
 session. The session translates codec events into the shared vocabulary from
