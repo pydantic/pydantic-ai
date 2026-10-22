@@ -44,6 +44,7 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelRetry,
     RetryModelRequest,
+    RunCancelled,
     RunTimedOut,
     UsageLimitExceeded,
     UserError,
@@ -1325,6 +1326,55 @@ async def test_a_run_timeout_is_not_fallen_back_from():
     with pytest.raises(RunTimedOut):
         await agent.run('x', timeout=0.05)
     assert fallback_calls == []
+
+
+def _suspends_then_hangs(started: asyncio.Event) -> FunctionModel:
+    """A model whose first request is billed and suspended, and whose continuation hangs until the run stops."""
+    calls = 0
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[TextPart('partial')], state='suspended', usage=RequestUsage(input_tokens=10, output_tokens=2)
+            )
+        started.set()
+        await asyncio.Event().wait()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    return FunctionModel(respond, model_name='suspends')
+
+
+async def test_a_cancelled_continuation_keeps_the_usage_already_billed():
+    """A run cancelled while continuing a suspended response still counts what the provider billed before it."""
+    started = asyncio.Event()
+    agent = Agent(_suspends_then_hangs(started), capabilities=[ModelFallback(TestModel())])
+    usage = RunUsage()
+    with pytest.raises(RunCancelled) as exc_info:
+        async with agent.iter('x', usage=usage) as run:
+
+            async def cancel() -> None:
+                await started.wait()
+                run.cancel()
+
+            canceller = asyncio.create_task(cancel())
+            try:
+                async for _ in run:
+                    pass
+            finally:
+                await canceller
+    assert usage == RunUsage(input_tokens=10, output_tokens=2)
+    assert exc_info.value.usage == RunUsage(input_tokens=10, output_tokens=2)
+
+
+async def test_a_timed_out_continuation_keeps_the_usage_already_billed():
+    """A run that times out while continuing a suspended response still counts what the provider billed before it."""
+    agent = Agent(_suspends_then_hangs(asyncio.Event()), capabilities=[ModelFallback(TestModel())])
+    usage = RunUsage()
+    with pytest.raises(RunTimedOut):
+        await agent.run('x', usage=usage, timeout=0.05)
+    assert usage == RunUsage(input_tokens=10, output_tokens=2)
 
 
 async def test_each_candidate_gets_its_own_max_retries():

@@ -2358,6 +2358,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             recovered = await self._recover_model_request_error(ctx, run_context, request_context, e, failed, start)
             # Not billed, so its usage is committed with the step's response, without the attempts it carries.
             response = failed.log.attach(recovered)
+        except BaseException:
+            # Cancelled, or timed out, after the provider already billed for part of a continuation chain: that
+            # usage is the run's, even though no response is committed.
+            if state.response is not None and not state.usage_recorded:
+                state.record(ctx, state.response, request_context)
+            raise
         state.response = response
         capture_model_response_span_context(request_context, response)
         try:
