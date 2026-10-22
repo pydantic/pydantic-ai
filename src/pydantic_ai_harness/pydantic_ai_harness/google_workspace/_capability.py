@@ -34,6 +34,8 @@ _MCP_URLS: dict[str, str] = {
     'people': 'https://people.googleapis.com/mcp/v1',
 }
 
+_DEFAULT_DESCRIPTION = 'Use Gmail, Calendar, Drive, and the other Google Workspace products.'
+
 
 @dataclass
 class GoogleWorkspace(AbstractCapability[AgentDepsT]):
@@ -54,8 +56,8 @@ class GoogleWorkspace(AbstractCapability[AgentDepsT]):
     are the same, also give it a distinct `id`, since their default ones collide.
     """
 
-    description: str | None = None
-    """Describes the capability when the agent loads it on demand. Unset, it names the selected products."""
+    description: str | None = _DEFAULT_DESCRIPTION
+    """Describes the capability when the agent loads it on demand. Left at its default, it names the selected products."""
 
     auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
     """A Google access token or a function of the run context that returns one.
@@ -81,9 +83,9 @@ class GoogleWorkspace(AbstractCapability[AgentDepsT]):
         if self.id is None:
             self.id = f'google-workspace-{"-".join(sorted(self.services))}'
 
-    def get_description(self) -> str:
-        """Return `description`, or one naming the selected products when it is unset."""
-        if self.description is not None:
+    def get_description(self) -> str | None:
+        """Return `description`, or one naming the selected products while it is left at its default."""
+        if self.description != _DEFAULT_DESCRIPTION:
             return self.description
         return f'Use these Google Workspace products: {", ".join(service.title() for service in self.services)}.'
 

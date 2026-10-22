@@ -88,8 +88,7 @@ class TestGoogleWorkspace:
         ids: list[str | None] = []
 
         def collect(leaf: AbstractToolset[None]) -> None:
-            if isinstance(leaf, MCPToolset):
-                ids.append(leaf.id)
+            ids.append(leaf.id)
 
         GoogleWorkspace[None](['gmail', 'calendar'], auth='token', id='mail').get_toolset().apply(collect)
         assert ids == ['mail-gmail', 'mail-calendar']
@@ -105,6 +104,7 @@ class TestGoogleWorkspace:
             'Use these Google Workspace products: People, Gmail.'
         )
         assert GoogleWorkspace('gmail', description='Read mail.').get_description() == 'Read mail.'
+        assert GoogleWorkspace('gmail', description=None).get_description() is None
 
     def test_missing_token_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv('GOOGLE_ACCESS_TOKEN', raising=False)

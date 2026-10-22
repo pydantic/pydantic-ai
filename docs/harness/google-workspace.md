@@ -70,7 +70,7 @@ The capability's `id` defaults to `google-workspace-<products>` with the product
 
 ## Provider settings
 
-`services` selects one product or a list: `gmail`, `drive`, `docs`, `sheets`, `slides`, `calendar`, `chat`, or `people`. Tool names start with the product, such as `gmail_search_threads`. Without a `description`, the one the agent sees when it loads the capability on demand names the selected products.
+`services` selects one product or a list: `gmail`, `drive`, `docs`, `sheets`, `slides`, `calendar`, `chat`, or `people`. Tool names start with the product, such as `gmail_search_threads`. Unless you set `description`, the one the agent sees when it loads the capability on demand names the selected products.
 
 Register a Google OAuth client yourself and request the scopes the selected products need. Google does not support automatic client registration, so `auth='oauth'` raises an error.
 
