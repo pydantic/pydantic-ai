@@ -12,6 +12,7 @@ from openai import APIError, AsyncOpenAI, Omit, OpenAIError
 from openai.resources.responses.responses import AsyncResponsesConnection
 from openai.types.responses import (
     ResponseCompletedEvent,
+    ResponseErrorEvent,
     ResponseFailedEvent,
     ResponseIncompleteEvent,
     ResponseStreamEvent,
@@ -24,6 +25,7 @@ from openai.types.websocket_connection_options import WebSocketConnectionOptions
 from pydantic_core import to_json
 from websockets.exceptions import InvalidStatus, WebSocketException
 
+from .. import _model_errors
 from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from . import _suggest_known_model_id_from_provider_error  # pyright: ignore[reportPrivateUsage]
 
@@ -309,22 +311,33 @@ class ResponsesWebSocketStream:
             # A 4xx or 5xx on a lane evicts the response it continued from, so nothing on the lane is cached.
             self.completed = True
             self.lane.latest_response_id = None
-            if event.status is not None:
-                raise ModelHTTPError(
-                    status_code=event.status,
-                    model_name=self.websocket.model_name,
-                    body=event.error.model_dump(exclude_none=True),
-                    headers=event.error.headers,
-                    suggested_model_id=(
-                        _suggest_known_model_id_from_provider_error(
-                            self.websocket.model_id_namespace, self.websocket.model_name
-                        )
-                        if event.error.code == 'model_not_found'
-                        else None
-                    ),
+            error = event.error
+            if event.status is None:
+                # The response parser raises this as it does an error in an HTTP stream.
+                return ResponseErrorEvent(
+                    type='error',
+                    code=error.code,
+                    message=error.message,
+                    param=error.param,
+                    sequence_number=event.sequence_number or 0,
                 )
-            message = f'{event.error.code}: {event.error.message}' if event.error.code else event.error.message
-            raise ModelAPIError(model_name=self.websocket.model_name, message=message)
+            # Mapped as `_map_status_error` maps the same error rejecting an HTTP request.
+            raise ModelHTTPError.for_category(
+                _model_errors.openai_compatible_category(event.status, error.code, error.type, error.message),
+                status_code=event.status,
+                model_name=self.websocket.model_name,
+                body=error.model_dump(exclude_none=True),
+                headers=error.headers,
+                suggested_model_id=(
+                    _suggest_known_model_id_from_provider_error(
+                        self.websocket.model_id_namespace, self.websocket.model_name
+                    )
+                    if error.code == 'model_not_found'
+                    else None
+                ),
+                provider_error_code=error.code,
+                provider_error_type=error.type,
+            )
         # Steering isn't supported: a lane serves one response at a time, so its cancellation and cleanup have
         # one owner, and steering would need its own event routing.
         if isinstance(event, (ResponseSteerAcceptedEvent, ResponseSteerPendingEvent, ResponseSteerFailedEvent)):

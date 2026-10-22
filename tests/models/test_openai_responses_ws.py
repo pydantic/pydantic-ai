@@ -35,7 +35,15 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.capabilities import Hooks, SelectModel
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+    ModelRateLimitError,
+    ModelServerError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.messages import ModelResponsePart
 from pydantic_ai.models import AbstractModel, Model, ModelRequestContext, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
@@ -1812,6 +1820,35 @@ async def test_error_frame(
         assert socket.close_count == 0
     assert socket.close_count == 1
     http_handler.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ('status', 'code', 'error_type', 'expected'),
+    [
+        (429, 'rate_limit_exceeded', 'requests', ModelRateLimitError),
+        (400, 'context_length_exceeded', 'invalid_request_error', ModelContextWindowExceededError),
+        (None, 'server_error', 'server_error', ModelServerError),
+    ],
+)
+async def test_error_frame_raises_the_http_error_category(
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    status: int | None,
+    code: str,
+    error_type: str,
+    expected: type[ModelAPIError],
+):
+    """An error frame raises the category the same error raises over HTTP, before or inside a stream."""
+    frame: Frame = {'type': 'error', 'error': {'type': error_type, 'code': code, 'message': 'The request failed.'}}
+    if status is not None:
+        frame['status'] = status
+    sockets.pending[0].responses = deque([[frame]])
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    async with source.connect() as connected:
+        with pytest.raises(expected) as raised:
+            await Agent(connected).run('hello')
+    assert raised.value.provider_error_code == code
+    assert raised.value.in_stream is (status is None)
 
 
 async def test_incomplete_response(allow_model_requests: None, sockets: SocketHarness):
