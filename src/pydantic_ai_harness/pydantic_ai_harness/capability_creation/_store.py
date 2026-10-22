@@ -15,6 +15,7 @@ are not coordinated.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import re
@@ -178,7 +179,9 @@ class CapabilityStore:
                     else:
                         live.unlink()
                     raise
-                rejected.unlink(missing_ok=True)
+                # The new version is committed, so a leftover rejected file must not fail the write.
+                with contextlib.suppress(OSError):
+                    rejected.unlink(missing_ok=True)
                 return record
         finally:
             shutil.rmtree(staging, ignore_errors=True)

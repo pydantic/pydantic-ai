@@ -406,6 +406,14 @@ class UsesModels(AbstractCapability):
             load_capability_instance(_write(tmp_path, 'm', 'raise RuntimeError("boom")\n'))
         with pytest.raises(CapabilityValidationError, match='no `AbstractCapability` subclass'):
             load_capability_instance(_write(tmp_path, 'n', NO_SUBCLASS_CODE))
+        constructor_raises = (
+            'from pydantic_ai.capabilities import AbstractCapability\n\n'
+            'class Broken(AbstractCapability):\n'
+            '    def __init__(self):\n'
+            '        raise RuntimeError("boom")\n'
+        )
+        with pytest.raises(CapabilityValidationError, match='RuntimeError: boom'):
+            load_capability_instance(_write(tmp_path, 'o', constructor_raises))
         assert set(sys.modules) - before == set()
 
     def test_failed_reload_keeps_the_earlier_module(self, tmp_path: Path) -> None:
@@ -485,23 +493,6 @@ class UsesModels(AbstractCapability):
         with pytest.raises(CapabilityValidationError):
             validate_capability_file(_write(tmp_path, 'n', NO_SUBCLASS_CODE))
         assert set(sys.modules) - before == set()
-
-    def test_failed_load_restores_module_registration(self, tmp_path: Path) -> None:
-        path = _write(tmp_path, 'm', VALID_CODE)
-        load_capability_instance(path)
-        [name] = [
-            name for name, module in sys.modules.items() if getattr(module, '__file__', None) == str(path.resolve())
-        ]
-        loaded = sys.modules[name]
-        path.write_text('raise RuntimeError("boom")\n', encoding='utf-8')
-        with pytest.raises(CapabilityValidationError, match='boom'):
-            load_capability_instance(path)
-        assert sys.modules[name] is loaded
-
-        broken = _write(tmp_path, 'never_loaded', 'raise RuntimeError("boom")\n')
-        with pytest.raises(CapabilityValidationError, match='boom'):
-            load_capability_instance(broken)
-        assert str(broken.resolve()) not in {getattr(module, '__file__', None) for module in sys.modules.values()}
 
     def test_concurrent_loads_of_one_file_run_one_at_a_time(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -640,6 +631,24 @@ class TestCapabilityStore:
         store.write('marker', NO_SUBCLASS_CODE)
         assert store.write('marker', _marker_code('Bar', 'V2')).class_name == 'Bar'
         assert sorted(path.name for path in tmp_path.iterdir() if path.suffix == '.py') == ['marker.py']
+
+    def test_a_rejected_source_that_cannot_be_removed_does_not_fail_the_write(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = CapabilityStore(tmp_path)
+        store.write('marker', VALID_CODE)
+        store.write('marker', NO_SUBCLASS_CODE)
+        unlink = Path.unlink
+
+        def failing_unlink(path: Path, missing_ok: bool = False) -> None:
+            if path.name == 'marker.rejected.py':
+                raise PermissionError('read-only')
+            unlink(path, missing_ok=missing_ok)
+
+        monkeypatch.setattr(Path, 'unlink', failing_unlink)
+        record = store.write('marker', _marker_code('Bar', 'V2'))
+        assert record.class_name == 'Bar'
+        assert store.list_all() == [record]
 
     def test_replacing_the_source_removes_an_older_rejected_source(self, tmp_path: Path) -> None:
         store = CapabilityStore(tmp_path)
@@ -792,6 +801,36 @@ class TestCapabilityStore:
             _gate(gate, 'release').set()
             loader.join(timeout=_READY_TIMEOUT)
         assert store.list_all() == [record]
+
+    @pytest.mark.parametrize('update', ['disable', 'author'])
+    def test_load_active_keeps_manifest_updates_made_while_loading(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, update: str
+    ) -> None:
+        # Recording a load error must not write back a manifest read before a concurrent disable or write.
+        store = CapabilityStore(tmp_path)
+        store.write('x', VALID_CODE)
+        gate = _gate_module(monkeypatch, 'entered', 'release')
+        broken = (
+            f'import {gate.__name__} as g\ng.entered.set()\ng.release.wait({_READY_TIMEOUT})\n'
+            'raise ValueError("broken")\n'
+        )
+        (tmp_path / 'x.py').write_text(broken, encoding='utf-8')
+        loader = threading.Thread(target=store.load_active)
+        loader.start()
+        try:
+            assert _gate(gate, 'entered').wait(timeout=_READY_TIMEOUT)
+            if update == 'disable':
+                store.disable('x')
+            else:
+                store.write('y', VALID_CODE)
+        finally:
+            _gate(gate, 'release').set()
+            loader.join(timeout=_READY_TIMEOUT)
+        records = [(record.name, record.status, record.last_error) for record in store.list_all()]
+        if update == 'disable':
+            assert records == [('x', 'disabled', None)]
+        else:
+            assert records == [('x', 'active', 'ValueError: broken'), ('y', 'active', None)]
 
     def test_load_manifest_missing_returns_empty(self, tmp_path: Path) -> None:
         assert CapabilityStore(tmp_path / 'absent').list_all() == []
