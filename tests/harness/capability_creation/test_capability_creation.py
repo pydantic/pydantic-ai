@@ -632,6 +632,24 @@ class TestCapabilityStore:
         assert store.write('marker', _marker_code('Bar', 'V2')).class_name == 'Bar'
         assert sorted(path.name for path in tmp_path.iterdir() if path.suffix == '.py') == ['marker.py']
 
+    def test_a_rejected_source_that_cannot_be_removed_does_not_fail_the_write(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = CapabilityStore(tmp_path)
+        store.write('marker', VALID_CODE)
+        store.write('marker', NO_SUBCLASS_CODE)
+        unlink = Path.unlink
+
+        def failing_unlink(path: Path, missing_ok: bool = False) -> None:
+            if path.name == 'marker.rejected.py':
+                raise PermissionError('read-only')
+            unlink(path, missing_ok=missing_ok)
+
+        monkeypatch.setattr(Path, 'unlink', failing_unlink)
+        record = store.write('marker', _marker_code('Bar', 'V2'))
+        assert record.class_name == 'Bar'
+        assert store.list_all() == [record]
+
     def test_replacing_the_source_removes_an_older_rejected_source(self, tmp_path: Path) -> None:
         store = CapabilityStore(tmp_path)
         store.write('marker', VALID_CODE)
