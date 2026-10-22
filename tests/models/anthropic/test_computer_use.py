@@ -453,3 +453,45 @@ async def test_a_result_without_its_metadata_reads_as_every_call_having_run() ->
         ('toolu_1', False, [{'text': 'OK', 'type': 'text'}]),
         ('toolu_2', False, [{'text': 'OK', 'type': 'text'}]),
     ]
+
+
+async def test_without_the_toolset_past_member_calls_replay_as_plain_calls(allow_model_requests: None) -> None:
+    client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
+    model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(anthropic_client=client))
+    note = ToolDefinition(name='note', parameters_json_schema={'type': 'object'})
+    other = ToolDefinition(name='other', parameters_json_schema={'type': 'object'})
+    params = ModelRequestParameters(function_tools=[COMPUTER, note, other], allow_text_output=True)
+    block: dict[str, Any] = {
+        'id': 'toolu_1',
+        'type': 'tool_use',
+        'name': 'screenshot',
+        'input': {},
+        'toolset_name': 'computer',
+    }
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Look.'),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    'computer',
+                    {'actions': [{'type': 'screenshot'}]},
+                    tool_call_id='toolu_1',
+                    provider_name='anthropic',
+                    provider_details={'computer_blocks': [block]},
+                )
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[ToolReturnPart('computer', 'Ran 1 action.', tool_call_id='toolu_1')]),
+    ]
+
+    # Tool choice leaves `computer` out, so the toolset isn't sent and its past calls can't name it.
+    await model.request(history, {'tool_choice': ['note', 'other']}, params)
+
+    (body,) = get_mock_chat_completion_kwargs(client)
+    assert [tool.get('name') for tool in body['tools']] == ['note', 'other']
+    assert _members(body, 'tool_use') == [] and _members(body, 'tool_result') == []
+    (call,) = [
+        b for m in body['messages'] if isinstance(m['content'], list) for b in m['content'] if b['type'] == 'tool_use'
+    ]
+    assert (call['name'], call['input']) == ('computer', {'actions': [{'type': 'screenshot'}]})

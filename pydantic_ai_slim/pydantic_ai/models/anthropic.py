@@ -2387,7 +2387,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # verbatim (no pairing logic needed).
         advisor_active = any(isinstance(t, AdvisorTool) for t in model_request_parameters.native_tools)
         # Computer calls replayed as toolset member calls, whose results must be one per member call.
-        native_computer = self._native_computer_tool(model_request_parameters) is not None
+        # Without the toolset in this request, past member calls are sent back as plain `computer` calls.
+        native_computer = self._sent_computer_toolset(model_settings, model_request_parameters)
         computer_calls: dict[str, list[dict[str, Any]]] = {}
         bm25_requested = any(
             isinstance(t, ToolSearchTool) and t.strategy == 'bm25' for t in model_request_parameters.native_tools
@@ -3344,6 +3345,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         ):
             return None
         return computer_tool(model_request_parameters)
+
+    def _sent_computer_toolset(
+        self, model_settings: AnthropicModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        """Whether this request sends the computer toolset: the model takes it, and tool choice doesn't leave it out."""
+        native_computer = self._native_computer_tool(model_request_parameters)
+        tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        return native_computer is not None and not (
+            isinstance(tool_choice, tuple) and native_computer.name not in tool_choice[1]
+        )
 
     async def _map_computer_results(
         self, part: ToolReturnPart, blocks: list[dict[str, Any]]
