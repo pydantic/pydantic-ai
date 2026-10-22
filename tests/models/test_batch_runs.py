@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic_core import to_json
 
 from pydantic_ai import (
@@ -28,7 +29,7 @@ from pydantic_ai import (
     ToolCallPart,
     UsageLimitExceeded,
 )
-from pydantic_ai.capabilities import BatchModelRequests, SelectModel
+from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, SelectModel
 from pydantic_ai.direct import model_request, model_request_batch, model_request_stream
 from pydantic_ai.exceptions import (
     ModelAPIError,
@@ -774,6 +775,36 @@ async def test_a_model_without_a_batch_api_selected_mid_run_raises_at_its_reques
     with pytest.raises(UserError, match=r"`_NoBatchModel` 'test' has no batch API\."):
         await agent.run('Where?')
     assert len(batched.created) == 1
+
+
+@pytest.mark.parametrize('batching_first', [False, True], ids=['select-model-first', 'batching-first'])
+async def test_a_run_switching_models_batches_each_request_with_the_model_serving_it(batching_first: bool) -> None:
+    first, second = SlowBatchTestModel(), SlowBatchTestModel()
+    selection = SelectModel(lambda ctx: first if ctx.run_step <= 1 else second)
+    batching = BatchModelRequests(**FAST_BATCH_SETTINGS)
+    agent = Agent(first, capabilities=[batching, selection] if batching_first else [selection, batching])
+
+    @agent.tool_plain
+    def get_city() -> str:
+        return 'Paris'
+
+    result = await agent.run('Where?')
+    assert result.output == snapshot('{"get_city":"Paris"}')
+    assert (len(first.created), len(second.created)) == (1, 1)
+
+
+async def test_a_model_a_capability_selects_is_batched() -> None:
+    @dataclass
+    class PickModel(AbstractCapability[object]):
+        model: Model
+
+        def get_model(self) -> Model:
+            return self.model
+
+    agent_model, picked = SlowBatchTestModel(), SlowBatchTestModel()
+    agent = Agent(agent_model, capabilities=[PickModel(picked), BatchModelRequests(**FAST_BATCH_SETTINGS)])
+    await agent.run('Hello')
+    assert (len(agent_model.created), len(picked.created)) == (0, 1)
 
 
 def test_a_fallback_model_is_not_batched() -> None:
