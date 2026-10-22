@@ -1923,7 +1923,8 @@ class _RepeatPrompt(AbstractCapability[Any]):
         last = request_context.messages[-1]
         assert isinstance(last, ModelRequest)
         copies = [dataclasses.replace(part) for part in last.parts if isinstance(part, UserPromptPart)]
-        request_context.messages[-1] = dataclasses.replace(last, parts=[*copies, *copies[-1:]])
+        repeated = [dataclasses.replace(part) for part in copies[-1:]]
+        request_context.messages[-1] = dataclasses.replace(last, parts=[*copies, *repeated])
         return await handler(request_context)
 
 
