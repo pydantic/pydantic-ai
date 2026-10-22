@@ -157,7 +157,7 @@ sent. Leaving out earlier messages, as a [history processor](message-history.md#
 [compaction](capabilities/compaction.md) can, keeps Anthropic and Bedrock document citations working as long as the
 cited document is still in the history. An OpenAI URL citation is left out if the text around its link was edited.
 
-The same history is sent the same way on every turn, so this doesn't affect prompt caching.
+Sending citations back doesn't affect prompt caching: the same history is sent the same way on every turn.
 
 !!! warning "The model may not see the source"
     A follow-up such as "Tell me more about source [1]" may reach a model that sees the `[1]` marker but not its URL
