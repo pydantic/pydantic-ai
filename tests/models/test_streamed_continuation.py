@@ -1648,8 +1648,9 @@ async def test_run_stream_continuation_error_cancels_job_once() -> None:
 
     with capture_run_messages() as messages:
         with pytest.raises(ModelAPIError, match='continuation failed'):
-            async with Agent(model).run_stream('go') as result:
-                await result.get_output()
+            # The suspended segment streams no output, so opening the stream already reaches the failing continuation.
+            async with Agent(model).run_stream('go'):
+                pass  # pragma: no cover
 
     assert [response.provider_response_id for response in model.cancelled] == ['job1']
     assert isinstance(messages[-1], ModelResponse)
