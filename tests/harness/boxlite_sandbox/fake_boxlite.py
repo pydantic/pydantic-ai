@@ -298,10 +298,13 @@ def _end(box: FakeBox) -> None:
     for process in list(box.processes):
         # Never signal a reaped process: its pid may belong to another one by now.
         if process.returncode is None:  # pragma: no branch - reaped only when an ending races its wait
+            # Listed first: once the script dies, its children are re-parented and `pgrep -P` misses them.
             children = subprocess.run(['pgrep', '-P', str(process.pid)], capture_output=True, text=True, check=False)
+            # The script before its command, so it dies of the signal as in a real box. Signalled second, it
+            # could see its command die first and exit 143 itself, which reads as the command's own exit.
+            with suppress(ProcessLookupError):
+                os.kill(process.pid, signal.SIGTERM)
             # Each may exit, and be reaped by the thread waiting for it, before it is signalled.
             for child in children.stdout.split():
                 with suppress(ProcessLookupError, PermissionError):
                     os.killpg(int(child), signal.SIGTERM)
-            with suppress(ProcessLookupError):
-                os.kill(process.pid, signal.SIGTERM)

@@ -14,6 +14,7 @@ import logging
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -352,6 +353,23 @@ class TestSqliteStepStoreProtocol:
                 SqliteStepStore(database='x', connection=conn)
         finally:
             conn.close()
+
+
+class TestSqliteWritersShareTheDatabase:
+    async def test_opened_connections_wait_30_seconds_for_another_writer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        timeouts: list[float] = []
+        connect = sqlite3.connect
+
+        def recording_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            timeouts.append(kwargs['timeout'])
+            return connect(*args, **kwargs)
+
+        monkeypatch.setattr(sqlite3, 'connect', recording_connect)
+        await SqliteStepStore(database=tmp_path / 'runs.db', media_store=None).register_run(RunRecord(run_id='r1'))
+        await SqliteMediaStore(database=tmp_path / 'runs.db').put(b'blob')
+        assert timeouts == [30, 30]
 
 
 # ---------------------------------------------------------------------------

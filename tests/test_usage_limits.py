@@ -20,7 +20,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryInfo,
     RunContext,
     TextPart,
     ToolCallPart,
@@ -1027,7 +1027,7 @@ async def test_failed_tool_calls_not_counted() -> None:
 
     result = await test_agent.run('test', usage_limits=UsageLimits(tool_calls_limit=1))
     assert call_count == 2
-    assert result.usage == snapshot(RunUsage(requests=3, input_tokens=176, output_tokens=29, tool_calls=1))
+    assert result.usage == snapshot(RunUsage(requests=3, input_tokens=168, output_tokens=29, tool_calls=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1051,11 +1051,13 @@ async def test_failed_tool_calls_not_counted() -> None:
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Temporary failure, please retry',
                         tool_name='flaky_tool',
                         tool_call_id='pyd_ai_tool_call_id__flaky_tool',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -1064,7 +1066,7 @@ async def test_failed_tool_calls_not_counted() -> None:
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='flaky_tool', args={'x': 'a'}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=62, output_tokens=10),
+                usage=RequestUsage(input_tokens=58, output_tokens=10),
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',
@@ -1086,7 +1088,7 @@ async def test_failed_tool_calls_not_counted() -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='{"flaky_tool":"a-success"}')],
-                usage=RequestUsage(input_tokens=63, output_tokens=14),
+                usage=RequestUsage(input_tokens=59, output_tokens=14),
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',
