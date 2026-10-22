@@ -8,7 +8,7 @@ import functools
 import inspect
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, ForwardRef, Optional
 
 import anyio
 import pytest
@@ -1494,6 +1494,19 @@ class TestTakesCtx:
         def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
 
         guard.__annotations__['ctx'] = annotation
+        with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
+            assert takes_ctx(guard) is True
+
+    def test_a_forward_reference_to_run_context_is_the_context(self):
+        def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
+
+        guard.__annotations__['ctx'] = Optional[ForwardRef('RunContext[None]')]  # noqa: UP045
+        assert takes_ctx(guard) is True
+
+    def test_an_unresolvable_forward_reference_keeps_the_context_with_a_warning(self):
+        def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
+
+        guard.__annotations__['ctx'] = Optional[ForwardRef('UndefinedAlias')]  # noqa: UP045
         with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
             assert takes_ctx(guard) is True
 
