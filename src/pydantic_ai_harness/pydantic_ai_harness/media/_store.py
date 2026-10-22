@@ -98,7 +98,7 @@ def default_key_strategy(uri: str, context: MediaContext) -> str:
     return f'{parse_media_uri(uri)}.bin'
 
 
-async def _resolve_public_url(
+async def resolve_public_url(
     resolver: PublicUrlResolver | None,
     uri: str,
     context: MediaContext,
@@ -280,7 +280,7 @@ class DiskMediaStore:
         return self._path_for(uri, context).exists()
 
     async def public_url(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> str | None:
-        return await _resolve_public_url(self._public_url_resolver, uri, context)
+        return await resolve_public_url(self._public_url_resolver, uri, context)
 
     async def get_metadata(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> Mapping[str, str]:
         return await anyio.to_thread.run_sync(self._sync_get_metadata, uri, context)
@@ -292,7 +292,7 @@ class DiskMediaStore:
         meta_path = path.with_name(path.name + '.meta.json')
         if not meta_path.exists():
             return _EMPTY_METADATA
-        return _coerce_metadata_mapping(json.loads(meta_path.read_text()))
+        return coerce_metadata_mapping(json.loads(meta_path.read_text()))
 
 
 def _write_atomically(path: Path, data: bytes) -> None:
@@ -309,7 +309,7 @@ def _is_object_dict(raw: object) -> TypeGuard[dict[object, object]]:
     return isinstance(raw, dict)
 
 
-def _coerce_metadata_mapping(raw: object) -> Mapping[str, str]:
+def coerce_metadata_mapping(raw: object) -> Mapping[str, str]:
     if not _is_object_dict(raw):
         raise ValueError(f'metadata payload must be a JSON object, got {type(raw).__name__}')
     out: dict[str, str] = {}
@@ -469,7 +469,7 @@ class SqliteMediaStore:
         return row is not None
 
     async def public_url(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> str | None:
-        return await _resolve_public_url(self._public_url_resolver, uri, context)
+        return await resolve_public_url(self._public_url_resolver, uri, context)
 
     async def get_metadata(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> Mapping[str, str]:
         digest = parse_media_uri(uri)
@@ -484,4 +484,4 @@ class SqliteMediaStore:
             self._maybe_close(conn)
         if row is None:
             raise FileNotFoundError(f'media not found: {digest}')
-        return _coerce_metadata_mapping(json.loads(row[0]))
+        return coerce_metadata_mapping(json.loads(row[0]))
