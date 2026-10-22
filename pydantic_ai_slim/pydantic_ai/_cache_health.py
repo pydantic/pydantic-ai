@@ -185,7 +185,9 @@ def _compaction_state(request_context: ModelRequestContext, response: ModelRespo
     Anthropic and OpenAI's server-side compaction return the part in the response that compacted; OpenAI's
     stateless compaction adds it to the history before the request, and a summary the application wrote sits in a
     request. The count grows unless the new part replaced an earlier one, as a second summary replaces the first,
-    so the newest part's digest tells that case apart.
+    so the newest part's digest tells that case apart. The digest covers the part's `metadata` too, so two
+    summaries with the same text still differ when the metadata records which compaction wrote each, as
+    `SummarizingCompaction`'s write time does; it is recorded with the summary, so a durable replay keeps it.
     """
     parts = [
         part
@@ -197,7 +199,9 @@ def _compaction_state(request_context: ModelRequestContext, response: ModelRespo
         return 0, None
     latest = parts[-1]
     identity = json.dumps(
-        [latest.content, latest.id, latest.provider_name, latest.provider_details], sort_keys=True, default=str
+        [latest.content, latest.id, latest.provider_name, latest.provider_details, latest.metadata],
+        sort_keys=True,
+        default=str,
     )
     return len(parts), hashlib.sha256(identity.encode()).hexdigest()
 
