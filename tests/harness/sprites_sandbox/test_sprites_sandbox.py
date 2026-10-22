@@ -5,6 +5,7 @@ import importlib
 import inspect
 import json
 import os
+import posixpath
 import signal
 import sys
 from collections.abc import AsyncIterator
@@ -951,6 +952,7 @@ class TestSpritesSandbox:
         )
         sudo.chmod(0o755)
         monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
+        transport.sudo_without_password = False
         keys: Any = {
             'access_key_id': 'a',
             'secret_access_key': 'stdin-only-key',
@@ -963,13 +965,13 @@ class TestSpritesSandbox:
         backend.check_mount(mount)
         with pytest.raises(MountError, match='MemoryFilesystem cannot be mounted'):
             backend.check_mount(Mount('data', MemoryFilesystem(), commands=True))
-        await backend.ensure_mounts([mount], '/work')
+        await backend.ensure_mounts([mount])
 
         args = (bin_dir / 'sudo.args').read_bytes().split(b'\0')[:-1]
         assert args[:4] == [b'-n', b'--', b'python3', b'-c'] and len(args) == 5
         request = json.loads((bin_dir / 'sudo.stdin').read_text())
         assert request['keys'].popitem()[1]['secret_access_key'] == 'stdin-only-key'
-        assert request['mounts'][0]['path'] == '/work/data'
+        assert request['mounts'][0]['path'] == posixpath.join(await backend.working_dir(), 'data')
         # The keys never reach the exec URL.
         assert all('stdin-only-key' not in socket.query_url for socket in transport.execs)
 

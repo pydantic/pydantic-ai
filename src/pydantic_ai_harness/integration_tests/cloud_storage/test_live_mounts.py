@@ -76,7 +76,7 @@ async def backend(image: str) -> AsyncIterator[DockerSandboxBackend]:
 async def _unmount(backend: DockerSandboxBackend) -> None:
     """As the next run in the sandbox would, with no mounts: the run that mounted releases them, and they go."""
     await backend._mounter.release()  # pyright: ignore[reportPrivateUsage]
-    await backend.ensure_mounts([], await backend.working_dir())
+    await backend.ensure_mounts([])
 
 
 async def _as_root(backend: DockerSandboxBackend, command: str) -> None:
@@ -129,13 +129,13 @@ async def test_files_written_while_unmounted_are_moved_aside(
     """A mount over them would hide them; moved, they stay where the agent can find them."""
     mount = Mount('data', new_bucket(), commands=True)
     working_dir = await backend.working_dir()
-    await backend.ensure_mounts([mount], working_dir)
+    await backend.ensure_mounts([mount])
     # As after a sandbox restart: the mount is gone, the folder is bare, and something writes into it.
     await _as_root(backend, f'pkill -9 -x rclone; umount -l {working_dir}/data')
     await backend.run('echo lost > data/lost.txt', shell=True)
 
     with pytest.warns(UserWarning, match='moved to /workspace/.pydantic-ai-recovered/'):
-        await backend.ensure_mounts([mount], working_dir)
+        await backend.ensure_mounts([mount])
 
     found = await backend.run('cat .pydantic-ai-recovered/*-data/lost.txt; ls data', shell=True)
     assert found.stdout == 'lost\n'
@@ -148,12 +148,11 @@ async def test_a_mount_whose_rclone_died_is_mounted_again(
     bucket = new_bucket()
     await bucket.write_bytes('/a.txt', b'a')
     mount = Mount('data', bucket, commands=True)
-    working_dir = await backend.working_dir()
-    await backend.ensure_mounts([mount], working_dir)
+    await backend.ensure_mounts([mount])
     await _as_root(backend, 'pkill -9 -x rclone; while pgrep -x rclone > /dev/null; do sleep 0.1; done')
     assert (await backend.run(['cat', 'data/a.txt'])).exit_code != 0
 
-    await backend.ensure_mounts([mount], working_dir)
+    await backend.ensure_mounts([mount])
 
     assert (await backend.run(['cat', 'data/a.txt'])).stdout == 'a'
 
@@ -166,7 +165,7 @@ async def test_a_folder_with_something_else_mounted_is_left_alone(
     await _as_root(backend, f'mkdir -p {working_dir}/data && mount -t tmpfs tmpfs {working_dir}/data')
 
     with pytest.raises(MountError, match='already has something else mounted'):
-        await backend.ensure_mounts([Mount('data', new_bucket(), commands=True)], working_dir)
+        await backend.ensure_mounts([Mount('data', new_bucket(), commands=True)])
 
 
 async def test_keys_that_never_expire_stay_out_of_the_sandbox(backend: DockerSandboxBackend) -> None:
@@ -176,7 +175,7 @@ async def test_keys_that_never_expire_stay_out_of_the_sandbox(backend: DockerSan
     bucket = s3_bucket(f'{BUCKET}/{uuid.uuid4().hex}', credentials=lambda: forever)
 
     with pytest.raises(MountError, match='do not expire'):
-        await backend.ensure_mounts([Mount('data', bucket, commands=True)], await backend.working_dir())
+        await backend.ensure_mounts([Mount('data', bucket, commands=True)])
 
 
 async def test_mounts_only_file_tools_reach_need_nothing_in_the_sandbox(new_bucket: Callable[..., Filesystem]) -> None:
@@ -207,9 +206,8 @@ async def test_a_mount_keeps_working_after_it_is_handed_fresh_keys(backend: Dock
         return {**s3_keys(), 'access_key_id': issued[-1]}
 
     bucket = s3_bucket(f'{BUCKET}/{uuid.uuid4().hex}', credentials=fresh_keys)
-    working_dir = await backend.working_dir()
-    await backend.ensure_mounts([Mount('data', bucket, commands=True)], working_dir)
-    await backend.ensure_mounts([Mount('data', bucket, commands=True)], working_dir)
+    await backend.ensure_mounts([Mount('data', bucket, commands=True)])
+    await backend.ensure_mounts([Mount('data', bucket, commands=True)])
     await backend.run('echo after > data/after.txt', shell=True)
     await _unmount(backend)
 
@@ -225,10 +223,9 @@ async def test_a_mount_path_with_spaces_and_accents(
     bucket = new_bucket()
     await bucket.write_bytes('/a.txt', b'a')
     mount = Mount('données du jour', bucket, commands=True)
-    working_dir = await backend.working_dir()
 
-    await backend.ensure_mounts([mount], working_dir)
-    await backend.ensure_mounts([mount], working_dir)
+    await backend.ensure_mounts([mount])
+    await backend.ensure_mounts([mount])
 
     assert (await backend.run(['cat', 'données du jour/a.txt'])).stdout == 'a'
     await _unmount(backend)
@@ -241,7 +238,7 @@ async def test_a_file_where_the_mount_folder_should_be_is_left_alone(
     await backend.run('echo mine > data', shell=True)
 
     with pytest.raises(MountError, match='is a file'):
-        await backend.ensure_mounts([Mount('data', new_bucket(), commands=True)], await backend.working_dir())
+        await backend.ensure_mounts([Mount('data', new_bucket(), commands=True)])
 
 
 async def test_a_folder_that_already_holds_files_is_refused(
@@ -251,7 +248,7 @@ async def test_a_folder_that_already_holds_files_is_refused(
     await backend.run('mkdir -p data && echo mine > data/own.txt', shell=True)
 
     with pytest.raises(MountError, match='already holds files'):
-        await backend.ensure_mounts([Mount('data', new_bucket(), commands=True)], await backend.working_dir())
+        await backend.ensure_mounts([Mount('data', new_bucket(), commands=True)])
 
     assert (await backend.run(['cat', 'data/own.txt'])).stdout == 'mine\n'
 
@@ -260,22 +257,21 @@ async def test_a_concurrent_run_with_other_mounts_is_refused_until_the_first_rel
     backend: DockerSandboxBackend, new_bucket: Callable[..., Filesystem]
 ) -> None:
     """Swapping the mounts under a running run would show its commands the other run's files."""
-    working_dir = await backend.working_dir()
     first = Mount('first', new_bucket(), commands=True)
-    await backend.ensure_mounts([first], working_dir)
+    await backend.ensure_mounts([first])
     assert backend.ref is not None
     other = DockerSandboxBackend(ref=backend.ref)
 
     with pytest.raises(MountError, match='Another run is using this sandbox with different mounts'):
-        await other.ensure_mounts([Mount('second', new_bucket(), commands=True)], working_dir)
+        await other.ensure_mounts([Mount('second', new_bucket(), commands=True)])
     # The same mounts are shared, and a run with nothing to mount leaves them in place.
-    await other.ensure_mounts([first], working_dir)
-    await DockerSandboxBackend(ref=backend.ref).ensure_mounts([], working_dir)
+    await other.ensure_mounts([first])
+    await DockerSandboxBackend(ref=backend.ref).ensure_mounts([])
     assert (await backend.run(['mountpoint', '-q', 'first'])).exit_code == 0
 
     await backend._mounter.release()  # pyright: ignore[reportPrivateUsage]
     await other._mounter.release()  # pyright: ignore[reportPrivateUsage]
-    await other.ensure_mounts([Mount('second', new_bucket(), commands=True)], working_dir)
+    await other.ensure_mounts([Mount('second', new_bucket(), commands=True)])
     mounted = await backend.run('mountpoint -q second && ! mountpoint -q first', shell=True)
     assert mounted.exit_code == 0
 
@@ -290,10 +286,9 @@ async def test_azure_mounts_with_a_sas_token_and_mounts_again_with_a_new_one(bac
         return issued[-1]
 
     bucket = azure_bucket(f'{BUCKET}/{uuid.uuid4().hex}', credentials=sas)
-    working_dir = await backend.working_dir()
-    await backend.ensure_mounts([Mount('data', bucket, commands=True)], working_dir)
+    await backend.ensure_mounts([Mount('data', bucket, commands=True)])
     await backend.run('echo before > data/before.txt', shell=True)
-    await backend.ensure_mounts([Mount('data', bucket, commands=True)], working_dir)
+    await backend.ensure_mounts([Mount('data', bucket, commands=True)])
 
     assert (await backend.run(['cat', 'data/before.txt'])).stdout == 'before\n'
     await _unmount(backend)

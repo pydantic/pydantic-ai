@@ -39,6 +39,12 @@ Responder = Callable[[list[str], 'int | None'], 'tuple[StreamData, StreamData, i
 
 
 def _echo_responder(argv: list[str], timeout: int | None) -> tuple[bytes, bytes, int]:
+    # `pwd -P` answers as Modal's default image does, so a backend that looks up its working directory finds one.
+    if argv[-2:] == ['pwd', '-P']:
+        return b'/root\n', b'', 0
+    # The mount helper, in a sandbox with nothing mounted.
+    if any('pydantic-ai-mounts' in arg for arg in argv):
+        return b'{"recovered": []}\n', b'', 0
     return (' '.join(argv) + '\n').encode(), b'', 0
 
 
@@ -505,6 +511,11 @@ class FakeSandbox:
         self.exec_calls.append(ExecCall(argv=argv, timeout=timeout, text=text, workdir=workdir, env=env))
         if self.shutting_down:
             raise FakeConflictError('Modal Sandbox is shutting down.')
+        if any('pydantic-ai-mounts' in arg for arg in argv):
+            # The mount helper needs root and FUSE: answer as a sandbox with nothing mounted does.
+            return _FakeProcess(
+                b'{"recovered": []}\n', b'', 0, None, False, stdin=_FakeStdin(self.exec_calls[-1], exited=False)
+            )
         assert self._control.host_root is not None
         variables = {**os.environ, **{key: value for key, value in (env or {}).items() if value is not None}}
         cwd = workdir or self.workdir or str(self._control.host_root)

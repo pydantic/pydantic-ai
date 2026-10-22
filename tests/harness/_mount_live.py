@@ -87,14 +87,14 @@ async def check_bucket_mounts(backend: MountingBackend) -> None:
     assert (stored.exit_code, stored.stdout) == (0, 'from file toolsfirst\ntwo\nmoved\n'), stored.stderr
 
     # As after a sandbox restart: the mount is gone, and something writes into the bare folder.
-    await backend.ensure_mounts([mount], working_dir)
+    await backend.ensure_mounts([mount])
     dropped = await backend._run_as_root(  # pyright: ignore[reportPrivateUsage]
         ['sh', '-c', f'pkill -9 -x rclone; umount -l {working_dir}/data'], b''
     )
     assert dropped.exit_code == 0, dropped.stderr
     await backend.run('echo lost > data/lost.txt', shell=True)
     with pytest.warns(UserWarning, match='.pydantic-ai-recovered'):
-        await backend.ensure_mounts([mount], working_dir)
+        await backend.ensure_mounts([mount])
     again = await backend.run('cat data/log .pydantic-ai-recovered/*-data/lost.txt', shell=True)
     assert again.stdout == 'first\ntwo\nlost\n'
     await _unmount(backend)
@@ -103,4 +103,4 @@ async def check_bucket_mounts(backend: MountingBackend) -> None:
 async def _unmount(backend: MountingBackend) -> None:
     """As the next run in the sandbox would, with no mounts: the run that mounted releases them, and they go."""
     await backend._mounter.release()  # pyright: ignore[reportPrivateUsage]
-    await backend.ensure_mounts([], await backend.working_dir())
+    await backend.ensure_mounts([])

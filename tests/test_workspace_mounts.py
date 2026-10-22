@@ -40,10 +40,10 @@ class MountingWorkspace(FakeWorkspace, SupportsMounts):
         if type(mount.filesystem) is not MemoryFilesystem:
             raise MountError(f'This sandbox cannot mount {type(mount.filesystem).__name__}.')
 
-    async def ensure_mounts(self, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
+    async def ensure_mounts(self, mounts: Sequence[Mount]) -> datetime | None:
         # A real mount awaits the sandbox; this lets the parallel calls in a test overlap it.
         await anyio.sleep(0)
-        self.ensured.append(([mount.path for mount in mounts], working_dir))
+        self.ensured.append(([mount.path for mount in mounts], await self.working_dir()))
         return None if self.keys_last is None else datetime.now(UTC) + self.keys_last
 
 
@@ -55,6 +55,11 @@ async def test_file_operations_under_a_mount_reach_its_filesystem() -> None:
     assert await workspace.read_bytes('data/report.csv') == b'a,b'
     await workspace.write_bytes('data/out/summary.md', b'# done')
     await workspace.make_dir('data/empty')
+    # The filesystem's own errors reach the caller, as a local filesystem's would.
+    with pytest.raises(FileNotFoundError):
+        await workspace.read_bytes('data/missing.csv')
+    with pytest.raises(IsADirectoryError):
+        await workspace.read_bytes('data/empty')
 
     assert storage.files['/out/summary.md'] == b'# done'
     assert '/empty' in storage.directories

@@ -63,6 +63,12 @@ Responder = Callable[[str, 'float | None'], 'tuple[str, str, int]']
 
 
 def _echo_responder(command: str, timeout: float | None) -> tuple[str, str, int]:
+    # `pwd -P` answers as an E2B sandbox does, so a backend that looks up its working directory finds one.
+    if command == 'pwd -P':
+        return '/home/user\n', '', 0
+    # The mount helper (its source, or what its shell launcher runs it as), in a sandbox with nothing mounted.
+    if 'pydantic-ai-mounts' in command or command == 'python3 -c "$1"':
+        return '{"recovered": []}\n', '', 0
     return f'{command}\n', '', 0
 
 

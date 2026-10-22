@@ -446,11 +446,11 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsMounts):
             )
         _mounts.check_mount(mount)
 
-    async def ensure_mounts(self, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
+    async def ensure_mounts(self, mounts: Sequence[Mount]) -> datetime | None:
         if not self._mounter.needed(mounts):
             return None
         await self._acquire()
-        return await self._mounter.ensure(mounts, working_dir)
+        return await self._mounter.ensure(mounts, await self.working_dir())
 
     async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
         docker = [self._executable, 'exec', '--interactive', '--user', '0', '--workdir', '/', self._name]

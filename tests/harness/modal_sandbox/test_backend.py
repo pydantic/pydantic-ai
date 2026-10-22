@@ -1276,13 +1276,13 @@ async def test_only_the_vm_runtime_mounts_buckets(fake_modal: FakeModal) -> None
 
 
 async def test_mounting_sends_the_request_on_stdin_as_root(fake_modal: FakeModal) -> None:
-    fake_modal.responder = lambda argv, timeout: ('{"recovered": []}\n', '', 0)
     backend = ModalSandboxBackend(runtime='vm')
+    # Looked up first, so the answer below reaches only the helper.
+    await backend.working_dir()
+    fake_modal.responder = lambda argv, timeout: ('{"recovered": []}\n', '', 0)
     keys: Any = {'access_key_id': 'a', 'secret_access_key': 'secret', 'token': None}
     keys['expires_at'] = datetime.now(UTC) + timedelta(minutes=5)
-    await backend.ensure_mounts(
-        [Mount('data', S3Filesystem('s3://acme/data', credentials=keys), commands=True)], '/root'
-    )
+    await backend.ensure_mounts([Mount('data', S3Filesystem('s3://acme/data', credentials=keys), commands=True)])
 
     call = fake_modal.sandboxes[0].exec_calls[-1]
     # No user switch: Modal runs commands as the image's user, root on the default image.
@@ -1294,8 +1294,9 @@ async def test_mounting_sends_the_request_on_stdin_as_root(fake_modal: FakeModal
 
 
 async def test_a_helper_that_exits_before_reading_reports_its_output(fake_modal: FakeModal) -> None:
+    backend = ModalSandboxBackend(runtime='vm')
+    await backend.working_dir()
     fake_modal.responder = lambda argv, timeout: ('', 'python3: not found', 127)
     fake_modal.stdin_refused = True
-    backend = ModalSandboxBackend(runtime='vm')
     with pytest.raises(MountError, match='python3: not found'):
-        await backend.ensure_mounts([_bucket_mount()], '/root')
+        await backend.ensure_mounts([_bucket_mount()])

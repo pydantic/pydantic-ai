@@ -774,11 +774,11 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             raise MountError("ModalSandbox can mount a filesystem for commands only with `runtime='vm'`; pass it.")
         _mounts.check_mount(mount)
 
-    async def ensure_mounts(self, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
+    async def ensure_mounts(self, mounts: Sequence[Mount]) -> datetime | None:
         if not self._mounter.needed(mounts):
             return None
         await self.get_sandbox()
-        return await self._mounter.ensure(mounts, working_dir)
+        return await self._mounter.ensure(mounts, await self.working_dir())
 
     async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
         import modal

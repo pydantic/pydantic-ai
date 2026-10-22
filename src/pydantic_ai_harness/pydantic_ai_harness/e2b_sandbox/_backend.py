@@ -683,13 +683,13 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         # E2B sandboxes have FUSE, and root reaches it without `sudo`.
         _mounts.check_mount(mount)
 
-    async def ensure_mounts(self, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
+    async def ensure_mounts(self, mounts: Sequence[Mount]) -> datetime | None:
         if not self._mounter.needed(mounts):
             return None
         if not running_on_asyncio():
             raise UserError('E2B commands need the asyncio event loop: the E2B SDK runs them on asyncio tasks.')
         await self.get_sandbox()
-        return await self._mounter.ensure(mounts, working_dir)
+        return await self._mounter.ensure(mounts, await self.working_dir())
 
     async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
         sandbox = await self.get_sandbox()

@@ -76,6 +76,8 @@ exec)
         case $1 in
         --workdir) workdir=$2; shift 2 ;;
         --env) export "$2"; shift 2 ;;
+        --user) shift 2 ;;
+        --interactive) shift ;;
         *) break ;;
         esac
     done

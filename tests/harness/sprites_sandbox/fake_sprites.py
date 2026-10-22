@@ -77,9 +77,14 @@ class FakeExecSocket:
             # `chdir` message on stdout, once the client has attached.
             argv = ['sh', '-c', 'cat >/dev/null; printf "chdir to \\`%s\\`: No such file or directory\\n" "$1"; exit 1']
             argv, cwd = [*argv, 'sh', cwd], str(sprite_transport.root)
+        environment = dict(os.environ)
+        if sprite_transport.sudo_without_password:
+            # A Sprite's user has passwordless `sudo`; this machine's may not, so `sudo` just runs the command.
+            environment['PATH'] = f'{sprite_transport.sudo_dir}{os.pathsep}{environment.get("PATH", "")}'
         self.process = subprocess.Popen(
             argv,
             cwd=cwd,
+            env=environment,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -163,6 +168,13 @@ class SpriteTransport:
 
     def __init__(self, root: Path) -> None:
         self.root = root
+        self.sudo_without_password = True
+        # Beside the root, not in it, so the Sprite's files don't include it.
+        self.sudo_dir = root.with_name(f'{root.name}-sudo')
+        self.sudo_dir.mkdir(exist_ok=True)
+        sudo = self.sudo_dir / 'sudo'
+        sudo.write_text('#!/bin/sh\n[ "$1" = -n ] && shift\n[ "$1" = -- ] && shift\nexec "$@"\n')
+        sudo.chmod(0o755)
         self.names: set[str] = set()
         self.created: list[str] = []
         self.create_started = asyncio.Event()
