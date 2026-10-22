@@ -109,7 +109,7 @@ async def _workflow() -> list[str]:
         for message in result.all_messages()
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, CompactionPart)
+        if isinstance(part, CompactionPart) and part.content is not None
     ]
 
 
