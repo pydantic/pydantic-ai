@@ -46,7 +46,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import ModelRequestAttempt
-from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, ModelResolutionContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -348,6 +348,39 @@ async def test_a_model_another_capability_retried_is_not_picked_again():
     )
     assert (await agent.run('x')).output == 'hello'
     assert calls == ['step', 'retried']
+
+
+@pytest.mark.parametrize('backup', [True, False])
+async def test_a_candidate_resolving_to_an_attempted_model_is_skipped(backup: bool):
+    """A candidate given as a string that resolves to a model already attempted, like the step's own, isn't sent again."""
+    calls: list[str] = []
+
+    def primary_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('primary')
+        raise ModelAPIError(model_name='primary', message='boom')
+
+    def backup_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('backup')
+        return ModelResponse(parts=[TextPart('ok')])
+
+    primary = FunctionModel(primary_fn, model_name='primary')
+
+    class Alias(AbstractCapability[None]):
+        async def resolve_model_id(self, ctx: ModelResolutionContext[None], *, model_id: str) -> Model | None:
+            return primary if model_id == 'my-primary' else None
+
+    candidates: list[Model | str] = ['my-primary']
+    if backup:
+        candidates.append(FunctionModel(backup_fn, model_name='backup'))
+    agent = Agent(primary, deps_type=type(None), capabilities=[Alias(), ModelFallback(*candidates)])
+    if backup:
+        assert (await agent.run('x')).output == 'ok'
+        assert calls == ['primary', 'backup']
+    else:
+        with pytest.raises(FallbackExceptionGroup) as exc_info:
+            await agent.run('x')
+        assert calls == ['primary']
+        assert [attempt.model_name for attempt in exc_info.value.attempts] == ['primary']
 
 
 async def test_fallback_candidates_are_entered_once_and_exited_with_the_run():

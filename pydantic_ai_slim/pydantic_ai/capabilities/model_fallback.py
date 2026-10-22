@@ -79,6 +79,8 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     _chain: FallbackChain = field(repr=False)
     """This step's way down the chain. Its attempt log stays empty: the agent records the attempts."""
     _pin_checked: bool = field(repr=False)
+    _moved: bool = field(repr=False)
+    """Whether the next attempt is at a candidate this capability moved the request to."""
 
     def __init__(
         self,
@@ -118,6 +120,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         self._attempted_ids = set()
         self._chain = self._new_chain()
         self._pin_checked = False
+        self._moved = False
 
     def get_ordering(self) -> CapabilityOrdering:
         # Innermost so a rejected attempt is judged before any other capability's
@@ -159,6 +162,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             _attempted_ids=set(),
             _chain=self._new_chain(),
             _pin_checked=False,
+            _moved=False,
         )
 
     async def prepare_model_request(
@@ -184,6 +188,11 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                     # The step would continue a provider-side job on a model other than the one that
                     # started it; send it to that model instead, before anything is sent.
                     raise RetryModelRequest(candidate)
+        moved, self._moved = self._moved, False
+        if moved and self._already_attempted(request_context.model):
+            # A candidate given as a string, which the agent resolved only now, turned out to be a model already
+            # attempted this step, like the step's own model under an alias.
+            raise self._advance()
         self._attempted_models.append(request_context.model)
         if request_context.model_id is not None:
             self._attempted_ids.add(request_context.model_id)
@@ -242,6 +251,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             self._attempted_ids = set()
             self._chain = self._new_chain()
             self._pin_checked = False
+            self._moved = False
 
     def _pinned_candidate(self, request_context: ModelRequestContext) -> tuple[int, Model | str | None] | None:
         """Where in the chain a resumed suspended response is pinned, if it's pinned to one of this capability's models.
@@ -272,6 +282,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             candidate = self.models[self._cursor]
             self._cursor += 1
             if not self._already_attempted(candidate):
+                self._moved = True
                 return RetryModelRequest(candidate)
         # The attempts are the agent's to list, as it made them: it records each failed one, and
         # lists them on this group once it ends the request.

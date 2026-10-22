@@ -614,7 +614,12 @@ class _FailedAttempts:
             # The model's own group, such as a `FallbackModel`'s, already lists the attempts it made.
             return
         self.record(request_context, failure, start)
-        group.attempts = list(self.log.attempts)
+        self.list_on(group)
+
+    def list_on(self, group: exceptions.FallbackExceptionGroup) -> None:
+        """List every attempt on a group a hook ended the request with, unless it lists its own."""
+        if not group.attempts:
+            group.attempts = list(self.log.attempts)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -2286,6 +2291,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # A `prepare_model_request` hook asked for another model before this attempt was sent.
                 await self._start_next_attempt(ctx, request_context, retry)
                 continue
+            except exceptions.FallbackExceptionGroup as unrecovered:
+                # A hook found no model left to attempt before this attempt was sent.
+                failed.list_on(unrecovered)
+                self._raise_usage_limit_exceeded(ctx, unrecovered)
+                raise
             capture_model_request_span_context(request_context)
             try:
                 return await self._request_attempt(ctx, run_context, request_context, state, failed)
@@ -2808,6 +2818,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # A `prepare_model_request` hook asked for another model before this attempt was sent.
                 await self._start_next_attempt(ctx, request_context, retry)
                 continue
+            except exceptions.FallbackExceptionGroup as unrecovered:
+                # A hook found no model left to attempt before this attempt was sent.
+                failed.list_on(unrecovered)
+                self._raise_usage_limit_exceeded(ctx, unrecovered)
+                raise
             # After the before-chain and `prepare_model_request`, so the check applies to the model
             # actually being called (a hook or an earlier attempt may have swapped it).
             _ensure_model_supports_streaming(request_context.model)
