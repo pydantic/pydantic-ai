@@ -10,7 +10,7 @@ import html
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -28,9 +28,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.tools import RunContext
-
-if TYPE_CHECKING:
-    from pydantic_ai.usage import UsageLimits
+from pydantic_ai.usage import UsageLimits
 
 JudgeAnswer: TypeAlias = Literal['yes', 'no', 'unsure']
 """The answer to a yes/no risk question about one tool call."""
@@ -159,3 +157,17 @@ def claim_offset_limits(limits: UsageLimits | None) -> UsageLimits | None:
     if limits is None or limits.request_limit is None:
         return limits
     return replace(limits, request_limit=limits.request_limit + 1)
+
+
+def claimed_request_limits(limits: UsageLimits | None) -> UsageLimits:
+    """The run's limits for a one-request nested run whose request `claim_request` already admitted.
+
+    The claim is the request check, so `request_limit` is lifted and only the token limits apply. Use this
+    instead of `claim_offset_limits` where judgments start while others are finishing, as through a
+    concurrency gate. There the shared `usage.requests` counts other judgments' claims and their nested
+    runs' own requests at once, so a preflight against the offset limit refuses requests the claims
+    admitted, and the `UsageLimitExceeded` fails the host run. Only for a judge that makes exactly one
+    request, with no retries, since nothing else bounds its requests. With no limits it lifts the request
+    limit too, as the nested run would otherwise apply the default one to the shared usage.
+    """
+    return replace(limits or UsageLimits(), request_limit=None)
