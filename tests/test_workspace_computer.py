@@ -302,3 +302,12 @@ async def test_read_only_workspace_allows_screenshots_and_refuses_actions() -> N
     with pytest.raises(WorkspaceReadOnlyError, match='acting on the display'):
         await workspace.act(Click())
     assert provider.actions == []
+
+
+def test_has_display_follows_wrappers_without_io() -> None:
+    provider = InMemoryProvider()
+    assert Workspace(provider.backend(None)).has_display is True
+    assert ReadOnlyWorkspace(Workspace(provider.backend(None))).has_display is True
+    assert ReadOnlyWorkspace(Workspace(FakeWorkspace('no-display'))).has_display is False
+    assert Workspace(UnavailableWorkspace('no workspace here')).has_display is False
+    assert provider.log == []

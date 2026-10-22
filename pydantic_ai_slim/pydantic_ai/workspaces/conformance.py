@@ -51,8 +51,10 @@ def _commands(backend: WorkspaceBackend) -> SupportsCommands:
 
 
 def _computer(backend: WorkspaceBackend) -> SupportsComputerUse:
-    if not isinstance(backend, SupportsComputerUse):
+    # A `Workspace` has the display methods whatever its backend, so ask it whether one is there.
+    if not (backend.has_display if isinstance(backend, Workspace) else isinstance(backend, SupportsComputerUse)):
         pytest.skip('backend does not implement SupportsComputerUse')
+    assert isinstance(backend, SupportsComputerUse)
     return backend
 
 

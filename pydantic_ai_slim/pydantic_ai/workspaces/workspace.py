@@ -412,6 +412,14 @@ class Workspace(WorkspaceBackend):
         return not isinstance(backend, UnavailableWorkspace)
 
     @property
+    def has_display(self) -> bool:
+        """Whether the backend has a display to control, so `screenshot` and `act` can work. Does no I/O."""
+        backend = self._backend
+        if isinstance(backend, Workspace):
+            return backend.has_display
+        return isinstance(backend, SupportsComputerUse) and not isinstance(backend, UnavailableWorkspace)
+
+    @property
     def ref(self) -> WorkspaceRef | None:
         """The environment's [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef], `None` until it exists."""
         return self._backend.ref
