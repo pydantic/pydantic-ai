@@ -751,7 +751,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._event_hooks: Hooks[AgentDepsT] = Hooks()
 
         self._root_capability = CombinedCapability(capabilities)
-        _validate_capability_ids(self._root_capability.capabilities)
+        _validate_capability_ids(self._root_capability._branches)  # pyright: ignore[reportPrivateUsage]
         # Two capabilities the agent itself was given meet under their shared id here, before
         # anything reads what they contribute: `for_agent`, toolset extraction and native-tool
         # validation all run below, and each would otherwise see a pair that is really one --
@@ -5110,12 +5110,38 @@ def _reject_second_of_a_kind(capabilities: Sequence[AbstractCapability[Any]]) ->
                 capability = capability.wrapped
             if (kind := capability._one_per_agent) is not None:  # pyright: ignore[reportPrivateUsage]
                 by_kind.setdefault(kind, []).append(capability)
+            if isinstance(capability, CombinedCapability) and capability._registers_itself:  # pyright: ignore[reportPrivateUsage]
+                _reject_one_per_agent_in_group(capability)
     for kind, found in by_kind.items():
         if len(found) > 1:
             names = ', '.join(f'`{type(capability).__name__}`' for capability in found)
             raise exceptions.UserError(
                 f'An agent can have only one {kind}, but this one would have {len(found)}: {names}. '
                 "That counts the agent's own capabilities together with any passed for a run. Keep one."
+            )
+
+
+def _reject_one_per_agent_in_group(group: CombinedCapability[Any]) -> None:
+    """Reject a durable execution engine inside a deferred group: it must wrap every toolset from the first request."""
+    for inner in leaf_capabilities(group):
+        while isinstance(inner, WrapperCapability):
+            inner = inner.wrapped
+        if (kind := inner._one_per_agent) is not None:  # pyright: ignore[reportPrivateUsage]
+            raise exceptions.UserError(
+                f'`{type(inner).__name__}` is inside capability {group.id!r}, but a {kind} must be passed to '
+                'the agent directly, so it can wrap every toolset the agent has.'
+            )
+
+
+def _reject_nested_deferral(capability: AbstractCapability[Any]) -> None:
+    """Reject a deferred capability inside another one: loading the outer one reveals everything in it."""
+    for inner in leaf_capabilities(capability):
+        # One without an `id` is left to the explicit-`id` check, which names the actual problem.
+        if inner is not capability and inner.defer_loading is True and inner.id is not None:
+            raise exceptions.UserError(
+                f'Deferred capability {inner.id!r} is inside deferred capability {capability.id!r}. '
+                f'Loading {capability.id!r} already loads everything in it, so remove `defer_loading=True` '
+                f'from {inner.id!r}, or pass it to the agent separately to load it on its own.'
             )
 
 
@@ -5146,6 +5172,8 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
                 'Deferred capabilities must use stable explicit `id` values. '
                 'Pass `id=...` when using `defer_loading=True`.'
             )
+        if cap.defer_loading is True:
+            _reject_nested_deferral(cap)
         if cap.id is None:
             continue
         _instructions.validate_instruction_id_segment(cap.id, kind='Capability id')

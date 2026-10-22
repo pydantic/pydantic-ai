@@ -88,6 +88,9 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             raise ModelRetry(f'No capability found with id {capability_id!r}.')
         if capability_id in ctx.active_capability_ids:
             raise ModelRetry(LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id=capability_id))
+        if capability.defer_loading is not True:
+            # A member of a deferred group that isn't loaded yet: it loads with its group.
+            raise ModelRetry(f'Capability {capability_id!r} is not loaded on its own.')
         if _is_duplicate_load_in_response(ctx, capability_id):
             raise ModelRetry(LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE.format(capability_id=capability_id))
 

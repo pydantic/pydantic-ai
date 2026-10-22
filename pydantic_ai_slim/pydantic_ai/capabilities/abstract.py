@@ -313,11 +313,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return None
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
-        """Run a visitor function on all leaf capabilities in this tree.
+        """Run a visitor function on every capability this tree registers.
 
         For a single capability, calls the visitor on itself.
         Overridden by [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]
-        to recursively visit all child capabilities.
+        to recursively visit all child capabilities, and itself first when it has an `id`.
         """
         visitor(self)
 
@@ -1464,7 +1464,9 @@ def _combination_roots(capability: AbstractCapability[AgentDepsT]) -> Sequence[A
     """Return the branches a surrounding combined capability retains after flattening."""
     from .combined import CombinedCapability
 
-    return capability.capabilities if isinstance(capability, CombinedCapability) else [capability]
+    if isinstance(capability, CombinedCapability) and not capability._registers_itself:  # pyright: ignore[reportPrivateUsage]
+        return capability._branches  # pyright: ignore[reportPrivateUsage]
+    return [capability]
 
 
 def select_workspace(
@@ -1498,6 +1500,40 @@ class _CapabilityOccurrence(Generic[AgentDepsT]):
     occurrence_index: int
     layer_index: int
     position: int
+
+
+def _occurrences_by_id(
+    visited: Sequence[tuple[AbstractCapability[AgentDepsT], int, int]],
+) -> tuple[dict[int, int], dict[str, list[_CapabilityOccurrence[AgentDepsT]]]]:
+    """Number each visit of a capability with an `id`, and group them by that `id` in position order."""
+    occurrence_counts: dict[int, int] = {}
+    by_id: dict[str, list[_CapabilityOccurrence[AgentDepsT]]] = {}
+    for leaf, layer_index, position in visited:
+        if leaf.id is not None:
+            occurrence_index = occurrence_counts.get(id(leaf), 0)
+            occurrence_counts[id(leaf)] = occurrence_index + 1
+            by_id.setdefault(leaf.id, []).append(_CapabilityOccurrence(leaf, occurrence_index, layer_index, position))
+    return occurrence_counts, by_id
+
+
+def _outside_discarded_subtrees(
+    visited: Sequence[tuple[AbstractCapability[AgentDepsT], int, int]],
+) -> Sequence[tuple[AbstractCapability[AgentDepsT], int, int]]:
+    """Drop the visits beneath a capability that combining will remove or replace.
+
+    A removed or replaced capability takes everything registered beneath it along, and
+    `visit_and_replace` never visits those, so they get no say in a duplicate and no decision of
+    their own: one handed to them would be consumed by the next occurrence of the same object.
+    `apply` visits a node before its subtree, so the subtree is the run of visits after it.
+    """
+    visit_index = {position: index for index, (_, _, position) in enumerate(visited)}
+    discarded: set[int] = set()
+    for duplicates in _occurrences_by_id(visited)[1].values():
+        # Every occurrence but the last is removed. The last keeps its place, or `combine`'s result takes it.
+        for duplicate in sorted(duplicates, key=lambda occurrence: occurrence.position)[:-1]:
+            start = visit_index[duplicate.position] + 1
+            discarded.update(range(start, start + len(leaf_capabilities(duplicate.capability)) - 1))
+    return [visit for index, visit in enumerate(visited) if index not in discarded]
 
 
 def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
@@ -1540,33 +1576,31 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     earlier, and reading "last" off the tree would turn a run-level override into the agent-level
     capability winning.
     """
+    from .combined import _ungrouped  # pyright: ignore[reportPrivateUsage]
     from .wrapper import WrapperCapability
 
-    # `CombinedCapability` may sort top-level branches, but it retains each non-combined branch as
-    # the object supplied by its source layer. Associate provenance with that branch before walking
-    # its leaves: a wrapper can move ahead of an earlier layer while the same leaf object appears
+    # `CombinedCapability` may sort top-level branches, but it retains each branch it doesn't flatten
+    # (see `_combination_roots`) as the object supplied by its source layer. Associate provenance
+    # with that branch before walking its leaves: a wrapper can move ahead of an earlier layer while the same leaf object appears
     # both inside that wrapper and on its own.
     root_locations: dict[int, list[tuple[int, dict[int, list[int]]]]] = {}
     position = 0
     for layer_index, layer in enumerate(layers):
-        for root in chain.from_iterable(map(_combination_roots, layer)):
+        ungrouped: list[AbstractCapability[AgentDepsT]] = _ungrouped(layer)
+        for root in chain.from_iterable(map(_combination_roots, ungrouped)):
             leaf_positions: dict[int, list[int]] = {}
             for leaf in leaf_capabilities(root):
                 leaf_positions.setdefault(id(leaf), []).append(position)
                 position += 1
             root_locations.setdefault(id(root), []).append((layer_index, leaf_positions))
 
-    occurrence_counts: dict[int, int] = {}
-    by_id: dict[str, list[_CapabilityOccurrence[AgentDepsT]]] = {}
+    visited: list[tuple[AbstractCapability[AgentDepsT], int, int]] = []
     for root in _combination_roots(capability):
         layer_index, leaf_positions = root_locations[id(root)].pop(0)
         for leaf in leaf_capabilities(root):
-            if leaf.id is not None:
-                occurrence_index = occurrence_counts.get(id(leaf), 0)
-                occurrence_counts[id(leaf)] = occurrence_index + 1
-                position = leaf_positions[id(leaf)].pop(0)
-                occurrence = _CapabilityOccurrence(leaf, occurrence_index, layer_index, position)
-                by_id.setdefault(leaf.id, []).append(occurrence)
+            visited.append((leaf, layer_index, leaf_positions[id(leaf)].pop(0)))
+
+    occurrence_counts, by_id = _occurrences_by_id(_outside_discarded_subtrees(visited))
     # Stable, so duplicates the application order does not distinguish keep their tree order.
     duplicate_groups = {
         capability_id: sorted(duplicates, key=lambda occurrence: occurrence.position)
