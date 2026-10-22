@@ -1,0 +1,48 @@
+--- expected
++++ actual
+@@ -33,22 +32,0 @@
+-    },
+-    {
+-     "kind": "user-prompt",
+-     "content": "Background result: 42"
+-    }
+-   ]
+-  ],
+-  [
+-   "response",
+-   [
+-    {
+-     "kind": "text",
+-     "content": "Synthetic reply"
+-    }
+-   ]
+-  ],
+-  [
+-   "request",
+-   [
+-    {
+-     "kind": "user-prompt",
+-     "content": "Synthetic follow-up"
+@@ -139,22 +116,0 @@
+-    },
+-    {
+-     "kind": "user-prompt",
+-     "content": "Background result: 42"
+-    }
+-   ]
+-  ],
+-  [
+-   "response",
+-   [
+-    {
+-     "kind": "text",
+-     "content": "Synthetic reply"
+-    }
+-   ]
+-  ],
+-  [
+-   "request",
+-   [
+-    {
+-     "kind": "user-prompt",
+-     "content": "Synthetic follow-up"

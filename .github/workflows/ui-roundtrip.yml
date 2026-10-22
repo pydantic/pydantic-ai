@@ -113,7 +113,7 @@ jobs:
           cat > "${RUNNER_TEMP}/nightly.md" <<EOF
           The scheduled run of \`tests/ui_roundtrip\` failed on \`main\`: ${RUN_URL}
 
-          These tests send conversations through the real Vercel AI and AG-UI JavaScript clients and check that what the clients send back loads as the history the server had. A change to \`main\` outside the paths that trigger the job on pull requests can break that round trip; so can a known gap that is now fixed, which turns its strict \`xfail\` into a failure.
+          These tests send conversations through the real Vercel AI and AG-UI JavaScript clients and check that what the clients send back loads as the history the server had. A change to \`main\` outside the paths that trigger the job on pull requests can break that round trip; so can a known gap that is now fixed, or that now differs from its recorded diff in \`tests/ui_roundtrip/known_gaps\`.
 
           Close this issue once a nightly run passes.
           EOF

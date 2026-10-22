@@ -28,9 +28,13 @@ and reported a loss that real clients don't have.
 
 from __future__ import annotations
 
+import difflib
 import json
+import os
+import re
 import warnings
 from abc import ABC, abstractmethod
+from collections import Counter
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -80,7 +84,7 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 
 from ..conftest import try_import
-from .conftest import JSDriver
+from .conftest import HERE, JSDriver
 
 with try_import() as imports_successful:
     from anthropic.types.beta import BetaTextBlock, BetaUsage
@@ -240,7 +244,8 @@ class _ProviderWire(WrapperModel):
         await self.wrapped.request(messages, settings, params)
         kwargs = self._sent()[-1]
         body = {key: kwargs.get(key) for key in self._body_keys}
-        self._calls.append(ModelCall(json.dumps(body, default=str, indent=1)))
+        # SDK sentinels such as `Omit` render by type: their default `str()` holds a memory address.
+        self._calls.append(ModelCall(json.dumps(body, default=lambda value: f'<{type(value).__name__}>', indent=1)))
 
     async def request(
         self,
@@ -281,7 +286,8 @@ class Scenario:
     gaps: dict[GapKey, str] = field(default_factory=dict[GapKey, str])
     """Known round-trip losses, as `(property, path, protocol)` -> a reason naming the issue or PR.
 
-    A wire gap that only one provider's rendering shows adds that provider to the key.
+    A wire gap that only one provider's rendering shows adds that provider to the key. Each case with a gap must
+    show exactly the difference recorded for it (see `Gap`), so the gap can't hide anything else.
     """
 
     def agent(self, provider: WireProvider | None = None) -> tuple[Agent[None, str], list[ModelCall]]:
@@ -904,46 +910,86 @@ def _params(prop: Property) -> list[Any]:
                     gap = scenario.gaps.get((prop, path, protocol))
                     if provider is not None:
                         gap = scenario.gaps.get((prop, path, protocol, provider), gap)
+                    key = '-'.join([scenario.id, path, protocol, *([provider] if provider else [])])
                     values = (scenario, path, protocol) if provider is None else (scenario, path, protocol, provider)
-                    params.append(
-                        pytest.param(
-                            *values,
-                            id='-'.join([scenario.id, path, protocol, *([provider] if provider else [])]),
-                            marks=[pytest.mark.xfail(reason=gap, raises=AssertionError, strict=True)] if gap else [],
-                        )
-                    )
+                    params.append(pytest.param(*values, Gap(f'{prop}-{key}', gap), id=key))
     return params
+
+
+KNOWN_GAPS = HERE / 'known_gaps'
+UPDATE_GAPS = 'UI_ROUNDTRIP_UPDATE_GAPS'
+
+
+@dataclass(frozen=True)
+class Gap:
+    """A case's known round-trip loss, if it has one, and the exact difference it makes.
+
+    The difference between what should be and what is, as a unified diff, is recorded in `known_gaps/<name>.diff`.
+    A case with a gap must still show exactly that difference: anything else it gets wrong fails as usual, and
+    so does the gap being fixed, which is the cue to delete the file and the scenario's `gaps` entry. Run with
+    `UI_ROUNDTRIP_UPDATE_GAPS=1` to rewrite the files after a deliberate change.
+    """
+
+    name: str
+    reason: str | None
+
+    def check(self, actual: str, expected: str) -> None:
+        if self.reason is None:
+            assert actual == expected
+            return
+        diff = '\n'.join(
+            difflib.unified_diff(expected.splitlines(), actual.splitlines(), 'expected', 'actual', n=0, lineterm='')
+        )
+        assert diff, f'Known gap no longer reproduces, so it may be fixed: {self.reason}'
+        recorded = KNOWN_GAPS / f'{self.name}.diff'
+        if os.environ.get(UPDATE_GAPS):
+            recorded.write_text(diff + '\n')
+        assert recorded.is_file(), f'No recorded difference for this known gap; run with {UPDATE_GAPS}=1'
+        assert diff + '\n' == recorded.read_text(), f'The known gap ({self.reason}) now differs differently'
+
+
+def _render(value: Any) -> str:
+    return json.dumps(value, indent=1, default=str)
 
 
 # --- Properties ---------------------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(('scenario', 'path', 'protocol'), _params('load'))
-async def test_load(scenario: Scenario, path: Path, protocol: Protocol, js_driver: JSDriver) -> None:
+@pytest.mark.parametrize(('scenario', 'path', 'protocol', 'gap'), _params('load'))
+async def test_load(scenario: Scenario, path: Path, protocol: Protocol, gap: Gap, js_driver: JSDriver) -> None:
     """`load_messages()` of what the client sends back projects identically to the history it should hold.
 
     That's the history it was hydrated with on the dump path, and the server's `all_messages()` on the stream path.
     """
     client = CLIENTS[protocol](js_driver, f'{scenario.id}-{path}', scenario.adapter_kwargs)
-    for turn in await run_client(scenario, client, path):
-        assert project(turn.sent) == project(turn.expected)
+    turns = await run_client(scenario, client, path)
+    gap.check(_render([project(turn.sent) for turn in turns]), _render([project(turn.expected) for turn in turns]))
 
 
-@pytest.mark.parametrize(('scenario', 'path', 'protocol'), _params('ids'))
-async def test_message_ids(scenario: Scenario, path: Path, protocol: Protocol, js_driver: JSDriver) -> None:
+_UUID = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-\d+)?')
+
+
+@pytest.mark.parametrize(('scenario', 'path', 'protocol', 'gap'), _params('ids'))
+async def test_message_ids(scenario: Scenario, path: Path, protocol: Protocol, gap: Gap, js_driver: JSDriver) -> None:
     """Every request the client sends has one id per message, as the frontend frameworks key messages on it."""
     client = CLIENTS[protocol](js_driver, f'{scenario.id}-{path}-ids', scenario.adapter_kwargs)
     await run_client(scenario, client, path)
-    for ids in client.sent_ids:
-        assert len(set(ids)) == len(ids), ids
+    assert client.sent_ids
+    # The repeated ids in each request; those `dump_messages()` mints are random, so they're masked.
+    repeated = [
+        sorted(_UUID.sub('<uuid>', message_id) for message_id, count in Counter(ids).items() if count > 1)
+        for ids in client.sent_ids
+    ]
+    gap.check(_render(repeated), _render([[] for _ in repeated]))
 
 
-@pytest.mark.parametrize(('scenario', 'path', 'protocol', 'provider'), _params('wire'))
+@pytest.mark.parametrize(('scenario', 'path', 'protocol', 'provider', 'gap'), _params('wire'))
 async def test_wire_request(
     scenario: Scenario,
     path: Path,
     protocol: Protocol,
     provider: WireProvider,
+    gap: Gap,
     js_driver: JSDriver,
     allow_model_requests: None,
 ) -> None:
@@ -952,6 +998,11 @@ async def test_wire_request(
     server_turns = await run_server(scenario, provider)
     # The last turn only records what the client would send next.
     client_turns = (await run_client(scenario, client, path, provider))[:-1]
-    for server_calls, client_turn in zip(server_turns, client_turns, strict=True):
-        assert server_calls
-        assert [call.body for call in client_turn.calls] == [call.body for call in server_calls]
+    assert len(client_turns) == len(server_turns)
+    assert all(server_turns)
+    gap.check(
+        '\n'.join(
+            f'### turn {i}\n' + '\n'.join(call.body for call in turn.calls) for i, turn in enumerate(client_turns)
+        ),
+        '\n'.join(f'### turn {i}\n' + '\n'.join(call.body for call in calls) for i, calls in enumerate(server_turns)),
+    )

@@ -1,0 +1,14 @@
+--- expected
++++ actual
+@@ -80,5 +79,0 @@
+-    },
+-    {
+-     "kind": "system-prompt",
+-     "content": "The job runs in the background.",
+-     "scope": "conversation"
+@@ -192,5 +186,0 @@
+-    },
+-    {
+-     "kind": "system-prompt",
+-     "content": "The job runs in the background.",
+-     "scope": "conversation"
