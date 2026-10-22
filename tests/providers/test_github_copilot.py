@@ -41,7 +41,7 @@ _COPILOT_HEADER_NAMES = frozenset(
 )
 
 
-def test_github_copilot_provider_client_headers():
+def test_github_copilot_provider_client_headers(env: TestEnv):
     """The Copilot client headers ride on the client, so every request carries them.
 
     None is documented as required and none could be made required against `api.githubcopilot.com`;
@@ -49,6 +49,7 @@ def test_github_copilot_provider_client_headers():
     `User-Agent` is not among them — `test_github_copilot_sends_model_id_verbatim` asserts on the
     wire that it stays `pydantic-ai/<version>`, which Copilot accepts.
     """
+    env.remove('GITHUB_COPILOT_INTEGRATION_ID')
     provider = GitHubCopilotProvider(api_key='gho_test_token')
     headers = provider.client.default_headers
     assert {key: headers[key] for key in headers if key in _COPILOT_HEADER_NAMES} == snapshot(
@@ -60,6 +61,20 @@ def test_github_copilot_provider_client_headers():
             'x-github-api-version': '2025-04-01',
         }
     )
+
+
+def test_github_copilot_provider_integration_id_from_env(env: TestEnv):
+    """`GITHUB_COPILOT_INTEGRATION_ID` is the name the Copilot CLI reads for the same header."""
+    env.set('GITHUB_COPILOT_INTEGRATION_ID', 'agentic-workflows')
+    provider = GitHubCopilotProvider(api_key='gho_test_token')
+    assert provider.client.default_headers['copilot-integration-id'] == 'agentic-workflows'
+
+
+def test_github_copilot_provider_integration_id_argument(env: TestEnv):
+    """The argument takes precedence over the environment, as `api_key` and `base_url` do."""
+    env.set('GITHUB_COPILOT_INTEGRATION_ID', 'from-env')
+    provider = GitHubCopilotProvider(api_key='gho_test_token', integration_id='agentic-workflows')
+    assert provider.client.default_headers['copilot-integration-id'] == 'agentic-workflows'
 
 
 _API_KEY_ENV_VARS = ('GITHUB_COPILOT_API_KEY', 'GITHUB_COPILOT_API_TOKEN', 'COPILOT_GITHUB_TOKEN')
@@ -131,6 +146,18 @@ def test_github_copilot_provider_pass_openai_client():
     provider = GitHubCopilotProvider(openai_client=openai_client)
     assert provider.client is openai_client
     assert 'editor-version' not in provider.client.default_headers
+
+
+def test_github_copilot_provider_openai_client_is_exclusive():
+    openai_client = openai.AsyncOpenAI(api_key='gho_test_token', base_url='https://api.githubcopilot.com')
+    with pytest.raises(AssertionError, match='Cannot provide both `openai_client` and `api_key`'):
+        GitHubCopilotProvider(openai_client=openai_client, api_key='gho_other')  # type: ignore[call-overload]
+    with pytest.raises(AssertionError, match='Cannot provide both `openai_client` and `base_url`'):
+        GitHubCopilotProvider(openai_client=openai_client, base_url='https://example.com')  # type: ignore[call-overload]
+    with pytest.raises(AssertionError, match='Cannot provide both `openai_client` and `integration_id`'):
+        GitHubCopilotProvider(openai_client=openai_client, integration_id='other')  # type: ignore[call-overload]
+    with pytest.raises(AssertionError, match='Cannot provide both `openai_client` and `http_client`'):
+        GitHubCopilotProvider(openai_client=openai_client, http_client=httpx2.AsyncClient())  # type: ignore[call-overload]
 
 
 def test_github_copilot_provider_claude_profile():

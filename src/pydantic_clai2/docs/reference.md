@@ -115,6 +115,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `LOGFIRE_TOKEN` | A Logfire write token for the `observability` plugin; see [Telemetry](#telemetry-and-references) |
 | `GITHUB_COPILOT_API_KEY`, `GITHUB_COPILOT_API_TOKEN`, `COPILOT_GITHUB_TOKEN` | A Copilot token when you have not run `/login github-copilot` |
 | `GITHUB_COPILOT_CLIENT_ID` | Your own OAuth app for Copilot sign-in |
+| `GITHUB_COPILOT_INTEGRATION_ID` | The `Copilot-Integration-Id` Copilot requests carry, `vscode-chat` by default; see [Integration id](../../../docs/models/github-copilot.md#integration-id) |
 | `CLAUDE_CONFIG_DIR`, `CODEX_HOME` | Where Claude Code and Codex sessions are read from for `/resume` |
 | `PYTHONWARNINGS` | `default` shows library warnings, which CLAI hides |
 
@@ -951,6 +952,12 @@ excludes those responses. Their requests and tokens remain in the usage totals. 
 reads `<$0.0001`. There is no spending cap here; use the agent's `UsageLimits`
 for that.
 
+When a provider response omits usage information, `/usage` and `/cost` mark the
+known token and cost totals as lower bounds. The response count is still
+included in the request total, and it is not listed as missing price data. The
+footer prefixes a known retained-history cost with `>=` while any retained
+response has omitted usage information.
+
 ## The prompt
 
 ### Prompt area
@@ -1045,7 +1052,20 @@ by `/resume`. Input recall stores markers, not image bytes: paste the image agai
 if you recall an expired marker. If submission is rejected because no model is
 selected, the most recently rejected prompt keeps its attachments for retry. Unsubmitted images are discarded on exit or reload.
 
-Pillow is a terminal-only dependency; see the CLAI dependency boundary in
+In the [web UI](../PLUGINS.md#web-this-session-in-your-browser), from `/web` or `clai2 --web`,
+paste an image into the composer with your browser's usual paste (Cmd-V or Ctrl-V), or drop image
+files on it. Each shows as a thumbnail above your text; hover one and click its **×** to remove it.
+Text copied together with a picture of itself, as from a spreadsheet, pastes as text. The page
+scales an image larger than 1568 pixels on its longest side down to that, about as far as models
+scale it anyway, so each image fits the 10 MiB limit once converted, and turns a format CLAI does
+not read, such as HEIC or SVG, into PNG when the browser can draw it. The images are sent with your
+prompt, or alone, and CLAI checks and converts them to PNG with the same limits as above; a photo
+can grow severalfold as PNG, so send fewer at a time if the 32 MiB limit refuses them. Unsent images stay with each session's draft until you reload the page.
+The transcript shows each sent image as a thumbnail in your message, also after a reload or `/resume`.
+The preview of a saved session that is not open, and a delegated task's transcript, show `[image]`
+instead.
+
+Pillow is a CLAI dependency, for the terminal and the web UI, not a harness one; see the CLAI dependency boundary in
 [#875](https://github.com/pydantic/pydantic-ai-harness/issues/875).
 
 ### Input history
