@@ -223,11 +223,11 @@ If a workflow has a local engine config, forward the same workflow, event, and
 stable task-key values that `shared/engine-zai.md` forwards.
 
 The provider-health job checks out the default branch and runs outside the agent
-container. It writes a decision summary and the `provider-health` artifact on blocked
-decisions. A blocked gate must skip
-inference without emitting a passing review or other fabricated agent result. The
-non-model provider-health monitor owns incident issue creation and recovery; do not
-enable gh-aw's generic failure-as-issue reporting for these workflows.
+container. It writes a decision summary and the `provider-health` artifact for every
+decision. A blocked gate must skip inference without emitting a passing review or other
+fabricated agent result. The non-model provider-health monitor owns incident issue
+creation and recovery; do not enable gh-aw's generic failure-as-issue reporting for these
+workflows.
 
 The agent job waits for its engine concurrency slot after `provider_health` decides,
 sometimes for hours. Incidents and quota exhaustion from that wait must still stop
@@ -238,7 +238,8 @@ first pre-agent step, before any workspace script runs:
   workspace copy: the workspace can hold the PR head or its base branch.
 - It forwards the same environment as the `provider_health` job.
 - It replaces the `provider-health` artifact, so the monitor reconciles the decision the run
-  acted on. Against the earlier decision, the blocked run reads as a setup failure.
+  acted on. The monitor never reads a failure of these steps as a setup failure. A recheck
+  that errors opens no incident, like an error in the `provider_health` job.
 - A blocked decision fails the agent job before the engine step. Do not write a `noop`
   instead: `detection` runs on any agent output and would send one more request to the
   blocked provider.

@@ -124,10 +124,11 @@ AWF_INSTALL_VERSION = re.compile(r'install_awf_binary\.sh"?\s+"?([^"\s]+)')
 DAILY_AIC_GUARDRAIL_SCRIPT = 'check_daily_aic_workflow_guardrail.cjs'
 
 # The agent-start recheck fetches the controller through the contents API with no `ref`,
-# which serves the default branch, then runs that copy's `check`. A workspace copy can
-# come from the PR head or its base branch.
+# which serves the default branch, then runs `check` from the file it fetched. A workspace
+# copy can come from the PR head or its base branch.
 AGENT_START_HEALTH_CHECK = re.compile(
-    r'/contents/\.github/scripts/agent_provider_health\.py".*agent_provider_health\.py"? check\b', re.DOTALL
+    r'/contents/\.github/scripts/agent_provider_health\.py"(?:\s|\\)*>\s*(?P<path>"[^"]+")\s*'
+    r'python3\s+(?P=path)\s+check\b'
 )
 
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')

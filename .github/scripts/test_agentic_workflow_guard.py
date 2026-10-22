@@ -1619,6 +1619,19 @@ def test_provider_health_agent_start_catches_the_queued_ci_review_defect(tmp_pat
         pytest.param(
             [
                 *_agent_start_steps(
+                    run=_RECHECK_RUN.replace(
+                        'python3 "$RUNNER_TEMP/provider-health/agent_provider_health.py"',
+                        'python3 .github/scripts/agent_provider_health.py',
+                        1,
+                    )
+                ),
+                *_SHIPPED_AGENT_STEPS,
+            ],
+            id='fetched-but-runs-workspace-controller',
+        ),
+        pytest.param(
+            [
+                *_agent_start_steps(
                     run=_RECHECK_RUN.replace('agent_provider_health.py"', 'agent_provider_health.py?ref=v1"', 1)
                 ),
                 *_SHIPPED_AGENT_STEPS,

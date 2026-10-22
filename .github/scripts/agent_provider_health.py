@@ -830,6 +830,13 @@ def _stage_from_attempt_jobs(jobs: list[dict[str, object]]) -> Stage | None:
         for index in failures:
             step = parsed[index]
             name = _string(step.get('name')) if step is not None else None
+            # The agent-start recheck fails closed. Its replaced artifact carries a block; an error is a gate error.
+            if name in (
+                'Recheck Z.AI provider health at agent start',
+                'Replace health decision for the incident monitor',
+                'Stop before inference on a blocked provider-health decision',
+            ):
+                continue
             if name == 'Restore full history and tags for dynamic versioning' or (
                 _string(job.get('name')) == 'pre_activation' and name == 'Setup Scripts'
             ):

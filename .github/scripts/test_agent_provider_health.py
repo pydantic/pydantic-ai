@@ -1758,13 +1758,8 @@ def test_agent_start_recheck_blocks_a_stale_ready_gate_and_replaces_its_decision
         assert _monitor_command(args) == 0
         return list(client.posts)
 
-    # Read against the stale gate decision, the stop reads as a trusted setup failure.
-    assert [_marker_from_payload(post) for post in monitor(gate_decision)] == [
-        health.IncidentMarker(
-            'task', 'CI Review:CI Review:workflow_run:feature:head-a1b2:', 'setup', '43', None, 'setup', 1
-        )
-    ]
-    client.issues = [issue for issue in client.issues if issue.number == 10572]
+    # Read against the stale gate decision, as when the replacement upload fails, the stop opens nothing.
+    assert monitor(gate_decision) == []
     posts = monitor(start_decision)
     if blocker == 'provider_incident':
         assert posts == []
@@ -2355,6 +2350,26 @@ def test_monitor_classifies_post_agent_allowlist_restore_as_validation(
                 }
             ],
             'setup',
+        ),
+        *(
+            (
+                [
+                    {
+                        'name': 'agent',
+                        'conclusion': 'failure',
+                        'steps': [
+                            {'name': name, 'conclusion': 'failure'},
+                            {'name': 'Execute Claude Code CLI', 'conclusion': 'skipped'},
+                        ],
+                    }
+                ],
+                None,
+            )
+            for name in (
+                'Recheck Z.AI provider health at agent start',
+                'Replace health decision for the incident monitor',
+                'Stop before inference on a blocked provider-health decision',
+            )
         ),
         ([{'name': 'agent', 'conclusion': 'failure', 'runner_name': None, 'steps': []}], None),
         ([{'name': 'provider_health', 'conclusion': 'failure', 'steps': []}], None),

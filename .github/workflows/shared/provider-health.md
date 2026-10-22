@@ -1,5 +1,6 @@
 ---
-# Trusted host-side Z.AI health check. Keep ZAI_API_KEY in this runner job.
+# Trusted host-side Z.AI health check. Keep ZAI_API_KEY in host steps: this job and the
+# agent-start recheck below, never the agent container.
 jobs:
   provider_health:
     name: Check Z.AI provider health
