@@ -260,7 +260,12 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         return run_capability.resolve_scope(ctx)
 
     async def _prepare_read_memory(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition:
-        """Step aside for a tool of `FileSystem`'s `READ_FILE_KIND` when it can read this run's memory files."""
+        """Step aside for a tool of `FileSystem`'s `READ_FILE_KIND` when it can read this run's memory files.
+
+        Only the injected snapshot tells the model where the files are, so without injection `read_memory` stays.
+        """
+        if not self._capability.inject_memory:
+            return tool_def
         store, scope = self._resolve_scope(ctx)
         if run_workspace_directory(store, scope) is None:
             return tool_def

@@ -128,6 +128,10 @@ class TestReaderKept:
         assert all('read_memory' in tools for tools in recorder.offered)
         assert recorder.user_text and not any('in the workspace.' in text for text in recorder.user_text)
 
+    async def test_without_injection(self, tmp_path: Path) -> None:
+        recorder, _ = await _run(tmp_path, Memory(store=FileStore('.agent-memory'), inject_memory=False), FileSystem())
+        assert all('read_memory' in tools and 'read_file' in tools for tools in recorder.offered)
+
     @pytest.mark.parametrize('store_kind', ['own_workspace', 'in_memory', 'outside_working_dir'])
     async def test_store_the_file_tools_cannot_see(self, tmp_path: Path, store_kind: str) -> None:
         elsewhere = tmp_path / 'elsewhere'

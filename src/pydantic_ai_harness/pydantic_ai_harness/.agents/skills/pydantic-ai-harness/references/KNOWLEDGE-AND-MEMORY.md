@@ -18,7 +18,7 @@ demand). Only `Skills` needs an extra.
 Gives the model four tools: `write_memory(content, file='MEMORY.md', old_text=None)` (append, or
 replace one unique fragment), `read_memory(file)`, `delete_memory(file)` (`MEMORY.md` is
 protected), and `search_memory(query)`. With a `FileStore` in the run's workspace (no `workspace=`,
-relative `directory`) and `FileSystem` on the agent, `read_memory` is left out
+relative `directory`), `FileSystem` on the agent and `inject_memory=True` (the default), `read_memory` is left out
 (`unless_tool_kind=READ_FILE_KIND`) and the injected memory block gives the scope's directory, e.g.
 `.agent-memory/main/`. The guidance names no reader, so it stays static. By default a bounded excerpt of `MEMORY.md` plus the list
 of other files is injected into each request as a delimited user-role part, attached to the request
