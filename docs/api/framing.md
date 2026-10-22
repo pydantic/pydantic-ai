@@ -8,5 +8,5 @@
             - open_tag
             - close_tag
             - register_tag
-            - FramingTag
+            - DataTag
             - RegisteredTag

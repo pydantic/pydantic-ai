@@ -354,7 +354,9 @@ For a body that isn't a string, such as a file, put it between [`open_tag`][pyda
 
 For untrusted text that ends up inside a frame without going through `wrap`, such as a value interpolated into a statement that a later step wraps, use [`neutralize_tags`][pydantic_ai.framing.neutralize_tags].
 
-Tag names are lowercase snake_case. `register_tag` raises a [`UserError`][pydantic_ai.exceptions.UserError] for any other name, and for Pydantic AI's own tags, the [`FramingTag`][pydantic_ai.framing.FramingTag] values, which `wrap` takes as they are. Registering a name again returns the same tag, and `wrap`, `open_tag` and `close_tag` raise for a tag that was never registered.
+Tag names are lowercase snake_case. `register_tag` raises a [`UserError`][pydantic_ai.exceptions.UserError] for any other name, and for Pydantic AI's own tags: the [`DataTag`][pydantic_ai.framing.DataTag] values, which `wrap` takes as they are, and `'system'`. Registering a name again returns the same tag, and `wrap`, `open_tag` and `close_tag` raise for a tag that was never registered.
+
+`wrap`, `open_tag` and `close_tag` take data tags only, and raise for `'system'`: the framework's voice tag is rendered only by Pydantic AI, from a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] on a model with no mid-conversation system role. Put instructions you wrote in a `SystemPromptPart`, and frame everything else in a data tag.
 
 `register_tag` is the low-level primitive: an API that declares a tag for you is expected to call it when its class or module is defined, which is just as import-time and deterministic.
 

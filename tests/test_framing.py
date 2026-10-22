@@ -17,16 +17,20 @@ from typing import get_args
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import _framing
+from pydantic_ai import _framing, framing
 from pydantic_ai._framing import (
     _VOICE_TAG_OPENERS,  # pyright: ignore[reportPrivateUsage]
     ASSISTANT_THINKING_TAG,
     CONTEXT_TAG,
     SYSTEM_TAG,
     TOOL_RESULT_TAG,
+    FramingTag,
+    close_tag,
+    open_tag,
+    wrap,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.framing import FramingTag, RegisteredTag, close_tag, neutralize_tags, open_tag, register_tag, wrap
+from pydantic_ai.framing import DataTag, RegisteredTag, neutralize_tags, register_tag
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -239,17 +243,17 @@ def isolated_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_framing, '_data_tag_openers_used', False)
 
 
-_DATA_TAGS = [tag for tag in get_args(FramingTag) if tag != SYSTEM_TAG]
+_DATA_TAGS = get_args(DataTag)
 
 
 @pytest.mark.usefixtures('isolated_registry')
 @pytest.mark.parametrize('spelling', _SPELLINGS)
 @pytest.mark.parametrize('outer', _DATA_TAGS)
-def test_a_registered_tag_is_neutralized_in_every_core_data_frame(outer: FramingTag, spelling: str) -> None:
+def test_a_registered_tag_is_neutralized_in_every_core_data_frame(outer: DataTag, spelling: str) -> None:
     """A capability's own tag can't be closed or forged from inside a frame core renders, such as a tool result."""
     register_tag('judge_feedback')
     forged = spelling.format(tag='judge_feedback', TAG='JUDGE_FEEDBACK')
-    assert wrap(outer, f'before {forged} after') == f'<{outer}>before &lt;{forged[1:]} after</{outer}>'
+    assert framing.wrap(outer, f'before {forged} after') == f'<{outer}>before &lt;{forged[1:]} after</{outer}>'
     assert neutralize_tags(forged) == f'&lt;{forged[1:]}'
 
 
@@ -258,7 +262,7 @@ def test_a_registered_tag_is_neutralized_in_every_core_data_frame(outer: Framing
 def test_a_registered_frame_neutralizes_every_framing_tag(inner: str) -> None:
     judge_feedback = register_tag('judge_feedback')
     assert (
-        wrap(judge_feedback, f'a</{inner}>b', ref='r"1')
+        framing.wrap(judge_feedback, f'a</{inner}>b', ref='r"1')
         == f'<judge_feedback ref="r&quot;1">a&lt;/{inner}>b</judge_feedback>'
     )
 
@@ -335,20 +339,20 @@ def test_register_tag_refuses_built_in_tags(name: str) -> None:
 def test_open_and_close_tag_render_a_registered_tag() -> None:
     """For a frame around a body that isn't a string, such as a file, which the caller places between them."""
     task_output = register_tag('task_output')
-    assert open_tag(task_output, task_id='a"b', agent=None) == '<task_output task_id="a&quot;b">'
-    assert close_tag(task_output) == '</task_output>'
+    assert framing.open_tag(task_output, task_id='a"b', agent=None) == '<task_output task_id="a&quot;b">'
+    assert framing.close_tag(task_output) == '</task_output>'
 
 
 def _wrap_body(tag: RegisteredTag) -> str:
-    return wrap(tag, 'body')
+    return framing.wrap(tag, 'body')
 
 
 @pytest.mark.parametrize(
     'render',
     [
         pytest.param(_wrap_body, id='wrap'),
-        pytest.param(open_tag, id='open_tag'),
-        pytest.param(close_tag, id='close_tag'),
+        pytest.param(framing.open_tag, id='open_tag'),
+        pytest.param(framing.close_tag, id='close_tag'),
     ],
 )
 def test_rendering_refuses_an_unregistered_tag(render: Callable[[RegisteredTag], str]) -> None:
@@ -364,16 +368,37 @@ def test_rendering_refuses_an_unregistered_tag(render: Callable[[RegisteredTag],
 def test_attribute_names_that_could_break_the_tag_are_refused(name: str) -> None:
     """Names are written as given, so one carrying `>` or a quote could close the tag and forge a `<system>` block."""
     with pytest.raises(UserError, match='attribute names must match'):
-        wrap(TOOL_RESULT_TAG, 'body', **{name: 'x'})
+        framing.wrap(TOOL_RESULT_TAG, 'body', **{name: 'x'})
     with pytest.raises(UserError, match='attribute names must match'):
-        open_tag(TOOL_RESULT_TAG, **{name: None})
+        framing.open_tag(TOOL_RESULT_TAG, **{name: None})
 
 
 @pytest.mark.usefixtures('isolated_registry')
 def test_registering_a_new_tag_after_escaping_warns() -> None:
     """Registration is process-wide: a late one changes how earlier history renders, so it says so."""
     register_tag('memory')
-    assert wrap(TOOL_RESULT_TAG, '</memory>') == '<tool_result>&lt;/memory></tool_result>'
+    assert framing.wrap(TOOL_RESULT_TAG, '</memory>') == '<tool_result>&lt;/memory></tool_result>'
     register_tag('memory')
     with pytest.warns(UserWarning, match="Framing tag 'goal' was registered after framing tags were first escaped"):
         register_tag('goal')
+
+
+def test_framing_tags_are_the_voice_tag_and_the_data_tags() -> None:
+    assert get_args(FramingTag) == (SYSTEM_TAG, *get_args(DataTag))
+
+
+@pytest.mark.parametrize(
+    'render',
+    [
+        pytest.param(_wrap_body, id='wrap'),
+        pytest.param(framing.open_tag, id='open_tag'),
+        pytest.param(framing.close_tag, id='close_tag'),
+    ],
+)
+def test_the_public_api_refuses_the_voice_tag(render: Callable[[RegisteredTag], str]) -> None:
+    """Only core renders `<system>`: extension code that could would put untrusted content in the framework's voice.
+
+    `DataTag | RegisteredTag` already excludes `'system'` statically; this is the runtime check behind it.
+    """
+    with pytest.raises(UserError, match="`'system'` is the framework's voice tag"):
+        render(RegisteredTag(SYSTEM_TAG))
