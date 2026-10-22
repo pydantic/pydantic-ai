@@ -276,6 +276,30 @@ class WithNativeTools(AbstractCapability):
 """
         assert validate_capability_file(_write(tmp_path, 'm', code)) == 'WithNativeTools'
 
+    @pytest.mark.parametrize(
+        ('getter', 'expected'),
+        [
+            (
+                "def get_instructions(self):\n        return [InstructionPart(content='x', name='agent')]\n",
+                "UserError: Instruction name 'agent' is reserved",
+            ),
+            (
+                '@classmethod\n    def get_serialization_name(cls):\n        return 42\n',
+                'get_serialization_name\\(\\) returned int',
+            ),
+        ],
+        ids=['reserved-instruction-name', 'serialization-name'],
+    )
+    def test_unusable_getter_value_rejected(self, tmp_path: Path, getter: str, expected: str) -> None:
+        code = (
+            'from pydantic_ai.capabilities import AbstractCapability\n'
+            'from pydantic_ai.messages import InstructionPart\n\n'
+            'class Unusable(AbstractCapability):\n'
+            f'    {getter}'
+        )
+        with pytest.raises(CapabilityValidationError, match=expected):
+            validate_capability_file(_write(tmp_path, 'm', code))
+
     def test_bad_model_settings_return_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(CapabilityValidationError, match='ModelSettings mapping'):
             validate_capability_file(_write(tmp_path, 'm', BAD_MODEL_SETTINGS_RETURN_CODE))
