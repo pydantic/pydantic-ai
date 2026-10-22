@@ -626,6 +626,9 @@ def test_non_utf8_bytes_round_trip_through_json_and_pickle() -> None:
     assert pickle.loads(pickle.dumps(call)) == call
     result = WorkspaceCallResult(data=raw, entries=[FileEntry(name='a', path='/a', is_dir=False, size=1)])
     assert JSON_CODEC.load(WorkspaceCallResult, JSON_CODEC.dump(WorkspaceCallResult, result)) == result
+
+
+def test_display_calls_round_trip_through_json_and_pickle() -> None:
     act = WorkspaceCall(method='act', action=PressKeys(keys=('ctrl', 's')))
     assert JSON_CODEC.load(WorkspaceCall, JSON_CODEC.dump(WorkspaceCall, act)) == act
     assert pickle.loads(pickle.dumps(act)) == act
