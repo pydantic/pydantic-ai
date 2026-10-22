@@ -118,8 +118,9 @@ def _find_prompt_part(
     When a capability replaced the prompt with a copy, the copy is found in the message the same
     distance from the end by `_find_copy`, wherever other parts were put around it. The copy is
     returned with the history part it was made from, so a redaction can reach both. Only when no
-    part there can be told to be the copy, because the request was rebuilt, is the most recent
-    part in `messages` used, with no original: nothing ties that part to the history.
+    part there can be told to be the copy, because the request was rebuilt or several parts carry
+    the prompt's timestamp and none has its text, is the most recent part in `messages` used, with
+    no original: nothing ties that part to the history.
     """
     for from_end, message in enumerate(reversed(ctx.messages), start=1):
         prompt = next((part for part in reversed(message.parts) if isinstance(part, UserPromptPart)), None)
