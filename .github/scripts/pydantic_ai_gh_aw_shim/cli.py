@@ -362,10 +362,12 @@ _LLM_MAX_RETRIES = 4
 # spreads retries when parallel sub-agents hit the limit together.
 RATE_LIMIT_RETRY_SECS = 60
 
-# Z.ai's request-rate (`1302`) and temporary-overload (`1305`) 429 codes. Every other
-# Z.ai 429 code reports an account or plan limit that waiting cannot clear.
+# Z.ai 429 codes for account and plan limits, which cannot clear inside the retry
+# window. Other 429s, such as `1302` request-rate limits and `1305` overload, are transient.
 # Keep these codes aligned with https://docs.z.ai/api-reference/api-code.
-_ZAI_TRANSIENT_RATE_LIMIT_CODES = frozenset({'1302', '1305'})
+_ZAI_PLAN_LIMIT_CODES = frozenset(
+    {'1308', '1309', '1310', '1311', '1313', '1314', '1315', '1316', '1317', '1318', '1319', '1320', '1321'}
+)
 _ERROR_BODY_ADAPTER = TypeAdapter(dict[str, object])
 
 
@@ -405,9 +407,6 @@ def rate_limit_retry_transport(wrapped: httpx2.AsyncBaseTransport | None = None)
     Handing back the response rather than raising keeps the SDK's `RateLimitError`,
     with the provider's error body, as what a run that stays rate-limited fails with.
     """
-    # Z.ai account and plan-quota errors cannot recover inside this retry window.
-    # Keep these codes aligned with https://docs.z.ai/api-reference/api-code.
-    non_retryable_codes: set[str] = {'1308', '1309', '1310', '1316', '1317', '1318', '1319', '1320', '1321'}
 
     async def should_retry(response: httpx2.Response) -> bool:
         if response.status_code != 429:
@@ -418,7 +417,7 @@ def rate_limit_retry_transport(wrapped: httpx2.AsyncBaseTransport | None = None)
             body = _ERROR_BODY_ADAPTER.validate_json(await response.aread())
         except ValidationError:
             return True
-        if _zai_error_code(body) in non_retryable_codes:
+        if _zai_error_code(body) in _ZAI_PLAN_LIMIT_CODES:
             response.headers['x-should-retry'] = 'false'
             return False
         return True
@@ -1169,9 +1168,7 @@ def _failure_details(error: BaseException | None) -> dict[str, object]:
         if error.status_code in (401, 403):
             kind = 'authentication'
         elif error.status_code == 429:
-            # A 429 without a Z.ai code carries no evidence of an account or plan limit.
-            code = _zai_error_code(error.body)
-            kind = 'rate_limit' if code is None or code in _ZAI_TRANSIENT_RATE_LIMIT_CODES else 'plan_limit'
+            kind = 'plan_limit' if _zai_error_code(error.body) in _ZAI_PLAN_LIMIT_CODES else 'rate_limit'
     failure: dict[str, object] = {'kind': kind}
     if http_status is not None:
         failure['http_status'] = http_status

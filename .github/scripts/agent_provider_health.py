@@ -26,6 +26,9 @@ REQUIRED_LABELS = ('agentic-workflows', 'pydanty:meta')
 ASSIGNEE = 'dsfaccini'
 # Minimum age before a healthy scheduled check closes a quota or rate-limit incident with no recorded reset time.
 _NULL_RESET_COOL_DOWN = dt.timedelta(hours=1)
+# GitHub withholds repository secrets from these events on fork and Dependabot pull requests. A gate on any other
+# event that lacks the key opens an incident, so a broken key binding still surfaces.
+_SECRETLESS_PR_EVENTS = ('pull_request', 'pull_request_review', 'pull_request_review_comment')
 _RETIRED_PROVIDER_REASON = (
     'Workflow passes retired `MINIMAX_API_KEY` instead of `ZAI_API_KEY`; update the workflow from `main`'
 )
@@ -887,10 +890,8 @@ def _monitor_workflow_outcome(
             if health.quota.status == 'healthy':
                 print(f'Activation was blocked by existing state: {health.reason}')
                 return 0
-            if health.quota.diagnostic == 'missing_api_key':
-                # GitHub withholds repository secrets from some events, such as reviews on fork pull requests.
-                # The scheduled check always receives the key, so it reports a key that is actually missing.
-                print('Activation had no Z.ai key for this event; the scheduled check owns provider health')
+            if health.quota.diagnostic == 'missing_api_key' and health.trigger_event in _SECRETLESS_PR_EVENTS:
+                print('Activation had no Z.ai key for this pull request event; no operational incident was created')
                 return 0
             kind = 'quota_unknown' if health.quota.status == 'unknown' else 'quota_exhausted'
             marker = IncidentMarker('provider', 'zai', kind, str(args.run_id), health.quota.reset_at)

@@ -2060,10 +2060,10 @@ def test_retired_provider_configuration_skips_without_an_incident(
 
 
 @pytest.mark.parametrize(('zai_key', 'minimax_key'), [(None, None), ('', None), ('', 'retired-fixture-key')])
-def test_missing_credentials_block_the_run_and_only_the_scheduled_check_reports_them(
+def test_current_configuration_with_missing_credentials_still_creates_an_incident(
     zai_key: str | None, minimax_key: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A run without the key is blocked; GitHub withholds secrets from some events, so only the scheduled check alerts."""
+    """Missing current credentials on an event that receives secrets remain an outage."""
     client = FakeGitHub()
     monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     for name, value in [('ZAI_API_KEY', zai_key), ('MINIMAX_API_KEY', minimax_key)]:
@@ -2074,8 +2074,36 @@ def test_missing_credentials_block_the_run_and_only_the_scheduled_check_reports_
     monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
     monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
     monkeypatch.setenv('GITHUB_WORKFLOW', 'CI Review')
-    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'CI Review:pull_request_review:10979:head-a1b2:')
-    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'pull_request_review')
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'CI Review:workflow_run:pr-123:head-a1b2:')
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'workflow_run')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    monkeypatch.delenv('GITHUB_OUTPUT', raising=False)
+    monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
+    artifact = tmp_path / 'provider-health.json'
+
+    assert health.main(['check', '--output', str(artifact)]) == 0
+    assert _health_from_json(json.loads(artifact.read_text())).quota.diagnostic == 'missing_api_key'
+    assert health.main(['monitor', '--run-id', '43', '--run-attempt', '1', '--health-artifact', str(artifact)]) == 0
+    assert len(client.posts) == 1
+    assert 'quota diagnostic: missing_api_key' in str((_mapping(client.posts[0]) or {}).get('body'))
+    assert _marker_from_payload(client.posts[0]) == health.IncidentMarker(
+        'provider', 'zai', 'quota_unknown', '43', None
+    )
+
+
+@pytest.mark.parametrize('trigger_event', ['pull_request', 'pull_request_review', 'pull_request_review_comment'])
+def test_missing_credentials_on_secretless_pull_request_events_leave_the_alert_to_the_scheduled_check(
+    trigger_event: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GitHub withholds secrets from fork and Dependabot pull request events, so their blocked gate opens nothing."""
+    client = FakeGitHub()
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.delenv('ZAI_API_KEY', raising=False)
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'CI Review')
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', f'CI Review:{trigger_event}:10979:head-a1b2:')
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', trigger_event)
     monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
     monkeypatch.delenv('GITHUB_OUTPUT', raising=False)
     monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)

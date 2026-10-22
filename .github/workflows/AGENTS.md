@@ -233,7 +233,7 @@ environment entry are intentionally blocked without an operational incident.
 They fetch this controller from the default branch, so the skip applies even
 before their branch receives the provider migration. Update the branch from
 `main` to restore agent runs. An empty or missing Z.ai credential in current
-configuration still follows the normal provider-health checks.
+configuration blocks the run; the next section says which runs open an incident for it.
 
 The controller keeps one assigned operational incident for a matching failure
 scope and marks it with both `agentic-workflows` and `pydanty:meta`. Leave both labels
@@ -242,15 +242,17 @@ starting on controller metadata. Do not create a second issue for the same open
 provider, workflow, or task incident.
 
 A provider incident blocks every Z.AI workflow. Open one only on provider-wide evidence:
-exhausted or unverifiable quota, rejected credentials, or a 429 whose Z.AI code reports an
-account or plan limit (runner kind `plan_limit`). Keep these outcomes local to their run:
+exhausted or unverifiable quota, rejected credentials, or a 429 whose Z.AI code is a
+documented account or plan limit (runner kind `plan_limit`). Keep these outcomes local to their run:
 
-- A `1302` or `1305` 429, or a 429 without a Z.AI code, that outlasts the runner's retry
-  window (runner kind `rate_limit`). A healthy quota check cannot show spare concurrency,
-  so such an incident has no recovery signal.
-- A gate that ran without `ZAI_API_KEY` (diagnostic `missing_api_key`). GitHub withholds
-  secrets from some events, such as reviews on fork pull requests. The scheduled check
-  always receives the key, so it reports a key that is actually missing.
+- Any other 429 that outlasts the runner's retry window (runner kind `rate_limit`), such as
+  `1302` request-rate limits and `1305` overload. A healthy quota check cannot show spare
+  concurrency, so such an incident has no recovery signal. An exhausted plan still blocks
+  the next run at its quota check.
+- A gate on a `pull_request`, `pull_request_review` or `pull_request_review_comment` event
+  that ran without `ZAI_API_KEY` (diagnostic `missing_api_key`). GitHub withholds secrets
+  from these events on fork and Dependabot pull requests. Gates on other events, and the
+  scheduled check, still open an incident for a missing key.
 
 The trusted health check calls `GET https://api.z.ai/api/monitor/usage/quota/limit`
 with the raw `ZAI_API_KEY` value in the `Authorization` header. Recognize
@@ -271,7 +273,8 @@ Unknown quota results may include one of these fixed diagnostic categories:
 also include a numeric HTTP status. These values contain no provider response text,
 request headers, URL, credential, or exception message. Version 1 artifacts without
 diagnostic fields remain valid. Diagnostics explain the unknown result; they do not
-change gate or recovery policy. Only `missing_api_key` changes incident creation.
+change gate or recovery policy. Only `missing_api_key` changes incident creation, and only
+on the pull request events listed above.
 
 For manual provider recovery, run **Agent Provider Health** with `workflow_dispatch`
 and enter the incident's number as `recover_issue`. The controller finds that one
