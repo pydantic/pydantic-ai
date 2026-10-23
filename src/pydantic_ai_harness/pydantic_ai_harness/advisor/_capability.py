@@ -113,13 +113,13 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     """
 
     id: str | None = 'advisor'
-    """One-off: an agent has one advisor, and its tool name is fixed.
+    """One-off: an agent has one advisor, so the id is fixed.
 
-    Declared here rather than only passed up from `__init__`, so the class states it where a reader
-    -- and Pydantic AI, deciding what two of this capability under one `id` mean -- can see it.
+    Two `Advisor` capabilities resolve to one via
+    [`combine`][pydantic_ai.capabilities.AbstractCapability.combine].
     """
 
-    _local_uses: int = field(init=False, repr=False, default=0)
+    _local_uses: int = field(init=False, repr=False, compare=False, default=0)
 
     def __init__(
         self,
@@ -218,7 +218,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         super().__init__(
             native=native,
             local=local,
-            id='advisor',
+            id=self.id,
         )
 
     @classmethod
@@ -264,8 +264,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         rebuilt.max_uses = max_uses
         rebuilt._local_uses = 0
         rebuilt._build_tools()
-        # `_build_tools` resets the inherited capability fields, which callers may set afterwards.
-        rebuilt.id = self.id
+        # `_build_tools` resets these inherited fields, which callers may set after construction.
         rebuilt.description = self.description
         rebuilt.defer_loading = self.defer_loading
         return rebuilt
