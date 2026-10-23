@@ -1,4 +1,7 @@
-"""Run state should be released by reference counting once the application drops it."""
+"""Run state should be released by reference counting once the application drops it.
+
+In-process models isolate object lifetime; provider recordings add no ownership coverage.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +13,7 @@ from collections.abc import AsyncIterator, Generator
 from dataclasses import dataclass
 from typing import Literal
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
@@ -30,6 +34,8 @@ from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
 from .conftest import IsNow, IsStr
+
+READINESS_WAIT_TIMEOUT = 5
 
 
 @dataclass
@@ -296,3 +302,38 @@ async def test_interrupted_iteration_releases_dependencies(exit_kind: Literal['b
     del deps, run
     if exit_kind != 'error':
         assert ref() is None
+
+
+@pytest.mark.usefixtures('no_gc')
+async def test_outer_cancellation_releases_run_references() -> None:
+    tool_started = anyio.Event()
+    contexts: list[RunContext[Deps]] = []
+    agent = Agent(FunctionModel(three_steps), deps_type=Deps)
+
+    @agent.tool
+    async def lookup(ctx: RunContext[Deps]) -> None:
+        contexts.append(ctx)
+        tool_started.set()
+        await anyio.sleep_forever()
+
+    async def cancel_when_tool_started(scope: anyio.CancelScope) -> None:
+        await tool_started.wait()
+        scope.cancel()
+
+    run = None
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT), anyio.CancelScope() as scope:
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(cancel_when_tool_started, scope)
+            async with agent.iter('hello', deps=Deps(), infer_name=False) as run:
+                async for _ in run:
+                    pass
+
+    assert scope.cancelled_caught
+    assert run is not None
+    assert run.result is None
+    assert contexts[0].tools.keys() == {'lookup'}
+    assert run._graph_run._iterator_instance is None  # pyright: ignore[reportPrivateUsage]
+    assert run._graph_run._iterator is None  # pyright: ignore[reportPrivateUsage]
+    manager = run.ctx.deps.tool_manager
+    assert manager.ctx is not None
+    assert manager.ctx.tool_manager is None

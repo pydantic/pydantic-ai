@@ -1,4 +1,7 @@
-"""Graph iteration must not retain run state through its iterator callbacks."""
+"""Graph iteration must not retain run state through its iterator callbacks.
+
+In-process graph steps expose reference lifetimes without a model provider or VCR recording.
+"""
 
 from __future__ import annotations
 
