@@ -134,9 +134,11 @@ class EagerCoordinator(Generic[AgentDepsT]):
                 call.halted = True
                 self.drop_queued(call)
                 return False
+            previous_char = call.args_text[-1:]
             call.args_text += args
-            # A statement can only close on a newline, so deltas without one need no decoding.
-            return '\\n' in args
+            # A statement can only close on a newline, so deltas without one need no decoding. The
+            # previous character joins the check because a provider can split the `\n` escape.
+            return '\\n' in previous_char + args
         if isinstance(args, dict):
             code = args.get('code')
             if args.get('restart'):
@@ -333,6 +335,8 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
 
         if tool_args.get('restart', False):
             await self.execution.discard(call)
+            if call.execution.usage_limit_exceeded is not None:
+                raise call.execution.usage_limit_exceeded
             async with self.execution.feed_lock:
                 return await super().call_tool(name, tool_args, ctx, tool)
 
@@ -342,6 +346,8 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
             run_state = self._run_state
             assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
             await run_state.reset()
+            if call.execution.usage_limit_exceeded is not None:
+                raise call.execution.usage_limit_exceeded
             raise ModelRetry(
                 'The submitted code no longer matches the prefix eager execution already ran, '
                 'so the session was restarted. Send the snippet again.'
