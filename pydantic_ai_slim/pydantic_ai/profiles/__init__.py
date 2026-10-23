@@ -151,6 +151,14 @@ class ModelProfile(TypedDict, total=False):
     See `supports_image_input` for how the file-input flags are used.
     """
 
+    computer_use_coordinate_grid: int
+    """The grid the model points at the screen on when it doesn't use pixels. Default: unset, meaning pixels.
+
+    With `1000`, a computer-use capability, such as Pydantic AI Harness's `ComputerUse`, asks the model for
+    coordinates from 0 to 999 across the width and height of the screenshot, and scales them to pixels. Gemini
+    models are trained on that grid and miss small targets by over 100 pixels when asked for pixels.
+    """
+
     supports_inline_system_prompts: bool
     """Whether the provider's API accepts `SystemPromptPart`s inline at any position. Default: `False`.
 

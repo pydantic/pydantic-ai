@@ -14,7 +14,6 @@
             - SupportsFilesystem
             - SupportsRealpath
             - SupportsDisplay
-            - X11Computer
             - ComputerAction
             - Click
             - MoveMouse
