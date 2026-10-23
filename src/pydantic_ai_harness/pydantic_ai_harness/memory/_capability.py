@@ -26,7 +26,6 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest
-from pydantic_ai_harness.filesystem import READ_FILE_KIND
 from pydantic_ai_harness.memory._file import FileStore
 from pydantic_ai_harness.memory._in_memory import InMemoryStore
 from pydantic_ai_harness.memory._render import injection_listing_limit, list_subfiles, render_memory_prompt
@@ -423,7 +422,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         # Called while the run's tools are being prepared, before the file reader is known by name, so render as
         # if it were there: the caller only asks whether the snapshot would name the directory.
         directory = run_workspace_directory(store, scope)
-        reader = None if directory is None else (READ_FILE_KIND, directory)
+        reader = None if directory is None else ('read_file', directory)
         snapshot = None if error_type is not None else self._render_snapshot(main, subfiles, files_truncated, reader)
         return None if snapshot is None else snapshot[0]
 
