@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -22,7 +21,7 @@ from pydantic_ai_harness.filesystem._toolset import (
 _DEFAULT_READ_CHARS = 50_000
 
 _DEFAULT_READ_ONLY: tuple[str, ...] = (
-    '**/.git/*',
+    '**/.git',
     '**/.env',
     '**/.env.*',
     '*.pem',
@@ -73,19 +72,24 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     """If non-empty, only paths matching at least one glob pattern are accessible."""
 
     denied_patterns: Sequence[str] = field(default_factory=list[str])
-    """Paths matching any of these glob patterns are rejected, even if `allowed_patterns` matches them."""
+    """Paths matching any of these glob patterns are rejected, even if `allowed_patterns` matches them.
+
+    Matching ignores case, so a differently cased spelling cannot reach a denied file on a
+    case-insensitive filesystem.
+    """
 
     read_only_patterns: Sequence[str] = _DEFAULT_READ_ONLY
     """Paths matching these patterns are read-only (writes are rejected).
 
-    Defaults to protecting `.git/`, `.env` files, key files, secrets, and
-    `.pydantic-ai-harness/` at any depth. Protected paths stay readable; use
-    `denied_patterns` to block reads too. Set to an empty list to make every
-    path writable.
+    Defaults to protecting `.git` (the directory, or the file a worktree or
+    submodule has), `.env` files, key files, secrets, and `.pydantic-ai-harness/`
+    at any depth. Protected paths stay readable; use `denied_patterns` to block
+    reads too. Set to an empty list to make every path writable. Like
+    `denied_patterns`, these match regardless of case.
     """
 
     max_read_lines: int = 2000
-    """Number of lines a `read_file` call returns when it passes no `limit`."""
+    """Most lines one `read_file` call returns, and the number it returns when it passes no `limit`."""
 
     max_read_chars: int | None = _DEFAULT_READ_CHARS
     """Maximum characters in a single `read_file` result, header and hint included.
@@ -102,10 +106,10 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     """Maximum number of entries returned by `list_directory`."""
 
     max_search_results: int = 1000
-    """Maximum number of matches returned by `search_files`."""
+    """Maximum number of matches returned by `search_files` and `grep`."""
 
     max_find_results: int = 1000
-    """Maximum number of matches returned by `find_files`."""
+    """Maximum number of matches returned by `find_files` and `list_files`."""
 
     read_only: bool = False
     """Whether to expose only the tools in `READ_ONLY_TOOL_NAMES`.
@@ -155,7 +159,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
         root_spelling(None if self.root_dir is None else Path(self.root_dir))
         # Runtime validation: dataclass field annotations are advisory, not enforced.
         # A config-driven caller could pass a string that would otherwise propagate.
-        values: dict[str, Any] = {
+        values: dict[str, object] = {
             'max_read_lines': self.max_read_lines,
             'max_list_results': self.max_list_results,
             'max_search_results': self.max_search_results,
@@ -164,9 +168,10 @@ class FileSystem(AbstractCapability[AgentDepsT]):
         if self.max_read_chars is not None:
             values['max_read_chars'] = self.max_read_chars
         for name, value in values.items():
-            if not isinstance(value, int) or value <= 0:
+            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
                 raise ValueError(f'{name} must be a positive integer, got {value!r}')
-        if self.max_retries is not None and (not isinstance(self.max_retries, int) or self.max_retries < 0):
+        retries: object = self.max_retries
+        if retries is not None and (not isinstance(retries, int) or isinstance(retries, bool) or retries < 0):
             raise ValueError(f'max_retries must be a non-negative integer, got {self.max_retries!r}')
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:

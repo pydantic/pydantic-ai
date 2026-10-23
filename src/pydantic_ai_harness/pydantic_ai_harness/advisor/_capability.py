@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import copy
+import inspect
+import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Self
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import ModelSelection, NativeOrLocalTool
+from pydantic_ai.capabilities import AbstractCapability, ModelSelection, NativeOrLocalTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import ModelRequestContext, parse_model_id
@@ -14,8 +18,27 @@ from pydantic_ai.native_tools import AdvisorTool
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 _LIMIT_REACHED = 'Advisor consultation limit reached for this model request. Continue without further advice.'
+
+
+def _caller_stacklevel() -> int:
+    """The `warnings.warn` stacklevel, from `Advisor.combine`, of the nearest frame in the user's code.
+
+    Skips this module, Pydantic AI, Pydantic Graph, and the `asyncio` and `contextlib` frames a run
+    goes through, so the warning points at the caller whether they call `combine` directly, build an
+    `Agent`, or pass capabilities to a run.
+    """
+    frame = inspect.currentframe()
+    stacklevel = 0
+    while frame is not None and (
+        (module := frame.f_globals.get('__name__', '')) == __name__
+        or module.partition('.')[0] in {'pydantic_ai', 'pydantic_graph', 'asyncio', 'contextlib'}
+    ):
+        frame = frame.f_back
+        stacklevel += 1
+    return stacklevel
 
 
 @dataclass(init=False)
@@ -135,6 +158,12 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         if mode == 'native' and native_provider == 'openrouter' and max_uses is not None:
             raise ValueError("Advisor.max_uses is not supported by OpenRouter in mode='native'")
 
+        self._build_tools()
+
+    def _build_tools(self) -> None:
+        """Build the native factory and local tool from the fields, and initialise the base capability."""
+        model, mode, output_type = self.model, self.mode, self.output_type
+        max_uses, max_tokens, forward_history = self.max_uses, self.max_tokens, self.forward_history
         native: AgentNativeTool[AgentDepsT] | bool
         local: Tool[AgentDepsT] | bool
         if mode == 'native':
@@ -192,19 +221,54 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             id='advisor',
         )
 
-    async def for_run(self, ctx: RunContext[AgentDepsT]) -> Advisor[AgentDepsT]:
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Merge the fields, then rebuild the native factory and local tool from the merged result.
+
+        Both are built in `__init__` from one instance's configuration, so the inherited merge alone
+        would send the later instance's settings while the merged fields report the union.
+        """
+        merged = super().combine(capabilities)
+        assert isinstance(merged, cls)
+        max_uses = merged.max_uses
+        if (
+            max_uses is not None
+            and merged.mode == 'native'
+            and cls._parse_native_model(merged.model)[0] == 'openrouter'
+        ):
+            # No single `Advisor` accepts this, but merging used to send the native tool without
+            # `max_uses`; keep doing that rather than make an agent that used to build raise.
+            warnings.warn(
+                f"Merged `Advisor` capabilities combine `mode='native'` on OpenRouter with `max_uses={max_uses}`, "
+                "which OpenRouter's native advisor does not support, so `max_uses` is ignored. "
+                "This will raise `UserError` in a future release: remove `max_uses`, or use `mode='auto'`.",
+                HarnessDeprecationWarning,
+                stacklevel=_caller_stacklevel(),
+            )
+            max_uses = None
+        return merged._rebuilt(max_uses=max_uses)
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> Self:
         """Return a fresh capability with local usage isolated to this run."""
         if self.max_uses is None or self.mode == 'native':
             return self
-        return Advisor(
-            self.model,
-            mode=self.mode,
-            output_type=self.output_type,
-            max_uses=self.max_uses,
-            max_tokens=self.max_tokens,
-            caching=self.caching,
-            forward_history=self.forward_history,
-        )
+        return self._rebuilt(max_uses=self.max_uses)
+
+    def _rebuilt(self, *, max_uses: int | None) -> Self:
+        """Copy this capability and rebuild its native factory and local tool from its fields.
+
+        Only `Advisor`'s tool building runs, so a subclass keeps its type and fields without its
+        `__init__` being called with arguments it may not take.
+        """
+        rebuilt = copy.copy(self)
+        rebuilt.max_uses = max_uses
+        rebuilt._local_uses = 0
+        rebuilt._build_tools()
+        # `_build_tools` resets the inherited capability fields, which callers may set afterwards.
+        rebuilt.id = self.id
+        rebuilt.description = self.description
+        rebuilt.defer_loading = self.defer_loading
+        return rebuilt
 
     async def after_model_request(
         self,

@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import base64
 import re
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -14,19 +14,15 @@ from uuid import UUID, uuid4
 import httpx2
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
-from .._context_size import mark_initial_input_tokens
+from .._context_size import mark_context_input_tokens
 from .._run_context import RunContext
 from ..exceptions import (
     ModelAPIError,
-    ModelContextWindowExceededError,
     ModelHTTPError,
-    ModelOverloadedError,
-    ModelRateLimitError,
-    ModelServerError,
-    ModelUnavailableError,
     UserError,
 )
 from ..messages import (
+    ERROR_OUTCOMES,
     BinaryContent,
     CachePoint,
     CompactionPart,
@@ -42,13 +38,11 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -80,10 +74,12 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -445,7 +441,7 @@ def _map_api_error(
             ):
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
         status = e.status if isinstance(e.status, str) else None
-        category = _error_category(status, e.message)
+        category = _model_errors.google_status_category(status, e.message)
         # An error chunk inside a stream comes with the stream's own 200 response; its `code` is the error's status.
         response_status = getattr(e.response, 'status_code', None)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         return ModelHTTPError.for_category(
@@ -459,36 +455,6 @@ def _map_api_error(
             in_stream=isinstance(response_status, int) and response_status < 400,
         )
     return ModelAPIError(model_name=model_name, message=str(e))
-
-
-_CONTEXT_WINDOW_ERROR_MESSAGES = ('input token count', 'number of tokens allowed')
-"""Gemini reports a context window overflow as `INVALID_ARGUMENT`, identifiable only by its message.
-
-The full message is `The input token count (N) exceeds the maximum number of tokens allowed (M)`; the file-upload
-variant drops the leading clause.
-"""
-
-
-def _error_category(status: str | None, message: object) -> _model_errors.HTTPErrorCategory | None:
-    """The error category for a Google API error status, like `RESOURCE_EXHAUSTED`.
-
-    Gemini sends `RESOURCE_EXHAUSTED` for both rate limits and exhausted quota, with the same message, so it's
-    always a rate limit.
-    """
-    match status:
-        case 'RESOURCE_EXHAUSTED':
-            return ModelRateLimitError
-        case 'UNAVAILABLE':
-            # Like `The model is overloaded. Please try again later.`
-            return ModelOverloadedError if _model_errors.says_overloaded(message) else ModelUnavailableError
-        case 'INTERNAL':
-            return ModelServerError
-        case 'INVALID_ARGUMENT' if isinstance(message, str) and any(
-            m in message.lower() for m in _CONTEXT_WINDOW_ERROR_MESSAGES
-        ):
-            return ModelContextWindowExceededError
-        case _:
-            return None
 
 
 def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> dict[str, str]:
@@ -523,7 +489,9 @@ def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
         'low': 'LOW',
         'medium': 'MEDIUM',
         'high': 'HIGH',
-        'xhigh': 'HIGH',  # Gemini has no `xhigh`; map it to the highest level.
+        # Gemini has nothing above `HIGH`; map the higher levels to it.
+        'xhigh': 'HIGH',
+        'max': 'HIGH',
     }
     return level_by_effort[thinking]
 
@@ -1043,6 +1011,10 @@ class GoogleModel(Model[Client]):
         except (errors.APIError, httpx2.TransportError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
 
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # An explicit thinking config replaces the unified one in `_translate_thinking`.
+        return ('google_thinking_config',) if model_settings.get('google_thinking_config') else ()
+
     def _build_http_options(self, model_settings: GoogleModelSettings, headers: dict[str, str]) -> HttpOptionsDict:
         """The per-request HTTP options: headers, plus the `timeout` and `max_retries` settings."""
         http_options: HttpOptionsDict = {'headers': headers}
@@ -1097,6 +1069,7 @@ class GoogleModel(Model[Client]):
                 'medium': 8192,
                 'high': 24576,
                 'xhigh': 24576,  # max for Flash; Pro goes to 32768 but we use a safe common max
+                'max': 24576,
             }
             return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
 
@@ -1276,7 +1249,7 @@ class GoogleModel(Model[Client]):
             file_search_enabled=_file_search_enabled(model_request_parameters),
         )
         if (initial_input_tokens := _initial_input_tokens(response)) is not None:
-            mark_initial_input_tokens(model_response, initial_input_tokens)
+            mark_context_input_tokens(model_response, initial_input_tokens)
         return model_response
 
     async def _process_streamed_response(
@@ -1329,7 +1302,7 @@ class GoogleModel(Model[Client]):
                 # of the attribution the framing exists to give it.
                 tool_return_media: list[PartDict] = []
 
-                for part in m.parts:
+                for part in _sendable_request_parts(m.parts):
                     if isinstance(part, SystemPromptPart):
                         system_parts.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
@@ -1338,23 +1311,10 @@ class GoogleModel(Model[Client]):
                         function_response_part, framed_media = await self._map_tool_return(part)
                         message_parts.append(function_response_part)
                         tool_return_media.extend(framed_media)
-                    elif isinstance(part, RetryPromptPart):
-                        if part.tool_name is None:
-                            message_parts.append({'text': part.model_response()})
-                        else:
-                            message_parts.append(
-                                {
-                                    'function_response': {
-                                        'name': part.tool_name,
-                                        'response': {'error': part.model_response()},
-                                        'id': part.tool_call_id,
-                                    }
-                                }
-                            )
                     elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                         raise _unprojected_instruction_delta_error()
-                    elif isinstance(part, ToolAvailabilityDeltaPart):
-                        raise _unsynthesized_tool_availability_delta_error()
+                    elif isinstance(part, _UnpreparedPart):
+                        raise _unprepared_part_error(part)
                     elif isinstance(part, SpeechPart):  # pragma: no cover
                         # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                         raise _unconverted_speech_part_error()
@@ -1440,7 +1400,7 @@ class GoogleModel(Model[Client]):
                 file_part = await self._map_file_to_part(file)
                 fallback_parts.extend([{'text': open_tag}, file_part, {'text': close_tag}])
 
-        if part.outcome == 'failed':
+        if part.outcome in ERROR_OUTCOMES:
             # Google's function-response schema prescribes an `error` key (mirroring the `output` key
             # used for success) for reporting a failed tool call, so this is Gemini's native error
             # channel, not the generic `{"error": ...}` wrapper other providers fall back to — hence
@@ -1636,7 +1596,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     cumulative=True,
                 )
                 if (initial_input_tokens := _initial_input_tokens(chunk)) is not None:
-                    mark_initial_input_tokens(self, initial_input_tokens)
+                    mark_context_input_tokens(self, initial_input_tokens)
                 # Grounding is counted from each chunk alone, and `web_searches` isn't carried forward like the token
                 # fields in `_usage_metadata_as_usage`: Gemini sends all grounding metadata once, on the final chunk,
                 # with the last `usage_metadata`. Seen in every grounded stream cassette and in live streams on
@@ -2084,7 +2044,7 @@ def _can_echo_server_side_tool_part(tool_call_id: str, *, supports_tool_combinat
 
     1. The model doesn't support tool combination (pre-Gemini-3) — those models never emit
        `tool_call`/`tool_response` parts and reject them in request bodies.
-    2. The `tool_call_id` was synthesized by pydantic-ai (the `pyd_ai_` prefix from
+    2. The `tool_call_id` was synthesized by pydantic-ai (the `TOOL_CALL_ID_PREFIX` prefix from
        [`generate_tool_call_id`][pydantic_ai._utils.generate_tool_call_id]) — i.e. the part was
        reconstructed from `grounding_metadata` / `url_context_metadata` and never had a real
        Google id. Gemini rejects unknown ids, so message histories built before this round-trip
@@ -2092,7 +2052,7 @@ def _can_echo_server_side_tool_part(tool_call_id: str, *, supports_tool_combinat
     """
     if not supports_tool_combination:
         return False
-    return not tool_call_id.startswith('pyd_ai_')
+    return not tool_call_id.startswith(_utils.TOOL_CALL_ID_PREFIX)
 
 
 def _process_part(

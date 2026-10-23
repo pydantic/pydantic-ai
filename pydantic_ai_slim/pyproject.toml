@@ -166,7 +166,10 @@ temporal = ["temporalio>=1.27.0"]
 # DBOS
 dbos = ["dbos>=2.10.0"]
 # Prefect
-prefect = ["prefect>=3.7.5"]
+# 3.9.0 is the first Prefect to cap `fastapi<0.151` (PrefectHQ/prefect#23478) and drop the `min_items`
+# keyword FastAPI 0.155 rejects (PrefectHQ/prefect#23476); earlier ones fail to import their server on
+# a current FastAPI.
+prefect = ["prefect>=3.9.0"]
 # Spec (YAML agent specs)
 spec = ["pyyaml>=6.0.2", "pydantic-handlebars>=0.1.0"]
 
