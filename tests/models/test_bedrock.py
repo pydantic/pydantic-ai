@@ -1488,6 +1488,26 @@ async def test_bedrock_citations_off_for_structured_output(
     }
 
 
+@pytest.mark.parametrize(
+    'tool_choice',
+    [pytest.param('required', id='required'), pytest.param(['save_summary'], id='named-tool')],
+)
+async def test_bedrock_citations_with_forced_tool_raises(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, tool_choice: Literal['required'] | list[str]
+) -> None:
+    """With a forced tool call, Anthropic models write their `<cite>` markup into the tool's arguments, so it's an error.
+
+    Checked live: 3 of 3 forced calls got the markup with citations on, none without. Unit test: no request is sent.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    with pytest.raises(UserError, match="`Citations\\(\\)` can't be used with a `tool_choice` that forces a tool call"):
+        await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+            [ModelRequest(parts=[UserPromptPart(content='Summarise the policy.')])],
+            ModelRequestParameters(function_tools=[ToolDefinition(name='save_summary')], allow_text_output=True),
+            BedrockModelSettings(citations=True, tool_choice=tool_choice),
+        )
+
+
 async def test_bedrock_citations_for_uploaded_document(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:

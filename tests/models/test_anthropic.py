@@ -66,7 +66,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._utils import PeekableAsyncStream
-from pydantic_ai.capabilities import Capability, NativeTool, ToolSearch
+from pydantic_ai.capabilities import AbstractCapability, Capability, Citations, NativeTool, ToolSearch
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
@@ -4105,6 +4105,41 @@ async def test_anthropic_citations_off_for_structured_output(
     assert 'citations' not in request['messages'][0]['content'][1]
     web_fetch_tool = next(tool for tool in request['tools'] if tool['name'] == 'web_fetch')
     assert web_fetch_tool.get('citations') is None
+
+
+@pytest.mark.parametrize(
+    'tool_choice',
+    [pytest.param('required', id='required'), pytest.param(['save_summary'], id='named-tool')],
+)
+async def test_anthropic_citations_with_forced_tool_raises(
+    allow_model_requests: None, tool_choice: Literal['required'] | list[str]
+) -> None:
+    """With a forced tool call, Anthropic writes its `<cite>` markup into the tool's arguments, so it's an error.
+
+    The tool is forced for one step by a capability, as in the docs' "force a tool on the first step" example.
+    Unit test: the error is raised before any request is sent.
+    """
+
+    @dataclass
+    class ForceTool(AbstractCapability[Any]):
+        def get_model_settings(self) -> Callable[[RunContext[Any]], ModelSettings]:
+            return lambda ctx: ModelSettings(tool_choice=tool_choice)
+
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=5, output_tokens=6))
+    )
+    agent = Agent(
+        AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client)),
+        capabilities=[Citations(), ForceTool()],
+    )
+
+    @agent.tool_plain
+    def save_summary(summary: str) -> str:  # pragma: no cover
+        return summary
+
+    with pytest.raises(UserError, match="`Citations\\(\\)` can't be used with a `tool_choice` that forces a tool call"):
+        await agent.run('Summarise the policy.')
+    assert get_mock_chat_completion_kwargs(mock_client) == []
 
 
 @pytest.mark.parametrize('citations', [pytest.param(False, id='off'), pytest.param(True, id='on')])
