@@ -610,7 +610,6 @@ def test_profile_allow_seeding() -> None:
         supports_interruption=True,
         supports_output_truncation=False,
         supports_text_output=False,  # Grok Voice always speaks
-        supports_audio_output=True,
         supports_session_seeding=True,
         supports_webrtc=False,
         supports_seeding_images=False,

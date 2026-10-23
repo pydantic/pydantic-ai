@@ -197,7 +197,6 @@ async def test_audio_in_server_vad_turn(
         supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
         # Voice Live's session config takes `modalities: ['text']`, so text output is supported.
         supports_text_output=True,
-        supports_audio_output=True,
         supports_tool_return_schema=False,  # no native surface; opted-in schemas go into descriptions
         emits_input_speech_events=True,
         synthesizes_turn_boundary=False,

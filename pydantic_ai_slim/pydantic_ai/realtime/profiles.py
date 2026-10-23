@@ -215,7 +215,6 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_interruption': False,
     'supports_output_truncation': False,
     'supports_text_output': True,
-    'supports_audio_output': True,
     'supports_session_seeding': False,
     'supports_webrtc': False,
     'supports_seeding_images': False,
