@@ -1,8 +1,8 @@
 ---
-description: "Connect browsers and phone calls to a Pydantic AI realtime voice agent via WebRTC, a WebSocket relay or a Twilio bridge, and host the long-lived sessions on your server."
+description: "Deploy a Pydantic AI realtime voice agent: connect browsers and phone calls via WebRTC, a WebSocket relay or a Twilio bridge, and host the long-lived sessions on your server."
 ---
 
-# Connecting a frontend
+# Deployment
 
 Keep provider keys, tools, and business logic on the server; connect user devices to your backend,
 not straight to the provider. How audio travels between the device and the model depends on the
