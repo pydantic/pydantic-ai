@@ -189,6 +189,8 @@ Pydantic AI leaves out citations whose text clearly changed, but an edit that ke
 
 History that's sent back unchanged goes out the same way every turn, so prompt caching keeps working.
 
+The [Vercel AI adapter](ui/vercel-ai.md#citations) keeps citations when the frontend holds the message history.
+
 !!! warning "The model may not see the source"
     If a user later asks about "source [1]", the model may see the `[1]` but not what it pointed to. Put the source in
     the new prompt, or let the model look it up again.
