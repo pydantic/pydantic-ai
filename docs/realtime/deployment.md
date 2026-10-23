@@ -181,10 +181,10 @@ A realtime session is not a request. It is a task that holds a WebSocket to the 
 whole call (on a [WebRTC sideband](#browser-webrtc-server-sideband), the control-plane WebSocket),
 next to the client's own connection in the [relay](#browser-backend-websocket-relay) and telephony
 setups. Each [`session()`][pydantic_ai.agent.AgentRealtime.session] opens its own provider connection,
-and one process can run many sessions on its event loop. Unlike a [standard agent](../production.md#deploy),
-where any instance can continue any conversation, a call lives in the process that holds it: its
-provider connection, running tools, and (on Gemini) resumption handles, which
-[can't be moved to another process](https://github.com/pydantic/pydantic-ai/issues/7302).
+and one process can run many sessions on its event loop. Unlike a
+[standard agent](../production.md#deploy), where any instance can continue any conversation, a call
+lives in the process that holds it: its provider connection, running tools, and (on Gemini) resumption
+handles, which [can't be moved to another process](https://github.com/pydantic/pydantic-ai/issues/7302).
 
 A WebSocket stays on the instance that accepted it, so the relay needs no extra routing; if your app
 splits one call across several requests, route them to the instance holding the session. A client that
@@ -196,7 +196,8 @@ Set the platform's request or connection timeout above your longest call. Provid
 duration too, and a `reconnect` policy survives that cap on most of them (see
 [provider session limits](lifecycle.md#provider-session-limits)), but nothing recovers the client's
 connection when your platform cuts it: in the relay above, the browser socket closing ends the session.
-Enforce your own maximum call length with a [watchdog](lifecycle.md#ending-a-call) instead.
+Enforce your own maximum call length with a [watchdog](lifecycle.md#ending-a-call) instead, calling
+[`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] rather than `close()` on a sideband.
 
 Scale on concurrent calls rather than request rate; a relay also carries every call's audio through
 the backend, so watch its bandwidth and CPU. A deploy has to drain: stop sending new calls to an
@@ -213,11 +214,11 @@ WebSockets. Platforms that cap requests work within their limits: Cloud Run, for
 WebSocket against its request timeout, which can be raised to an hour, so a longer call has to
 continue on a new connection and session. Request-scoped functions don't fit. With AWS Lambda behind
 an Amazon API Gateway WebSocket API, API Gateway holds the client's connection but invokes the function
-once per message, so no invocation lives long enough to hold the provider connection between messages. The session has to
-run on long-lived compute instead. API Gateway can still front it, but then you build the routing
-yourself: a registry that sends each message to the instance holding that call's session, audio
-base64-encoded in text frames (it rejects binary ones) and sent back through its `@connections` API,
-and a connection that closes after ten idle minutes or two hours.
+once per message, so no invocation lives long enough to hold the provider connection between messages.
+The session has to run on long-lived compute instead. API Gateway can still front it, but then you
+build the routing yourself: a registry that sends each message to the instance holding that call's
+session, audio base64-encoded in text frames (it rejects binary ones) and sent back through its
+`@connections` API, and a connection that closes after ten idle minutes or two hours.
 
 [Browser WebRTC](#browser-webrtc-server-sideband) takes media off your servers: audio flows directly
 between the browser and the provider, and your backend carries only the sideband. That removes the
