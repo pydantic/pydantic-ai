@@ -17,9 +17,9 @@ Paths are relative to `pydantic_ai_slim/pydantic_ai/`.
 
 ### One method per part type, one dispatch per message kind
 
-- Map each part type in its own method. Call those methods from one exhaustive dispatch per message kind: an `isinstance` chain or a `match` over the part union, ending in `assert_never`. Precedent: `models/openai.py::OpenAIChatModel._MapModelResponseContext.map_assistant_message`. — A new part type then adds one flat arm and one method, not a branch nested inside the loop.
+- Map each part type in its own method. Call those methods from one exhaustive dispatch per message kind: an `isinstance` chain or a `match` over the part union, ending in `assert_never`. Precedents: `models/anthropic.py::AnthropicModel._map_model_response` and `models/openai.py::OpenAIChatModel._MapModelResponseContext.map_assistant_message`. — A new part type then adds one flat arm and one method, not a branch nested inside the loop.
 - A per-part method with one call site is an arm of the dispatch. Make it a method on the model class, never a `def` nested in the mapper. An arm of one statement stays inline in the dispatch. — A nested function counts toward the mapper's complexity, so it removes nothing.
-- Keep the request-wide state those methods share in a private dataclass that holds data only. Build it once before the loop: the facts each part is mapped against (resolved flags, tool definitions by name) and the wire lists being built. The per-part methods live on the model class. — `_MapModelResponseContext` carries methods because `OpenRouterModel` and `SnowflakeModel` subclass it to override them; a context that nothing subclasses holds data only.
+- Keep the request-wide state those methods share in a private dataclass that holds data only. Build it once before the loop: the facts each part is mapped against (resolved flags, tool definitions by name) and the wire lists being built. The per-part methods live on the model class. Precedent: `models/anthropic.py::_MapMessagesContext`. — `_MapModelResponseContext` carries methods because `OpenRouterModel` and `SnowflakeModel` subclass it to override them; a context that nothing subclasses holds data only.
 - Map each wire item of a response in one function, and call it from both `_process_response` and the stream. Precedent: `models/anthropic.py::_map_server_tool_use_block` and its sibling `_map_*_block` functions. — `request()` and `request_stream()` must build the same parts, and two copies of a mapping drift.
 - In a stream, map each event type in its own sync method that returns an `Iterable` of events, and forward it from `_get_event_iterator` in one loop. Precedent: `models/openai.py::OpenAIStreamedResponse._map_part_delta`. — An async generator can't `yield from`, so every parts-manager call made directly in `_get_event_iterator` needs its own re-yield loop; a sync method can `yield from` each one.
 
@@ -58,7 +58,7 @@ Paths are relative to `pydantic_ai_slim/pydantic_ai/`.
 ### Thinking round-trips
 
 - Send a `ThinkingPart` on a signed or encrypted reasoning channel only when this adapter owns it and it carries the signature or encrypted content the API checks.
-- Render every `ThinkingPart` the adapter doesn't send on its native channel with `_thinking_part.py::render_replayed_thinking`, and place it where its second return value says. Never join `thinking_tags` by hand. Precedents: `models/anthropic.py::AnthropicModel._map_message` and `models/bedrock.py::BedrockConverseModel._map_messages`. — The helper owns the tags and `mimics_assistant_message_formatting`; a hand-written join ignores that flag.
+- Render every `ThinkingPart` the adapter doesn't send on its native channel with `_thinking_part.py::render_replayed_thinking`, and place it where its second return value says. Never join `thinking_tags` by hand. Precedent: `models/anthropic.py::AnthropicModel._map_thinking_part`. — The helper owns the tags and `mimics_assistant_message_formatting`; a hand-written join ignores that flag.
 - Send nothing for a `ThinkingPart` that has neither content nor replay data.
 
 ### Native tool parts

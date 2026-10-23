@@ -72,7 +72,7 @@ Read `agent_docs/provider-adapters.md` before you edit an adapter's mapper. Plac
 - **a new part type** → one arm in each message kind's dispatch, calling the part's own method on the model class. When most APIs can't render the part, lower it in `Model.prepare_messages` instead; an adapter that doesn't render it raises `_unprepared_part_error(part)` in its one arm.
 - **a new native tool kind** → one entry in the adapter's `kind`-to-wire-name table. Add a branch only where the wire shape differs.
 - **a new response wire item** → one function, called from both `_process_response` and the stream.
-- **a new flag or setting that changes how an existing part maps** → read it inside that part's method, never as a new branch in the mapping loop.
+- **a new flag or setting that changes how an existing part maps** → read it inside that part's method. Where the adapter still maps that part inline in its loop, read it where the part is mapped today, and leave extracting the method to its own structural PR.
 
 ## Step 4 — Tests
 
