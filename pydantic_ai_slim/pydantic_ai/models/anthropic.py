@@ -3906,8 +3906,8 @@ class AnthropicStreamedResponse(StreamedResponse):
     _model_id_namespace: str
     _provider_url: str
     _enabled_server_tool_names: frozenset[str]
-    _history_fetched_pages: Sequence[tuple[str, str]] = ()
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _history_fetched_pages: Sequence[tuple[str, str]] = ()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name, self._model_id_namespace):
