@@ -1700,6 +1700,9 @@ class BedrockConverseModel(Model[BaseClient]):
                     elif isinstance(item, CompactionPart | FilePart):
                         # Compaction and file parts are not sent back to models that don't support them.
                         pass  # pragma: no cover
+                    elif isinstance(item, SpeechPart):
+                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
