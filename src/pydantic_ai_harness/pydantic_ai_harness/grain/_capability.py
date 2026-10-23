@@ -25,7 +25,8 @@ from pydantic_ai.capabilities import AbstractCapability, MCPAuthorizationTokenFu
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai_harness._mcp import connect_with_auth, credential, one_connection, read_only_toolset
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._mcp import credential, per_run_connection, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -89,7 +90,7 @@ class Grain(AbstractCapability[AgentDepsT]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one connection stated twice; two that disagree raise rather than merge."""
-        return one_connection(capabilities)
+        return one_per_id(capabilities)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the Grain MCP tools."""
@@ -97,8 +98,10 @@ class Grain(AbstractCapability[AgentDepsT]):
             toolset: AbstractToolset[AgentDepsT] = MCPToolset(
                 self.client, id=self.id, include_instructions=self.include_instructions
             )
+        elif callable(self.auth):
+            toolset = per_run_connection(self.auth, self._connect, id=self.id)
         else:
-            toolset = connect_with_auth(self.auth, self._connect, id=self.id)
+            toolset = self._connect(self.auth)
         if self.read_only:
             return read_only_toolset(toolset)
         return toolset

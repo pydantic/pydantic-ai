@@ -11,7 +11,8 @@ from pydantic_ai.capabilities import AbstractCapability, MCPAuthorizationTokenFu
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai_harness._mcp import connect_with_auth, credential, one_connection, read_only_toolset
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._mcp import credential, per_run_connection, read_only_toolset
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 try:
@@ -89,16 +90,17 @@ class GitHub(AbstractCapability[AgentDepsT]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one connection stated twice; two that disagree raise rather than merge."""
-        return one_connection(capabilities)
+        return one_per_id(capabilities)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the GitHub tools."""
         toolset: AbstractToolset[AgentDepsT]
         if self.client is not None:
             toolset = MCPToolset(self.client, id=self.id or _ID, include_instructions=self.include_instructions)
+        elif callable(self.auth):
+            toolset = per_run_connection(self.auth, self._connect, id=self.id or _ID, expects='a GitHub token')
         else:
-            # `_connect` rejects 'oauth' with a GitHub-specific reason.
-            toolset = connect_with_auth(self.auth, self._connect, id=self.id or _ID, reject_oauth=False)
+            toolset = self._connect(self.auth)
         # The hosted connection also sends `X-MCP-Readonly`; filtering here keeps write tools out when the header is
         # dropped or ignored on the way.
         # The hosted connection kept its `id` before this filter was added, so the filtered one keeps it too.

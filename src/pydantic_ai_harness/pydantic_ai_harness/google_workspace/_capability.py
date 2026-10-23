@@ -10,7 +10,7 @@ from pydantic_ai.capabilities import AbstractCapability, MCPAuthorizationTokenFu
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset
-from pydantic_ai_harness._mcp import connect_with_auth, credential, read_only_toolset
+from pydantic_ai_harness._mcp import credential, per_run_connection, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset
@@ -94,8 +94,11 @@ class GoogleWorkspace(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the tools for the selected products, with names prefixed by product."""
-        # `_connect` rejects 'oauth' with a Google-specific reason.
-        toolset = connect_with_auth(self.auth, self._connect, id=self.id, reject_oauth=False)
+        toolset = (
+            per_run_connection(self.auth, self._connect, id=self.id, expects='an access token')
+            if callable(self.auth)
+            else self._connect(self.auth)
+        )
         return read_only_toolset(toolset) if self.read_only else toolset
 
     def _connect(self, auth: str | None) -> AbstractToolset[AgentDepsT]:

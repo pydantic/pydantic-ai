@@ -1,4 +1,4 @@
-"""Test the shared hosted MCP helpers: credential lookup, per-run connection, and read-only selection."""
+"""Test the shared hosted MCP helpers: credential lookup, per-run connections, and read-only selection."""
 
 from __future__ import annotations
 
@@ -6,14 +6,14 @@ from dataclasses import dataclass
 
 import pytest
 
-from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolset
+from pydantic_ai.tools import RunContext, ToolDefinition
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness._mcp import connect_with_auth, credential, is_read_only, one_connection
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._mcp import credential, is_read_only, per_run_connection
 
 
 def test_explicit_credential_wins(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -35,53 +35,57 @@ def test_missing_credential_raises(auth: str | None, env: str | None, monkeypatc
         credential(auth, env=env, service='whoami')
 
 
-def _connect(auth: str | None) -> AbstractToolset[str | None]:
-    """Stand in for an integration's `_connect`: a toolset that records the token it was given."""
-    return FunctionToolset[str | None](id=f'connected-as-{auth}')
+def run_context(deps: str | None) -> RunContext[str | None]:
+    return RunContext[str | None](deps=deps, model=TestModel(), usage=RunUsage())
 
 
-async def _resolved_for(toolset: AbstractToolset[str | None], deps: str | None) -> str | None:
-    """The id of the toolset a run with `deps` connects, or `None` when it has no tools."""
-    assert isinstance(toolset, DynamicToolset)
-    run_toolset = await toolset.for_run(RunContext[str | None](deps=deps, model=TestModel(), usage=RunUsage()))
-    assert isinstance(run_toolset, DynamicToolset)
-    inner = run_toolset._toolset  # pyright: ignore[reportPrivateUsage]
-    return None if inner is None else inner.id
+def token_from_deps(ctx: RunContext[str | None]) -> str | None:
+    return ctx.deps
 
 
-def test_fixed_auth_connects_once() -> None:
-    assert connect_with_auth('user-token', _connect, id='whoami').id == 'connected-as-user-token'
+def must_not_connect(token: str) -> FunctionToolset[str | None]:
+    raise AssertionError('`oauth` must not connect')  # pragma: no cover
 
 
-async def test_sync_and_async_auth_functions_connect_each_run() -> None:
-    def sync_token(ctx: RunContext[str | None]) -> str | None:
+async def test_per_run_connection_connects_with_each_run_token() -> None:
+    tokens: list[str] = []
+
+    def connect(token: str) -> FunctionToolset[str | None]:
+        tokens.append(token)
+        return FunctionToolset[str | None]()
+
+    toolset = per_run_connection(token_from_deps, connect, id='whoami')
+    for deps in ['alice', None, '', 'bob']:
+        await toolset.for_run(run_context(deps))
+    assert (toolset.id, tokens) == ('whoami', ['alice', 'bob'])
+
+
+async def test_per_run_connection_awaits_an_async_auth_function() -> None:
+    async def async_token_from_deps(ctx: RunContext[str | None]) -> str | None:
         return ctx.deps
 
-    async def async_token(ctx: RunContext[str | None]) -> str | None:
-        return ctx.deps
+    tokens: list[str] = []
 
-    for auth in (sync_token, async_token):
-        toolset = connect_with_auth(auth, _connect, id='whoami')
-        assert toolset.id == 'whoami'
-        assert await _resolved_for(toolset, 'alice') == 'connected-as-alice'
-        assert await _resolved_for(toolset, 'bob') == 'connected-as-bob'
+    def connect(token: str) -> FunctionToolset[str | None]:
+        tokens.append(token)
+        return FunctionToolset[str | None]()
 
-
-@pytest.mark.parametrize('missing', [None, ''])
-async def test_auth_function_returning_nothing_means_no_tools(missing: str | None) -> None:
-    toolset = connect_with_auth(lambda ctx: ctx.deps, _connect, id='whoami')
-    assert await _resolved_for(toolset, missing) is None
+    toolset = per_run_connection(async_token_from_deps, connect, id='whoami')
+    for deps in ['alice', None, 'bob']:
+        await toolset.for_run(run_context(deps))
+    assert tokens == ['alice', 'bob']
 
 
-async def test_auth_function_returning_oauth_raises() -> None:
-    toolset = connect_with_auth(lambda ctx: ctx.deps, _connect, id='whoami')
+async def test_per_run_connection_rejects_oauth() -> None:
+    toolset = per_run_connection(token_from_deps, must_not_connect, id=None)
     with pytest.raises(UserError, match="must return an API key or token, not 'oauth'"):
-        await _resolved_for(toolset, 'oauth')
+        await toolset.for_run(run_context('oauth'))
 
 
-async def test_reject_oauth_false_leaves_oauth_to_connect() -> None:
-    toolset = connect_with_auth(lambda ctx: ctx.deps, _connect, id='whoami', reject_oauth=False)
-    assert await _resolved_for(toolset, 'oauth') == 'connected-as-oauth'
+async def test_per_run_connection_names_the_expected_token() -> None:
+    toolset = per_run_connection(token_from_deps, must_not_connect, id=None, expects='an access token')
+    with pytest.raises(UserError, match="must return an access token, not 'oauth'"):
+        await toolset.for_run(run_context('oauth'))
 
 
 @pytest.mark.parametrize(
@@ -104,11 +108,11 @@ class Connection(AbstractCapability[None]):
 
 def test_same_configuration_is_one_connection() -> None:
     first = Connection(token='a', id='whoami')
-    assert one_connection([first, Connection(token='a', id='whoami')]) is first
+    assert one_per_id([first, Connection(token='a', id='whoami')]) is first
 
 
 def test_different_configurations_raise() -> None:
     with pytest.raises(
         UserError, match="Capability id 'whoami' is used by multiple Connection capabilities that disagree on 'token'"
     ):
-        one_connection([Connection(token='a', id='whoami'), Connection(token='b', id='whoami')])
+        one_per_id([Connection(token='a', id='whoami'), Connection(token='b', id='whoami')])

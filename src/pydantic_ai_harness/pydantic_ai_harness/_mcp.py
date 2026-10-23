@@ -12,11 +12,7 @@ from pydantic_ai.capabilities import MCPAuthorizationTokenFunc
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, PreparedToolset
-from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._warn import MCPReadOnlyNoToolsWarning
-
-one_connection = one_per_id
-"""Resolve hosted MCP capabilities that share an `id`: one connection stated twice is one, two that disagree raise."""
 
 
 def credential(auth: str | None, *, env: str | None, service: str) -> str:
@@ -30,29 +26,26 @@ def credential(auth: str | None, *, env: str | None, service: str) -> str:
     return auth
 
 
-def connect_with_auth(
-    auth: str | MCPAuthorizationTokenFunc[AgentDepsT] | None,
-    connect: Callable[[str | None], AbstractToolset[AgentDepsT]],
+def per_run_connection(
+    auth: MCPAuthorizationTokenFunc[AgentDepsT],
+    connect: Callable[[str], AbstractToolset[AgentDepsT]],
     *,
     id: str | None,
-    reject_oauth: bool = True,
-) -> AbstractToolset[AgentDepsT]:
-    """`connect(auth)` for a fixed `auth`; for a function of the run context, a toolset that connects per run.
+    expects: str = 'an API key or token',
+) -> DynamicToolset[AgentDepsT]:
+    """Call `auth` at the start of each run and `connect` with the token it returns; `None` or `''` means no tools.
 
-    The function, sync or async, is called at the start of each run, and that run connects with the token it
-    returns: each run then has a session of its own, opened as its own user. When it returns `None` or `''`, that run
-    has no tools, rather than `connect` falling back to the environment credential. The toolset is registered once
-    under `id`, as durable execution requires, and filled per run. A function returning `'oauth'` raises, unless
-    `reject_oauth=False` leaves that to `connect`, to give a service-specific reason.
+    `auth` may be sync or async. It is bound when the toolset is built, as a string `auth` is; per-run state comes
+    from its `ctx`.
+    Registered once under a fixed `id`, as durable execution requires. `expects` names the token in the error raised
+    when `auth` returns `'oauth'`.
     """
-    if not callable(auth):
-        return connect(auth)
 
     async def connect_for_run(ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         token = await await_maybe(auth(ctx))
-        if reject_oauth and token == 'oauth':
+        if token == 'oauth':
             # FastMCP reads 'oauth' as "log in through a browser", which would hang a server run.
-            raise UserError("The `auth` function must return an API key or token, not 'oauth'.")
+            raise UserError(f"The `auth` function must return {expects}, not 'oauth'.")
         return connect(token) if token else None
 
     return DynamicToolset(connect_for_run, per_run_step=False, id=id)
