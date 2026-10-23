@@ -129,7 +129,7 @@ async def _run_holding_claim(task_ctx: AsyncTaskContext, body: Callable[[], Awai
         # raised meanwhile (often its reaction to being cancelled); that error is kept as the cause.
         if len(group.exceptions) == 1:
             if error is None:
-                # `from None` would replace the SDK's own cause, the database error saying why.
+                # Keep the SDK's own cause, the database error saying why, rather than clear it with `from None`.
                 raise group.exceptions[0]
             raise group.exceptions[0] from error
         # Both failed at once: raise them together rather than lose either.
