@@ -1185,7 +1185,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )
-        # Narrowed rather than handled in `_map_model_request` so `Model.prepare_messages` stays the only place
+        # Narrowed rather than handled in `_map_system_prompt_part` so `Model.prepare_messages` stays the only place
         # that knows the `<system>`-tagged fallback: where this is `False`, the mid-conversation parts are
         # rewritten before the adapter ever sees them.
         supports_inline_system_prompts = _profile.get('supports_inline_system_prompts', False) and not isinstance(
@@ -1705,7 +1705,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             for name in part.tools_added
         ):
             betas.add('mid-conversation-tool-changes-2026-07-01')
-        # Co-extensive with the renderer in `_map_model_request`: `clear_at` is a 400 without the beta. A user
+        # Co-extensive with the renderer in `_map_system_prompt_part`: `clear_at` is a 400 without the beta. A user
         # who can't use the beta opts out by setting the profile flag to `False`, which falls back to
         # leaving finished request-scoped prompts out of the request.
         if anthropic_profile.get('supports_request_scoped_system_prompts', False) and any(
