@@ -5,6 +5,7 @@ from typing import Literal, assert_never, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
@@ -58,8 +59,9 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
     # (globally-unique IDs), so this keys on the endpoint family rather than the model version — the
     # reset follows the endpoint, and a per-version allowlist would silently miss future GPT-5.x. See #6536.
     response_scoped = interface == 'openai-responses'
+    base = openai_model_profile(base_model_name)
     return merge_profile(
-        openai_model_profile(base_model_name),
+        base,
         BedrockMantleModelProfile(
             bedrock_mantle_interface=interface,
             openai_responses_tool_call_ids_are_response_scoped=response_scoped,
@@ -73,6 +75,9 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
             # Disable the base profile's native tools to fail with a clean UserError rather than an opaque
             # provider error.
             supported_native_tools=frozenset(),
+            # OpenAI's native `computer` tool works on the `/openai/v1` endpoint as on OpenAI's own API, for the
+            # models that take it there (verified live 2026-10-22 on gpt-5.6-luna).
+            openai_supports_computer_tool=response_scoped and ToolSearchTool in base.get('supported_native_tools', ()),
         ),
     )
 
