@@ -34,7 +34,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_ai import Agent, ToolsetTool, models
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import BaseExceptionGroup
-from pydantic_ai.capabilities import MCP
+from pydantic_ai.capabilities import MCP, Capability
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     InstructionDeltaPart,
@@ -57,7 +57,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
+from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolset
 from pydantic_ai.toolsets._instruction_collection import (
     collect_toolset_instructions,
     flatten_instruction_contributions,
@@ -1171,6 +1171,44 @@ A later <context> element with the same id replaces the earlier one and stays in
         assert [(part.content, str(part.id) if part.id else None) for part in parts] == [
             ('Own guidance.', 'toolset:testserver:own'),
             ('Remote guidance.', 'toolset:testserver'),
+        ]
+
+    async def test_server_instructions_in_a_deferred_capability_only_warn_for_an_authors_own_opt_in(
+        self, fastmcp_server: FastMCP[None]
+    ):
+        """Server instructions append by the framework's choice, so where appending isn't supported they rewrite quietly.
+
+        An author's own append block in the same deferred capability still gets the warning.
+        """
+        calls = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'docs'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        capability = Capability[None](
+            id='docs',
+            defer_loading=True,
+            toolsets=[
+                MCPToolset(fastmcp_server, id='docs_server', include_instructions=True),
+                FunctionToolset[None](
+                    instructions=InstructionPart(content='Author guidance.', on_change='append'), id='author'
+                ),
+            ],
+        )
+        agent = Agent(FunctionModel(model_fn), deps_type=type(None), capabilities=[capability])
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            await agent.run('Continue.')
+
+        assert [
+            str(warning.message) for warning in caught if 'deferred capability instructions' in str(warning.message)
+        ] == [
+            "`on_change='append'` is not supported for deferred capability instructions, so instruction blocks "
+            "'toolset:author' are delivered when the capability loads and their later changes are not tracked."
         ]
 
     async def test_get_instructions_returns_none_when_disabled(
