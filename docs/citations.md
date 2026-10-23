@@ -123,12 +123,27 @@ TextPart(
 )
 ```
 
+## Citations and structured output
+
+On Anthropic, and on Bedrock with Anthropic models, citations only work when your agent's output is text. With [structured output](output.md),
+`Citations()` doesn't ask Anthropic to cite your documents, because Anthropic can't attach citations to it:
+
+- Tool output, the default, comes back as tool call arguments, which have no place for citations. With citations on,
+  the model writes its citation markup into your fields instead, such as
+  `summary='<cite index="1-1">Items may be returned within 30 days.</cite>'`.
+- With `NativeOutput`, Anthropic rejects the request: "Citations cannot be enabled when output format is set".
+- With `PromptedOutput`, some models write the same markup into your fields.
+
+So with structured output you get clean output and no document citations. If you need the citations, use text output.
+
+Anthropic always cites [web search](native-tools.md#web-search-tool) results, so with web search the markup can show
+up in structured output even without `Citations()`. The same goes for
+[web fetch](native-tools.md#web-fetch-tool) when you set `enable_citations=True` on the tool.
+
 ## Good to know
 
 - Citations are only on text parts. If your output comes from a [tool call](output.md#output-modes), as structured
   output does by default, the output itself has no citations.
-- With [structured output](output.md), `Citations()` doesn't turn on document and web fetch citations on Anthropic
-  and Bedrock: the model would write its citation markup into your output.
 - When streaming, citations can arrive after their text: at the end of each text part on Anthropic, and at the end of
   the response on Google and OpenAI Chat. Read citations from the final response.
 - Citation URLs, titles and excerpts come from outside sources, so treat them as untrusted. Excerpts can also contain
