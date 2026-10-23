@@ -4172,17 +4172,26 @@ async def test_prefect_durability_identical_events_are_dispatched_twice() -> Non
     assert calls == 2
 
 
-async def test_prefect_durability_identical_capability_operations_execute_twice_and_replay() -> None:
+@pytest.mark.parametrize(
+    ('capability_id', 'operation_name'),
+    [
+        pytest.param('side_effect', 'record', id='ordinary'),
+        pytest.param('workspace', 'call', id='workspace-operation-id'),
+    ],
+)
+async def test_prefect_durability_identical_capability_operations_execute_twice_and_replay(
+    capability_id: str, operation_name: str
+) -> None:
     calls = 0
 
     class SideEffectCapability(AbstractCapability[object]):
-        id = 'side_effect'
+        id = capability_id
 
         async def before_run(self, ctx: RunContext[object]) -> None:
             await self.record(ctx, 'same')
             await self.record(ctx, 'same')
 
-        @durable_operation('record')
+        @durable_operation(operation_name)
         async def record(self, ctx: RunContext[object], value: str) -> None:
             nonlocal calls
             calls += 1
