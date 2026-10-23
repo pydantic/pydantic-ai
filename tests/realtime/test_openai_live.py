@@ -924,8 +924,10 @@ async def test_a_late_completion_does_not_end_a_delegation_mid_continuation() ->
     assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_a_call_that_raised_gives_up_its_round() -> None:
-    """The backend resumes only from every output of its round, so a call whose tool raised leaves none to continue.
+async def test_an_unanswered_call_gives_up_its_round() -> None:
+    """The backend resumes only from every output of its round, so a call left without one leaves none to continue.
+
+    A call is left without one when a usage limit stops it, or its failure result can't be sent.
 
     The round is given up as a failed backend would be: no `response.create`, a sibling's result goes nowhere, and the
     delegation no longer suspends the turn clock.
@@ -943,7 +945,7 @@ async def test_a_call_that_raised_gives_up_its_round() -> None:
     assert connection.sent == []
 
 
-async def test_a_call_that_raised_while_its_response_runs_gives_up_the_round_at_its_terminal() -> None:
+async def test_a_call_unanswered_while_its_response_runs_gives_up_the_round_at_its_terminal() -> None:
     """The response that asked for the calls may still be running: the round is given up once it ends."""
     connection = _Recorder()
     _open_delegation(connection, call_ids=('c1', 'c2'))

@@ -273,10 +273,9 @@ _INFERRED_BOUNDARY_SILENCE_FRAMES = 120
 def _marks(case: RealtimeParityCase, *, unrecorded_on_azure: bool = False) -> tuple[pytest.MarkDecorator, ...]:
     """The marks a row needs: ElevenLabs' REST preflight records through HTTP VCR next to the WebSocket cassette.
 
-    Our Azure realtime resource answers 401, so the spoken scenarios, and the ones added since, could not be recorded
-    for it. Its
-    row is skipped rather than dropped, so the hole stays visible: record it (and delete this mark) once
-    the Azure key works again. Azure's text scenario still runs from its existing recording.
+    Our Azure realtime resource answers 401, so scenarios recorded after that (the spoken ones, and the raising-tool
+    one) have no Azure recording. Their row is skipped rather than dropped, so the hole stays visible: record it (and
+    delete this mark) once the Azure key works again. Azure's text scenario still runs from its existing recording.
     """
     marks: list[pytest.MarkDecorator] = []
     if case.route == 'elevenlabs-agents':
