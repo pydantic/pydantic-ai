@@ -8,6 +8,7 @@ the wire (the methodology that surfaced the OpenRouter `enabled: True` miss).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -15,6 +16,8 @@ import pytest
 from cassetter import Cassette
 
 from pydantic_ai import Agent
+from pydantic_ai.direct import model_request
+from pydantic_ai.messages import ModelRequest
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 
 from .cassette_utils import single_request_body
@@ -35,6 +38,10 @@ with try_import() as google_imports:
 with try_import() as mistral_imports:
     from pydantic_ai.models.mistral import MistralModel
     from pydantic_ai.providers.mistral import MistralProvider
+
+with try_import() as openai_imports:
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
@@ -399,3 +406,71 @@ async def test_reasoning_wire_contract(
         assert node == value, f'expected {path}={value!r} on the wire, got {node!r}'
     for key in case.absent:
         assert key not in body, f'expected {key!r} absent from the wire, got {body[key]!r}'
+
+
+# A provider-specific effort from a broader scope still wins over a narrower `thinking`, as documented, and the
+# caller is told which setting took precedence. Each scope records its own exchange, matched on the body so the
+# recording pins that the explicit effort is what goes out.
+
+_OVERRIDE_PROMPT = 'What is 2+2? Reply with just the number.'
+
+
+def _openai_responses_model(api_key: str, settings: ModelSettings | None = None) -> OpenAIResponsesModel:
+    return OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key=api_key), settings=settings)
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_model_reasoning_effort_overrides_run_thinking_with_warning(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    model = _openai_responses_model(openai_api_key, OpenAIResponsesModelSettings(openai_reasoning_effort='low'))
+    with pytest.warns(
+        UserWarning,
+        match=re.escape(
+            "`openai_reasoning_effort` from the model's `settings` takes precedence over `thinking='high'` from the "
+            "run's `model_settings`. Set `openai_reasoning_effort` in the run's `model_settings` instead of "
+            "`thinking`, or remove it from the model's `settings`."
+        ),
+    ):
+        await Agent(model).run(_OVERRIDE_PROMPT, model_settings=ModelSettings(thinking='high'))
+    assert single_request_body(vcr)['reasoning'] == {'effort': 'low'}
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_agent_reasoning_effort_overrides_run_thinking_with_warning(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    agent = Agent(
+        _openai_responses_model(openai_api_key),
+        model_settings=OpenAIResponsesModelSettings(openai_reasoning_effort='low'),
+    )
+    with pytest.warns(
+        UserWarning,
+        match=re.escape(
+            "`openai_reasoning_effort` from the agent's `model_settings` takes precedence over `thinking='high'` "
+            "from the run's `model_settings`."
+        ),
+    ):
+        await agent.run(_OVERRIDE_PROMPT, model_settings=ModelSettings(thinking='high'))
+    assert single_request_body(vcr)['reasoning'] == {'effort': 'low'}
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_model_reasoning_effort_overrides_direct_request_thinking_with_warning(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    model = _openai_responses_model(openai_api_key, OpenAIResponsesModelSettings(openai_reasoning_effort='low'))
+    with pytest.warns(
+        UserWarning,
+        match=re.escape(
+            "`openai_reasoning_effort` from the model's `settings` takes precedence over `thinking='high'` from the "
+            "request's `model_settings`."
+        ),
+    ):
+        await model_request(
+            model, [ModelRequest.user_text_prompt(_OVERRIDE_PROMPT)], model_settings=ModelSettings(thinking='high')
+        )
+    assert single_request_body(vcr)['reasoning'] == {'effort': 'low'}

@@ -451,6 +451,8 @@ class CohereModel(Model[AsyncClientV2]):
                             raise RuntimeError('Cohere does not yet support multi-modal inputs.')
                     yield UserChatMessageV2(role='user', content=cohere_content)
             elif isinstance(part, ToolReturnPart):
+                if part.files:
+                    raise NotImplementedError('Files are not supported in Cohere tool returns')
                 yield ToolChatMessageV2(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part),

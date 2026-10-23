@@ -36,7 +36,7 @@ The [`Thinking.effort`][pydantic_ai.capabilities.Thinking.effort] value accepts:
 - `'minimal'` / `'low'` / `'medium'` / `'high'` / `'xhigh'` / `'max'` — enable thinking at a specific effort level (unsupported levels map to the closest available value)
 
 These are the same values accepted by the underlying `thinking` model setting.
-When omitted, the model uses its default behavior. Provider-specific settings (documented in the sections below) take precedence when both are set.
+When omitted, the model uses its default behavior. Provider-specific settings (documented in the sections below) take precedence when both are set, except that `thinking=False` still disables reasoning on Cerebras and on Groq's qwen3 models. If the provider-specific setting comes from a broader scope than `thinking` (for example, the model's `settings` while `thinking` comes from this capability, `agent.run()` or a direct request), a `UserWarning` names both. Settings given as a callable ([dynamic model settings](../agent.md#dynamic-model-settings)) are not checked, and neither are capability settings, this capability's `thinking` included, once any capability's settings are a callable or are deferred with `defer_loading`.
 
 ### Provider translation
 
@@ -340,7 +340,7 @@ agent = Agent(model, model_settings=settings)
     Most Groq reasoning models do not support truly disabling thinking. When `thinking=False` is set via the unified setting, the behavior is family-specific: the qwen3 family truly disables reasoning via `reasoning_effort='none'` (and when combined with an explicit `groq_reasoning_effort` on qwen3, the disable wins and `groq_reasoning_effort` is ignored, with a warning); the gpt-oss family reasons always-on and cannot be disabled, so `thinking=False` sends its lowest effort, `reasoning_effort='low'`, with `reasoning_format='hidden'` to keep the reasoning out of the response.
 
 !!! note
-    The accepted `reasoning_effort` values are family-specific (see the [Groq docs](https://console.groq.com/docs/reasoning#reasoning-effort)): the gpt-oss family accepts `'low'`, `'medium'`, and `'high'`, so unified `thinking` effort levels map onto those; the qwen3 family accepts only `'none'` and `'default'`, so unified enable-levels there control `reasoning_format` but send no `reasoning_effort` (there is no gradation to map). An explicit `groq_reasoning_effort` always takes precedence over the unified mapping.
+    The accepted `reasoning_effort` values are family-specific (see the [Groq docs](https://console.groq.com/docs/reasoning#reasoning-effort)): the gpt-oss family accepts `'low'`, `'medium'`, and `'high'`, so unified `thinking` effort levels map onto those; the qwen3 family accepts only `'none'` and `'default'`, so unified enable-levels there control `reasoning_format` but send no `reasoning_effort` (there is no gradation to map). An explicit `groq_reasoning_effort` takes precedence over the unified mapping, except that on the qwen3 family `thinking=False` still wins and sends `reasoning_effort='none'`.
 
 ## OpenRouter
 
