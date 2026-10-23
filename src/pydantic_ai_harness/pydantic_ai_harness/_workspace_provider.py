@@ -187,6 +187,12 @@ def command_argv(command: WorkspaceCommand, shell: bool) -> list[str]:
     return list(command)
 
 
+def check_env_types(env: Mapping[str, str] | None) -> None:
+    """Raise `TypeError` unless `env` is `None` or maps strings to strings."""
+    if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
+        raise TypeError('env keys and values must be strings')
+
+
 def check_env(env: Mapping[str, str] | None) -> None:
     """Raise unless `env` maps non-empty names without `=` or NUL to strings without NUL.
 
@@ -194,8 +200,7 @@ def check_env(env: Mapping[str, str] | None) -> None:
     """
     if env is None:
         return
-    if any(type(key) is not str or type(value) is not str for key, value in env.items()):
-        raise TypeError('env keys and values must be strings')
+    check_env_types(env)
     if any(not key or '=' in key or '\0' in key or '\0' in value for key, value in env.items()):
         raise ValueError('env keys must be non-empty without `=` or NUL, and values must not contain NUL')
 

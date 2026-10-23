@@ -10,7 +10,13 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.workspaces import CommandResult, LocalWorkspaceBackend, Workspace, WorkspaceCommand
+from pydantic_ai.workspaces import (
+    CommandResult,
+    LocalWorkspaceBackend,
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceCommand,
+)
 from pydantic_ai_harness.filesystem import FileSystem, FileSystemToolset
 
 from .conftest import tools_path
@@ -228,9 +234,9 @@ async def test_posix_oversized_line_keeps_later_matches(tmp_path: Path, no_rg_gi
 
 
 async def test_posix_output_cap_reports_truncation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # A smaller cap stands in for `_MAX_OUTPUT_BYTES`; the file still overflows it and the pipe buffer
+    # A smaller cap stands in for `MAX_OUTPUT_BYTES`; the file still overflows it and the pipe buffer
     # many times over, so `head` closes the pipe while the search is still writing.
-    monkeypatch.setattr('pydantic_ai_harness.filesystem._command_search._MAX_OUTPUT_BYTES', 50_000)
+    monkeypatch.setattr('pydantic_ai_harness.filesystem._command_search.MAX_OUTPUT_BYTES', 50_000)
     bin_dir, scratch, root = tmp_path / 'bin', tmp_path / 'scratch', tmp_path / 'ws'
     path = tools_path(bin_dir, exclude=frozenset({'rg', 'mktemp'}))
     # Put the search's temp files in a known directory: BSD mktemp ignores TMPDIR here.
@@ -251,8 +257,8 @@ async def test_posix_output_cap_reports_truncation(tmp_path: Path, monkeypatch: 
 async def test_posix_output_cap_drops_the_match_line_it_cuts(
     tmp_path: Path, no_rg_git_path: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A smaller cap stands in for `_MAX_OUTPUT_BYTES`, so it lands inside the second file's long line cheaply.
-    monkeypatch.setattr('pydantic_ai_harness.filesystem._command_search._MAX_OUTPUT_BYTES', 50_000)
+    # A smaller cap stands in for `MAX_OUTPUT_BYTES`, so it lands inside the second file's long line cheaply.
+    monkeypatch.setattr('pydantic_ai_harness.filesystem._command_search.MAX_OUTPUT_BYTES', 50_000)
     (tmp_path / 'a.txt').write_text('needle\n')
     (tmp_path / 'b.txt').write_text('needle' + 'x' * 100_000 + '\n')
     backend = CountingBackend(tmp_path, no_rg_git_path)
@@ -353,3 +359,168 @@ async def test_the_fallback_is_logged_once_per_workspace(
         assert await tools.list_files(workspace=workspace) == 'a.txt'
     (record,) = caplog.records
     assert record.getMessage().startswith(f'`rg` is not on the PATH of the workspace at {tmp_path.resolve()}')
+
+
+async def test_include_glob_with_a_slash_matches_alike_on_every_search_path(
+    tmp_path: Path, no_rg_path: str, no_rg_git_path: str
+) -> None:
+    """`rg --glob` anchors a glob with a `/` and its `*` stops at `/`, so `src/*.py` alone would miss
+    `src/pkg/m.py` there while the walker and the POSIX fallback find it.
+    """
+    (tmp_path / 'src' / 'pkg').mkdir(parents=True)
+    (tmp_path / 'src' / 'pkg' / 'm.py').write_text('needle\n')
+    (tmp_path / 'src' / 'pkg' / 'm.txt').write_text('needle\n')
+    tools = FileSystem[None]().get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    workspaces = {
+        'rg': LocalWorkspaceBackend(tmp_path),
+        'posix': LocalWorkspaceBackend(tmp_path, env={'PATH': no_rg_path}),
+        # `find` prints `./src/pkg/m.py`, which the glob is matched against without the `./`.
+        'posix without git': LocalWorkspaceBackend(tmp_path, env={'PATH': no_rg_git_path}),
+        'walker': ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path))),
+    }
+    for name, workspace in workspaces.items():
+        nested = await tools.search_files('needle', include_glob='src/*.py', workspace=workspace)
+        assert nested == 'src/pkg/m.py:1:needle', name
+        below = await tools.search_files('needle', path='src', include_glob='*.py', workspace=workspace)
+        assert below == 'src/pkg/m.py:1:needle', name
+
+
+async def test_include_glob_without_a_slash_matches_file_names_at_any_depth_with_rg(
+    tmp_path: Path, no_rg_git_path: str
+) -> None:
+    """A glob without a `/` still goes to `rg --glob`, which matches it against file names at any depth."""
+    (tmp_path / 'tests').mkdir()
+    (tmp_path / 'tests' / 'test_m.py').write_text('needle\n')
+    (tmp_path / 'test_root.py').write_text('needle\n')
+    (tmp_path / 'm.py').write_text('needle\n')
+    tools = FileSystem[None]().get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    found = await tools.search_files('needle', include_glob='test_*.py', workspace=LocalWorkspaceBackend(tmp_path))
+    assert found == 'test_root.py:1:needle\ntests/test_m.py:1:needle'
+    # Without `rg` or git, `find` prints `./test_root.py`, which the glob is matched against without the `./`.
+    no_git = LocalWorkspaceBackend(tmp_path, env={'PATH': no_rg_git_path})
+    assert await tools.search_files('needle', include_glob='test_*.py', workspace=no_git) == 'test_root.py:1:needle'
+
+
+async def test_include_glob_with_rg_only_syntax_still_goes_to_rg(tmp_path: Path) -> None:
+    """`fnmatch` has no `**/` for zero directories, `{a,b}`, `!` exclusion, or `/` anchor, so `rg` keeps such a glob."""
+    (tmp_path / 'src').mkdir()
+    (tmp_path / 'src' / 'a.py').write_text('needle\n')
+    (tmp_path / 'src' / 'b.txt').write_text('needle\n')
+    (tmp_path / 'tests').mkdir()
+    (tmp_path / 'tests' / 't.py').write_text('needle\n')
+    tools = FileSystem[None]().get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    workspace = LocalWorkspaceBackend(tmp_path)
+    assert await tools.search_files('needle', include_glob='src/**/*.py', workspace=workspace) == 'src/a.py:1:needle'
+    both = await tools.search_files('needle', include_glob='src/*.{py,txt}', workspace=workspace)
+    assert both == 'src/a.py:1:needle\nsrc/b.txt:1:needle'
+    others = await tools.search_files('needle', include_glob='!tests/**', workspace=workspace)
+    assert others == 'src/a.py:1:needle\nsrc/b.txt:1:needle'
+    assert await tools.search_files('needle', include_glob='/src/*.py', workspace=workspace) == 'src/a.py:1:needle'
+
+
+@pytest.mark.parametrize(
+    ('include_glob', 'expected'),
+    [
+        ('pkg/*.py', 'src/pkg/m.py:1:needle'),
+        ('src/pkg/*.py', 'src/pkg/m.py:1:needle'),
+        (
+            'src/*.py',
+            'src/a.py:1:needle\nsrc/pkg/m.py:1:needle\nsrc/src/src/z.py:1:needle\nsrc/src/y.py:1:needle',
+        ),
+        ('docs/*.py', 'No matches found.'),
+        ('src/src/*.py', 'src/src/src/z.py:1:needle\nsrc/src/y.py:1:needle'),
+    ],
+)
+async def test_include_glob_is_also_matched_below_the_search_directory(
+    tmp_path: Path, include_glob: str, expected: str
+) -> None:
+    """A glob matches a path as it is below the search directory or as it is below the root."""
+    (tmp_path / 'src' / 'pkg').mkdir(parents=True)
+    (tmp_path / 'src' / 'a.py').write_text('needle\n')
+    (tmp_path / 'src' / 'pkg' / 'm.py').write_text('needle\n')
+    (tmp_path / 'src' / 'src' / 'src').mkdir(parents=True)
+    (tmp_path / 'src' / 'src' / 'y.py').write_text('needle\n')
+    (tmp_path / 'src' / 'src' / 'src' / 'z.py').write_text('needle\n')
+    (tmp_path / 'docs').mkdir()
+    (tmp_path / 'docs' / 'd.py').write_text('needle\n')
+    tools = FileSystem[None]().get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    found = await tools.search_files(
+        'needle', path='src', include_glob=include_glob, workspace=LocalWorkspaceBackend(tmp_path)
+    )
+    assert found == expected
+
+
+async def test_include_glob_with_a_slash_keeps_rg_to_its_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`rg` searches only the glob's leading directories, so matches elsewhere can't fill the output cap."""
+    (tmp_path / 'aaa').mkdir()
+    for n in range(50):
+        (tmp_path / 'aaa' / f'{n}.py').write_text('needle\n' * 20)
+    (tmp_path / 'src' / 'pkg').mkdir(parents=True)
+    (tmp_path / 'src' / 'pkg' / 'm.py').write_text('needle\n')
+    monkeypatch.setattr('pydantic_ai_harness.filesystem._ripgrep.MAX_OUTPUT_BYTES', 2_000)
+    tools = FileSystem[None]().get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    workspace = LocalWorkspaceBackend(tmp_path)
+    assert await tools.search_files('needle', include_glob='src/*.py', workspace=workspace) == 'src/pkg/m.py:1:needle'
+
+
+async def test_include_glob_with_a_slash_keeps_ignore_files_and_hidden_paths(tmp_path: Path) -> None:
+    """Searching only the glob's directories still skips what `.gitignore` lists, and `./` names nothing hidden."""
+    subprocess.run(['git', '-C', str(tmp_path), 'init', '-q'], check=True)
+    (tmp_path / '.gitignore').write_text('src/gen/\n')
+    (tmp_path / 'src' / 'gen').mkdir(parents=True)
+    (tmp_path / 'src' / 'gen' / 'x.py').write_text('needle\n')
+    (tmp_path / 'src' / '.cache').mkdir()
+    (tmp_path / 'src' / '.cache' / 'b.py').write_text('needle\n')
+    (tmp_path / 'src' / 'a.py').write_text('needle\n')
+    tools = FileSystem[None]().get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    workspace = LocalWorkspaceBackend(tmp_path)
+    assert await tools.search_files('needle', include_glob='src/*.py', workspace=workspace) == 'src/a.py:1:needle'
+    assert await tools.search_files('needle', include_glob='./src/*.py', workspace=workspace) == 'src/a.py:1:needle'
+    assert await tools.search_files('needle', include_glob='nowhere/*.py', workspace=workspace) == 'No matches found.'
+
+
+async def test_a_brace_alternative_naming_a_hidden_directory_searches_it_with_rg(tmp_path: Path) -> None:
+    (tmp_path / '.github').mkdir()
+    (tmp_path / '.github' / 'x.yml').write_text('needle\n')
+    (tmp_path / 'src').mkdir()
+    (tmp_path / 'src' / 'x.yml').write_text('needle\n')
+    tools = FileSystem[None](tools=['grep', 'list_files']).get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    workspace = LocalWorkspaceBackend(tmp_path)
+    glob = '{.github,src}/**/*.yml'
+    found = '.github/x.yml:1:needle\nsrc/x.yml:1:needle'
+    assert await tools.search_files('needle', include_glob=glob, workspace=workspace) == found
+    assert await tools.grep('needle', glob=glob, workspace=workspace) == found
+    assert await tools.list_files(glob=glob, workspace=workspace) == '.github/x.yml\nsrc/x.yml'
+    # Excluding the same directories leaves the other hidden ones out, as without the glob.
+    (tmp_path / '.git').mkdir()
+    (tmp_path / '.git' / 'config').write_text('needle\n')
+    excluded = '!{.github,src}'
+    assert await tools.search_files('needle', include_glob=excluded, workspace=workspace) == 'No matches found.'
+    assert await tools.grep('needle', glob=excluded, workspace=workspace) == 'No matches found.'
+    vendored = '!**/{.venv,node_modules}/**'
+    assert await tools.grep('needle', glob=vendored, workspace=workspace) == 'src/x.yml:1:needle'
+
+
+async def test_a_glob_naming_a_hidden_directory_searches_it_with_rg(tmp_path: Path) -> None:
+    """A hidden directory the glob names is searched, as the walker and the POSIX fallback already do."""
+    (tmp_path / '.github' / 'workflows').mkdir(parents=True)
+    (tmp_path / '.github' / 'workflows' / 'ci.yml').write_text('needle\n')
+    (tmp_path / '.cache').mkdir()
+    (tmp_path / '.cache' / 'x.yml').write_text('needle\n')
+    tools = FileSystem[None](tools=['grep', 'list_files']).get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    workspace = LocalWorkspaceBackend(tmp_path)
+    found = '.github/workflows/ci.yml:1:needle'
+    assert await tools.search_files('needle', include_glob='.github/*.yml', workspace=workspace) == found
+    assert await tools.search_files('needle', include_glob='.github/**/*.yml', workspace=workspace) == found
+    assert await tools.grep('needle', glob='.github/**', workspace=workspace) == found
+    assert await tools.list_files(glob='.github/**', workspace=workspace) == '.github/workflows/ci.yml'

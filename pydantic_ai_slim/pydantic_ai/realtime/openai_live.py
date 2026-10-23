@@ -51,7 +51,6 @@ from typing_extensions import TypedDict
 # maps a direct one — including the cache and reasoning breakdowns genai-prices reads.
 from .. import _utils
 from .._genai_prices import best_effort_price
-from .._instrumentation import get_instructions
 from .._run_context import get_current_run_context
 from ..exceptions import UserError
 from ..messages import (
@@ -110,6 +109,7 @@ from ..usage import RequestUsage
 from ._inferred_lifecycle import InferredLifecycle
 from ._lifecycle import AnswersRevised, InputId, LifecycleEvent, RealtimeFrame, ResponseStatus, ToolCallsAbandoned
 from ._openai_protocol import (
+    AUTO_TRANSCRIPTION_MODEL,
     RealtimeHandshakeError,
     _without_media as without_media,  # pyright: ignore[reportPrivateUsage]
     expect_event,
@@ -126,6 +126,8 @@ from ._utils import (
     reconnect_with_backoff,
     resolve_advertised_tools,
     seed_retry_feedback_text,
+    session_instructions,
+    wrap_seeded_system_prompts,
 )
 from .codec import (
     AudioDelta,
@@ -481,10 +483,11 @@ def _seed_item(role: _SeedRole, text: str) -> dict[str, Any] | None:
 def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_SeedRole, str] | None:
     """The role and text a request part seeds as, or `None` when it carries nothing replayable.
 
-    `SystemPromptPart`s are routed through `instructions` instead, exactly as on the Realtime
-    protocol. A tool result becomes user-level text because Live has nowhere to put a function part in
-    seeded history, and not a developer note: its content comes from whatever the tool read, which
-    must not be replayed with more authority than it had as a tool result.
+    The standing system prompt is routed through `instructions` instead, exactly as on the Realtime
+    protocol, and `seed_input_items` has already turned a later one into `<system>`-tagged user text.
+    A tool result becomes user-level text because Live has nowhere to put a function part in seeded
+    history, and not a developer note: its content comes from whatever the tool read, which must not
+    be replayed with more authority than it had as a tool result.
     """
     # TODO(v3): remove `RetryPromptPart`. Translated ahead of the branches rather than inside one of
     # them, so a tool-bound legacy retry seeds through the `ToolReturnPart` branch below and reads
@@ -532,7 +535,7 @@ def seed_input_items(messages: Sequence[ModelMessage], *, provider_name: str) ->
     before we get here.
     """
     items: list[dict[str, Any]] = []
-    for message in messages:
+    for message in wrap_seeded_system_prompts(messages):
         if isinstance(message, ModelRequest):
             seeded_parts = [_seed_request_part(part, provider_name=provider_name) for part in message.parts]
         else:
@@ -1969,7 +1972,7 @@ def _backend_reasoning_effort(
     The backend is the model that reasons, so `thinking` is resolved against *its* profile, exactly as a
     direct Responses request to it would be: a backend that doesn't reason ignores it, `thinking=False`
     leaves a backend that always reasons at its default, and `'minimal'` becomes `'low'` where the
-    backend has no minimal effort.
+    backend has no minimal effort. `'max'` becomes `'xhigh'`: the delegation's effort levels stop at `'xhigh'`.
     """
     if (effort := delegation_settings.get('reasoning_effort')) is not None:
         return effort
@@ -1982,7 +1985,7 @@ def _backend_reasoning_effort(
         return None
     if thinking is False and thinking_always_enabled:
         return None
-    return _resolve_openai_thinking_effort(thinking, profile)
+    return _resolve_openai_thinking_effort(thinking, profile, supports_max=False)
 
 
 def _resolve_openai_model(model_id: str) -> Model | None:
@@ -2211,10 +2214,15 @@ class OpenAILiveModel(RealtimeModel):
         for setting, feature in (
             ('turn_detection', 'turn detection: Live owns turn-taking and exposes no VAD configuration'),
             ('max_tokens', 'a token limit on the spoken conversation'),
-            ('input_transcription_model', 'choosing a transcription model'),
         ):
             if settings.get(setting) is not None:
                 raise UserError(f'OpenAI GPT-Live does not support {feature}, so `{setting}` cannot be set.')
+        # Live always transcribes with its own model, which is what the `'auto'` default asks for.
+        if (transcription_model := settings.get('input_transcription_model')) not in (AUTO_TRANSCRIPTION_MODEL, None):
+            raise UserError(
+                'OpenAI GPT-Live does not support choosing a transcription model, so `input_transcription_model` '
+                f"can only be `'auto'`; got {transcription_model!r}."
+            )
 
     def _live_url(self) -> str:
         return realtime_websocket_url(self._provider.base_url, path=_LIVE_WEBSOCKET_PATH)
@@ -2369,7 +2377,7 @@ class OpenAILiveModel(RealtimeModel):
         settings = cast('OpenAILiveModelSettings', self._merge_model_settings(model_settings) or {})
         self._reject_unsupported(settings)
         handshake_timeout = settings.get('handshake_timeout', 30.0)
-        instructions = get_instructions(messages, model_request_parameters) or ''
+        instructions = session_instructions(messages, model_request_parameters)
         session_config = self._session_config(
             instructions=instructions,
             tools=model_request_parameters.function_tools,

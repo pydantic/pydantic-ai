@@ -11,8 +11,9 @@ full-history snapshots, and compaction strategies that persist their edits (e.g.
 is then post-compaction, but earlier snapshots of the same run still hold the
 originals, so reconciling each snapshot's carried-forward prefix against the
 accumulated history and excluding compaction artifacts recovers the durable record.
-The overlap is reconciled by sequence position, so byte-identical messages at
-distinct positions remain in the record. A substrate that keeps an append-only
+The overlap is the longest suffix/prefix match, so byte-identical messages at
+distinct positions remain in the record, except where a snapshot that dropped a prefix
+also repeats the exchange that ends the accumulated history. A substrate that keeps an append-only
 entry log (the session-tree direction of pydantic/pydantic-ai#9001) can implement
 `HistorySource` directly via replay and replace the adapter without touching the
 search layer.
@@ -25,6 +26,8 @@ from dataclasses import replace
 from typing import Protocol, runtime_checkable
 
 from pydantic_ai.messages import (
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -76,7 +79,8 @@ class SnapshotStore(Protocol):
     """The narrow read surface `SnapshotHistorySource` needs from a snapshot store.
 
     A structural subset of the step-persistence stores: `InMemoryStepStore`,
-    `FileStepStore`, `SqliteStepStore`, and `MongoStepStore` all satisfy it.
+    `FileStepStore`, `SqliteStepStore`, `MongoStepStore`, and `PostgresStepStore` all
+    satisfy it.
     `list_snapshots` is not part of the `StepStore` protocol yet -- the shipped
     stores implement it as a plain method; promoting it into the protocol is
     proposed alongside the session-tree evolution (pydantic/pydantic-ai#9001).
@@ -98,13 +102,17 @@ def _canonical_message(message: ModelMessage) -> ModelMessage:
     pydantic-ai stamps `timestamp`, `run_id`, and `conversation_id` onto a
     message (and fills `instructions` on requests) after the boundary snapshot
     that first carries it is serialized, so the same logical message has
-    different bytes before and after stamping. Clearing exactly those fields
-    makes the dedup key stable across the boundary; every other field keeps
-    participating in the key, so two genuinely distinct messages sharing parts
-    stay distinct.
+    different bytes before and after stamping. It likewise appends instruction
+    bookkeeping to a request that an earlier snapshot already holds: an
+    `InstructionDeltaPart` when an `on_change='append'` block changes, an
+    `InstructionBaselinePart` when an instruction window opens or closes.
+    Clearing exactly those makes the dedup key stable across
+    the boundary; every other field keeps participating in the key, so two
+    genuinely distinct messages sharing parts stay distinct.
     """
     if isinstance(message, ModelRequest):
-        return replace(message, timestamp=None, run_id=None, conversation_id=None, instructions=None)
+        parts = [part for part in message.parts if not isinstance(part, InstructionDeltaPart | InstructionBaselinePart)]
+        return replace(message, parts=parts, timestamp=None, run_id=None, conversation_id=None, instructions=None)
     # `ModelMessage` is exactly the `ModelRequest | ModelResponse` union, so any
     # other message is a `ModelResponse`.
     return replace(message, timestamp=None, run_id=None, conversation_id=None)
@@ -148,7 +156,9 @@ class SnapshotHistorySource:
     summary. Iterating snapshots in write order, skipping summary artifacts, and
     removing only the overlap between accumulated history's suffix and each
     snapshot's prefix yields the originals plus everything compaction never touched.
-    Repeated byte-identical messages at distinct sequence positions are preserved.
+    Repeated byte-identical messages at distinct sequence positions are preserved, unless
+    a snapshot that dropped a prefix also repeats the exchange that ends the accumulated
+    history: the longest overlap then absorbs the repeat.
 
     The shipped stores' `list_snapshots` defaults to `complete` snapshots only
     (mirroring `latest_snapshot`), so `interrupted` captures -- which can carry
@@ -165,7 +175,8 @@ class SnapshotHistorySource:
             raise TypeError(
                 f'{type(store).__name__} is not a supported search substrate: SnapshotHistorySource '
                 'needs a store providing both `list_runs` and `list_snapshots`. The shipped '
-                'InMemoryStepStore, FileStepStore, SqliteStepStore, and MongoStepStore satisfy this.'
+                'InMemoryStepStore, FileStepStore, SqliteStepStore, MongoStepStore, and '
+                'PostgresStepStore satisfy this.'
             )
         self._store = store
 
@@ -181,6 +192,9 @@ class SnapshotHistorySource:
             messages = [message for message in snapshot.messages if not is_summary_artifact(message)]
             snapshot_hashes = [message_hash(message) for message in messages]
             overlap = _overlap_length(history_hashes, snapshot_hashes)
+            # Keep the later copies of the overlap: they carry what core added after the
+            # earlier snapshot, such as an instruction change, which the hash leaves out.
+            history[len(history) - overlap :] = messages[:overlap]
             history.extend(messages[overlap:])
             history_hashes.extend(snapshot_hashes[overlap:])
         return history

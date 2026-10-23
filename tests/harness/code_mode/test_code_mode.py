@@ -94,7 +94,6 @@ from pydantic_ai_harness.code_mode._toolset import (
     _SEARCH_TOOLS_MODIFIER,  # pyright: ignore[reportPrivateUsage]
     _sanitize_tool_name,  # pyright: ignore[reportPrivateUsage]
     _tool_search_addendum,  # pyright: ignore[reportPrivateUsage]
-    global_mode_is_sequential,
 )
 from pydantic_ai_harness.tool_output_limits import LocalFileStore
 
@@ -950,7 +949,7 @@ class TestCodeMode:
         wrapper = CodeModeToolset[object](
             wrapped=_build_function_toolset(add), resource_limits={'max_suspensions': limit}
         )
-        with pytest.raises(UserError, match='`max_suspensions` must be at least 1'):
+        with pytest.raises(UserError, match='`max_suspensions` must be an integer of at least 1'):
             await wrapper.__aenter__()
 
     async def test_duration_exhaustion_resets_the_session(self) -> None:
@@ -1376,9 +1375,11 @@ class TestCodeMode:
         assert toolset.resource_limits is None
 
     async def test_resource_limits_accept_overrides_and_unlimited(self) -> None:
-        """Both an explicit cap and `'unlimited'` reach the sandbox session."""
+        """An explicit cap, an explicit `None`, and `'unlimited'` all reach the sandbox session."""
         options: list[CodeModeResourceLimits | Literal['unlimited']] = [
             {'max_duration_secs': 5, 'max_memory': 64 * 1024 * 1024},
+            # An explicit `None` reaches Monty as no limit, as it did before limits were checked.
+            {'max_duration_secs': None, 'max_memory': None},  # pyright: ignore[reportAssignmentType]
             'unlimited',
         ]
         for limits in options:
@@ -1400,6 +1401,32 @@ class TestCodeMode:
         zero_calls = CodeModeToolset[object](wrapped=_build_function_toolset(add), max_tool_calls=0)
         with pytest.raises(UserError, match='`max_tool_calls` must be at least 1'):
             await zero_calls.__aenter__()
+
+    @pytest.mark.parametrize(
+        ('limits', 'message'),
+        [
+            ({'max_duration_secs': 0}, '`max_duration_secs` must be a positive number of seconds below'),
+            ({'max_duration_secs': -1}, '`max_duration_secs` must be a positive number of seconds below'),
+            ({'max_duration_secs': float('nan')}, '`max_duration_secs` must be a positive number of seconds below'),
+            ({'max_duration_secs': float('inf')}, '`max_duration_secs` must be a positive number of seconds below'),
+            ({'max_memory': 0}, '`max_memory` must be a positive integer number of bytes below'),
+            ({'max_memory': 2**64}, '`max_memory` must be a positive integer number of bytes below'),
+            ({'max_suspensions': 2**64}, '`max_suspensions` must be an integer of at least 1 and below'),
+            ({'max_suspensions': 10.0}, '`max_suspensions` must be an integer of at least 1 and below'),
+            ({'max_suspensions': True}, '`max_suspensions` must be an integer of at least 1 and below'),
+            ({'max_suspensions': None}, '`max_suspensions` must be an integer of at least 1 and below'),
+            ({'max_memory': 256.0}, '`max_memory` must be a positive integer number of bytes below'),
+            ({'max_memory': True}, '`max_memory` must be a positive integer number of bytes below'),
+            ({'max_duration_secs': True}, '`max_duration_secs` must be a positive number of seconds below'),
+        ],
+    )
+    async def test_out_of_range_resource_limits_are_rejected_on_enter(
+        self, limits: CodeModeResourceLimits, message: str
+    ) -> None:
+        """A limit no snippet can run under fails the run at start, not every `run_code` call as a retry."""
+        toolset = CodeModeToolset[object](wrapped=_build_function_toolset(add), resource_limits=limits)
+        with pytest.raises(UserError, match=message):
+            await toolset.__aenter__()
 
     async def test_run_code_syntax_error_becomes_model_retry(self) -> None:
         """A Python syntax error is surfaced as `ModelRetry` so the model can fix it."""
@@ -5188,39 +5215,6 @@ def _search_tool_def(description: str = 'Search for tools.', name: str = _SEARCH
         parameters_json_schema={'type': 'object', 'properties': {'keywords': {'type': 'string'}}},
         tool_kind='tool-search',
     )
-
-
-class TestGlobalModeIsSequential:
-    """`global_mode_is_sequential` dispatches across pydantic-ai v1 and v2.
-
-    v1's `get_parallel_execution_mode` takes the pending calls list; v2 dropped
-    the argument. The helper inspects arity and calls the matching shape, so
-    both code paths are exercised here regardless of which major is installed.
-    """
-
-    def test_v1_signature_with_calls_argument(self) -> None:
-        def parallel(calls: list[ToolCallPart]) -> ParallelExecutionMode:
-            return 'parallel'
-
-        def sequential(calls: list[ToolCallPart]) -> ParallelExecutionMode:
-            return 'sequential'
-
-        assert global_mode_is_sequential(parallel) is False
-        assert global_mode_is_sequential(sequential) is True
-
-    def test_v2_signature_without_arguments(self) -> None:
-        def parallel() -> ParallelExecutionMode:
-            return 'parallel'
-
-        def sequential() -> ParallelExecutionMode:
-            return 'sequential'
-
-        def parallel_ordered_events() -> ParallelExecutionMode:
-            return 'parallel_ordered_events'
-
-        assert global_mode_is_sequential(parallel) is False
-        assert global_mode_is_sequential(sequential) is True
-        assert global_mode_is_sequential(parallel_ordered_events) is False
 
 
 class TestCodeModeOSAccessInTemporal:
