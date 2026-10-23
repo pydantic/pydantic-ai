@@ -1,3 +1,4 @@
+# description: Runs the test suite against the highest dependency versions the declared constraints allow, daily, on edits to this workflow, and when CI calls it for a tag.
 name: Latest Versions Canary
 
 # Resolves the workspace at the HIGHEST versions our declared constraints allow -- no

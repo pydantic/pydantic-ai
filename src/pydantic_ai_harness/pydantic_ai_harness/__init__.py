@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from ._warn import HarnessDeprecationWarning, MCPReadOnlyNoToolsWarning
 
 if TYPE_CHECKING:
-    from .absurd import AbsurdDurability
+    from .absurd import AbsurdDurability, UnserializableStepResultError
     from .advisor import Advisor
     from .approval_reviewer import ApprovalReviewer
     from .ask_user import AskUser
@@ -164,6 +164,7 @@ __all__ = [
     'ToolGuardrail',
     'ToolOutputLimits',
     'TrajectoryJudge',
+    'UnserializableStepResultError',
     'WarnNearLimits',
     'WarnOnCacheBusts',
     'YouResearch',
@@ -251,6 +252,7 @@ _CONSTANT_EXPORTS = {
     'SpritesSandboxBackend': 'sprites_sandbox',
     'SSHWorkspaceBackend': 'ssh_workspace',
     'SubAgent': 'subagents',
+    'UnserializableStepResultError': 'absurd',
 }
 
 _GUARDRAIL_EXPORTS = {

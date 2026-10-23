@@ -161,6 +161,15 @@ async def test_agent_realtime_signaling_resolves_bound_configuration() -> None:
         assert settings == RealtimeModelSettings(max_tokens=100, output_modality='text')
 
 
+async def test_agent_realtime_signaling_includes_system_prompt() -> None:
+    """The agent's system prompt opens the instructions baked into a WebRTC call, as it opens a session's."""
+    model = _SignalingModel()
+    realtime = Agent(system_prompt='System prompt.', instructions='Instructions.').realtime(model)
+    await realtime.answer_webrtc_offer(SAMPLE_SDP_OFFER)
+    await realtime.create_client_secret()
+    assert [instructions for instructions, _, _ in model.calls] == ['System prompt.\n\nInstructions.'] * 2
+
+
 async def test_agent_realtime_offer_carries_the_bound_history() -> None:
     """The history bound with `agent.realtime(...)` reaches the offer, as it reaches the session.
 
