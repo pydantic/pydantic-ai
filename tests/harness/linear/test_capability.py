@@ -148,7 +148,7 @@ class TestLinear:
         assert Linear[None](id=id, auth='linear-token').get_toolset().id == 'linear'
 
     def test_unset_ids_are_not_combined(self) -> None:
-        # Without an id there is nothing to combine on, so differing settings keep working as separate connections.
+        # An unset id has nothing to combine on, so differing settings don't raise when the agent is built, as on main.
         Agent(
             TestModel(),
             capabilities=[
