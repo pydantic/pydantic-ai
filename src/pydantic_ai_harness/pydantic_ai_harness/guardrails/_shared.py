@@ -140,15 +140,20 @@ class GuardrailResult:
         return cls(action='approve')
 
 
+TextDetector = Callable[[str], GuardrailResult]
+"""A check over text. Adapt one with `for_text` or `for_tool_result_text` at non-text guard boundaries."""
+
+
 GuardOutcome = bool | GuardrailResult
 """What a guard callable returns: a bare `bool` (`True` = allow), or a `GuardrailResult`."""
 
 
 GuardCallable = Callable[..., object]
-"""A guard as the helpers below handle it. `evaluate` normalizes whatever it returns.
+"""A guard as the helpers below handle it.
 
-The public `*GuardrailFunc` aliases pin down what a guard may return; by the time
-one reaches here it has already been checked against that field type.
+Deliberately loose: whether a guard takes `RunContext` is decided from its signature at call
+time, which no static callable type can express, and `evaluate` checks what it returns at
+runtime. The public `*GuardrailFunc` aliases carry the precise types for users.
 """
 
 
@@ -328,7 +333,7 @@ async def evaluate_all(
     ctx: RunContext[AgentDepsT],
     value: object,
     *,
-    check_replacement: Callable[[object, int], None] | None = None,
+    check_replacement: Callable[[object, int], object] | None = None,
 ) -> tuple[GuardrailResult, int]:
     """Run each guard in order over the value, threading replacements through.
 
