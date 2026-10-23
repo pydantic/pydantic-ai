@@ -914,7 +914,6 @@ class ModelHTTPError(ModelAPIError):
             | ModelQuotaExceededError
             | ModelUnavailableError
             | ModelServerError
-            | ModelContextWindowExceededError
             | ModelRequestRejectedError
         ]
         | None,

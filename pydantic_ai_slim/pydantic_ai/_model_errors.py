@@ -23,12 +23,7 @@ from .exceptions import (
 )
 
 HTTPErrorCategory = type[
-    ModelRateLimitError
-    | ModelQuotaExceededError
-    | ModelUnavailableError
-    | ModelServerError
-    | ModelContextWindowExceededError
-    | ModelRequestRejectedError
+    ModelRateLimitError | ModelQuotaExceededError | ModelUnavailableError | ModelServerError | ModelRequestRejectedError
 ]
 """An error category an HTTP error can belong to; see `ModelHTTPError.for_category`."""
 
