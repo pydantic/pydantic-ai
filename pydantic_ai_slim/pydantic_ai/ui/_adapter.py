@@ -38,6 +38,7 @@ from pydantic_ai.messages import (
     RetryFeedbackPart,
     RetryInfo,
     SystemPromptPart,
+    ThinkingEffortDeltaPart,
     ToolAvailabilityDeltaPart,
     ToolRetryCause,
     _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
@@ -86,6 +87,7 @@ DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 _TOOL_NAME_PATTERN = re.compile(r'[a-zA-Z0-9_-]{1,64}')
 """The tool-name shape accepted by the strictest supported model providers."""
 _TOOL_AVAILABILITY_DELTA_PART_ADAPTER = TypeAdapter(ToolAvailabilityDeltaPart)
+_THINKING_EFFORT_DELTA_PART_ADAPTER = TypeAdapter(ThinkingEffortDeltaPart)
 _RETRY_FEEDBACK_PART_ADAPTER = TypeAdapter(RetryFeedbackPart)
 
 
@@ -274,6 +276,33 @@ def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvai
     if part.tool_call_id is not None and not part.tool_call_id.strip():
         part.tool_call_id = None
     return part
+
+
+def thinking_effort_delta_payload(part: ThinkingEffortDeltaPart) -> dict[str, Any]:
+    """Serialize a [`ThinkingEffortDeltaPart`][pydantic_ai.messages.ThinkingEffortDeltaPart] for a UI data channel.
+
+    The part rides through the client like a `ToolAvailabilityDeltaPart`, because the request after a round trip
+    has to send the effort changes, and the request-level effort, that the earlier requests were sent with:
+    leaving it out would change the prompt cache prefix.
+    """
+    return {'effort': part.effort, 'top_level': part.top_level}
+
+
+def thinking_effort_delta_from_payload(payload: Mapping[str, Any]) -> ThinkingEffortDeltaPart | None:
+    """Build a [`ThinkingEffortDeltaPart`][pydantic_ai.messages.ThinkingEffortDeltaPart] from a UI payload, or `None` if it's malformed.
+
+    Client-driven like `tool_availability_delta_from_payload`, and bounded: the effort is validated against
+    the effort levels, and a forged change is superseded by the one the next request records for the effort
+    the server actually resolves.
+    """
+    try:
+        part = _THINKING_EFFORT_DELTA_PART_ADAPTER.validate_python(
+            {'effort': payload.get('effort'), 'top_level': payload.get('top_level', False)}
+        )
+    except ValidationError:
+        return None
+    # Only a window's opening part goes back to no effort level: the framework never records any other.
+    return part if part.effort is not None or part.top_level else None
 
 
 def retry_feedback_payload(part: RetryFeedbackPart) -> dict[str, Any]:

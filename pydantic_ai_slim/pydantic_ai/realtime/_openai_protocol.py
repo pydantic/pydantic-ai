@@ -78,6 +78,7 @@ from ..messages import (
     SystemPromptPart,
     TextContent,
     TextPart,
+    ThinkingEffortDeltaPart,
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -621,7 +622,14 @@ async def _seed_request_items(
         if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
             part = _translate_legacy_retry_part(part)
         if isinstance(
-            part, (SystemPromptPart, InstructionDeltaPart, InstructionBaselinePart, ToolAvailabilityDeltaPart)
+            part,
+            (
+                SystemPromptPart,
+                InstructionDeltaPart,
+                InstructionBaselinePart,
+                ToolAvailabilityDeltaPart,
+                ThinkingEffortDeltaPart,
+            ),
         ):
             # System prompts are seeded through session instructions, and tool-availability news
             # from a prior standard run is stale here: the session advertises its own tools.

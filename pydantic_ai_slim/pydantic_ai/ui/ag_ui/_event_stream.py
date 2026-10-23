@@ -28,6 +28,7 @@ from ...messages import (
     OutputToolResultEvent,
     TextPart,
     TextPartDelta,
+    ThinkingEffortDeltaEvent,
     ThinkingPart,
     ThinkingPartDelta,
     ToolAvailabilityDeltaEvent,
@@ -38,7 +39,7 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
-from .._adapter import compaction_payload, enqueued_messages_for_client
+from .._adapter import compaction_payload, enqueued_messages_for_client, thinking_effort_delta_payload
 from .._utils import MCP_APPS_UI_TYPE, mcp_app_ui_payload
 from ._interrupt import (
     HAS_INTERRUPTS,
@@ -54,6 +55,7 @@ from ._utils import (
     ENQUEUED_MESSAGES_ACTIVITY_TYPE,
     INTERRUPTS_VERSION,
     REASONING_VERSION,
+    THINKING_EFFORT_DELTA_ACTIVITY_TYPE,
     TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
     dump_tool_return_content,
     parse_ag_ui_version,
@@ -431,6 +433,18 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseEvent]:
         async for e in self._handle_tool_result(event.part):
             yield e
+
+    async def handle_thinking_effort_delta(self, event: ThinkingEffortDeltaEvent) -> AsyncIterator[BaseEvent]:
+        if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
+            return
+
+        from ag_ui.core import ActivitySnapshotEvent
+
+        yield ActivitySnapshotEvent(
+            message_id=str(uuid4()),
+            activity_type=THINKING_EFFORT_DELTA_ACTIVITY_TYPE,
+            content=thinking_effort_delta_payload(event.part),
+        )
 
     async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[BaseEvent]:
         if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:

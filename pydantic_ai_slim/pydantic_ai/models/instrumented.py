@@ -47,6 +47,7 @@ from ..messages import (
     RetryFeedbackPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SystemPromptPart,
+    ThinkingEffortDeltaPart,
     ToolAvailabilityDeltaPart,
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
 )
@@ -472,9 +473,9 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     withheld. `tool` is the one role that would actively mislead, being paired with
     `tool_call_response`.
     """
-    if isinstance(part, SystemPromptPart | ToolAvailabilityDeltaPart | InstructionDeltaPart) or (
-        version >= 6 and isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part)
-    ):
+    if isinstance(
+        part, SystemPromptPart | ToolAvailabilityDeltaPart | InstructionDeltaPart | ThinkingEffortDeltaPart
+    ) or (version >= 6 and isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part)):
         return 'system'
     # TODO(v3): remove `RetryPromptPart`, still reachable here because `pydantic_ai.all_messages`
     # records the stored history rather than the prepared one.

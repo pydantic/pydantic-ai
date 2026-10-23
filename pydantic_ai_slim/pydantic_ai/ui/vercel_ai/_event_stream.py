@@ -24,6 +24,7 @@ from ...messages import (
     OutputToolResultEvent,
     TextPart,
     TextPartDelta,
+    ThinkingEffortDeltaEvent,
     ThinkingPart,
     ThinkingPartDelta,
     ToolAvailabilityDeltaEvent,
@@ -36,11 +37,12 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
-from .._adapter import compaction_payload, enqueued_messages_for_client
+from .._adapter import compaction_payload, enqueued_messages_for_client, thinking_effort_delta_payload
 from ._utils import (
     COMPACTION_DATA_TYPE,
     DATA_CHUNK_TYPES,
     ENQUEUED_MESSAGES_DATA_TYPE,
+    THINKING_EFFORT_DELTA_DATA_TYPE,
     TOOL_AVAILABILITY_DELTA_DATA_TYPE,
     dump_message_metadata,
     dump_provider_metadata,
@@ -417,6 +419,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
         async for chunk in self._handle_tool_result(event.part):
             yield chunk
+
+    async def handle_thinking_effort_delta(self, event: ThinkingEffortDeltaEvent) -> AsyncIterator[BaseChunk]:
+        yield DataChunk(type=THINKING_EFFORT_DELTA_DATA_TYPE, data=thinking_effort_delta_payload(event.part))
 
     async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[BaseChunk]:
         part = event.part

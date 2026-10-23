@@ -81,6 +81,7 @@ from ..messages import (
     SystemPromptPart,
     TextContent,
     TextPart,
+    ThinkingEffortDeltaPart,
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -129,12 +130,14 @@ from . import (
     OpenAIResponsesCompatibleProvider,
     StreamedResponse,
     ToolVisibility,
+    _effort_window_baseline,  # pyright: ignore[reportPrivateUsage]
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _without_effort_deltas,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -2562,6 +2565,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     supported_tool_deferral_modes = frozenset({'with_tool_search'})
     supported_tool_addition_modes = frozenset({'with_definitions'})
+    _renders_effort_deltas = True
     # Responses only: `OpenAIChatModel` shares this model family's profile but has no compaction
     # surface, and the Responses API bills replayed pre-boundary items, so the trim is what makes
     # compaction actually compact here.
@@ -2789,6 +2793,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         instructions_override: str | None = None,
     ) -> responses.CompactedResponse | ModelResponse:
         """Call the OpenAI Responses compaction endpoint."""
+        # The endpoint doesn't take `configuration_update` items: the compacted window carries no effort change.
+        messages = _without_effort_deltas(messages)
         previous_response_id, messages = self._resolve_previous_response_id(
             model_settings.get('openai_previous_response_id'), messages, allow_no_new_messages=True
         )
@@ -3284,6 +3290,38 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             streamed_response.provider_details = {**(streamed_response.provider_details or {}), 'background': True}
         return streamed_response
 
+    def _effort_delta_request(
+        self,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[list[ModelRequest | ModelResponse], ModelRequestParameters]:
+        """Decide whether this request sends effort changes as `configuration_update` items.
+
+        It does when the history holds a mid-conversation change (a `ThinkingEffortDeltaPart` that
+        `prepare_messages` kept for this model) and nothing rules the item out: an explicit
+        `openai_reasoning_effort`, which is sent as is, and server-side truncation or compaction, which OpenAI
+        documents the item doesn't work with. The request then keeps the window's opening effort as its
+        `reasoning.effort`, so its prefix matches the earlier requests'. Otherwise the parts are removed and the
+        current effort goes out as `reasoning.effort`, as it would without them.
+        """
+        baseline, has_changes = _effort_window_baseline(messages)
+        if has_changes and not (
+            model_settings.get('openai_reasoning_effort')
+            or model_settings.get('openai_truncation') == 'auto'
+            or model_settings.get('openai_context_management')
+            or any(
+                isinstance(part, CompactionPart)
+                for message in messages
+                if isinstance(message, ModelResponse)
+                for part in message.parts
+            )
+        ):
+            if baseline is not None and isinstance(model_request_parameters.thinking, str):
+                model_request_parameters = replace(model_request_parameters, thinking=baseline)
+            return messages, model_request_parameters
+        return _without_effort_deltas(messages), model_request_parameters
+
     async def _build_responses_request_params(
         self,
         messages: list[ModelRequest | ModelResponse],
@@ -3292,6 +3330,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         profile: OpenAIModelProfile,
     ) -> _ResponsesRequestParams:
         """Build typed request parameters shared by Responses API calls."""
+        messages, effort_request_parameters = self._effort_delta_request(
+            messages, model_settings, model_request_parameters
+        )
         # Deliberately a separate variable: `messages` itself stays untrimmed for
         # `_resolve_server_side_state`, which recovers conversation/response IDs from responses the
         # trim would drop; `_map_messages` applies the same idempotent trim to whatever slice that
@@ -3341,7 +3382,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             wire_request_parameters,
             previous_response_id=previous_response_id,
         )
-        reasoning = self._translate_thinking(model_settings, model_request_parameters)
+        reasoning = self._translate_thinking(model_settings, effort_request_parameters)
 
         system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
         if (
@@ -4134,6 +4175,25 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         openai_messages.append(await self._map_user_prompt(part))
                     elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                         raise _unprojected_instruction_delta_error()
+                    elif isinstance(part, ThinkingEffortDeltaPart):
+                        # Only the mid-conversation changes render: a window's opening effort went out as the
+                        # request-level `reasoning.effort`. `_effort_delta_request` has already removed every
+                        # part when this request sends the current effort at request level instead.
+                        if not part.top_level and part.effort is not None:
+                            openai_messages.append(
+                                responses.ResponseConfigurationUpdateItemParamParam(
+                                    type='configuration_update',
+                                    reasoning={
+                                        'effort': _resolve_openai_thinking_effort(
+                                            part.effort,
+                                            profile,
+                                            supports_max=profile.get(
+                                                'openai_responses_supports_max_reasoning_effort', False
+                                            ),
+                                        )
+                                    },
+                                )
+                            )
                     elif isinstance(part, ToolAvailabilityDeltaPart):
                         if self.tool_addition_mode != 'with_definitions':
                             # `prepare_messages` projects the delta onto the local tool-search exchange

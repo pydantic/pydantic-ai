@@ -102,6 +102,7 @@ from ..messages import (
     SpeechPart,
     SystemPromptPart,
     TextPart,
+    ThinkingEffortDeltaPart,
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -134,7 +135,14 @@ from ..profiles import (
 )
 from ..profiles.decision import decision_model_profile
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
-from ..settings import CacheSetting, ModelSettingName, ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import (
+    CacheSetting,
+    ModelSettingName,
+    ModelSettings,
+    ThinkingEffort,
+    ThinkingLevel,
+    merge_model_settings,
+)
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
@@ -657,6 +665,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     """The document media types this adapter's message mapping can send, or `None` for all of them.
 
     Intersected with the profile's `supported_document_media_types`, like `_unsupported_file_inputs`.
+    """
+    _renders_effort_deltas: ClassVar[bool] = False
+    """Whether this adapter renders a `ThinkingEffortDeltaPart` on a model whose profile sets `supports_mid_conversation_effort`.
+
+    Elsewhere `prepare_messages` drops the parts, so the adapter sends the current effort as the request-level
+    setting.
     """
     _renders_retry_feedback: ClassVar[bool] = False
     """Whether this model renders a `RetryFeedbackPart` itself, so `prepare_messages` passes it through untranslated.
@@ -1289,6 +1303,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 prefix=model_request_parameters.instruction_parts if model_request_parameters is not None else None,
             )
 
+        messages = _project_effort_deltas(
+            messages,
+            keep=self._renders_effort_deltas and self.profile.get('supports_mid_conversation_effort', False),
+        )
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
         # Translated before every later step — the tool-availability announcement and the `<system>`
         # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
@@ -3108,7 +3126,14 @@ def _reaches_the_model_as_a_user_message(part: ModelRequestPart) -> bool:
     Everything but the parts that render in the system voice: system prompts, instruction records, tool
     reveals, and the retry feedback that speaks for the harness.
     """
-    if isinstance(part, SystemPromptPart | InstructionDeltaPart | InstructionBaselinePart | ToolAvailabilityDeltaPart):
+    if isinstance(
+        part,
+        SystemPromptPart
+        | InstructionDeltaPart
+        | InstructionBaselinePart
+        | ToolAvailabilityDeltaPart
+        | ThinkingEffortDeltaPart,
+    ):
         return False
     return not (isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part))
 
@@ -3363,6 +3388,88 @@ def _project_instruction_state(
     return projected
 
 
+def _project_effort_deltas(messages: list[ModelMessage], *, keep: bool) -> list[ModelMessage]:
+    """Leave the `ThinkingEffortDeltaPart`s a model with a mid-conversation effort channel renders, or drop them all.
+
+    With `keep`, only the parts from the last one that opened a window (`top_level=True`) on are kept: the
+    window's opening request sent its effort as the request-level setting because no mid-conversation
+    change could express it, and a change from before it would override that setting on both providers
+    with a channel. Parts with no `ModelResponse` between them are collapsed into the last, as OpenAI
+    rejects two adjacent `configuration_update` items; the result opens a window if any of them did.
+
+    Returns `messages` itself when there is nothing to change.
+    """
+    if not any(
+        isinstance(part, ThinkingEffortDeltaPart)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    ):
+        return messages
+    kept: dict[int, ThinkingEffortDeltaPart] = {}
+    """The parts to keep, by `id()`, each mapped to what it renders as after collapsing."""
+    if keep:
+        run: list[ThinkingEffortDeltaPart] = []
+
+        def close_run() -> None:
+            if run:
+                last = run[-1]
+                top_level = any(part.top_level for part in run)
+                kept[id(last)] = last if last.top_level == top_level else replace(last, top_level=top_level)
+                run.clear()
+
+        for message in messages:
+            if isinstance(message, ModelResponse):
+                close_run()
+                continue
+            for part in message.parts:
+                if isinstance(part, ThinkingEffortDeltaPart):
+                    if part.top_level:
+                        close_run()
+                        kept.clear()
+                    run.append(part)
+        close_run()
+    projected: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelRequest) and any(
+            isinstance(part, ThinkingEffortDeltaPart) for part in message.parts
+        ):
+            parts = [
+                kept[id(part)] if isinstance(part, ThinkingEffortDeltaPart) else part
+                for part in message.parts
+                if not isinstance(part, ThinkingEffortDeltaPart) or id(part) in kept
+            ]
+            message = replace(message, parts=parts)
+        projected.append(message)
+    return projected
+
+
+def _effort_window_baseline(messages: Sequence[ModelMessage]) -> tuple[ThinkingEffort | None, bool]:  # pyright: ignore[reportUnusedFunction]
+    """The request-level effort a projected history's window opened with, and whether it holds a mid-conversation change.
+
+    Read from the messages `prepare_messages` left on a model with a mid-conversation effort channel, before
+    any server-side-state trimming. The effort is `None` when the window's opening part was removed (by a
+    history processor, say), in which case the request sends the current effort as its request-level setting:
+    the latest change always equals it, so only the cache is affected.
+    """
+    parts = [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ThinkingEffortDeltaPart)
+    ]
+    if not parts:
+        return None, False
+    baseline = parts[0].effort if parts[0].top_level else None
+    return baseline, any(not part.top_level for part in parts)
+
+
+def _without_effort_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:  # pyright: ignore[reportUnusedFunction]
+    """`messages` without their `ThinkingEffortDeltaPart`s, for a request that sends the current effort as its request-level setting."""
+    return _project_effort_deltas(messages, keep=False)
+
+
 def _has_instruction_state(messages: Iterable[ModelMessage]) -> bool:
     """Whether any request in `messages` records instruction state that `prepare_messages` projects."""
     return any(
@@ -3505,13 +3612,13 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
 
 # TODO(v3): remove `RetryPromptPart`
 _UnpreparedPart: TypeAlias = (
-    ToolAvailabilityDeltaPart | RetryFeedbackPart | RetryPromptPart  # pyright: ignore[reportDeprecated]
+    ToolAvailabilityDeltaPart | ThinkingEffortDeltaPart | RetryFeedbackPart | RetryPromptPart  # pyright: ignore[reportDeprecated]
 )
 """The request parts `prepare_messages` translates away before any adapter sees them.
 
 Each of these carries something no provider API has a field for — a mid-conversation change to the
-tool list, or a retry that isn't a plain turn — and `prepare_messages` turns it into the parts every
-adapter already knows how to map. So an adapter meeting one has been handed a history that step never
+tool list or the thinking effort, or a retry that isn't a plain turn — and `prepare_messages` turns it
+into the parts every adapter already knows how to map, or drops it. So an adapter meeting one has been handed a history that step never
 ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart`
 on a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
 A deprecated `RetryPromptPart` never reaches this branch either: adapters map their parts through

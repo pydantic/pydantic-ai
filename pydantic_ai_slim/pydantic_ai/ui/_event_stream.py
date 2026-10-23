@@ -43,6 +43,7 @@ from ..messages import (
     SpeechPartDelta,
     TextPart,
     TextPartDelta,
+    ThinkingEffortDeltaEvent,
     ThinkingPart,
     ThinkingPartDelta,
     ToolAvailabilityDeltaEvent,
@@ -436,6 +437,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] -> `handle_function_tool_call`
         - [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] -> `handle_function_tool_result`
         - [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent] -> `handle_tool_availability_delta`
+        - [`ThinkingEffortDeltaEvent`][pydantic_ai.messages.ThinkingEffortDeltaEvent] -> `handle_thinking_effort_delta`
         - [`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] -> `handle_output_tool_call`
         - [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] -> `handle_output_tool_result`
         - [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] -> `handle_deferred_tool_requests`
@@ -471,6 +473,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     yield e
             case ToolAvailabilityDeltaEvent():
                 async for e in self.handle_tool_availability_delta(event):
+                    yield e
+            case ThinkingEffortDeltaEvent():
+                async for e in self.handle_thinking_effort_delta(event):
                     yield e
             case OutputToolCallEvent():
                 async for e in self.handle_output_tool_call(event):
@@ -867,6 +872,18 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         Args:
             event: The function tool result event.
+        """
+        return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_thinking_effort_delta(self, event: ThinkingEffortDeltaEvent) -> AsyncIterator[EventT]:
+        """Handle a `ThinkingEffortDeltaEvent`.
+
+        By default no protocol events are emitted. Override this to carry the recorded change to a frontend
+        that rebuilds history from the event stream, so the next request keeps the prompt cache.
+
+        Args:
+            event: The thinking effort delta event.
         """
         return  # pragma: no cover
         yield  # Make this an async generator

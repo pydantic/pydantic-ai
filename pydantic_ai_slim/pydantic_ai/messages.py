@@ -73,6 +73,7 @@ from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from .settings import ThinkingEffort
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
@@ -3118,6 +3119,39 @@ class ToolAvailabilityDeltaPart:
 
 
 @dataclass(repr=False, kw_only=True)
+class ThinkingEffortDeltaPart:
+    """Records the thinking effort in effect for the model from this point in the conversation.
+
+    The framework records one whenever the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking]
+    setting resolves to a different effort level than the one in effect. The request-level effort setting is
+    part of the provider's prompt cache key, so a model with a mid-conversation effort channel (an OpenAI
+    Responses `configuration_update` item, a per-message Anthropic `output_config`) renders a change in place
+    and keeps sending the window's opening effort as the request-level setting. Every other model drops these
+    parts and sends the current effort as the request-level setting, as it would without them. See
+    [changing effort mid-conversation](../thinking.md#changing-effort-mid-conversation).
+    """
+
+    effort: ThinkingEffort | None
+    """The effort level in effect from here, or `None` when `thinking` doesn't name a level (`True` or `False`)."""
+
+    top_level: bool = False
+    """Whether this request sent `effort` as its request-level setting, opening a new window.
+
+    The first request that names an effort level opens one, as does a change that no mid-conversation channel
+    can express: to or from `None`. Every other change is recorded with `top_level=False`.
+    """
+
+    part_kind: Literal['thinking-effort-delta'] = 'thinking-effort-delta'
+    """Part type identifier, used as a discriminator for deserialization."""
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """Render the change as trace content: it's configuration rather than user content, so it's always recorded."""
+        return [_otel_messages.TextPart(type='text', content=f'Thinking effort: {self.effort or "default"}')]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
 class InstructionDigest:
     """A rewrite-mode instruction block as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart] records it.
 
@@ -3979,6 +4013,7 @@ ModelRequestPart = Annotated[
     | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')]  # pyright: ignore[reportDeprecated]
     | Annotated[RetryFeedbackPart, pydantic.Tag('retry-feedback')]
     | Annotated[ToolAvailabilityDeltaPart, pydantic.Tag('tool-availability-delta')]
+    | Annotated[ThinkingEffortDeltaPart, pydantic.Tag('thinking-effort-delta')]
     | Annotated[InstructionDeltaPart, pydantic.Tag('instruction-delta')]
     | Annotated[InstructionBaselinePart, pydantic.Tag('instruction-baseline')]
     # A legacy part is translated on the way in, so a stored history is upgraded by loading it and
@@ -6179,6 +6214,23 @@ class ToolAvailabilityDeltaEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False, kw_only=True)
+class ThinkingEffortDeltaEvent:
+    """An event indicating the thinking effort in effect changed, carrying the recorded delta part.
+
+    Emitted when a request records a [`ThinkingEffortDeltaPart`][pydantic_ai.messages.ThinkingEffortDeltaPart],
+    so a UI that rebuilds history from the event stream keeps it.
+    """
+
+    part: ThinkingEffortDeltaPart
+    """The thinking effort delta part that will be recorded in message history."""
+
+    event_kind: Literal['thinking_effort_delta'] = 'thinking_effort_delta'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @dataclass(repr=False)
 class OutputToolResultEvent(ToolResultEvent):
     """An event indicating the result of an output tool call."""
@@ -6462,6 +6514,7 @@ HandleResponseEvent = Annotated[
     FunctionToolCallEvent
     | FunctionToolResultEvent
     | ToolAvailabilityDeltaEvent
+    | ThinkingEffortDeltaEvent
     | OutputToolCallEvent
     | OutputToolResultEvent
     | DeferredToolRequestsEvent

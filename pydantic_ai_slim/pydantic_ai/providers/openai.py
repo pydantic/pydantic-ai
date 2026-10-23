@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import (
+    _GPT_6_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
     OpenAIJsonSchemaTransformer,
     OpenAIModelProfile,
     # Keep the provider-specific specialization private; the provider only selects it.
@@ -115,6 +116,11 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 openai_responses_supports_max_reasoning_effort=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # The `configuration_update` input item that changes reasoning effort mid-conversation is
+                # documented for the GPT-6 family. Set here rather than in `openai_model_profile` because the
+                # OpenAI-compatible Responses endpoints that share it don't necessarily implement the item.
+                # https://developers.openai.com/api/docs/guides/reasoning
+                supports_mid_conversation_effort=model_name.startswith(_GPT_6_MODEL_PREFIXES),
             ),
         )
 

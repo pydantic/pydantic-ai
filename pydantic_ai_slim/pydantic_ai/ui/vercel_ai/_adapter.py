@@ -39,6 +39,7 @@ from ...messages import (
     SystemPromptPart,
     TextContent,
     TextPart,
+    ThinkingEffortDeltaPart,
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -66,6 +67,8 @@ from .._adapter import (
     resolve_allow_uploaded_files,
     retry_feedback_from_payload,
     retry_feedback_payload,
+    thinking_effort_delta_from_payload,
+    thinking_effort_delta_payload,
     tool_availability_delta_from_payload,
     tool_retry_payload,
 )
@@ -75,6 +78,7 @@ from ._utils import (
     COMPACTION_DATA_TYPE,
     ENQUEUED_MESSAGES_DATA_TYPE,
     PROVIDER_METADATA_KEY,
+    THINKING_EFFORT_DELTA_DATA_TYPE,
     TOOL_AVAILABILITY_DELTA_DATA_TYPE,
     apply_message_metadata,
     dump_message_metadata,
@@ -456,6 +460,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     elif isinstance(part, DataUIPart):
                         if part.type == TOOL_AVAILABILITY_DELTA_DATA_TYPE and _is_str_dict(part.data):
                             builder.add(tool_availability_delta_from_payload(part.data))
+                        elif (
+                            part.type == THINKING_EFFORT_DELTA_DATA_TYPE
+                            and _is_str_dict(part.data)
+                            and (effort_part := thinking_effort_delta_from_payload(part.data)) is not None
+                        ):
+                            builder.add(effort_part)
                     else:  # pragma: no cover
                         raise ValueError(f'Unsupported user message part type: {type(part)}')
 
@@ -468,7 +478,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 # response. Streamed messages mark steps with `step-start` parts; without them (as
                 # `dump_messages` writes, one response per message) content after a completed tool
                 # call is taken to start the next step.
-                pending_returns: list[ToolReturnPart | ToolAvailabilityDeltaPart] = []
+                pending_returns: list[ToolReturnPart | ToolAvailabilityDeltaPart | ThinkingEffortDeltaPart] = []
                 # Enqueued messages were delivered after the step's tool returns, so they wait with them.
                 # `_append_whole` is private on purpose, so custom adapters don't depend on it yet.
                 pending_enqueued: list[ModelMessage] = []
@@ -541,6 +551,18 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             # the request carrying that tool return, matching the server-side history. It waits
                             # with the step's held-back tool returns so it follows the return that caused it.
                             pending_returns.append(tool_availability_delta_from_payload(part.data))
+                        elif (
+                            part.type == THINKING_EFFORT_DELTA_DATA_TYPE
+                            and _is_str_dict(part.data)
+                            and (effort_part := thinking_effort_delta_from_payload(part.data)) is not None
+                        ):
+                            # Streamed at the start of the model request that records it, so the AI SDK
+                            # attaches it to the assistant message. It belongs at the end of that request:
+                            # after the step's held-back tool returns, or on the request already open.
+                            if pending_returns:
+                                pending_returns.append(effort_part)
+                            else:
+                                builder.add(effort_part)
                         elif part.type == ENQUEUED_MESSAGES_DATA_TYPE:
                             # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
                             loaded = cls.load_messages(_enqueued_ui_messages(part.data))
@@ -801,6 +823,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 pass
             elif isinstance(part, (InstructionDeltaPart, InstructionBaselinePart)):
                 pass  # Operator instruction state stays in trusted server-side history.
+            elif isinstance(part, ThinkingEffortDeltaPart):
+                add('user', DataUIPart(type=THINKING_EFFORT_DELTA_DATA_TYPE, data=thinking_effort_delta_payload(part)))
             elif isinstance(part, ToolAvailabilityDeltaPart):
                 add(
                     'user',
