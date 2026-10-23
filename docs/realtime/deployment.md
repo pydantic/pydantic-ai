@@ -184,10 +184,11 @@ setups. Each [`session()`][pydantic_ai.agent.AgentRealtime.session] opens its ow
 and one process can run many sessions on its event loop. Unlike a [standard agent](../production.md#deploy),
 where any instance can continue any conversation, a call lives in the process that holds it: its
 provider connection, running tools, and (on Gemini) resumption handles, which
-[can't be moved to another process](https://github.com/pydantic/pydantic-ai/issues/7302). A WebSocket
-stays on the instance that accepted it, so the relay needs no extra routing; if your app splits one call
-across several requests, route them to the instance holding the session. A client that reconnects
-elsewhere gets a new provider session; to carry the conversation over, store
+[can't be moved to another process](https://github.com/pydantic/pydantic-ai/issues/7302).
+
+A WebSocket stays on the instance that accepted it, so the relay needs no extra routing; if your app
+splits one call across several requests, route them to the instance holding the session. A client that
+reconnects elsewhere gets a new provider session; to carry the conversation over, store
 [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] and
 [seed](history.md#seeding-a-session) the new session with it.
 
@@ -209,13 +210,14 @@ hanging up (see [Reconnecting](lifecycle.md#reconnecting)).
 
 Long-running compute fits this directly: containers or VMs behind a load balancer that supports
 WebSockets. Platforms that cap requests work within their limits: Cloud Run, for example, counts a
-WebSocket against its request timeout (up to an hour), so set that above your longest call and enable
-session affinity. Request-scoped functions don't fit. With AWS Lambda behind an Amazon API Gateway
-WebSocket API, API Gateway holds the client's connection but invokes the function once per message, so
-no invocation lives long enough to hold the provider connection between messages. The session has to
-run on long-lived compute instead; API Gateway can still front it, but you then route its per-message
-calls to the instance holding each call's session, send audio back through its `@connections` API, and
-live with its two-hour connection limit and text-only frames.
+WebSocket against its request timeout, which can be raised to an hour, so a longer call has to
+continue on a new connection and session. Request-scoped functions don't fit. With AWS Lambda behind
+an Amazon API Gateway WebSocket API, API Gateway holds the client's connection but invokes the function
+once per message, so no invocation lives long enough to hold the provider connection between messages. The session has to
+run on long-lived compute instead. API Gateway can still front it, but then you build the routing
+yourself: a registry that sends each message to the instance holding that call's session, audio
+base64-encoded in text frames (it rejects binary ones) and sent back through its `@connections` API,
+and a connection that closes after ten idle minutes or two hours.
 
 [Browser WebRTC](#browser-webrtc-server-sideband) takes media off your servers: audio flows directly
 between the browser and the provider, and your backend carries only the sideband. That removes the
