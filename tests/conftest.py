@@ -359,6 +359,27 @@ class TestEnv:
 
 
 @pytest.fixture
+def transport_limits(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Limits | httpx2.Limits]:
+    """Record the `limits` every HTTPX transport (either family, sync or async) is constructed with.
+
+    HTTPX keeps the limits on its transport without a public accessor, so tests of connection pool
+    defaults record what each transport is handed instead.
+    """
+    recorded: list[httpx.Limits | httpx2.Limits] = []
+
+    for transport_class in (httpx2.HTTPTransport, httpx2.AsyncHTTPTransport, httpx.AsyncHTTPTransport):
+        original_init = transport_class.__init__
+
+        def recording_init(self: Any, *args: Any, _original_init: Any = original_init, **kwargs: Any) -> None:
+            recorded.append(kwargs['limits'])
+            _original_init(self, *args, **kwargs)
+
+        monkeypatch.setattr(transport_class, '__init__', recording_init)
+
+    return recorded
+
+
+@pytest.fixture
 def env() -> Iterator[TestEnv]:
     test_env = TestEnv()
 
