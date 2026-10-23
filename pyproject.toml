@@ -528,7 +528,6 @@ markers = [
     "boxlite_live: boots real BoxLite VMs; needs a host that can run them",
     "docker_live: starts real containers; needs a Docker daemon",
     "temporal: starts or connects to a local Temporal dev server",
-    "local_monty: needs a local Monty worker; skipped when the CodeMode suite runs against `MONTY_SANDBOX_TEST_URL`",
     "subprocess(reason, conditional=False): launches a Python interpreter, which the cost guard otherwise fails; reason required. `conditional=True` skips the stale-marker check for a test that only launches one on some platforms or installs",
     "slow(reason): exempt from the per-test time budget (`PYTEST_TEST_BUDGET_SECONDS`); reason required",
 ]

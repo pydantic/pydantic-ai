@@ -1740,8 +1740,7 @@ jobs:
 
       # An empty URL would quietly run the suite on local workers, and staging refuses a dial
       # without a key, so either secret missing fails here instead.
-      # `local_monty` tests patch the local worker class, so they skip; `temporal` ones run in
-      # `test-durable-exec` and need a dev server.
+      # `temporal` tests run in `test-durable-exec` and need a dev server.
       - run: |
           [ -n "$MONTY_SANDBOX_TEST_URL" ] || { echo '::error::the MONTY_STAGING_URL secret is not set'; exit 1; }
           [ -n "$MONTY_EXECUTION_KEY" ] || { echo '::error::the MONTY_EXECUTION_KEY secret is not set'; exit 1; }
