@@ -1005,6 +1005,12 @@ async def _get_loaded_instructions(
     return parts
 
 
+def _loaded_capability_id(part: _messages.InstructionPart) -> str:
+    """The loaded capability a part `resolve_loaded_capability_instructions` resolved belongs to."""
+    assert part.id is not None and isinstance(part.id.source, _messages.CapabilityInstructionSource)
+    return part.id.source.id
+
+
 def _split_loaded_instruction_parts(
     params: models.ModelRequestParameters,
 ) -> tuple[list[_messages.InstructionPart] | None, list[_messages.InstructionPart]]:
@@ -1502,6 +1508,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     )
     _did_stream: bool = field(repr=False, init=False, default=False)
     last_request_context: ModelRequestContext | None = field(repr=False, init=False, default=None)
+    _resolved_loaded_capability_ids: frozenset[str] = field(repr=False, init=False, default=frozenset())
+    """The loaded capabilities whose instructions this request resolved to text, before the hooks ran."""
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -1972,9 +1980,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
-        model_request_parameters = await _prepare_request_parameters(
-            ctx, instruction_parts, await _get_loaded_instructions(ctx, run_context)
+        loaded_instruction_parts = await _get_loaded_instructions(ctx, run_context)
+        self._resolved_loaded_capability_ids = frozenset(
+            _loaded_capability_id(part) for part in loaded_instruction_parts if part.content
         )
+        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts, loaded_instruction_parts)
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
         run_context.model_settings = model_settings
 
@@ -2144,10 +2154,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 messages,
                 loaded_parts,
                 recording_targets,
-                eager_capability_ids={
-                    capability_id
-                    for capability_id, capability in ctx.deps.capabilities.items()
-                    if capability.defer_loading is not True
+                keep_without_parts={
+                    *self._resolved_loaded_capability_ids,
+                    *(
+                        capability_id
+                        for capability_id, capability in ctx.deps.capabilities.items()
+                        if capability.defer_loading is not True
+                    ),
                 },
             )
             _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)

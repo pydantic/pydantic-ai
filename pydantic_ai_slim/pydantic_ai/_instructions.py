@@ -499,17 +499,21 @@ def update_loaded_instruction_history(
     parts: Sequence[InstructionPart],
     targets: Sequence[ModelRequest],
     *,
-    eager_capability_ids: Collection[str] = (),
+    keep_without_parts: Collection[str] = (),
 ) -> None:
     """Append changes to loaded capabilities' instructions to the outgoing request.
 
     `parts` are the loaded capabilities' instruction parts this request resolved, each addressed beneath its
     capability's block, after the `before_model_request` hooks. A loaded block whose joined text differs from
     what the model last received is recorded on `targets` as an
-    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart], in load order; one with no parts any
-    more, because its instructions are empty or the capability is no longer configured, is withdrawn. A
-    capability in `eager_capability_ids` is not deferred any more, so its instructions are in the prefix
-    again, and its loaded block is left alone.
+    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart], in load order, and one whose parts
+    are all empty is withdrawn.
+
+    A loaded block with no parts at all is withdrawn too, because the capability's instructions resolved to
+    nothing or it is no longer configured, unless it's in `keep_without_parts`: a capability that's eager
+    again, whose instructions are back in the prefix, or one whose parts a hook left out, as a hook that
+    builds `instruction_parts` from scratch does. A hook withdraws a block by keeping its parts with empty
+    content instead.
     """
     current: dict[str, list[InstructionPart]] = {}
     for part in parts:
@@ -518,7 +522,7 @@ def update_loaded_instruction_history(
     changes = [
         _instruction_change(loaded_instruction_id(capability_id), previous, content)
         for capability_id, previous in LoadedInstructionValues.of(messages).values.items()
-        if capability_id not in eager_capability_ids
+        if (capability_id in current or capability_id not in keep_without_parts)
         and (content := InstructionPart.join([part for part in current.get(capability_id, []) if part.content]))
         != previous
     ]

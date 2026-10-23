@@ -429,3 +429,34 @@ async def test_client_edited_load_return_never_reaches_the_system_voice():
     # A later change is a diff against the full text the first change delivered.
     await agent.run('Again.', deps=Counter(2), message_history=second.all_messages())
     assert received.statements[-1][-1].startswith('<context_diff id="capability:counter">')
+
+
+async def test_hook_that_leaves_loaded_parts_out_keeps_them():
+    """A hook that builds `instruction_parts` from scratch doesn't withdraw a loaded block; emptying its parts does."""
+    received = Received()
+    first = await scripted_agent(LOAD, received=received).run('Count.', deps=Counter())
+
+    def from_scratch(ctx: RunContext[Counter], request: ModelRequestContext) -> ModelRequestContext:
+        request.model_request_parameters.instruction_parts = [InstructionPart('Be brief.')]
+        return request
+
+    def emptied(ctx: RunContext[Counter], request: ModelRequestContext) -> ModelRequestContext:
+        params = request.model_request_parameters
+        params.instruction_parts = [
+            replace(part, content='') if params.instruction_visibility_of(part) == 'via_history' else part
+            for part in params.instruction_parts or []
+        ]
+        return request
+
+    hooks = Hooks(before_model_request=from_scratch)
+    second = await scripted_agent(received=received, capabilities=[counter_capability(), hooks]).run(
+        'Again.', deps=Counter(5), message_history=first.all_messages()
+    )
+    # The count changed, but the hook left it out: nothing is recorded for it.
+    assert deltas(second.new_messages()) == []
+
+    hooks = Hooks(before_model_request=emptied)
+    third = await scripted_agent(received=received, capabilities=[counter_capability(), hooks]).run(
+        'Again.', deps=Counter(), message_history=first.all_messages()
+    )
+    assert deltas(third.new_messages()) == [InstructionDeltaPart(id=COUNTER_ID, content=None)]
