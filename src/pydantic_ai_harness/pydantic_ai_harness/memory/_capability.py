@@ -41,6 +41,7 @@ from pydantic_ai_harness.memory._toolset import (
     MemoryToolOperations,
     MemoryToolset,
     MemoryWriteResult,
+    empty_snapshot_body,
     file_reader,
     read_call,
     require_metadata_store,
@@ -62,7 +63,6 @@ _DEFAULT_GUIDANCE = (
     'in this turn. A later `<memory>` block for this memory supersedes its earlier ones.'
 )
 
-_EMPTY_MEMORY = '[memory is empty]'
 # The slash is inside the optional group so the two `\s*` never compete for one run of spaces.
 _MEMORY_TAG_RE = re.compile(r'<(?=(?:\s*/)?\s*memory\b)', re.IGNORECASE)
 """The `<` of a `<memory>` or `</memory>` tag in stored content, which could otherwise close the block early."""
@@ -345,15 +345,10 @@ class Memory(AbstractCapability[AgentDepsT]):
             has_memory = bool((main is not None and main.content) or subfiles or files_truncated)
             snapshot = self._render_snapshot(main, subfiles, files_truncated, file_reader(ctx, store, scope))
             rendered = None if snapshot is None else snapshot[0]
-            # An empty snapshot is only worth recording when it replaces one the model could still read as current.
-            # That's judged over the whole history, not the post-compaction window: a provider that doesn't honor
-            # the compaction boundary (OpenAI Chat, after switching from Anthropic) still sends the older snapshot.
-            if (
-                snapshot is not None
-                and snapshot[1]
-                and latest is None
-                and _latest_snapshot(ctx.messages, metadata) is None
-            ):
+            # Memory just emptied could still be shown by anything earlier in the history: an older snapshot, or a
+            # summary that kept its facts. So an empty snapshot is skipped only in a fresh conversation, whose history
+            # is just this request, and recorded once per run in which it isn't already the latest snapshot.
+            if snapshot is not None and snapshot[1] and len(ctx.messages) <= 1:
                 rendered = None
             appended = rendered if rendered is not None and rendered != latest else None
             if appended is not None:
@@ -383,7 +378,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         files_truncated: bool,
         reader: tuple[str, str] | None,
     ) -> tuple[str, bool] | None:
-        """The framed snapshot and whether it only says memory is empty (so a conversation without one can skip it), or `None` when it doesn't fit the budget."""
+        """The framed snapshot, and whether a fresh conversation can skip it, or `None` when it doesn't fit the budget."""
         main_content = '' if main is None else _neutralize(main.content)
         subfiles = [_neutralize(name) for name in subfiles]
         guidance = self._render_guidance()
@@ -393,12 +388,10 @@ class Memory(AbstractCapability[AgentDepsT]):
         if not (main_content or subfiles or files_truncated):
             # Under its heading, so several memories on one agent stay apart, and with the directory when the run's
             # file tools read it, since that's the only place the model learns where to write and read later.
-            sections = [f'## {self.heading}'] if self.heading else []
-            if reader is not None:
-                sections.append(f'These files are in `{reader[1]}/` in the workspace.')
-            empty = '\n\n'.join([*sections, _EMPTY_MEMORY])
+            empty = empty_snapshot_body(self.heading, None if reader is None else reader[1])
             if len(empty) > content_budget:
                 return None
+            # One that names the directory is recorded even in a fresh conversation, as the only disclosure of it.
             return f'{MEMORY_DATA_PREFIX}{empty}{MEMORY_DATA_SUFFIX}', reader is None
         rendered = render_memory_prompt(
             main_content,

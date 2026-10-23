@@ -98,6 +98,17 @@ def _snapshot_discloses(messages: list[ModelMessage], metadata: dict[str, str], 
     )
 
 
+EMPTY_MEMORY = '[memory is empty]'
+
+
+def empty_snapshot_body(heading: str, location: str | None) -> str:
+    """What a snapshot says when memory is empty: under its heading, and with the directory when files are read in place."""
+    sections = [f'## {heading}'] if heading else []
+    if location is not None:
+        sections.append(f'These files are in `{location}/` in the workspace.')
+    return '\n\n'.join([*sections, EMPTY_MEMORY])
+
+
 def snapshot_content_budget(max_tokens: int, guidance: str | None) -> int:
     """Characters left for the injected snapshot once the guidance and its delimiters are counted."""
     return max_tokens * 4 - len(guidance or '') - len(MEMORY_DATA_PREFIX) - len(MEMORY_DATA_SUFFIX)
@@ -310,13 +321,14 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         """
         capability = self._capability
         guidance = capability.get_instructions()
-        if (
-            not capability.inject_memory
-            or snapshot_content_budget(capability.max_tokens, guidance if isinstance(guidance, str) else None) <= 0
-        ):
+        budget = snapshot_content_budget(capability.max_tokens, guidance if isinstance(guidance, str) else None)
+        if not capability.inject_memory or budget <= 0:
             return tool_def
         store, scope = self._resolve_scope(ctx)
         if (directory := run_workspace_directory(store, scope)) is None:
+            return tool_def
+        # The smallest snapshot that names the directory is the empty one: if it doesn't fit, none reliably does.
+        if len(empty_snapshot_body(capability.heading, directory)) > budget:
             return tool_def
         # A snapshot only gives the directory when one is recorded: in a run that answers a prompt before the
         # model's first response, or already visible in history. A run that continues earlier work, or loads

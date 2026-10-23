@@ -136,6 +136,12 @@ class TestReaderKept:
         recorder, _ = await _run(tmp_path, Memory(store=FileStore('.agent-memory'), max_tokens=100), FileSystem())
         assert all('read_memory' in tools and 'read_file' in tools for tools in recorder.offered)
 
+    async def test_when_no_snapshot_naming_the_directory_fits(self, tmp_path: Path) -> None:
+        # Room for a few characters of snapshot, but not for the line that gives the directory.
+        memory = Memory(store=FileStore('.agent-memory'), guidance='', max_tokens=5)
+        recorder, _ = await _run(tmp_path, memory, FileSystem())
+        assert all('read_memory' in tools and 'read_file' in tools for tools in recorder.offered)
+
     @pytest.mark.parametrize('store_kind', ['own_workspace', 'in_memory', 'outside_working_dir'])
     async def test_store_the_file_tools_cannot_see(self, tmp_path: Path, store_kind: str) -> None:
         elsewhere = tmp_path / 'elsewhere'

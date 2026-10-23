@@ -60,7 +60,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.compaction import SlidingWindowCompaction
+from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
 from pydantic_ai_harness.memory import (
     FileStore,
     InMemoryStore,
@@ -2026,6 +2026,24 @@ class TestInjection:
         assert '- likes tea' in sent
         assert '[memory is empty]' in sent
         assert sent.index('- likes tea') < sent.index('[memory is empty]')
+
+    async def test_emptied_memory_is_recorded_after_a_summary_replaced_its_snapshot(self) -> None:
+        store = InMemoryStore()
+        mutation = await _seed(store, 'main/MEMORY.md', '- likes tea')
+        summarizer = SummarizingCompaction(
+            model=TestModel(custom_output_text='The user likes tea.'), max_messages=2, keep_messages=1
+        )
+        agent = Agent(TestModel(call_tools=[]), capabilities=[summarizer, Memory(store=store)])
+        first = await agent.run('first')
+        assert len(_memory_contexts(first.all_messages())) == 1
+        await store.delete('main/MEMORY.md', expected_version=mutation.version)
+
+        second = await agent.run('second', message_history=first.all_messages())
+
+        # The summary still says the user likes tea and no snapshot is left to replace, so the empty one is needed.
+        history = second.all_messages()
+        assert not any('- likes tea' in context for context in _memory_contexts(history))
+        assert _memory_contexts(history)[-1] == '<memory>\n[memory is empty]\n</memory>'
 
     async def test_memory_loaded_mid_run_waits_for_the_next_prompt(self) -> None:
         store = InMemoryStore()
