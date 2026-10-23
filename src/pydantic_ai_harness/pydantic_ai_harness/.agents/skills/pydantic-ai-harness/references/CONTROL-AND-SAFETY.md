@@ -193,10 +193,14 @@ where a redactor would redact: `guard=lambda text: redact_secrets(text).action !
 Gotchas:
 - Hard-fail instead of graceful: raise `InputBlocked`/`OutputBlocked`/`ToolBlocked(tool_name, reason)`
   (all subclass `GuardrailError`) from the guard; any exception propagates as-is.
-- Input `replace` on a multimodal prompt raises `UserError` (it would drop attachments).
+- Input `replace` on a multimodal prompt raises `UserError` (it would drop attachments), also when
+  the model was sent a text copy and the history's original is the multimodal prompt.
 - `InputGuardrail` screens and rewrites the user's prompt part only. Parts another capability adds to the
-  request (`SystemReminders`, `Planning`, `Memory`) are left alone. A run resumed without a new prompt
-  screens the most recent prompt in the history again.
+  request (`SystemReminders`, `Planning`, `Memory`) are left alone. If one sends the model a copy of the
+  prompt part, a redaction also reaches the history's original; for a copy with changed text the guard
+  is called again on the original's own text: a redaction from it is written there and a `block`
+  blocks the run. A run resumed without a new prompt screens the most recent prompt in the history
+  again.
 - Redaction spans carry `guardrail.replacement` under `trace_include_content`, never the original value.
 - `email` also matches `git@github.com`; on code agents use `personal_data(only=['us_ssn', 'credit_card', 'iban'])`.
 - AWS *secret* keys are not in the defaults; add via `extra=`. Regex detectors do not catch prompt injection.
