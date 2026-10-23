@@ -3,14 +3,36 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import pytest
 from pydantic_monty._binary import find_monty_binary  # the lookup `AsyncMonty()` uses for local workers
 
+from pydantic_ai_harness.code_mode import CodeModeToolset
 from tests.harness.code_mode import websocket_relay
+
+_REMOTE_MONTY_URL = os.environ.get('MONTY_SANDBOX_TEST_URL') or None
+"""When set, the whole suite runs against this Monty server instead of local workers (CI: staging)."""
+
+
+@pytest.fixture(autouse=True)
+def _remote_monty(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point every `CodeMode` without its own `monty_sandbox_url` at `MONTY_SANDBOX_TEST_URL`."""
+    if _REMOTE_MONTY_URL is not None:  # pragma: no cover -- remote mode only
+        if request.node.get_closest_marker('local_monty') is not None:
+            pytest.skip('needs a local Monty worker')
+        original = CodeModeToolset.__aenter__
+
+        async def aenter(self: CodeModeToolset[Any]) -> CodeModeToolset[Any]:
+            if self.monty_sandbox_url is None:
+                self.monty_sandbox_url = _REMOTE_MONTY_URL
+            return await original(self)
+
+        monkeypatch.setattr(CodeModeToolset, '__aenter__', aenter)
 
 
 @asynccontextmanager

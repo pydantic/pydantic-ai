@@ -1498,6 +1498,7 @@ class TestCodeMode:
     # `for_run` / `for_run_step` lifecycle
     # ---------------------------------------------------------------------------
 
+    @pytest.mark.local_monty  # patches `AsyncMonty`, which a remote run never constructs
     async def test_enter_does_not_start_monty_if_wrapped_enter_fails(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A wrapped-toolset failure must not start an unused Monty worker."""
 
@@ -1515,6 +1516,7 @@ class TestCodeMode:
 
         monty.assert_not_called()
 
+    @pytest.mark.local_monty  # patches `AsyncMonty`, which a remote run never constructs
     async def test_exit_releases_resources_in_reverse_entry_order(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The wrapped toolset exits before the Monty pool it may depend on."""
         events: list[str] = []
@@ -1568,6 +1570,7 @@ class TestCodeMode:
             'monty exit',
         ]
 
+    @pytest.mark.local_monty  # patches `AsyncMonty`, which a remote run never constructs
     async def test_failed_pool_start_closes_the_portal(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A pool that fails to start inside a Temporal workflow does not leave its portal thread behind."""
 
@@ -3242,6 +3245,7 @@ class TestCodeMode:
         assert unwound.is_set()
         assert extra_cancels == 0, f'cancelled scope must not re-cancel dispatched work, got {extra_cancels} re-cancels'
 
+    @pytest.mark.local_monty  # patches `AsyncMonty`, which a remote run never constructs
     async def test_worker_crash_becomes_model_retry_and_resets_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A `MontyCrashedError` (worker death) becomes a retry with the session reset.
 
