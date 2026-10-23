@@ -44,6 +44,36 @@
     },
     {
       "against": "v2.59.0",
+      "fingerprint": "01c743d24a50d95bf9e6e60708d8e18127f8162acb6c6eb7be934c07d4c76a31",
+      "reason": "Adds the 'max' effort level to unified thinking (#9993); existing values are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "d2843ec47262fc6f636d040aab3968f84f4a196040a6c4d80d1346117291581c",
+      "reason": "Adds the 'max' key for the new unified thinking effort level (#9993); existing keys are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "8d99eeaee298c23b0fd72e23c0a5412cbd02dcf80e141f40959631d764afd89e",
+      "reason": "Adds the 'max' key for the new unified thinking effort level (#9993); existing keys are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "7d58785ddbe7ca707bcc6ebf0914706ff6434552ecf3640b865ae4e1e3748080",
+      "reason": "Adds the 'max' key for the new unified thinking effort level (#9993); existing keys are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "30907d84b32362b61fa212732b1ad3fb8fda3160dcd968b37470a5f39863fd67",
+      "reason": "Adds the 'max' key for the new unified thinking effort level (#9993); existing keys are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
       "fingerprint": "679024394731649b9cd4c4300679de05df481ee1512142e772055756302b9541",
       "reason": "Adds the xAI Grok 4.6 and 4.7 Bedrock ids to `LatestBedrockModelNames`; every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8639"
@@ -65,6 +95,18 @@
       "fingerprint": "481effa0702c0a046ac7a6eebbd1a1689f975c12ab516e981a6a000c3f6e6f1f",
       "reason": "Harness 0.x: the same `GitHub.description` default text change, reported on `GitHub.__init__`; calls that pass or omit `description` keep working.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10815"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "953e88def3e59bb46a780d71e7f68ec43d2091299deec34f7d0520f89f42a27f",
+      "reason": "False positive: only adds `repr=False` so the credential-bearing URL stays out of `repr`; the attribute's type, default, and constructor parameter are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "f5277165732c4c6ae79c0ff3e286f1fbccca262094e6dee75b26bfca7455c244",
+      "reason": "False positive: only adds `repr=False` so the credential-bearing URL stays out of `repr`; the attribute's type, default, and constructor parameter are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
     }
   ]
 }

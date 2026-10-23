@@ -176,7 +176,7 @@ class TestPerRunAuth:
 
     async def test_provider_returning_oauth_raises(self) -> None:
         capability = GoogleWorkspace[str | None]('gmail', auth=per_user_token)
-        with pytest.raises(UserError, match="needs an access token, not 'oauth'"):
+        with pytest.raises(UserError, match="must return an access token, not 'oauth'"):
             await connections_for(capability, 'oauth')
 
     def test_provider_does_not_need_environment_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
