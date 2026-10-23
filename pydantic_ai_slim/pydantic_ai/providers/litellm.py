@@ -44,10 +44,7 @@ def _litellm_mistral_model_profile(model_name: str) -> ModelProfile:
 
 
 class LiteLLMProvider(_OpenAICompatibleProvider):
-    """Provider for a LiteLLM proxy.
-
-    This does not install or import the `litellm` Python package; it talks to the proxy over HTTP using the OpenAI client.
-    """
+    """Provider for LiteLLM API."""
 
     @property
     def name(self) -> str:
