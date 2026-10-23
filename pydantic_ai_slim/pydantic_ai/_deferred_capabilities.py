@@ -37,10 +37,16 @@ class LoadCapabilityArgs(TypedDict):
 class LoadCapabilityReturn(TypedDict):
     """Typed return value for the `load_capability` tool."""
 
+    message: NotRequired[str]
+    """Confirms the load to the model, and says whether the capability's instructions follow.
+
+    Absent from histories recorded by earlier versions.
+    """
+
     instructions: NotRequired[str]
     """Instructions for the loaded capability, as they were when it loaded, in a realtime session only.
 
-    Elsewhere the load returns an empty payload, and the instructions are recorded as
+    Elsewhere the load returns only its `message`, and the instructions are recorded as
     [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s for the capability's block,
     `capability:<id>`, on the request after the load. Histories from earlier versions carry them here, and
     those still seed the block's value without being sent again.

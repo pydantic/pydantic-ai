@@ -1779,7 +1779,7 @@ async def test_a_deferred_capability_can_declare_its_blocks_as_parts():
         for part in message.parts
         if part.part_kind == 'tool-return'
     ]
-    assert returns == [{}]
+    assert returns == [{'message': "Capability 'refunds' loaded. Its instructions follow."}]
     assert [
         part.content
         for message in result.all_messages()

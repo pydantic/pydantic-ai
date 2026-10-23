@@ -518,6 +518,11 @@ def loaded_part_capability_id(part: InstructionPart) -> str | None:
     return source.id if isinstance(source, CapabilityInstructionSource) else None
 
 
+def is_loaded_block(instruction_id: InstructionId | None) -> bool:
+    """Whether `instruction_id` is a loaded capability's block, whose statements outlive instruction windows."""
+    return _loaded_block_capability_id(instruction_id) is not None
+
+
 def _loaded_block_capability_id(instruction_id: InstructionId | None) -> str | None:
     """The capability `instruction_id` is the loaded block of, if it is one."""
     if instruction_id is None or instruction_id.name is not None:

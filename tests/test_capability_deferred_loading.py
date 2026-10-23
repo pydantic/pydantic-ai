@@ -645,7 +645,7 @@ async def test_deferred_capability_instructions_decorator_resolves_on_load() -> 
         for part in message.parts
         if isinstance(part, LoadCapabilityReturnPart)
     ]
-    assert load_return.content == {}
+    assert load_return.content == {'message': "Capability 'account' loaded. Its instructions follow."}
     assert loaded_instructions(result.all_messages(), 'account') == 'Use account id 123.'
     first_request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
     assert first_request.instructions == snapshot(
@@ -906,7 +906,11 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelRequest(
                 parts=[
-                    LoadCapabilityReturnPart(content={}, tool_call_id=IsStr(), timestamp=IsDatetime()),
+                    LoadCapabilityReturnPart(
+                        content={'message': "Capability 'refunds' loaded. Its instructions follow."},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    ),
                     InstructionDeltaPart(
                         id=InstructionId(source=CapabilityInstructionSource(id='refunds')),
                         content='Refund instructions.',
@@ -922,7 +926,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
-                usage=RequestUsage(input_tokens=77, output_tokens=11),
+                usage=RequestUsage(input_tokens=85, output_tokens=11),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1160,7 +1164,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ModelRequest(
                 parts=[
                     LoadCapabilityReturnPart(
-                        content={},
+                        content={'message': "Capability 'refunds' loaded. Its instructions follow."},
                         tool_call_id='load-refunds',
                         timestamp=IsDatetime(),
                     ),
@@ -1190,7 +1194,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         tool_name='lookup_refund_policy', args={'order_id': 'order-123'}, tool_call_id='lookup-refund'
                     )
                 ],
-                usage=RequestUsage(input_tokens=84, output_tokens=10),
+                usage=RequestUsage(input_tokens=92, output_tokens=10),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1226,7 +1230,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='final: order-123: refund allowed for 30 days')],
-                usage=RequestUsage(input_tokens=111, output_tokens=17),
+                usage=RequestUsage(input_tokens=119, output_tokens=17),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -2349,7 +2353,7 @@ async def test_deferred_capability_load_includes_toolset_instructions() -> None:
         for part in message.parts
         if isinstance(part, LoadCapabilityReturnPart)
     ]
-    assert load_return.content == {}
+    assert load_return.content == {'message': "Capability 'refunds' loaded. Its instructions follow."}
     assert loaded_instructions(result.all_messages(), 'refunds') == snapshot("""\
 Quote the refund policy verbatim.
 
@@ -2419,7 +2423,7 @@ async def test_deferred_capability_load_drops_empty_toolset_instructions() -> No
         for part in message.parts
         if isinstance(part, LoadCapabilityReturnPart)
     ]
-    assert load_return.content == {}
+    assert load_return.content == {'message': "Capability 'cap' loaded. Its instructions follow."}
     assert loaded_instructions(result.all_messages(), 'cap') == 'Real hint from toolset.'
 
 

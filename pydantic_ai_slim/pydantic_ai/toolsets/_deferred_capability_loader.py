@@ -30,6 +30,8 @@ LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE = (
     'Capability {capability_id!r} is already active. '
     'Use its existing instructions and any tools it provides; do not call `load_capability` for it again.'
 )
+LOAD_CAPABILITY_LOADED_MESSAGE_TEMPLATE = 'Capability {capability_id!r} loaded.'
+LOAD_CAPABILITY_INSTRUCTIONS_FOLLOW_MESSAGE_TEMPLATE = 'Capability {capability_id!r} loaded. Its instructions follow.'
 LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE = (
     'Capability {capability_id!r} is already being loaded by an earlier `load_capability` call in this response; '
     'do not call `load_capability` for it again.'
@@ -95,11 +97,21 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         # they treat as authoritative over user and tool-output pressure. They're never in both places, which
         # made models treat them as tool output again. A realtime session has no channel for those parts, so
         # the instructions still ride the return there.
-        result: LoadCapabilityReturn = {}
-        if ctx.realtime:
-            parts = await resolve_loaded_capability_instructions(capability_id, self, ctx)
-            text = InstructionPart.join([part for part in parts if part.content])
-            result = {'instructions': text} if text is not None else {}
+        parts = await resolve_loaded_capability_instructions(capability_id, self, ctx)
+        text = InstructionPart.join([part for part in parts if part.content])
+        if text is None:
+            result: LoadCapabilityReturn = {
+                'message': LOAD_CAPABILITY_LOADED_MESSAGE_TEMPLATE.format(capability_id=capability_id)
+            }
+        elif ctx.realtime:
+            result = {
+                'message': LOAD_CAPABILITY_LOADED_MESSAGE_TEMPLATE.format(capability_id=capability_id),
+                'instructions': text,
+            }
+        else:
+            result = {
+                'message': LOAD_CAPABILITY_INSTRUCTIONS_FOLLOW_MESSAGE_TEMPLATE.format(capability_id=capability_id)
+            }
         tools = sorted(name for name, tool_def in ctx.tools.items() if tool_def.capability_id == capability_id)
         return ToolReturn(return_value=result, tools=tools or None)
 

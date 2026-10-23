@@ -150,7 +150,9 @@ async def test_loaded_instructions_are_stated_after_the_load():
     counter = Counter()
     agent = scripted_agent(LOAD, BUMP, received=received)
     first = await agent.run('Count.', deps=counter)
-    assert load_return(first.all_messages()).content == {}
+    assert load_return(first.all_messages()).content == {
+        'message': "Capability 'counter' loaded. Its instructions follow."
+    }
     assert deltas(first.all_messages()) == [
         InstructionDeltaPart(id=COUNTER_ID, content=f'{RULES}\n\nThe count is 0.'),
         InstructionDeltaPart(
@@ -425,7 +427,9 @@ async def test_append_mode_loaded_instructions_are_tracked():
     )
     load = ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'memory'})])
     result = await scripted_agent(load, received=received, capabilities=[capability]).run('Go.', deps=Counter())
-    assert load_return(result.all_messages()).content == {}
+    assert load_return(result.all_messages()).content == {
+        'message': "Capability 'memory' loaded. Its instructions follow."
+    }
     assert deltas(result.all_messages()) == [
         InstructionDeltaPart(id=InstructionId(CapabilityInstructionSource('memory')), content='Remember.')
     ]
@@ -573,7 +577,12 @@ WIRE_SHAPES: dict[str, Any] = snapshot(
                     {
                         'tool_use_id': 'toolu_1_0',
                         'type': 'tool_result',
-                        'content': [{'text': '{}', 'type': 'text'}],
+                        'content': [
+                            {
+                                'text': '{"message":"Capability \'housekeeping\' loaded. Its instructions follow."}',
+                                'type': 'text',
+                            }
+                        ],
                         'is_error': False,
                     }
                 ],
@@ -600,7 +609,11 @@ Use trash.
                 'type': 'function_call',
                 'id': 'fc_1_0',
             },
-            {'type': 'function_call_output', 'call_id': 'call_1_0', 'output': '{}'},
+            {
+                'type': 'function_call_output',
+                'call_id': 'call_1_0',
+                'output': '{"message":"Capability \'housekeeping\' loaded. Its instructions follow."}',
+            },
             {
                 'role': 'system',
                 'content': """\
@@ -611,7 +624,11 @@ Use trash.
             },
         ],
         'openai-chat': [
-            {'role': 'tool', 'tool_call_id': 'call_1_0', 'content': '{}'},
+            {
+                'role': 'tool',
+                'tool_call_id': 'call_1_0',
+                'content': '{"message":"Capability \'housekeeping\' loaded. Its instructions follow."}',
+            },
             {
                 'role': 'system',
                 'content': """\
@@ -656,7 +673,12 @@ async def test_wire_shape_after_the_load_without_a_system_channel(
                 {
                     'tool_use_id': 'toolu_1_0',
                     'type': 'tool_result',
-                    'content': [{'text': '{}', 'type': 'text'}],
+                    'content': [
+                        {
+                            'text': '{"message":"Capability \'housekeeping\' loaded. Its instructions follow."}',
+                            'type': 'text',
+                        }
+                    ],
                     'is_error': False,
                 },
                 {
