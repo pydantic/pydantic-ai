@@ -59,6 +59,10 @@ read tools are offered. `list_files` and `grep` run `rg` inside the workspace;
 where it can't run commands, they walk its files instead, as `find_files` and
 `search_files` do.
 
+[Mounted folders](https://pydantic.dev/docs/ai/core-concepts/workspace/#mounting-filesystems), such as an [`S3Filesystem`](cloud-storage.md), are listed in the
+instructions, with whether commands see them. A search that includes a mount commands can't see
+walks it through the filesystem, which is slower than `rg`.
+
 ## Tools
 
 `FileSystem` contributes eight tools by default, plus two opt-in ripgrep tools, all path-scoped to `root_dir`:

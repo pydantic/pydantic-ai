@@ -212,6 +212,7 @@ Whoever passes a ref runs commands in the VM it names. smolmachines can open any
 | `allow_internet_access` | Whether a new VM has unrestricted outbound network access, from this machine's network. Default: `False`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created if missing. Default: `/workspace`; `None` uses the VM's own (`/` without an image). |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the VM, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
+| `mounts` | [Filesystems to show as folders](https://pydantic.dev/docs/ai/harness/cloud-storage/), such as an `S3Filesystem`, or a function of the run that picks them, for example one folder per customer. File tools reach them. Default: none. |
 
 ## Platforms
 

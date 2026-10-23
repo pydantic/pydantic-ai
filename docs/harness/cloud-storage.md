@@ -41,23 +41,32 @@ The file tools read `2026-10-01.csv` from `s3://acme-data/exports/2026-10-01.csv
 
 ## As a folder
 
-A [`Mount`](https://pydantic.dev/docs/ai/core-concepts/workspace/#mounting-filesystems) shows the bucket as a folder of another workspace, such as `LocalWorkspace`:
+A [`Mount`](https://pydantic.dev/docs/ai/core-concepts/workspace/#mounting-filesystems) shows the bucket as a folder of another workspace. `LocalWorkspace` and every sandbox capability take `mounts=`, a list or a function of the run, for example one folder per customer:
 
 ```python {names="defined"}
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.workspaces import Mount
-from pydantic_ai_harness import FileSystem
-from pydantic_ai_harness.cloud_storage import S3Filesystem
+from dataclasses import dataclass
 
-exports = S3Filesystem('s3://acme-data/exports/')
-agent = Agent(
-    '{{ anthropic:large }}',
-    capabilities=[LocalWorkspace('.', mounts=[Mount('exports', exports, read_only=True)]), FileSystem()],
-)
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.workspaces import Mount
+from pydantic_ai_harness.cloud_storage import S3Filesystem
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.e2b_sandbox import E2BSandbox
+
+
+@dataclass
+class Customer:
+    id: str
+
+
+def customer_files(ctx: RunContext[Customer]) -> list[Mount]:
+    files = S3Filesystem(f's3://acme-customers/{ctx.deps.id}/')
+    return [Mount('files', files, read_only=True, description="The customer's files")]
+
+
+agent = Agent('{{ anthropic:large }}', deps_type=Customer, capabilities=[E2BSandbox(mounts=customer_files), Coder()])
 ```
 
-File tools reach `exports/`; commands on your machine don't.
+File tools reach `files/`; commands don't, and the model is told so.
 
 ## Choosing the class
 

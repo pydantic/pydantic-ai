@@ -9,7 +9,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir
+from pydantic_ai_harness._workspace_provider import Mounts, check_integer, check_working_dir, with_mounts
 from pydantic_ai_harness.e2b_sandbox import _backend
 from pydantic_ai_harness.e2b_sandbox._backend import DEFAULT_SANDBOX_TIMEOUT, E2BSandboxBackend
 
@@ -48,6 +48,9 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, also on an attached workspace; nothing is read from the host."""
 
+    mounts: Mounts = ()
+    """Filesystems to show as folders in the sandbox, such as an [`S3Filesystem`][pydantic_ai_harness.cloud_storage.S3Filesystem]; a function of the run can pick them per run."""
+
     def __post_init__(self) -> None:
         if self.defer_loading:
             raise UserError(
@@ -71,10 +74,9 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it attaches or creates on first use."""
-        del ctx
         if ref is not None and ref.provider != 'e2b':
             return None
-        return E2BSandboxBackend(
+        backend = E2BSandboxBackend(
             ref=ref,
             template=self.template,
             allow_internet_access=self.allow_internet_access,
@@ -82,3 +84,4 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             working_dir=self.working_dir,
             env=self.env,
         )
+        return with_mounts(backend, self.mounts, ctx)

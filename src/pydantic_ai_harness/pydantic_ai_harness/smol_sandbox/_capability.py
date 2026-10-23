@@ -12,7 +12,13 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir, running_on_asyncio
+from pydantic_ai_harness._workspace_provider import (
+    Mounts,
+    check_integer,
+    check_working_dir,
+    running_on_asyncio,
+    with_mounts,
+)
 from pydantic_ai_harness.smol_sandbox import _backend
 from pydantic_ai_harness.smol_sandbox._backend import SmolSandboxBackend
 
@@ -46,6 +52,9 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, also on an attached VM; nothing is read from the host."""
 
+    mounts: Mounts = ()
+    """Filesystems to show as folders in the sandbox, such as an [`S3Filesystem`][pydantic_ai_harness.cloud_storage.S3Filesystem]; a function of the run can pick them per run."""
+
     def __post_init__(self) -> None:
         if self.defer_loading:
             raise UserError(
@@ -75,13 +84,12 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it boots or attaches on first use."""
-        del ctx
         if ref is not None and ref.provider != 'smol':
             return None
         if ref is not None:
             # A ref from message history only reaches VMs `SmolSandbox` created.
             _backend.check_ref(ref)
-        return SmolSandboxBackend(
+        backend = SmolSandboxBackend(
             ref=ref,
             image=self.image,
             cpus=self.cpus,
@@ -90,6 +98,7 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
             working_dir=self.working_dir,
             env=self.env,
         )
+        return with_mounts(backend, self.mounts, ctx)
 
 
 async def _delete(machine_id: str) -> None:

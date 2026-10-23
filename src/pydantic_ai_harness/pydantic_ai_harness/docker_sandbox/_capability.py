@@ -9,7 +9,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import check_working_dir
+from pydantic_ai_harness._workspace_provider import Mounts, check_working_dir, with_mounts
 from pydantic_ai_harness.docker_sandbox._backend import (
     PROVIDER,
     DockerSandboxBackend,
@@ -50,6 +50,9 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, also in an attached container; nothing is read from the host."""
 
+    mounts: Mounts = ()
+    """Filesystems to show as folders in the sandbox, such as an [`S3Filesystem`][pydantic_ai_harness.cloud_storage.S3Filesystem]; a function of the run can pick them per run."""
+
     allow_internet_access: bool = True
     """Whether a new container gets outbound network access, through Docker's default bridge: the internet, but also this machine's local network and services. `False` runs it with `--network none`."""
 
@@ -87,12 +90,11 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it creates or attaches on first use."""
-        del ctx
         if ref is not None:
-            return self.backend(ref) if ref.provider == PROVIDER else None
+            return with_mounts(self.backend(ref), self.mounts, ctx) if ref.provider == PROVIDER else None
         if self.image is None:
             return None
-        return DockerSandboxBackend(
+        backend = DockerSandboxBackend(
             image=self.image,
             working_dir=self.working_dir,
             env=self.env,
@@ -100,3 +102,4 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
             docker_args=self.docker_args,
             executable=self._executable_path,
         )
+        return with_mounts(backend, self.mounts, ctx)

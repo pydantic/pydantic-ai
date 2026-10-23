@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FilteredToolset
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored, warn_argument_renamed
-from pydantic_ai_harness._workspace import require_workspace
+from pydantic_ai_harness._workspace import require_workspace, supports_commands
 from pydantic_ai_harness.filesystem._toolset import (
     DEFAULT_TOOL_NAMES,
     READ_ONLY_TOOL_NAMES,
@@ -178,6 +179,10 @@ class FileSystem(AbstractCapability[AgentDepsT]):
         """Fail without a workspace, without touching it: the boundary waits for the first file operation."""
         require_workspace(ctx.workspace, 'FileSystem', ctx.messages)
 
+    def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], str | None]:
+        """Tell the model which folders are mounted filesystems, and whether shell commands see them."""
+        return _mount_instructions
+
     def get_toolset(self) -> FileSystemToolset[AgentDepsT] | FilteredToolset[AgentDepsT]:
         """The filesystem toolset, the same one for every run, so durable execution sees the leaf it registered."""
         toolset = self._file_system_toolset()
@@ -203,3 +208,23 @@ class FileSystem(AbstractCapability[AgentDepsT]):
                 max_retries=self.max_retries,
             )
         return self._toolset
+
+
+def _mount_instructions(ctx: RunContext[Any]) -> str | None:
+    workspace = ctx.workspace
+    # Without a shell there is nothing for a mount to be hidden from.
+    shell = supports_commands(workspace)
+    lines = [
+        f'- `{mount.path}` ({"read-only" if mount.read_only or workspace.read_only else "read-write"}'
+        + (
+            ''
+            if not shell
+            else '; commands see it too'
+            if mount.commands
+            else '; file tools only, commands do not see it'
+        )
+        + ')'
+        + (f': {mount.description}' if mount.description else '')
+        for mount in workspace.mounts
+    ]
+    return '\n'.join(['Mounted folders in this workspace:', *lines]) if lines else None

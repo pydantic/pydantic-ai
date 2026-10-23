@@ -252,14 +252,15 @@ class BubblewrapWorkspace(WrapperWorkspace):
             to hide one.
     """
 
-    def __init__(self, wrapped: Workspace, *, network: bool = False, bwrap_args: Sequence[str] = ()):
+    def __init__(self, wrapped: WorkspaceBackend, *, network: bool = False, bwrap_args: Sequence[str] = ()):
         if isinstance(bwrap_args, str):
             raise TypeError('bwrap_args must be a sequence of arguments, not a string')
         super().__init__(wrapped)
         self._network = network
         self._bwrap_args = tuple(bwrap_args)
         self._sandbox_works = False
-        self._files = wrapped if wrapped.read_only else Workspace(_SandboxedCommands(self))
+        wrapped = self.wrapped
+        self._files = wrapped if wrapped.read_only else Workspace(_SandboxedCommands(self), mounts=wrapped.mounts)
         self._login_guard: tuple[str, ...] | None = None
 
     def durable_policy(self) -> tuple[object, ...]:

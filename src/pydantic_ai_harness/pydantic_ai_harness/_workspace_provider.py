@@ -5,14 +5,15 @@ from __future__ import annotations
 import asyncio
 import math
 import posixpath
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from typing import TypeVar
+from typing import Any, TypeAlias, TypeVar
 
 import anyio
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.workspaces import WorkspaceCommand, WorkspaceTimeoutError
+from pydantic_ai.tools import RunContext
+from pydantic_ai.workspaces import Mount, Workspace, WorkspaceBackend, WorkspaceCommand, WorkspaceTimeoutError
 
 # Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
 try:
@@ -21,6 +22,15 @@ except ModuleNotFoundError:  # pragma: no cover - exercised by the clean-import 
     _sniffio = None
 
 _T = TypeVar('_T')
+
+Mounts: TypeAlias = 'Sequence[Mount] | Callable[[RunContext[Any]], Sequence[Mount]]'
+"""A workspace capability's `mounts=`: the mounts, or a function of the run that picks them, such as one folder per customer."""
+
+
+def with_mounts(backend: WorkspaceBackend, mounts: Mounts, ctx: RunContext[Any]) -> WorkspaceBackend:
+    """`backend` with the capability's mounts, or `backend` itself when it has none."""
+    picked = mounts(ctx) if callable(mounts) else mounts
+    return Workspace(backend, mounts=picked) if picked else backend
 
 
 def safe_credential_reason(error: Exception) -> str:
