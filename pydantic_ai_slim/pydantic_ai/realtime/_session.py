@@ -250,6 +250,7 @@ _WAV_MEDIA_TYPE = 'audio/wav'
 _FULL_PROFILE = RealtimeModelProfile(
     supports_image_input=True,
     supports_text_output=True,
+    supports_audio_output=True,
     supports_manual_turn_control=True,
     supports_interruption=True,
     supports_output_truncation=True,

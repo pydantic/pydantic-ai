@@ -121,6 +121,7 @@ from ..profiles.openai import (
     OPENAI_REASONING_EFFORT_MAP,
     SAMPLING_PARAMS,
     OpenAIModelProfile,
+    OpenAIReasoningEffort,
     OpenAISystemPromptRole,
     validate_openai_profile,
 )
@@ -616,19 +617,50 @@ def _merge_leading_system_messages(
     return [merged, *openai_messages[leading_count:]]
 
 
+_REASONING_EFFORT_ORDER: tuple[OpenAIReasoningEffort, ...] = get_args(OpenAIReasoningEffort)
+"""Every `reasoning_effort` value, from least to most reasoning, in the order `OpenAIReasoningEffort` lists them."""
+
+
 def _resolve_openai_thinking_effort(
     thinking: ThinkingLevel, profile: OpenAIModelProfile, *, supports_max: bool
 ) -> ReasoningEffort:
-    """Map unified thinking to the closest reasoning effort the model supports.
+    """Map unified thinking to the closest reasoning effort the model accepts, or `None` to send none.
 
+    `thinking=False` on a model that always reasons resolves to the least reasoning it accepts.
     `supports_max` says whether the API the request goes to accepts `'max'` for the model, which differs
     between OpenAI's Chat Completions and Responses APIs.
     """
-    if thinking == 'minimal' and not profile.get('openai_supports_minimal_reasoning_effort', True):
-        return 'low'
-    if thinking == 'max' and supports_max:
-        return 'max'
-    return OPENAI_REASONING_EFFORT_MAP[thinking]  # type: ignore[return-value]
+    supported = profile.get('openai_reasoning_efforts')
+    if supported is None:
+        if thinking is False and profile.get('thinking_always_enabled', False):
+            # Without the model's accepted efforts there's no lowest one to send, so it keeps its default.
+            return None
+        if thinking == 'minimal' and not profile.get('openai_supports_minimal_reasoning_effort', True):
+            return 'low'
+        if thinking == 'max' and supports_max:
+            return 'max'
+        return OPENAI_REASONING_EFFORT_MAP[thinking]
+    accepted: list[OpenAIReasoningEffort] = sorted(
+        (effort for effort in supported if effort != 'max' or supports_max), key=_REASONING_EFFORT_ORDER.index
+    )
+    if thinking is False:
+        # `'none'` where the model accepts it, else its lowest effort.
+        return next(iter(accepted), None)
+    requested_effort = 'max' if thinking == 'max' and supports_max else OPENAI_REASONING_EFFORT_MAP[thinking]
+    requested = _REASONING_EFFORT_ORDER.index(requested_effort)
+    active: list[OpenAIReasoningEffort] = [effort for effort in accepted if effort != 'none']
+    # The lowest accepted effort at or above the requested one, else the highest.
+    for effort in active:
+        if _REASONING_EFFORT_ORDER.index(effort) >= requested:
+            return effort
+    return active[-1] if active else None
+
+
+def _supports_reasoning_effort_none(profile: OpenAIModelProfile) -> bool:
+    """Whether the model accepts `reasoning_effort='none'`, read from its accepted efforts where they're pinned."""
+    if (supported := profile.get('openai_reasoning_efforts')) is not None:
+        return 'none' in supported
+    return profile.get('openai_supports_reasoning_effort_none', False)
 
 
 def _reasoning_active(
@@ -645,7 +677,8 @@ def _reasoning_active(
         return reasoning_effort != 'none'
     thinking = model_request_parameters.thinking
     if thinking is not None:
-        return thinking is not False
+        # `thinking=False` on a model that always reasons sends its lowest effort, so reasoning stays on.
+        return thinking is not False or profile.get('thinking_always_enabled', False)
     return profile.get('thinking_enabled_by_default', False)
 
 
@@ -668,7 +701,7 @@ def _drop_sampling_params_for_reasoning(
         return
 
     # When the model can turn reasoning off, sampling params are allowed while reasoning is inactive.
-    if profile.get('openai_supports_reasoning_effort_none', False) and not _reasoning_active(
+    if _supports_reasoning_effort_none(profile) and not _reasoning_active(
         profile, model_settings, model_request_parameters
     ):
         return
@@ -1494,11 +1527,34 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return OMIT
-        return _resolve_openai_thinking_effort(
+        if thinking is False and 'openai_chat_thinking_false_body' in self.profile:
+            # The profile's body fields stand in for `reasoning_effort`; see `_thinking_false_extra_body`.
+            return OMIT
+        effort = _resolve_openai_thinking_effort(
             thinking,
             self.profile,
             supports_max=self.profile.get('openai_chat_supports_max_reasoning_effort', False),
         )
+        return OMIT if effort is None else effort
+
+    def _thinking_false_extra_body(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> object | None:
+        """The request's `extra_body`, plus the profile's `openai_chat_thinking_false_body` fields for `thinking=False`.
+
+        Keys the caller set in `extra_body` win, and nothing is added when `openai_reasoning_effort` is set.
+        """
+        extra_body = model_settings.get('extra_body')
+        thinking_false_body = self.profile.get('openai_chat_thinking_false_body')
+        if (
+            thinking_false_body is None
+            or model_request_parameters.thinking is not False
+            or model_settings.get('openai_reasoning_effort')
+        ):
+            return extra_body
+        return {**thinking_false_body, **cast(dict[str, Any], extra_body or {})}
 
     @asynccontextmanager
     async def request_stream(
@@ -1611,7 +1667,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                     prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
                     extra_headers=extra_headers,
-                    extra_body=model_settings.get('extra_body'),
+                    extra_body=self._thinking_false_extra_body(model_settings, model_request_parameters),
                 )
             except APIStatusError as e:
                 if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):

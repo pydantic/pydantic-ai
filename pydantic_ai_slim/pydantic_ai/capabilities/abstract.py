@@ -129,6 +129,29 @@ For dynamic descriptions, return a callable from
 having the method itself take `RunContext`.
 """
 
+_REALTIME_UNCALLED_HOOKS: tuple[str, ...] = (
+    'before_node_run',
+    'after_node_run',
+    'wrap_node_run',
+    'on_node_run_error',
+    'before_model_request',
+    'after_model_request',
+    'wrap_model_request',
+    'on_model_request_error',
+    'before_output_validate',
+    'after_output_validate',
+    'wrap_output_validate',
+    'on_output_validate_error',
+    'before_output_process',
+    'after_output_process',
+    'wrap_output_process',
+    'on_output_process_error',
+)
+"""Hooks a realtime session never calls: it has no graph nodes, no per-request boundary, and no output stage.
+
+KEEP IN SYNC with the hook table in `docs/realtime/capabilities.md`.
+"""
+
 
 @dataclass
 class CapabilityOrdering:
@@ -396,6 +419,19 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return type(self).on_event is not AbstractCapability.on_event or marked_listens_to(type(self), event)
 
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        """The hooks this capability itself implements that a realtime session never calls.
+
+        A realtime session warns about every capability in its tree that reports any. Containers and
+        wrappers report only their own overrides: the session asks each capability in the tree for
+        itself. A built-in whose behavior a session provides another way reports none.
+        """
+        return self._realtime_uncalled_hooks_overriding(AbstractCapability)
+
+    def _realtime_uncalled_hooks_overriding(self, base: type[AbstractCapability[Any]]) -> tuple[str, ...]:
+        """The realtime-uncalled hooks this capability's class overrides relative to `base`."""
+        return tuple(hook for hook in _REALTIME_UNCALLED_HOOKS if getattr(type(self), hook) is not getattr(base, hook))
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         """Return the name used for spec serialization (CamelCase class name by default).
@@ -579,20 +615,28 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def _default_run_id(self) -> str | None:
-        """A replay-stable `run_id` for a run started without one, or `None` to generate a UUID7."""
+    def get_default_run_id(self) -> str | None:
+        """Return a replay-stable `run_id` for a run started without one, or `None` to generate a UUID7.
+
+        Durable execution capabilities override this so a replayed or recovered run gets the same
+        `run_id` it had the first time. When several capabilities return one, the one listed last wins.
+        """
         return None
 
-    def _default_conversation_id(self, run_id: str) -> str | None:
-        """A replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7."""
+    def get_default_conversation_id(self, run_id: str) -> str | None:
+        """Return a replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7."""
         return None
 
-    def _run_clock(self) -> Callable[[], datetime] | None:
-        """A replay-safe clock to measure a run's deadline against, or `None` for the system clock."""
+    def get_run_clock(self) -> Callable[[], datetime] | None:
+        """Return a replay-safe clock to measure the run's deadline against, or `None` for the system clock.
+
+        Durable execution capabilities return the engine's deterministic clock, such as
+        `workflow.now()` on Temporal.
+        """
         return None
 
-    async def _run_start_time(self, run_id: str) -> datetime | None:
-        """A replay-stable start time to count the `timeout=` of the run `run_id` from, or `None` to read the run's clock."""
+    async def get_run_start_time(self, run_id: str) -> datetime | None:
+        """Return a replay-stable start time to count the `timeout=` of run `run_id` from, or `None` to read the run's clock."""
         return None
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:
