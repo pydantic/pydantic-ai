@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,15 @@ pytestmark = [
 @pytest.fixture
 def tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeRemoteTools:
     return install_fake_remote_tools(tmp_path, monkeypatch)
+
+
+@pytest.fixture
+def skip_time(monkeypatch: pytest.MonkeyPatch) -> Callable[[float], None]:
+    """Moves the clock the backend reads forward, so a test uses up a timeout without waiting it out."""
+    clock = ssh_backend.anyio.current_time
+    skipped: list[float] = []
+    monkeypatch.setattr(ssh_backend.anyio, 'current_time', lambda: clock() + sum(skipped))
+    return skipped.append
 
 
 async def test_commands_and_files_reach_the_remote_working_dir(tools: FakeRemoteTools, tmp_path: Path) -> None:
@@ -278,7 +288,7 @@ async def test_concurrent_first_commands_over_an_ssh_that_does_not_forward_its_i
 
 
 async def test_a_timeout_used_up_by_the_input_attempt_never_starts_the_command(
-    tools: FakeRemoteTools, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tools: FakeRemoteTools, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, skip_time: Callable[[float], None]
 ) -> None:
     backend = SSHWorkspaceBackend('box', working_dir=str(tmp_path), ssh_args=['-n'])
     runner = backend._runner  # pyright: ignore[reportPrivateUsage]
@@ -286,15 +296,15 @@ async def test_a_timeout_used_up_by_the_input_attempt_never_starts_the_command(
 
     async def slow_run(*args: Any, **kwargs: Any) -> CommandResult:
         result = await run(*args, **kwargs)
-        await anyio.sleep(0.3)
+        skip_time(10)
         return result
 
     monkeypatch.setattr(runner, 'run', slow_run)
 
     with pytest.raises(
-        WorkspaceTimeoutError, match=r'^command timed out after 0\.2s while connecting and was not started$'
+        WorkspaceTimeoutError, match=r'^command timed out after 5s while connecting and was not started$'
     ):
-        await backend.run(['touch', 'started'], timeout=0.2)
+        await backend.run(['touch', 'started'], timeout=5)
     assert not (tmp_path / 'started').exists()
     # No second connection was wasted on the command, and the next one goes straight to the argument form.
     assert len(tools.ssh_commands) == 1
@@ -311,12 +321,12 @@ async def test_a_login_that_runs_nothing_and_exits_0_is_unavailable(tools: FakeR
 
 
 async def test_a_timeout_used_up_while_connecting_never_starts_the_command(
-    tools: FakeRemoteTools, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tools: FakeRemoteTools, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, skip_time: Callable[[float], None]
 ) -> None:
     backend = SSHWorkspaceBackend('box', working_dir=str(tmp_path))
 
     async def slow_resolve(*, timeout: float | None) -> str:
-        await anyio.sleep(0.3)
+        skip_time(0.3)
         return str(tmp_path)
 
     monkeypatch.setattr(backend, '_resolve_working_dir', slow_resolve)
