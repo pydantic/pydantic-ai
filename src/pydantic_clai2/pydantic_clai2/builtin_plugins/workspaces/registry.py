@@ -38,7 +38,8 @@ class Workspace:
     """One workspace: where its checkout is, what it was made from, and the session the orchestrator runs there.
 
     A record an older CLAI wrote, with a `status` and the process of a CLAI of its own, reads the same: keys this
-    one does not know are ignored.
+    one does not know are ignored. The reverse does not hold: an older CLAI requires that `status`, so it neither
+    lists nor destroys a workspace this one created or saved again.
     """
 
     id: str
