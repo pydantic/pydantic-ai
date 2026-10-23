@@ -13,7 +13,7 @@ from pathlib import Path
 import anyio
 import pytest
 
-from pydantic_ai.workspaces import CommandResult, LocalWorkspaceBackend, WorkspaceCommand
+from pydantic_ai.workspaces import CommandResult, FileEntry, LocalWorkspaceBackend, WorkspaceCommand
 from pydantic_ai_harness.shell import Shell
 
 from .._tool_calls import call_tool
@@ -43,11 +43,16 @@ async def _wait_for_notice(log: Path) -> None:
 
 
 class _FirstReadMarked(LocalWorkspaceBackend):
-    """Marks the first read of the start of a job log that returns output with a `read` file."""
+    """Creates a `read` file once the first read of the start of a job log that returns output is kept.
+
+    The events check `log_clears` after each read, so the marker waits for that check: a clear the command causes
+    after the marker can no longer drop the chunk.
+    """
 
     def __init__(self, working_dir: Path) -> None:
         super().__init__(working_dir)
         self.markers = working_dir
+        self.started = False
 
     async def run(
         self,
@@ -60,8 +65,15 @@ class _FirstReadMarked(LocalWorkspaceBackend):
         assert isinstance(command, str)
         result = await super().run(command, shell=shell, env=env, timeout=timeout)
         if 'tail -c +1 ' in command and result.stdout.strip():
-            (self.markers / 'read').touch()
+            self.started = True
         return result
+
+    async def stat(self, path: str) -> FileEntry:
+        try:
+            return await super().stat(path)
+        finally:  # `log_clears` is missing until the first clear
+            if self.started and path.endswith('/log_clears'):
+                (self.markers / 'read').touch()
 
 
 class _ReadsHeldUntilWritten(_FirstReadMarked):
