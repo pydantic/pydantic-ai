@@ -1,8 +1,8 @@
 """The unified `thinking_summary` setting against recorded provider responses.
 
 What comes back is the claim — readable thinking, empty signed thinking, or none at all — so these record real
-requests. The outbound field is read off the request hook where the provider takes an injected `httpx2` client,
-and off the recorded body for Groq, whose provider only takes a legacy `httpx` client.
+requests. The outbound field is read off a request hook on the provider's HTTP client: the shared `httpx2` one, or for
+Groq, whose provider only takes a legacy `httpx` client, that client.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ import json
 from typing import Any
 
 import pytest
-from cassetter import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, ThinkingPart
@@ -132,9 +131,7 @@ async def test_openai_responses_thinking_summary(
 
 
 @pytest.mark.skipif(not groq_imports(), reason='groq not installed')
-async def test_groq_thinking_summary_false_hides_reasoning(
-    allow_model_requests: None, groq_api_key: str, vcr: Cassette
-):
+async def test_groq_thinking_summary_false_hides_reasoning(allow_model_requests: None, groq_api_key: str):
     """gpt-oss on Groq returns its reasoning by default; `False` asks for `reasoning_format='hidden'`, so none comes back.
 
     `GroqProvider` takes a legacy `httpx` client rather than the shared `httpx2` one, so the outbound body is read

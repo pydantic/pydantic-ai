@@ -614,7 +614,8 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * Anthropic (as `thinking.display`)
-    * Bedrock (Claude models as `thinking.display`; `gpt-oss` models only take `False`, as `include_reasoning`)
+    * Bedrock (Claude models as `thinking.display`; GPT-5.6 and GPT-6 only take `True`, as
+      `reasoning.summary='auto'`; `gpt-oss` models only take `False`, as `include_reasoning`)
     * Google (as `thinking_config.include_thoughts`)
     * Groq (as `reasoning_format`)
     * OpenAI (the Responses API only takes `True`, as `reasoning.summary='auto'` when the request reasons;
