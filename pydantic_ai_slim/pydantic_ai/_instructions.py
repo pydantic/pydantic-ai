@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import warnings
 from collections import Counter
-from collections.abc import Sequence
-from dataclasses import KW_ONLY, dataclass, replace
-from typing import Generic
+from collections.abc import Collection, Iterable, Sequence
+from dataclasses import KW_ONLY, dataclass, field, replace
+from typing import Generic, TypeGuard
 
+from pydantic_ai._deferred_capabilities import LoadCapabilityCallPart, LoadCapabilityReturnPart
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._utils import dataclasses_no_defaults_repr
 from pydantic_ai.exceptions import UserError
@@ -21,7 +22,9 @@ from pydantic_ai.messages import (
     InstructionSource,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
     _instruction_text_hash,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.template import TemplateStr
@@ -89,7 +92,7 @@ class SourcedInstruction(Generic[AgentDepsT]):
     """Whether `on_change` is the framework's choice for a block it owns rather than its author's.
 
     Such a block uses `'rewrite'` without a warning where appending isn't supported, such as in a
-    realtime session or when its capability is loaded on demand.
+    realtime session.
     """
 
     __repr__ = dataclasses_no_defaults_repr
@@ -408,6 +411,111 @@ class InstructionValues:
         return previous
 
 
+def loaded_instruction_id(capability_id: str) -> InstructionId:
+    """The id of the block a loaded capability's instructions are delivered as: `capability:<id>`."""
+    return InstructionId(CapabilityInstructionSource(capability_id))
+
+
+@dataclass
+class LoadedInstructionValues:
+    """Each loaded capability's instructions as the model last received them, in the order they were loaded.
+
+    A capability's block, `capability:<id>`, comes into scope
+    with the `load_capability` return that delivers its instructions, and its later changes are recorded as
+    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s with that id. A compaction ends every
+    load, as [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] does for loaded tools.
+
+    Unlike the prefix's blocks, a loaded block is not recorded in an
+    [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart], so a new instruction window
+    doesn't restate it and its changes stay in effect across windows.
+    """
+
+    values: dict[str, str | None] = field(default_factory=dict[str, str | None])
+    """Each loaded capability's block text, keyed by its registry id."""
+
+    _loading: dict[str, str] = field(default_factory=dict[str, str], repr=False)
+    """The capability each `load_capability` call seen so far loads, keyed by tool call id."""
+
+    @classmethod
+    def of(cls, messages: Iterable[ModelMessage]) -> LoadedInstructionValues:
+        """The values at the end of `messages`."""
+        loaded = cls()
+        for message in messages:
+            for part in message.parts:
+                if loaded.tracks(part):
+                    loaded.apply(part)
+                else:
+                    loaded.observe(part)
+        return loaded
+
+    def observe(self, part: ModelRequestPart | ModelResponsePart) -> None:
+        """Fold in a part that loads a capability or ends the loads, if `part` is one."""
+        if isinstance(part, CompactionPart):
+            self.values.clear()
+            self._loading.clear()
+        elif isinstance(part, LoadCapabilityCallPart):
+            if part.capability_id is not None:
+                self._loading[part.tool_call_id] = part.capability_id
+        elif isinstance(part, LoadCapabilityReturnPart):
+            if (capability_id := self._loading.get(part.tool_call_id)) is not None:
+                # Moved to the end, so the values stay in load order.
+                self.values.pop(capability_id, None)
+                self.values[capability_id] = part.instructions
+
+    def tracks(self, part: ModelRequestPart | ModelResponsePart) -> TypeGuard[InstructionDeltaPart]:
+        """Whether `part` is a change to a loaded capability's block."""
+        return isinstance(part, InstructionDeltaPart) and _loaded_block_capability_id(part.id) in self.values
+
+    def apply(self, change: InstructionDeltaPart) -> str | None:
+        """Fold in a change `tracks` accepted, returning the value it replaces."""
+        capability_id = _loaded_block_capability_id(change.id)
+        assert capability_id is not None
+        previous = self.values[capability_id]
+        self.values[capability_id] = change.content
+        return previous
+
+
+def _loaded_block_capability_id(instruction_id: InstructionId | None) -> str | None:
+    """The capability `instruction_id` is the loaded block of, if it is one."""
+    if instruction_id is None or instruction_id.name is not None:
+        return None
+    source = instruction_id.source
+    return source.id if isinstance(source, CapabilityInstructionSource) else None
+
+
+def update_loaded_instruction_history(
+    messages: Sequence[ModelMessage],
+    parts: Sequence[InstructionPart],
+    targets: Sequence[ModelRequest],
+    *,
+    eager_capability_ids: Collection[str] = (),
+) -> None:
+    """Append changes to loaded capabilities' instructions to the outgoing request.
+
+    `parts` are the loaded capabilities' instruction parts this request resolved, each addressed beneath its
+    capability's block, after the `before_model_request` hooks. A loaded block whose joined text differs from
+    what the model last received is recorded on `targets` as an
+    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart], in load order; one with no parts any
+    more, because its instructions are empty or the capability is no longer configured, is withdrawn. A
+    capability in `eager_capability_ids` is not deferred any more, so its instructions are in the prefix
+    again, and its loaded block is left alone.
+    """
+    current: dict[str, list[InstructionPart]] = {}
+    for part in parts:
+        if part.id is not None and isinstance(source := part.id.source, CapabilityInstructionSource):
+            current.setdefault(source.id, []).append(part)
+    changes = [
+        _instruction_change(loaded_instruction_id(capability_id), previous, content)
+        for capability_id, previous in LoadedInstructionValues.of(messages).values.items()
+        if capability_id not in eager_capability_ids
+        and (content := InstructionPart.join([part for part in current.get(capability_id, []) if part.content]))
+        != previous
+    ]
+    if changes:
+        for target in targets:
+            target.parts = [*target.parts, *changes]
+
+
 def _recorded_instruction_values(
     messages: Sequence[ModelMessage], baseline: InstructionBaselinePart
 ) -> dict[InstructionId, str | None] | None:
@@ -416,16 +524,22 @@ def _recorded_instruction_values(
     `None` if the window has a change this version can't address, written by a newer one.
     """
     values = InstructionValues.at(baseline)
+    loaded = LoadedInstructionValues()
     in_window = False
     for message in messages:
-        if isinstance(message, ModelRequest):
-            for part in message.parts:
-                if part is baseline:
-                    in_window = True
-                elif in_window and isinstance(part, InstructionDeltaPart):
-                    if part.id is None:
-                        return None
-                    values.apply(part)
+        for part in message.parts:
+            if part is baseline:
+                in_window = True
+            elif loaded.tracks(part):
+                # A loaded capability's block is delivered through history, not the prefix: its changes are no
+                # part of this window, and leaving it out of `current` is no withdrawal.
+                loaded.apply(part)
+            elif in_window and isinstance(part, InstructionDeltaPart):
+                if part.id is None:
+                    return None
+                values.apply(part)
+            else:
+                loaded.observe(part)
     return values.values
 
 

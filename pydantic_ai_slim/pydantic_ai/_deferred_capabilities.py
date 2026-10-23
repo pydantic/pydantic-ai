@@ -38,7 +38,11 @@ class LoadCapabilityReturn(TypedDict):
     """Typed return value for the `load_capability` tool."""
 
     instructions: NotRequired[str]
-    """Instructions for the loaded capability."""
+    """Instructions for the loaded capability, as they were when it loaded.
+
+    Later changes are recorded as [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s for the
+    capability's block, `capability:<id>`.
+    """
 
 
 CAPABILITY_LOAD_KIND = ToolKind._core(  # pyright: ignore[reportPrivateUsage]

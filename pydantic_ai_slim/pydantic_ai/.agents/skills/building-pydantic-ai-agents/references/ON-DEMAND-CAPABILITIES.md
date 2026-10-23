@@ -124,6 +124,8 @@ When `load_capability` succeeds:
 - tools owned by the loaded capability become visible, and callable, on later steps
 - `load_capability` remains visible so the tool set stays stable
 
+After a capability loads, its instructions are resolved again before every model request. They never enter the prefix: `before_model_request` hooks see them in `ModelRequestParameters.instruction_parts`, addressed beneath the block `capability:<id>`, with `instruction_visibility_of(part) == 'via_history'`, and the framework removes them before calling the model. When the joined text differs from what the model last received (the load return, folded forward through later changes), the change is appended as an `InstructionDeltaPart(id='capability:<id>')`, whatever the parts' `on_change` policy; empty instructions, or a capability no longer configured, withdraw the block. A compaction ends the load, so the model loads the capability again. Don't fight this with `on_change='rewrite'` or by rewriting the load return: there is no prefix to rewrite, and editing the tool return breaks the cache.
+
 Use `ctx.is_tool_available(tool_def)` when a wrapping toolset needs to decide whether a definition it holds is currently visible. The definition form remains reliable inside `get_tools`; the name form looks in the current resolved `ctx.tools` snapshot and is intended for model-request hooks and tool execution.
 
 Message history matters. Loaded capability state is reconstructed from matching `LoadCapabilityCallPart` and `LoadCapabilityReturnPart` pairs, while revealed function-tool state is reconstructed from `ToolAvailabilityDeltaPart` entries. A history processor must preserve the deltas or the complete capability-load pairs from which Pydantic AI can reconstruct them. If it removes both representations, those tools become hidden again. A processor that *adds* a complete load pair activates that capability for the request it is processing, not the next one: its `prepare_tools` runs before any of its tools are dispatched, so a capability using `prepare_tools` as a permission filter still governs them.
@@ -132,7 +134,7 @@ A `CompactionPart` resets both forms of prospective derived state at its exact p
 
 ## Dynamic Descriptions and Instructions
 
-Use `get_description()` when the catalog text depends on run context. Return a callable (with or without `RunContext`) that produces the description string. Use dynamic instructions when load-time instructions need deps or current run state.
+Use `get_description()` when the catalog text depends on run context. Return a callable (with or without `RunContext`) that produces the description string. Use dynamic instructions when a loaded capability's instructions need deps or current run state; each change is appended to history, so avoid text that changes on every request, such as a timestamp.
 
 ```python
 from dataclasses import dataclass

@@ -37,7 +37,7 @@ On the first turn, the refund workflow is collapsed to a catalog entry. The mode
 
 ```text
 <context id="capability:deferred_capabilities">
-The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability may have tools; they stay hidden until it is loaded:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded:
 - refunds: Use for refund eligibility, refund status, or processing a refund.
 </context>
 A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
@@ -51,6 +51,8 @@ The model does not receive the refund instructions or the `refund_status` tool d
 2. **Load.** Pydantic AI returns the capability's instructions — *"Always confirm the order ID before issuing a refund."* — as the tool result and exposes the `refund_status` definition on the next request.
 3. **Request 2.** The model now sees those instructions in history and `refund_status` in its tool list. It calls `refund_status(order_id='ABC-123')` and answers the user from the result.
 
+If the capability's instructions change after it loads — a dynamic [`@refunds.instructions`][pydantic_ai.capabilities.Capability.instructions] function returns something new, or the instructions in code are edited between runs of a conversation — the change is [appended](../agent.md#appending-instruction-changes) to message history as an update for the block `capability:refunds`, holding the capability's complete instructions, or a diff against the text the model last received when that's shorter. The tool result isn't rewritten, so the cached prompt is kept. A capability whose instructions become empty, or that the agent no longer has, is withdrawn the same way. Every loaded capability's changes are tracked, whatever the [`on_change`][pydantic_ai.messages.InstructionPart.on_change] policy of its instructions: a loaded capability's instructions are never in the prefix, so there is nothing to rewrite. An instruction function that returns something different on every request, such as the current time, appends an update to every request.
+
 Already-loaded capabilities stay loaded for the rest of the run — the model never needs to re-open one. A `load_capability` tool call for a capability that is already active, or one that an earlier call in the same response already loads, is answered with a retry prompt instead of a second copy of its instructions.
 
 Searching cannot reveal a capability-owned tool: it stays hidden until its capability loads. In runs that also have searchable deferred tools, the catalog explicitly steers the model to load the capability rather than search for its tools; in capability-only runs — where no search surface exists — the catalog omits any mention of searching.
@@ -63,7 +65,7 @@ Loading activates the whole bundle, not just instructions: the capability's func
 !!! note "Deferred instructions reach client-facing message history"
     A deferred capability's instructions come back as the `load_capability` tool *result*, so they land in the run's message history — including the copy a [UI adapter](../ui/overview.md) serializes to the client. Instructions on an always-on capability stay in the server-side system prompt instead. If a capability's instructions shouldn't be exposed to the client, keep it always-on rather than deferred.
 
-    Because they arrive as tool-result text rather than as [`InstructionPart`s][pydantic_ai.messages.InstructionPart], they are also not addressable by [`id`][pydantic_ai.messages.InstructionPart.id]: a `before_model_request` hook that rewrites `ModelRequestParameters.instruction_parts` never sees them, so anything built on that — including remote instruction overrides — reaches an always-on capability's instructions but not a deferred one's. Keep a capability always-on if its instructions need to stay addressable.
+    A `before_model_request` hook still sees a loaded capability's instructions in `ModelRequestParameters.instruction_parts`, each addressed beneath the capability's block (`capability:refunds`, or `capability:refunds:<name>` for a named part), and [`instruction_visibility_of`][pydantic_ai.models.ModelRequestParameters.instruction_visibility_of] reports them as `'via_history'`. Pydantic AI takes them out before the model is called, and what the hook made of them is what's compared with the text the model last received, so a rewrite is delivered as an update from the next request on. The text the `load_capability` tool result carries is resolved when the tool runs, before any hook can see it.
 
 ## What you can defer
 
@@ -161,7 +163,7 @@ Calling the `load_capability` tool reveals capability behavior between requests.
 
 | What loads | Cache prefix |
 |---|---|
-| Instructions only | **Stable** — instructions land in the message history, not the request prefix. |
+| Instructions only | **Stable** — instructions land in the message history, not the request prefix, and later changes to them are appended there too. |
 | Function tools with provider-native reveal-item support (`tool_addition_mode='by_reference'` or `'with_definitions'`) | **Stable on Anthropic and OpenAI Responses** — deferred Anthropic entries are outside its cache key, and OpenAI Responses appends `additional_tools` without changing `tools[]`. |
 | Function tools without provider-native reveal-item support (`tool_addition_mode=None`) | **May break between turns** — function-tool visibility can change as capabilities load. |
 | Native tools | **Always breaks the prefix on load** — native tool definitions are part of the request prefix on every provider. |

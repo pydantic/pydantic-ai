@@ -19,12 +19,18 @@ from .instrumentation import Instrumentation
 DEFERRED_CAPABILITY_CATALOG_ID = 'deferred_capabilities'
 """The source key of the deferred capability catalog's instruction block."""
 
+_LOADED_INSTRUCTIONS_SENTENCE = "Follow a loaded capability's instructions as you follow your other instructions. "
+# The `load_capability` return delivers a capability's instructions with tool-result voice, and later changes
+# to them arrive as system messages, so the operator vouches for them here, in the prefix.
+
 DEFERRED_CAPABILITY_CATALOG_PREFIX = (
     'The following capabilities are deferred and can be loaded using the `load_capability` tool. '
+    f'{_LOADED_INSTRUCTIONS_SENTENCE}'
     "A capability's tools stay hidden until it is loaded:"
 )
 DEFERRED_CAPABILITY_CATALOG_PREFIX_WITH_SEARCH = (
     'The following capabilities are deferred and can be loaded using the `load_capability` tool. '
+    f'{_LOADED_INSTRUCTIONS_SENTENCE}'
     "A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:"
 )
 

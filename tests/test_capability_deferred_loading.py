@@ -38,6 +38,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    InstructionDeltaPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -108,7 +109,7 @@ async def test_deferred_capability_catalog_mentions_search_only_when_search_surf
         return request.instructions
 
     assert await first_request_instructions(Agent(FunctionModel(model_fn), capabilities=[refunds])) == snapshot(
-        "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:\n"
+        "The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded:\n"
         '- refunds: Refund tools.'
     )
 
@@ -122,7 +123,7 @@ async def test_deferred_capability_catalog_mentions_search_only_when_search_surf
     assert await first_request_instructions(
         Agent(FunctionModel(model_fn), capabilities=[ToolSearch(), refunds], toolsets=[searchable_toolset])
     ) == snapshot(
-        "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:\n"
+        "The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:\n"
         '- refunds: Refund tools.'
     )
 
@@ -131,7 +132,7 @@ async def test_deferred_capability_catalog_mentions_search_only_when_search_surf
     assert await first_request_instructions(
         Agent(FunctionModel(model_fn), capabilities=[refunds], toolsets=[searchable_toolset])
     ) == snapshot(
-        "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:\n"
+        "The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:\n"
         '- refunds: Refund tools.'
     )
 
@@ -144,7 +145,7 @@ async def test_deferred_capability_catalog_mentions_search_only_when_search_surf
             toolsets=[searchable_toolset],
         )
     ) == snapshot(
-        "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:\n"
+        "The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:\n"
         '- refunds: Refund tools.'
     )
 
@@ -217,7 +218,7 @@ async def test_capability_description_can_be_dynamic() -> None:
 
     assert request.instructions == snapshot(
         """\
-The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded:
 - dynamic-description: Use for billing questions.\
 """
     )
@@ -636,7 +637,7 @@ async def test_deferred_capability_instructions_decorator_resolves_on_load() -> 
     first_request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
     assert first_request.instructions == snapshot(
         """\
-The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded:
 - account: Account-specific guidance.\
 """
     )
@@ -829,7 +830,7 @@ async def test_load_capability_invalid_dict_args_recovers_via_retry() -> None:
                         instructions=[
                             InstructionPart(
                                 content="""\
-The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded:
 - refunds: Refund tools.\
 """,
                                 dynamic=True,
@@ -841,7 +842,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
-The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded:
 - refunds: Refund tools.\
 """,
                 run_id=IsStr(),
@@ -876,7 +877,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
-The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded:
 - refunds: Refund tools.\
 """,
                 run_id=IsStr(),
@@ -900,7 +901,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
-The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded:
 - refunds: Refund tools.\
 """,
                 run_id=IsStr(),
@@ -1109,7 +1110,7 @@ async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
                             ),
                             InstructionPart(
                                 content="""\
-The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded:
 - refunds: Refund policy tools.\
 """,
                                 dynamic=True,
@@ -1123,7 +1124,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                 instructions="""\
 Visible billing instructions.
 
-The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded:
 - refunds: Refund policy tools.\
 """,
                 run_id=IsStr(),
@@ -1157,12 +1158,21 @@ Load-time account context for run step 1.\
                         timestamp=IsDatetime(),
                     ),
                     ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'], tool_call_id='load-refunds'),
+                    InstructionDeltaPart(
+                        id=InstructionId(source=CapabilityInstructionSource(id='refunds')),
+                        content="""\
+Use the refund policy before answering refund questions.
+
+Load-time account context for run step 2.\
+""",
+                        base_hash='220889af1f7734f41f5d333b424bddf7841d3e62a8f292118006bd61d95dcc1d',
+                    ),
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
 Visible billing instructions.
 
-The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded:
 - refunds: Refund policy tools.\
 """,
                 run_id=IsStr(),
@@ -1174,7 +1184,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         tool_name='lookup_refund_policy', args={'order_id': 'order-123'}, tool_call_id='lookup-refund'
                     )
                 ],
-                usage=RequestUsage(input_tokens=80, output_tokens=10),
+                usage=RequestUsage(input_tokens=101, output_tokens=10),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1187,13 +1197,22 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         content='order-123: refund allowed for 30 days',
                         tool_call_id='lookup-refund',
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    InstructionDeltaPart(
+                        id=InstructionId(source=CapabilityInstructionSource(id='refunds')),
+                        content="""\
+Use the refund policy before answering refund questions.
+
+Load-time account context for run step 3.\
+""",
+                        base_hash='4a05c2dd57b0957d1494fda5f7a7f78d565b493d8bfce3acc48d49e2b1804d54',
+                    ),
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
 Visible billing instructions.
 
-The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded:
 - refunds: Refund policy tools.\
 """,
                 run_id=IsStr(),
@@ -1201,7 +1220,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='final: order-123: refund allowed for 30 days')],
-                usage=RequestUsage(input_tokens=86, output_tokens=17),
+                usage=RequestUsage(input_tokens=128, output_tokens=17),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -2332,7 +2351,7 @@ Use the refund tool with the order id, not the customer id.\
     first_request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
     assert first_request.instructions == snapshot(
         """\
-The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded:
 - refunds: Refund tools.\
 """
     )

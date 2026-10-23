@@ -13794,7 +13794,7 @@ async def test_anthropic_explicit_tool_search_keeps_search_surface(
                 'type': 'text',
                 'text': """\
 <context id="capability:deferred_capabilities">
-The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:
 - refunds: Refund policy tools.
 </context>
 A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
@@ -13878,7 +13878,7 @@ async def test_anthropic_deferred_capability_tool_callable_without_tool_search(
                 'type': 'text',
                 'text': """\
 <context id="capability:deferred_capabilities">
-The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded:
 - refunds: Refund policy tools. Load this capability before looking up refund policy.
 </context>
 A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
@@ -13959,7 +13959,7 @@ async def test_anthropic_deferred_capability_without_tool_search_across_models(
             'type': 'text',
             'text': """\
 <context id="capability:deferred_capabilities">
-The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded:
 - refunds: Refund policy tools. Load this capability before looking up refund policy.
 </context>
 A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
