@@ -19,8 +19,8 @@ Gives the model four tools: `write_memory(content, file='MEMORY.md', old_text=No
 replace one unique fragment), `read_memory(file)`, `delete_memory(file)` (`MEMORY.md` is
 protected), and `search_memory(query)`. With a `FileStore` in the run's workspace (no `workspace=`,
 relative `directory`), `FileSystem` on the agent and `inject_memory=True` (the default), `read_memory` is left out
-(`unless_tool_kind=READ_FILE_KIND`) and the injected memory block gives the scope's directory, e.g.
-`.agent-memory/main/`. The guidance names no reader, so it stays static. By default a bounded excerpt of `MEMORY.md` plus the list
+(`unless_tool_kind=READ_FILE_KIND`, fixed for the run) and an instruction block named `directory`
+(`on_change='append'`) gives the scope's directory, e.g. `.agent-memory/main/`. The guidance names no reader, so it stays static. By default a bounded excerpt of `MEMORY.md` plus the list
 of other files is recorded in message history as a delimited user-role `<memory>` part, with the
 user's prompt on a run's first request, and only when memory changed since the latest snapshot in
 history (after the latest compaction boundary). History stays append-only: earlier snapshots are kept,

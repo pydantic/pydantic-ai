@@ -17,14 +17,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import ModelRetry
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ToolFailed, UserError
-from pydantic_ai.messages import (
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    TextContent,
-    UserPromptPart,
-    post_compaction_window,
-)
+from pydantic_ai.messages import InstructionPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import (
@@ -84,18 +77,6 @@ def snapshot_metadata(scope: str, memory_id: str | None) -> dict[str, str]:
     """
     scope_hash = hashlib.sha256(scope.encode()).hexdigest()[:16]
     return {'origin': MEMORY_ORIGIN, 'scope': scope_hash, 'id': memory_id or ''}
-
-
-def _snapshot_discloses(messages: list[ModelMessage], metadata: dict[str, str], directory: str) -> bool:
-    """Whether a snapshot of this capability the model still sees names `directory`."""
-    return any(
-        isinstance(item, TextContent) and item.metadata == metadata and directory in item.content
-        for message in post_compaction_window(messages)
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
-        for item in part.content
-    )
 
 
 EMPTY_MEMORY = '[memory is empty]'
@@ -267,8 +248,6 @@ class MemoryToolOperations(Generic[AgentDepsT]):
     read_memory: Callable[[RunContext[AgentDepsT], str], Awaitable[str | RetryRequest]]
     delete_memory: Callable[[RunContext[AgentDepsT], str], Awaitable[MemoryDeleteResult | RetryRequest]]
     search_memory: Callable[[RunContext[AgentDepsT], str], Awaitable[MemorySearchResponse | RetryRequest]]
-    render_snapshot: Callable[[RunContext[AgentDepsT]], Awaitable[str | None]] | None = None
-    """Renders the snapshot this run would record now, or `None` when it would record none."""
 
 
 class MemoryToolset(FunctionToolset[AgentDepsT]):
@@ -315,31 +294,40 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
             ctx.root_capability.apply(select)
         return run_capability.resolve_scope(ctx)
 
+    def _read_in_place(self, ctx: RunContext[AgentDepsT]) -> tuple[MemoryStore, str] | None:
+        """The run's store and scope when `read_memory` steps aside for the run's file reader, decided from configuration.
+
+        That needs a `FileStore` in the run's workspace, and a snapshot to go with it: with
+        `inject_memory=False`, or guidance that leaves no room for one, `read_memory` stays.
+        """
+        capability = self._capability
+        guidance = capability.get_instructions()
+        budget = snapshot_content_budget(capability.max_tokens, guidance if isinstance(guidance, str) else None)
+        if not capability.inject_memory or budget <= 0:
+            return None
+        store, scope = self._resolve_scope(ctx)
+        return None if run_workspace_directory(store, scope) is None else (store, scope)
+
     async def _prepare_read_memory(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition:
         """Step aside for a tool of `FileSystem`'s `READ_FILE_KIND` when it can read this run's memory files.
 
-        Only a snapshot tells the model where the files are, so `read_memory` stays unless one that names the
-        directory is in the conversation or about to be recorded: not with `inject_memory=False`, nor when the
-        rendered snapshot leaves the directory out (the budget has no room for it).
+        Decided from configuration alone, so the tools stay the same for the whole run; the `directory`
+        instruction tells the model where the files are.
         """
-        capability = self._capability
-        if not capability.inject_memory:
-            return tool_def
-        store, scope = self._resolve_scope(ctx)
-        if (directory := run_workspace_directory(store, scope)) is None:
-            return tool_def
-        # Step aside only when the model sees, or this request will record, a snapshot that names the directory:
-        # judged from the snapshot as rendered, never predicted from budgets.
-        if _snapshot_discloses(ctx.messages, snapshot_metadata(scope, capability.id), directory):
-            return step_aside_for_read_file(ctx, tool_def)
-        # This run records one only when it answers a prompt and the model hasn't responded yet.
-        will_record = ctx.prompt is not None and not any(
-            isinstance(message, ModelResponse) and message.run_id == ctx.run_id for message in ctx.messages
-        )
-        render = None if self._operations is None else self._operations.render_snapshot
-        if not will_record or render is None or directory not in ((await render(ctx)) or ''):
-            return tool_def
-        return step_aside_for_read_file(ctx, tool_def)
+        return tool_def if self._read_in_place(ctx) is None else step_aside_for_read_file(ctx, tool_def)
+
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[InstructionPart] | None:
+        """Say where the memory files are when `read_memory` steps aside for the run's file reader.
+
+        A block of its own, appended to the history if it ever changes, rather than something only a snapshot
+        says: a run can record no snapshot at all.
+        """
+        parts = await super().get_instructions(ctx) or []
+        if (scoped := self._read_in_place(ctx)) is not None and (found := file_reader(ctx, *scoped)) is not None:
+            reader, directory = found
+            text = f'Memory files are in `{directory}/` in the workspace; read them with `{reader}`.'
+            parts.append(InstructionPart(text, name='directory', on_change='append'))
+        return parts or None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools = await super().get_tools(ctx)

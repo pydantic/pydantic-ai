@@ -46,7 +46,6 @@ from pydantic_ai_harness.memory._toolset import (
     read_call,
     require_metadata_store,
     run_as_operation,
-    run_workspace_directory,
     snapshot_content_budget,
     snapshot_metadata,
 )
@@ -235,7 +234,6 @@ class Memory(AbstractCapability[AgentDepsT]):
                 read_memory=self._read_memory,
                 delete_memory=self._delete_memory,
                 search_memory=self._search_memory,
-                render_snapshot=self._render_current_snapshot,
             )
             self._toolset = MemoryToolset(self, operations=operations)
         return self._toolset
@@ -399,8 +397,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             empty = empty_snapshot_body(self.heading, None if reader is None else reader[1])
             if len(empty) > content_budget:
                 return None
-            # One that names the directory is recorded even in a fresh conversation, as the only disclosure of it.
-            return f'{MEMORY_DATA_PREFIX}{empty}{MEMORY_DATA_SUFFIX}', reader is None
+            return f'{MEMORY_DATA_PREFIX}{empty}{MEMORY_DATA_SUFFIX}', True
         rendered = render_memory_prompt(
             main_content,
             subfiles,
@@ -414,17 +411,6 @@ class Memory(AbstractCapability[AgentDepsT]):
             location=None if reader is None else reader[1],
         )[:content_budget]
         return f'{MEMORY_DATA_PREFIX}{rendered}{MEMORY_DATA_SUFFIX}', False
-
-    async def _render_current_snapshot(self, ctx: RunContext[AgentDepsT]) -> str | None:
-        """The snapshot as `before_model_request` would render it now, or `None` when it would render none."""
-        store, scope = self.resolve_scope(ctx)
-        main, subfiles, files_truncated, error_type = await self._load_snapshot(ctx)
-        # Called while the run's tools are being prepared, before the file reader is known by name, so render as
-        # if it were there: the caller only asks whether the snapshot would name the directory.
-        directory = run_workspace_directory(store, scope)
-        reader = None if directory is None else ('read_file', directory)
-        snapshot = None if error_type is not None else self._render_snapshot(main, subfiles, files_truncated, reader)
-        return None if snapshot is None else snapshot[0]
 
     @durable_operation('load_snapshot')
     async def _load_snapshot(

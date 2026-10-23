@@ -112,11 +112,16 @@ class TestGuidanceStaysStatic:
         assert Memory[None](store=FileStore('.agent-memory')).get_instructions() == default
         assert Memory[None](store_resolver=resolve).get_instructions() == default
 
-    async def test_instructions_match_with_and_without_file_system(self, tmp_path: Path) -> None:
+    async def test_file_system_adds_only_the_directory_block(self, tmp_path: Path) -> None:
         without, _ = await _run(tmp_path, Memory(store=FileStore('.agent-memory')))
         with_file_system, _ = await _run(tmp_path, Memory(store=FileStore('.agent-memory')), FileSystem())
         assert without.instructions[0] is not None
-        assert with_file_system.instructions == without.instructions
+        directory = 'Memory files are in `.agent-memory/main/` in the workspace; read them with `read_file`.'
+        assert directory not in without.instructions[0]
+        [instructions] = with_file_system.instructions
+        assert instructions is not None
+        assert instructions.startswith(without.instructions[0])
+        assert '<context id="toolset:memory:directory">\n' + directory in instructions
 
 
 class TestReaderKept:
@@ -136,24 +141,6 @@ class TestReaderKept:
         recorder, _ = await _run(tmp_path, Memory(store=FileStore('.agent-memory'), max_tokens=100), FileSystem())
         assert all('read_memory' in tools and 'read_file' in tools for tools in recorder.offered)
 
-    async def test_when_the_rendered_snapshot_leaves_the_directory_out(self, tmp_path: Path) -> None:
-        scope = tmp_path / '.agent-memory' / 'main'
-        scope.mkdir(parents=True)
-        (scope / 'MEMORY.md').write_text('- a fact\n')
-        for index in range(50):
-            (scope / f'topic-{index:02}.md').write_text('body')
-        # Too small for the listing: the snapshot falls back to a note without the directory.
-        memory = Memory(store=FileStore('.agent-memory'), guidance='', max_tokens=30)
-        recorder, _ = await _run(tmp_path, memory, FileSystem())
-        assert recorder.user_text and not any('in the workspace.' in text for text in recorder.user_text)
-        assert all('read_memory' in tools and 'read_file' in tools for tools in recorder.offered)
-
-    async def test_when_no_snapshot_naming_the_directory_fits(self, tmp_path: Path) -> None:
-        # Room for a few characters of snapshot, but not for the line that gives the directory.
-        memory = Memory(store=FileStore('.agent-memory'), guidance='', max_tokens=5)
-        recorder, _ = await _run(tmp_path, memory, FileSystem())
-        assert all('read_memory' in tools and 'read_file' in tools for tools in recorder.offered)
-
     @pytest.mark.parametrize('store_kind', ['own_workspace', 'in_memory', 'outside_working_dir'])
     async def test_store_the_file_tools_cannot_see(self, tmp_path: Path, store_kind: str) -> None:
         elsewhere = tmp_path / 'elsewhere'
@@ -171,12 +158,41 @@ class TestReaderKept:
         assert all('read_memory' in tools and 'read_file' in tools for tools in recorder.offered)
 
 
-class TestDeferredFileMemory:
-    async def test_memory_loaded_mid_run_keeps_read_memory(self, tmp_path: Path) -> None:
+class TestDirectoryBlock:
+    async def test_tools_and_instructions_are_the_same_on_every_request_of_a_promptless_run(
+        self, tmp_path: Path
+    ) -> None:
         offered: list[set[str]] = []
+        instructions: list[str | None] = []
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             offered.append({tool.name for tool in info.function_tools})
+            instructions.append(info.instructions)
+            if len(offered) == 1:
+                return ModelResponse(parts=[ToolCallPart('list_directory', {'path': '.'}, tool_call_id='list')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(respond),
+            deps_type=type(None),
+            capabilities=[LocalWorkspace(tmp_path), FileSystem(), Memory(store=FileStore('.agent-memory'))],
+        )
+        await agent.run(message_history=[ModelRequest(parts=[UserPromptPart('go')])])
+
+        assert len(offered) == 2
+        assert offered[0] == offered[1]
+        assert 'read_memory' not in offered[0]
+        assert instructions[0] == instructions[1]
+        assert instructions[0] is not None and '`.agent-memory/main/`' in instructions[0]
+
+    async def test_memory_loaded_mid_run_names_its_directory(self, tmp_path: Path) -> None:
+        offered: list[set[str]] = []
+        seen: list[str] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            offered.append({tool.name for tool in info.function_tools})
+            # A block that appears mid-run is appended to the history rather than the instructions.
+            seen.append(f'{info.instructions}\n{messages!r}')
             if len(offered) == 1:
                 return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'memory'}, tool_call_id='load')])
             return ModelResponse(parts=[TextPart('done')])
@@ -191,7 +207,7 @@ class TestDeferredFileMemory:
         )
         await agent.run('go')
 
-        # Loaded mid-run, Memory records no snapshot, so nothing names its directory: `read_memory` stays.
+        # Loaded mid-run, Memory records no snapshot, so its instructions are what give the directory.
         assert len(offered) == 2
-        assert 'read_memory' in offered[1]
-        assert 'read_file' in offered[1]
+        assert 'read_memory' not in offered[1]
+        assert 'Memory files are in `.agent-memory/acme/main/` in the workspace; read them with `read_file`.' in seen[1]
