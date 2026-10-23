@@ -518,11 +518,15 @@ def _loaded_block_capability_id(instruction_id: InstructionId | None) -> str | N
 
 
 def _loaded_texts(parts: Sequence[InstructionPart]) -> dict[str, str | None]:
-    """Each loaded capability's joined text, from its parts as `resolve_loaded_capability_instructions` keys them."""
+    """Each loaded capability's joined text, from its parts as `resolve_loaded_capability_instructions` keys them.
+
+    Every part belongs to a loaded capability: the agent only delivers those through history.
+    """
     grouped: dict[str, list[InstructionPart]] = {}
     for part in parts:
-        if (capability_id := loaded_part_capability_id(part)) is not None:
-            grouped.setdefault(capability_id, []).append(part)
+        capability_id = loaded_part_capability_id(part)
+        assert capability_id is not None
+        grouped.setdefault(capability_id, []).append(part)
     return {
         capability_id: InstructionPart.join([part for part in group if part.content])
         for capability_id, group in grouped.items()
