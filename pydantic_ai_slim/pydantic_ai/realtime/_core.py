@@ -57,7 +57,7 @@ from ..messages import (
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SpeechPartDelta,
     TextPart,
@@ -78,6 +78,7 @@ from ._lifecycle import (
     ResponseRequestRefused,
     ResponseStarted,
     ResponseStatus,
+    ToolCallsAbandoned,
     UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
@@ -168,8 +169,9 @@ class ToolCallRefused:
 class Interrupted:
     """The caller interrupted the response being spoken, having heard `played_ms` of it.
 
-    `cuts` are the output items the session truncated on the provider, by item id, each with how much of its
-    audio was heard: a response that already ended is recorded as cut off there too.
+    `cuts` are the output items the barge-in cut off, by item id, each with how much of its audio was heard
+    (truncated on the provider too when the model supports output truncation): a response that already ended is
+    recorded as cut off there too.
     """
 
     played_ms: int | None
@@ -300,10 +302,17 @@ class ToolRoundsOver:
 
 @dataclass(frozen=True)
 class ExchangeOver:
-    """A response ended, and with it everything the model owed: what `wait_for_reply()` waits for is over."""
+    """The exchange is over: what `wait_for_reply()` waits for is over.
+
+    Either a response ended with nothing more owed, or the exchange was abandoned with no response left to end it (see
+    `ExchangeAbandoned`).
+    """
 
     interrupted: bool
-    """Whether the response that ended it was cut off (the user barged in, or the caller interrupted it)."""
+    """Whether the response that ended it was cut off (the user barged in, or the caller interrupted it).
+
+    `False` for an exchange that was abandoned.
+    """
 
 
 Effect: TypeAlias = (
@@ -446,6 +455,7 @@ class SessionCore:
         input_sample_rate: int = 24000,
         output_sample_rate: int = 24000,
         seeded: Sequence[ModelMessage] = (),
+        opening: ModelRequest | None = None,
         usage: RunUsage | None = None,
         annotate_response: Callable[[ModelResponse], None] | None = None,
     ) -> None:
@@ -465,6 +475,11 @@ class SessionCore:
         self._input_rate = input_sample_rate
         self._output_rate = output_sample_rate
         self._seeded = list(seeded)
+        self._opening: list[ModelMessage] = []
+        """The request a fresh conversation opens with, holding the agent's system prompt: the first message recorded."""
+        if opening is not None:
+            fill_run_metadata(opening, run_id=run_id, conversation_id=conversation_id)
+            self._opening.append(opening)
         self._annotate_response = annotate_response
         """Adds what instrumentation knows about each response's parts (its tools' OTel metadata) before it's recorded."""
         self.usage = usage if usage is not None else RunUsage()
@@ -509,7 +524,9 @@ class SessionCore:
         self._unanswered_responses: set[str] = set()
         """Responses whose tool results get no reply: one of their calls settled without its result going out."""
         self._settled_calls: set[str] = set()
-        """Calls that settled: their result is recorded (sent or not), or the provider cancelled them."""
+        """Calls that settled: their result is recorded (sent or not), or the provider cancelled or abandoned them."""
+        self._abandoned_calls: set[str] = set()
+        """Calls the provider abandoned: they run on, but no response answers their results (see `ToolCallsAbandoned`)."""
         self._input_audio = bytearray()
         # What `retain_audio_max_seconds` bounds, as `retain_images_max` bounds images: the audio built into history,
         # the audio of turns waiting to be recorded, and what is still coming in (`_input_audio`, `open_audio`).
@@ -539,6 +556,8 @@ class SessionCore:
         self._effects: list[Effect] = []
         self._exchange_ending: bool | None = None
         """A response ended in the frame being applied, and whether it was cut off (see `end_frame`)."""
+        self._exchange_under_way = False
+        """A response started since the last `ExchangeOver`: the exchange it is part of is still to end."""
         self._unrounded: dict[str, list[str]] = {}
         """The calls of each recorded response that no `ToolRoundsOver` named yet, while it has any (when tracking)."""
         self._pruned_calls: set[str] = set()
@@ -617,6 +636,8 @@ class SessionCore:
             # (One the session hasn't taken yet still runs, to be stopped as the session reaches the cancellation.)
             for call_id in item.tool_call_ids:
                 self._call_unanswered(call_id)
+        elif isinstance(item, ToolCallsAbandoned):
+            self._abandon_calls(item.tool_call_ids)
         elif isinstance(
             item,
             (
@@ -655,8 +676,7 @@ class SessionCore:
             for item_id, heard_ms in command.cuts:
                 self._cut_recorded_item(item_id, _Cut(heard_ms=heard_ms))
         elif isinstance(command, ExchangeAbandoned):
-            self._abandoned.update((token.kind, token.key) for token in self.wait_tokens())
-            self._epoch += 1
+            self._abandon_exchange()
         elif isinstance(command, TranscriptOverdue):
             self._end_transcriptions([command.turn_id])
         elif isinstance(command, ResponseOverdue):
@@ -732,6 +752,7 @@ class SessionCore:
             if self._obligations.get(input_id) == 'pending':
                 self._obligations[input_id] = 'answered'
                 self._answered_by[input_id] = event.response_id
+        self._exchange_under_way = True
         self._effects.append(ResponseOpened(event.response_id))
 
     def _revise_answers(self, event: AnswersRevised) -> None:
@@ -945,7 +966,17 @@ class SessionCore:
         self._settle([self._result_input[call] for call in response.tool_calls if call in self._result_input], 'void')
 
     def _result_unanswered(self, call_id: str) -> bool:
-        return (response := self._call_response.get(call_id)) is not None and response.id in self._unanswered_responses
+        return call_id in self._abandoned_calls or (
+            (response := self._call_response.get(call_id)) is not None and response.id in self._unanswered_responses
+        )
+
+    def _abandon_calls(self, call_ids: Sequence[str]) -> None:
+        """The provider answers none of these calls' results: they run on, and nothing waits for them any more."""
+        self._abandoned_calls.update(call_ids)
+        self._settled_calls.update(call_ids)
+        for call_id in call_ids:
+            self._call_unanswered(call_id)
+        self._settle([self._result_input[call_id] for call_id in call_ids if call_id in self._result_input], 'void')
 
     def _native_part(self, event: PartStartEvent | PartEndEvent) -> None:
         """A native tool part (grounding, code execution) the connection streamed, numbered by its own counter.
@@ -1071,7 +1102,30 @@ class SessionCore:
             return
         self._exchange_ending = None
         if not self.wait_tokens():
-            self._effects.append(ExchangeOver(interrupted=interrupted))
+            self._exchange_over(interrupted=interrupted)
+
+    def _exchange_over(self, *, interrupted: bool) -> None:
+        self._exchange_under_way = False
+        self._effects.append(ExchangeOver(interrupted=interrupted))
+
+    def _abandon_exchange(self) -> None:
+        """Stop waiting for what is owed (see `ExchangeAbandoned`), ending the exchange under way if nothing else will.
+
+        A response still under way, or one that ended in the frame being applied, ends it as it ends (see `end_frame`),
+        as nothing owed before now holds it open. Otherwise no response is coming to end it: the result of a tool that
+        raised doesn't go out, so the model never answers it.
+        """
+        owed = self.wait_tokens()
+        self._abandoned.update((token.kind, token.key) for token in owed)
+        self._epoch += 1
+        if (
+            (owed or self._exchange_under_way)
+            and self._receiving
+            and not self._closed
+            and not self.response_under_way()
+            and self._exchange_ending is None
+        ):
+            self._exchange_over(interrupted=False)
 
     def _record_response(self, response: _Response, event: ResponseEnded) -> ModelResponse | None:
         """Record a response that ended, returning what history records for it, if anything."""
@@ -1471,7 +1525,11 @@ class SessionCore:
     def set_conversation_id(self, conversation_id: str) -> None:
         """The conversation id the session resolved late: what the core records from now on, and has recorded, carries it."""
         self._conversation_id = conversation_id
-        recorded: list[ModelMessage] = [*(input_.request for input_ in self._inputs.values()), *self._returns.values()]
+        recorded: list[ModelMessage] = [
+            *self._opening,
+            *(input_.request for input_ in self._inputs.values()),
+            *self._returns.values(),
+        ]
         for entry in self._placed:
             if not isinstance(entry, _Input) and entry.message is not None:
                 recorded.append(entry.message)
@@ -1482,10 +1540,10 @@ class SessionCore:
 
     def all_messages(self) -> list[ModelMessage]:
         """The seeded history plus everything recorded this session, as far as it is final."""
-        return [*self._seeded, *self._visible()]
+        return [*self._seeded, *self._opening, *self._visible()]
 
     def new_messages(self) -> list[ModelMessage]:
-        return list(self._visible())
+        return [*self._opening, *self._visible()]
 
     def _visible(self) -> Iterator[ModelMessage]:
         for entry in self._placed[: self._held_from()]:
@@ -1507,7 +1565,7 @@ class SessionCore:
         along. Inputs sent that the provider hadn't acknowledged yet come last, as sent: the old connection may
         never have delivered them, and the reply the reconnect asks for again answers them.
         """
-        messages: list[ModelMessage] = list(self._seeded)
+        messages: list[ModelMessage] = [*self._seeded, *self._opening]
         for entry in self._placed:
             messages.extend(self._entry_messages(entry))
         messages.extend(input_.request for input_ in self._unplaced.values())
@@ -1525,7 +1583,11 @@ class SessionCore:
         pruned = self._pruned_calls
 
         def is_pruned(part: ModelRequestPart | ModelResponsePart) -> bool:
-            return isinstance(part, (ToolCallPart, ToolReturnPart, RetryPromptPart)) and part.tool_call_id in pruned
+            # TODO(v3): remove `RetryPromptPart`; a history a caller passed can still hold one
+            return (
+                isinstance(part, (ToolCallPart, ToolReturnPart, RetryPromptPart))  # pyright: ignore[reportDeprecated]
+                and part.tool_call_id in pruned
+            )
 
         if not any(is_pruned(part) for part in message.parts):
             return message
@@ -1614,7 +1676,7 @@ class SessionCore:
 
         A spoken turn still waiting for its transcript is in it with what it has.
         """
-        messages: list[ModelMessage] = list(self._seeded)
+        messages: list[ModelMessage] = [*self._seeded, *self._opening]
         for entry in self._placed[: self._placed.index(response)]:
             messages.extend(self._entry_messages(entry))
         return messages
@@ -1635,7 +1697,7 @@ class SessionCore:
         Like `replayable_messages()`, with what a response under way has said and called so far: a tool runs while
         the response that called it can still be under way.
         """
-        messages: list[ModelMessage] = list(self._seeded)
+        messages: list[ModelMessage] = [*self._seeded, *self._opening]
         for entry in self._placed:
             if isinstance(entry, _Response) and entry.status is None:
                 parts = [*entry.native_parts, *entry.parts]
@@ -1661,9 +1723,10 @@ class SessionCore:
         response = self._speaking_response()
         return response.open_part_index if response is not None and response.open_part is not None else None
 
-    def response_under_way(self) -> bool:
-        """Whether a response is under way that the session didn't refuse."""
-        return any(not response.refused for response in self._open_responses.values())
+    def response_under_way(self, *, besides_caller_of: str | None = None) -> bool:
+        """Whether a response is under way that the session didn't refuse, other than the one that made `besides_caller_of`."""
+        caller = self._call_response.get(besides_caller_of) if besides_caller_of is not None else None
+        return any(not response.refused and response is not caller for response in self._open_responses.values())
 
     def call_waiting(self, call_id: str) -> bool:
         """Whether a tool call is waiting for the session to take it to run (see `take_call`)."""
@@ -1698,10 +1761,10 @@ class SessionCore:
 
     def result_asks_reply(self, call_id: str) -> bool:
         """Whether sending this call's result asks for a reply `requests_ahead()` doesn't count yet."""
+        if self._result_unanswered(call_id):
+            return False
         if not self._answers_per_response or (response := self._call_response.get(call_id)) is None:
             return True
-        if response.id in self._unanswered_responses:
-            return False
         return not any(
             outcome == 'pending' and self._reply_for(input_id) == response.id
             for input_id, outcome in self._obligations.items()

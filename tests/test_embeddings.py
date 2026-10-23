@@ -23,10 +23,10 @@ import pytest
 from opentelemetry.trace import StatusCode
 from pytest_mock import MockerFixture
 
-import pydantic_ai.models
 from pydantic_ai._utils import BaseExceptionGroup
 from pydantic_ai.embeddings import (
     Embedder,
+    EmbeddingModel,
     EmbeddingResult,
     EmbeddingSettings,
     EmbedInputType,
@@ -37,6 +37,7 @@ from pydantic_ai.embeddings import (
     infer_embedding_model,
 )
 from pydantic_ai.exceptions import ModelAPIError, ModelConnectionError, ModelHTTPError, UserError
+from pydantic_ai.models import override_allow_model_requests
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -115,7 +116,7 @@ def sentence_transformers_imported() -> None:
 async def test_openai_embedding_model_blocks_requests_when_disabled():
     model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key='test-key'))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.embed('hello', input_type='query')
 
@@ -124,7 +125,7 @@ async def test_openai_embedding_model_blocks_requests_when_disabled():
 async def test_cohere_embedding_model_blocks_requests_when_disabled():
     model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key='test-key'))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.embed('hello', input_type='query')
 
@@ -133,7 +134,7 @@ async def test_cohere_embedding_model_blocks_requests_when_disabled():
 async def test_google_embedding_model_blocks_requests_when_disabled():
     model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key='test-key'))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.embed('hello', input_type='query')
 
@@ -142,7 +143,7 @@ async def test_google_embedding_model_blocks_requests_when_disabled():
 async def test_bedrock_embedding_model_blocks_requests_when_disabled():
     model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=BedrockProvider(bedrock_client=MagicMock()))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.embed('hello', input_type='query')
 
@@ -155,7 +156,7 @@ async def test_voyageai_embedding_model_blocks_requests_when_disabled():
 
     model = VoyageAIEmbeddingModel('voyage-4', provider=VoyageAIProvider(api_key='test-key'))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.embed('hello', input_type='query')
 
@@ -164,7 +165,7 @@ async def test_voyageai_embedding_model_blocks_requests_when_disabled():
 async def test_google_embedding_model_blocks_count_tokens_when_disabled():
     model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key='test-key'))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.count_tokens('hello')
 
@@ -173,7 +174,7 @@ async def test_google_embedding_model_blocks_count_tokens_when_disabled():
 async def test_cohere_embedding_model_blocks_count_tokens_when_disabled():
     model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key='test-key'))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.count_tokens('hello')
 
@@ -189,7 +190,7 @@ async def test_embedder_blocks_requests_when_disabled():
     """
     embedder = Embedder(OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key='test-key')))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await embedder.embed_query('hello')
 
@@ -203,7 +204,7 @@ async def test_test_embedding_model_is_exempt_from_request_guard():
     """
     embedder = Embedder(TestEmbeddingModel())
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         result = await embedder.embed_query('hello')
 
     assert result.embeddings == snapshot([[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]])
@@ -2136,7 +2137,7 @@ class TestSentenceTransformers:
 
         Inference is local, so there's no provider call to block and no recording to make.
         """
-        with pydantic_ai.models.override_allow_model_requests(False):
+        with override_allow_model_requests(False):
             result = await embedder.embed_query('hello')
 
         assert result.embeddings
@@ -2653,3 +2654,41 @@ async def test_bedrock_embedding_non_json_response_body_raises_model_api_error(b
 
     assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+class _PlainEmbeddingModel(EmbeddingModel):
+    """A subclass that isn't a dataclass, so it has no fields to compare."""
+
+    @property
+    def model_name(self) -> str:
+        raise NotImplementedError
+
+    @property
+    def system(self) -> str:
+        raise NotImplementedError
+
+    async def embed(
+        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+    ) -> EmbeddingResult:
+        raise NotImplementedError
+
+
+class _OwnEqualityEmbeddingModel(_PlainEmbeddingModel):
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _OwnEqualityEmbeddingModel)
+
+
+def test_embedding_models_that_differ_only_in_settings_are_not_equal():
+    """`settings` live on the `EmbeddingModel` base, outside the fields a dataclass subclass compares.
+
+    Not a VCR test: equality makes no request.
+    """
+    assert TestEmbeddingModel(settings={'dimensions': 1}) != TestEmbeddingModel(settings={'dimensions': 2})
+    assert TestEmbeddingModel(settings={'dimensions': 1}) == TestEmbeddingModel(settings={'dimensions': 1})
+    assert TestEmbeddingModel() != object()
+
+    model = _PlainEmbeddingModel()
+    assert model == model
+    assert model != _PlainEmbeddingModel()
+    assert {model: 'kept'}[model] == 'kept'
+    assert _OwnEqualityEmbeddingModel() == _OwnEqualityEmbeddingModel(), "a subclass's own `__eq__` is kept"

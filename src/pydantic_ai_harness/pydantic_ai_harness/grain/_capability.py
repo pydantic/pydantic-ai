@@ -24,8 +24,9 @@ from dataclasses import dataclass, field
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, one_connection, read_only_toolset
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._mcp import credential, per_run_connection, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -36,15 +37,15 @@ except ImportError as _import_error:  # pragma: no cover
 
 _GRAIN_MCP_URL = 'https://api.grain.com/_/mcp'
 _ID = 'grain'
-_DEFAULT_DESCRIPTION = 'Search and read Grain meetings: transcripts, notes, people, companies, and deals.'
+_DEFAULT_DESCRIPTION = 'Use Grain meetings, transcripts, notes, clips, people, companies, and deals.'
 
 
 @dataclass(kw_only=True)
 class Grain(AbstractCapability[AgentDepsT]):
-    """Let an agent search and read Grain meetings, transcripts, and notes.
+    """Let an agent search and read Grain meetings, transcripts, and notes, and create clips and tag meetings.
 
-    Set `GRAIN_ACCESS_TOKEN` or pass a Grain access token as `auth`. The agent can then read every meeting the
-    user can see in Grain.
+    Set `GRAIN_ACCESS_TOKEN` or pass a Grain access token as `auth`. The agent can then reach every meeting the
+    user can see in Grain. Pass `read_only=True` to keep only the tools Grain marks read-only.
 
     ```python
     from pydantic_ai import Agent
@@ -57,8 +58,9 @@ class Grain(AbstractCapability[AgentDepsT]):
     id: str | None = _ID
     """Stable capability and toolset ID, so `defer_loading=True` needs none.
 
-    One `Grain` is one connection to one account, like `StackOne`'s linked account. Two sharing this `id` are
-    one connection stated twice when they agree, and an error when they differ; give each its own `id` to keep both.
+    Each `Grain` is one connection to one Grain account. Two with the same `id` and settings are one connection, and
+    two with the same `id` but different settings raise. Give each its own `id` to keep both. `None` or `''` means
+    the default, `grain`.
     """
 
     description: str | None = _DEFAULT_DESCRIPTION
@@ -80,40 +82,34 @@ class Grain(AbstractCapability[AgentDepsT]):
     """Your own MCP client or transport, for full control of the connection. It cannot be combined with `auth`."""
 
     def __post_init__(self) -> None:
-        if self.client is not None and self.auth is not None:
+        # The toolset always needs an id, so normalize here and let `combine` see the id the toolset uses.
+        self.id = self.id or _ID
+        if self.client is not None and self.auth:
             raise UserError('`client` owns the connection, so it cannot be combined with `auth`.')
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one connection stated twice; two that disagree raise rather than merge."""
-        return one_connection(capabilities)
+        return one_per_id(capabilities)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the Grain MCP tools."""
-        id = self.id or _ID
         if self.client is not None:
             toolset: AbstractToolset[AgentDepsT] = MCPToolset(
-                self.client, id=id, include_instructions=self.include_instructions
+                self.client, id=self.id, include_instructions=self.include_instructions
             )
         elif callable(self.auth):
-            toolset = DynamicToolset(self._connect_for_run, per_run_step=False, id=id)
+            toolset = per_run_connection(self.auth, self._connect, id=self.id)
         else:
             toolset = self._connect(self.auth)
         if self.read_only:
             return read_only_toolset(toolset)
         return toolset
 
-    def _connect_for_run(self, ctx: RunContext[AgentDepsT]) -> MCPToolset[AgentDepsT] | None:
-        auth = self.auth(ctx) if callable(self.auth) else self.auth
-        if auth == 'oauth':
-            # FastMCP reads 'oauth' as "log in through a browser", which would hang a server run.
-            raise UserError("The `auth` function must return an API key or token, not 'oauth'.")
-        return self._connect(auth) if auth else None
-
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
         return MCPToolset(
             _GRAIN_MCP_URL,
-            id=self.id or _ID,
+            id=self.id,
             auth=credential(auth, env='GRAIN_ACCESS_TOKEN', service='Grain'),
             include_instructions=self.include_instructions,
         )

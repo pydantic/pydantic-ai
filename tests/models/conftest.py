@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import pytest
 from pydantic import JsonValue
+from pytest_mock import MockerFixture
 
 from ..conftest import RequestCapture, try_import
 
@@ -142,6 +145,36 @@ def cache_breakpoints(body: dict[str, JsonValue]) -> tuple[dict[str, JsonValue] 
             if block.get('cache_control') or block.get('prompt_cache_breakpoint'):
                 blocks.append(f'messages[{message_index}].content[{block_index}]')
     return cache_control, blocks
+
+
+def stream_bedrock_converse_mock(mocker: MockerFixture, client: Any) -> None:
+    """Answer `client.converse_stream` with what the mocked `client.converse` returns, as `ConverseStream` events.
+
+    `BedrockConverseModel.request()` streams behind the scenes when it sends a Claude model's maximum output as the
+    default `maxTokens`, so a test that mocks `converse` keeps its mocked responses, and `converse`'s calls keep holding
+    the requests that were sent. Responses can hold text and tool calls.
+    """
+
+    def events(response: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        for index, block in enumerate(response['output']['message']['content']):
+            if 'text' in block:
+                yield {'contentBlockDelta': {'contentBlockIndex': index, 'delta': {'text': block['text']}}}
+            else:
+                tool_use = block['toolUse']
+                start = {'toolUse': {'toolUseId': tool_use['toolUseId'], 'name': tool_use['name']}}
+                yield {'contentBlockStart': {'contentBlockIndex': index, 'start': start}}
+                delta = {'toolUse': {'input': json.dumps(tool_use['input'])}}
+                yield {'contentBlockDelta': {'contentBlockIndex': index, 'delta': delta}}
+            yield {'contentBlockStop': {'contentBlockIndex': index}}
+        yield {'messageStop': {'stopReason': response['stopReason']}}
+        yield {'metadata': {'usage': response['usage']}}
+
+    def converse_stream(**kwargs: Any) -> dict[str, Any]:
+        response = client.converse(**kwargs)
+        return {'stream': events(response), 'ResponseMetadata': response.get('ResponseMetadata', {})}
+
+    mocker.patch.object(client, 'converse_stream', side_effect=converse_stream)
 
 
 @pytest.fixture(scope='function')

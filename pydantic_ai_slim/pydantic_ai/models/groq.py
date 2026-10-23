@@ -34,7 +34,6 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -58,8 +57,11 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -199,6 +201,9 @@ class GroqModel(Model[AsyncGroq]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    # Groq's chat API takes images and no other file.
+    _unsupported_file_inputs = frozenset({'document', 'audio', 'video'})
+
     unsupported_settings = frozenset({'service_tier', 'top_k'})
 
     _model_name: GroqModelName = field(repr=False)
@@ -317,6 +322,23 @@ class GroqModel(Model[AsyncGroq]):
         )
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
+
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        overriding: list[str] = []
+        thinking = model_settings.get('thinking')
+        supports_reasoning_disable = self.profile.get('groq_supports_reasoning_disable', False)
+        # On qwen3, `thinking=False` disables reasoning through `reasoning_effort='none'`, which Groq lets win.
+        if model_settings.get('groq_reasoning_format') and not (thinking is False and supports_reasoning_disable):
+            overriding.append('groq_reasoning_format')
+        # As in `_completions_create`, an explicit effort replaces the one a graded family maps `thinking` to, and
+        # on qwen3 an explicit `'none'` disables the reasoning an enabling `thinking` asks for.
+        effort = model_settings.get('groq_reasoning_effort')
+        if effort is not None and (
+            self.profile.get('groq_supports_graded_reasoning_effort', False)
+            or (effort == 'none' and thinking is not False and supports_reasoning_disable)
+        ):
+            overriding.append('groq_reasoning_effort')
+        return tuple(overriding)
 
     def _translate_thinking(
         self,
@@ -663,7 +685,7 @@ class GroqModel(Model[AsyncGroq]):
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         file_content: list[UserContent] = []
-        for part in message.parts:
+        for part in _sendable_request_parts(message.parts):
             if isinstance(part, SystemPromptPart):
                 yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
@@ -678,15 +700,13 @@ class GroqModel(Model[AsyncGroq]):
                 )
             elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                 raise _unprojected_instruction_delta_error()
-            elif isinstance(part, RetryPromptPart):  # pragma: no branch
-                if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
-                else:
-                    yield chat.ChatCompletionToolMessageParam(
-                        role='tool',
-                        tool_call_id=_guard_tool_call_id(t=part),
-                        content=part.model_response(),
-                    )
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s.
+                raise _unconverted_speech_part_error()
+            elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                raise _unprepared_part_error(part)
+            else:
+                assert_never(part)
         if file_content:
             yield await self._map_user_prompt(UserPromptPart(content=file_content))
 
