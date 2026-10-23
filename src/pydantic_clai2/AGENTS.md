@@ -90,7 +90,7 @@ they agree in the same PR.
   Esc cancels: a refused `/plugins` fires its refusal instead, and a cancelled command
   fires nothing. A delegated task's own events never enter the parent run's stream, and a
   background task outlives that run, so no hook of the parent sees them; `Tasks.observe`,
-  the harness owner's one observer, fires `TaskEvent`. `/update` is a command, so no core
+  the harness owner's one observer, fires `TaskEvent`. `/update now` is a command, so no core
   hook sees its install either, and `CommandEnd` comes only once uv has finished; `Updates.command`
   fires `UpdateProgress` as it goes. Additional moments need the same
   justification: say which core hook you checked and why it does not fit.

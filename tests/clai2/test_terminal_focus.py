@@ -175,7 +175,7 @@ async def test_restarts_are_refused_while_other_sessions_run_turns(
                 await home.commands.execute_async('/reload')
             release['b'].set()
             await until(desk.live, lambda: not b.running)
-            assert await home.commands.execute_async('/update') == 'Updated.'
+            assert await home.commands.execute_async('/update now') == 'Updated.'
             assert await home.commands.execute_async('/reload') == 'Reloading CLAI2...'
     assert home.reload_requested
     await home.close('exit')

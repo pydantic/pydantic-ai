@@ -105,8 +105,9 @@ in the reference.
 
 ## Updating
 
-Run `/update`. CLAI installs the newest build, then restarts into it with the same
-conversation open. While other live sessions run turns, as ones the browser opened can,
+Run `/update` to see whether a newer CLAI is out, and choose **Update…** to install it.
+`/update now` installs without asking, and `clai2 --update` does it from your shell and exits.
+CLAI installs the newest build, then restarts into it with the same conversation open. While other live sessions run turns, as ones the browser opened can,
 `/update` and `/reload` ask you to try again when they finish. They restart CLAI in the folder it started in,
 so a session from another folder shown in the terminal cannot run them.
 
@@ -122,7 +123,7 @@ There are two channels. Pick one with `/set updates.channel`:
 
 ```text
 /set updates.channel main
-/update
+/update now
 ```
 
 `/update` works when CLAI was installed with `uv tool install`. On Windows, CLAI closes

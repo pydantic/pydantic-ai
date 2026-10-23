@@ -315,7 +315,7 @@ async def test_unexpected_command_errors_are_recorded_under_the_command(content_
     with pytest.raises(httpx.HTTPStatusError, match='403'):
         await commands.execute_async('/update')
     with pytest.raises(ValueError, match='Usage'):
-        await commands.execute_async('/update now')
+        await commands.execute_async('/update later')
     with pytest.raises(UserError):
         await commands.execute_async('/login')
     # Usage errors keep only their type on the command's span; the unexpected failure is logged with its traceback.

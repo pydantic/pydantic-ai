@@ -46,7 +46,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/fork [@MODEL] PROMPT` | Run a copy of the conversation in the background; `/fork cancel N` stops one |
 | `/forks` | Show this session's background forks |
 | `/tasks` | Inspect and control delegated tasks |
-| `/update` | Install the newest CLAI from `updates.channel` and restart |
+| `/update [now]` | Show whether a newer CLAI is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
 | `/reload` | Reload CLAI's own code without restarting |
 | `/exit` | Quit |
 | `/SKILL-NAME [ARGS]` | Send an Agent Skill as your next prompt |
@@ -67,6 +67,7 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `--session-id UUID` | Save a new session under this ID |
 | `--fork-session` | With `--resume`, continue in a copy of the session |
 | `-w`, `--worktree [NAME]` | Start in a Git worktree; see [Git worktrees](#git-worktrees) |
+| `--update` | Install the newest CLAI from `updates.channel`, print how it went, and exit; see [Updating](#updating) |
 | `--request-limit N` | The full prompt's model-request budget |
 | `--database PATH` | Use another settings database (and session folder) |
 | `clai2 config show\|get\|set\|reset` | Read or write saved settings from your shell |
@@ -217,7 +218,7 @@ Install with `uv tool install pydantic-clai2` and CLAI can update itself.
 
 ```text
 /set updates.channel main
-/update
+/update now
 ```
 
 To use another copy of the release, start CLAI with `CLAI_BLEEDING_URL` set to
@@ -238,11 +239,24 @@ CLAI_BLEEDING_URL=http://localhost:8000 clai2
 
 When a newer build exists, the status row shows `update <version or commit>: /update`.
 CLAI checks once at startup and again when you change the channel, and only for
-`uv tool` installs. Offline, it shows nothing. `/update` runs `uv tool install --force`,
-shows uv's output, then restarts CLAI as the new build with the same launch options,
-resuming the current conversation. Switching back to `stable` offers the latest release.
-Run from a source checkout, `/update` installs CLAI as a `uv tool` the same way and
-restarts into that.
+`uv tool` installs. Offline, it shows nothing.
+
+`/update` opens the **About CLAI** menu: the running version, a line saying whether
+it is the latest on the channel or which newer one is out, and the `updates.channel` row.
+Opening it checks too, even from a source checkout, and waits up to a second for the
+answer; offline, the line says why it could not tell. **Update…** asks first, then
+closes the menu and installs. `/update now` installs without the menu.
+
+Installing runs `uv tool install --force`, shows uv's output, then restarts CLAI as the
+new build with the same launch options, resuming the current conversation. Switching back
+to `stable` offers the latest release. Run from a source checkout, it installs CLAI as a
+`uv tool` the same way and restarts into that.
+
+`clai2 --update` installs the same way without starting a session: it prints uv's output
+and a last line saying what it did, then exits instead of restarting, so the next `clai2`
+is the new build. It exits with status 1 when the check, uv, or finding uv failed. It
+cannot be combined with `config`, `plugins`, `--prompt`, `--web`, `--resume`, `--session-id`,
+`--agent`, or `--worktree`.
 
 `/update` works from the [web UI](../PLUGINS.md#web-this-session-in-your-browser) too,
 typed in the page or in the terminal: the page shows uv's progress and the result. After
@@ -252,16 +266,16 @@ and `--token-file`; a terminal session that ran `/web` comes back with the web U
 Like any command, `/update` entered while a turn runs waits for the turn to end.
 
 Windows does not let a program replace files it is running from, so there
-`/update` exits first and installs in a new PowerShell window; start `clai2`
+an install exits CLAI first and installs in a new PowerShell window; start `clai2`
 again when that window reports success.
 
 The reinstall keeps only CLAI's own packages, so add any extra `--with` packages
-again afterwards. Without uv on `PATH`, `/update` prints the complete command to
+again afterwards. Without uv on `PATH`, an install prints the complete command to
 run yourself, in PowerShell syntax on Windows. For `main` installs, it also
 writes the overrides file and includes its path in the printed command.
 
-In the web UI, `/update` opens the Settings window's **About** section instead: the running
-version and `updates.channel`, with an **Update…** button that asks before it runs `/update`.
+In the web UI, `/update` opens the same menu as the Settings window's **About** section, whose
+**Update…** button asks before it runs `/update now`.
 
 ### Environment variables
 

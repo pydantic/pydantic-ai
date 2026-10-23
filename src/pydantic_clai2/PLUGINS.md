@@ -1339,8 +1339,9 @@ per server, each an action whose dialogs run `/mcp`'s subcommands; see
 **System prompt** is `/system_prompt`'s menu, the one the terminal runs: your instructions in a
 multi-line dialog (`Dialogs.text(multiline=True)`), a paragraph to append, and the full system
 prompt the model last received in a read-only one (`Dialogs.view`). **About** is `/update`'s
-menu: the running version, whose **Update…** asks before it enters `/update` (bare `/update` in
-the terminal still installs at once), and the `updates.channel` setting. `/usage` and `/cost`
+menu, the one bare `/update` opens in the terminal: the running version with a note saying whether
+a newer CLAI is out, whose **Update…** asks before it enters `/update now`, and the
+`updates.channel` setting. `/usage` and `/cost`
 results carry their figures (`Notice.usage`, from the `session_usage` the commands report), which
 the page shows as a card; the terminal prints them as before. The command palette (⌘⇧P, or bare
 `/help` in the composer) lists every command `host.complete('/')` offers, plugin and skill
@@ -1405,7 +1406,7 @@ The UI is a React app in `web-ui/` in the CLAI source tree. Its built files ship
 package, so running it needs no Node. After changing it, run `npm ci && npm run build` there and
 commit the rebuilt `pydantic_clai2/builtin_plugins/web/static/`.
 
-`/update`, typed in the terminal or confirmed with **Update…** in the page's About section (bare
+`/update now`, typed in the terminal or confirmed with **Update…** in the page's About section (bare
 `/update` in the composer opens that section), shows in the page: uv's latest line while it
 installs (`on_update_progress`), then all it printed and the command's result. A failed install,
 or nothing to install, says so and changes nothing. After a successful one, CLAI restarts as the
@@ -3027,6 +3028,9 @@ A `SettingsMenu` (from `pydantic_clai2.plugins.menus`) has:
 - `actions`, for rows that need more than one value typed or picked, such as
   choosing a `/keys` entry or signing in: the row's key maps to an async function
   that takes a `Dialogs`, asks through it, saves, and returns the lines to show.
+  Return them as a `CloseMenu` (`return CloseMenu(['Installing…'])`) to close the
+  terminal's menu as well, for an action that starts what the menu is for, as
+  `/update`'s **Update…** does; the web UI shows the lines as after any action.
 - `menus`, for rows that open another `SettingsMenu`, such as each saved model's
   settings in `/model`'s menu: the row's key maps to a zero-argument callable that
   builds it when it opens. Leaving it returns to this menu, in the terminal and in
