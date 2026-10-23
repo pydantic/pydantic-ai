@@ -283,12 +283,15 @@ class SessionBrowser:
                 counts = f'{label}{entry.message_count} msgs'
             if self.importing(entry):
                 counts = f'{label}to import'
+            if len(counts) > width // 2:
+                counts = counts.removeprefix(label)
             title = truncate(plain(title), max(1, width - len(counts) - 1))
             if entry == selected and self.mode == 'sessions':
                 title = f'{theme.sgr(theme.INFO, bold=True)}{title}\x1b[0m'
             lines.append(title + ' ' * max(1, width - visible_length(title) - len(counts)) + counts)
-            # The tag saying where a session came from is shown beside its counts, not as a topic.
-            tags = [tag for tag in entry.tags if source is None or tag != source_tag(source)]
+            # Where a session came from is shown beside its counts, not as a topic: neither its tag
+            # nor the bare one imports had before it.
+            tags = [tag for tag in entry.tags if source is None or tag not in (source_tag(source), source)]
             while tags and len(' '.join(f'#{t}' for t in tags)) > width // 2:
                 tags.pop()
             chips = ' '.join(f'#{t}' for t in tags)
