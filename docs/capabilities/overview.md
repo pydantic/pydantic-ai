@@ -92,6 +92,7 @@ Finding and reading things on the open web.
 | [Web Search](web-search.md) | Core | Provider-native search where available, local DuckDuckGo fallback everywhere |
 | [Web Fetch](web-fetch.md) | Core | Fetch and read URLs, native or local |
 | [X Search](x-search.md) | Core | Search X; native on xAI, subagent fallback elsewhere |
+| [Citations](../citations.md) | Core | Ask providers to cite the documents and pages behind the answer |
 | [Exa Search](https://pydantic.dev/docs/ai/harness/exa-search/) | Harness | Web research via [Exa](https://exa.ai): excerpted search, full-page reads, opt-in cited deep search |
 | [Exa Agent](https://pydantic.dev/docs/ai/harness/exa-search/) | Harness | Delegate open-ended research to the Exa Agent API |
 | [You.com Search](https://pydantic.dev/docs/ai/harness/youdotcom/) | Harness | Web search and page reads via [You.com](https://you.com): query-relevant excerpts or full-page markdown |

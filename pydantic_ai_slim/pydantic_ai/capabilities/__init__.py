@@ -38,6 +38,7 @@ from .abstract import (
 from .batch_model_requests import BatchModelRequests
 from .caching import Caching
 from .capability import Capability
+from .citations import Citations
 from .combined import CombinedCapability
 from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
@@ -80,6 +81,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     for cls in (
         NativeTool,
         Caching,
+        Citations,
         RaiseContentFilterError,
         FileUnderstanding,
         ImageGeneration,
@@ -137,6 +139,7 @@ __all__ = [
     'BatchModelRequests',
     'Caching',
     'Capability',
+    'Citations',
     'CAPABILITY_TYPES',
     'FileUnderstanding',
     'ImageGeneration',

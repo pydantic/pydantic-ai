@@ -100,15 +100,15 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     include_domains: Sequence[str] = field(default_factory=list[str])
     """If non-empty, search results only come from these domains (allowlist).
 
-    Applies to `web_search` and `deep_search`. Mutually exclusive with
-    `exclude_domains`.
+    Applies to `web_search` and `deep_search`, not `get_page`, which reads any
+    URL the model passes. Mutually exclusive with `exclude_domains`.
     """
 
     exclude_domains: Sequence[str] = field(default_factory=list[str])
     """Search results never come from these domains (denylist).
 
-    Applies to `web_search` and `deep_search`. Mutually exclusive with
-    `include_domains`.
+    Applies to `web_search` and `deep_search`, not `get_page`. Mutually
+    exclusive with `include_domains`.
     """
 
     guidance: str | None = None
@@ -119,7 +119,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     """
 
     client: ExaClient | None = None
-    """Exa client to use; when `None`, an `exa_py.AsyncExa` is built from `EXA_API_KEY`.
+    """Exa client to use; when `None`, a default client wrapping `exa_py.AsyncExa` is built from `EXA_API_KEY`.
 
     Any object satisfying the `ExaClient` protocol works: use it to pass an API
     key explicitly, point at a different base URL, or substitute a fake in tests.
@@ -245,7 +245,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
         """Construct the capability from serializable spec options.
 
         The `client` field is not spec-serializable, so spec-loaded instances
-        always build the default `exa_py.AsyncExa` from `EXA_API_KEY`.
+        always build the default client, which wraps `exa_py.AsyncExa`, from `EXA_API_KEY`.
         """
         return cls(
             num_results=num_results,

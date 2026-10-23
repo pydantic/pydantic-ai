@@ -109,6 +109,12 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 openai_responses_supports_prompt_cache_diagnostics=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # Measured live: every model from `gpt-4o-mini` through `gpt-5.5` rejects a `tool_choice` naming a tool
+                # that only an `additional_tools` item declares, and GPT-5.6 and GPT-6 accept it. Those are the models
+                # with explicit cache breakpoints. Set here with `tool_addition_mode`, since the item is first-party.
+                openai_responses_tool_choice_accepts_additional_tools=bool(
+                    profile.get('openai_supports_prompt_cache_breakpoints')
+                ),
                 # GPT-5.6 and later, the models with explicit cache breakpoints, accept `reasoning.effort='max'`
                 # (verified live). Set here rather than in `openai_model_profile` because `max` is unverified on
                 # the OpenAI-compatible endpoints that share it.
