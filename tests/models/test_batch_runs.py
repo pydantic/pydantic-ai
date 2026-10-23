@@ -887,7 +887,7 @@ async def test_a_run_waiting_in_process_still_cancels_its_batch_when_cancelled()
 class _RejectPendingOnce(AbstractCapability[object]):
     """Rejects the first pending response it sees, the way a response handler or a fallback would."""
 
-    reject: Literal['retry', 'replace', 'mutate', 'raise']
+    reject: Literal['retry', 'replace', 'mutate', 'strip', 'raise']
     rejected: int = 0
 
     async def after_model_request(
@@ -905,13 +905,16 @@ class _RejectPendingOnce(AbstractCapability[object]):
             response.state = 'complete'
             response.provider_details = None
             return response
+        if self.reject == 'strip':
+            # Still pending, but without what a later run would resume it from.
+            return replace(response, provider_details=None)
         raise RuntimeError('rejected')
 
 
 @pytest.mark.parametrize('stream', [False, True], ids=['run', 'run_stream'])
-@pytest.mark.parametrize('reject', ['retry', 'replace', 'mutate', 'raise'])
+@pytest.mark.parametrize('reject', ['retry', 'replace', 'mutate', 'strip', 'raise'])
 async def test_a_pending_response_a_hook_rejects_is_withdrawn_from_its_batch(
-    reject: Literal['retry', 'replace', 'mutate', 'raise'], stream: bool
+    reject: Literal['retry', 'replace', 'mutate', 'strip', 'raise'], stream: bool
 ) -> None:
     """Nothing collects a request whose pending response a hook rejected, so its batch is cancelled."""
     wrapped = SlowBatchTestModel(pending_checks=10**6)
@@ -932,6 +935,9 @@ async def test_a_pending_response_a_hook_rejects_is_withdrawn_from_its_batch(
 
     if reject == 'raise':
         assert isinstance(output, RuntimeError)
+        assert len(wrapped.created) == 1
+    elif reject == 'strip':
+        assert isinstance(output, PendingModelResponse)
         assert len(wrapped.created) == 1
     elif reject == 'retry':
         # The retry is submitted in a new batch, which the run ends pending on and leaves running.

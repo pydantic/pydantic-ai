@@ -1174,6 +1174,8 @@ async def _settle_pending(
         accepted is not None
         and accepted.state == 'suspended'
         and accepted.provider_response_id == response.provider_response_id
+        # Still the job a later run continues: a hook may have kept the response but dropped what resumes it.
+        and request_context.model.continuation_delay(accepted) is not None
     ):
         request_context.model._release_suspended_response(response)  # pyright: ignore[reportPrivateUsage]
     elif request_context.model._withdraws_rejected_suspended_response(response):  # pyright: ignore[reportPrivateUsage]
