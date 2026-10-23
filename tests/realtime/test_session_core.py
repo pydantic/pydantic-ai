@@ -205,15 +205,18 @@ def test_untranscribed_speech_beside_transcribed_speech_is_left_out_when_all_out
     session_core = feed(
         core(output_always_transcribed=output_always_transcribed),
         started('r1'),
-        said('r1', 'Checking.'),
+        said('r1', 'Checking.', 'item_1'),
         ToolCall('c1', tool_name='weather', args='{}', response_id='r1'),
-        AudioDelta(b'\x00\x10', response_id='r1'),
+        AudioDelta(b'\x00\x10', response_id='r1', item_id='item_2'),
         ended('r1'),
         started('r2'),
         AudioDelta(b'\x00\x10', response_id='r2'),
         ended('r2'),
     )
     assert summary(session_core.all_messages()) == expected
+    # A part left out has nothing to cut; the one recorded still can be.
+    feed(session_core, OutputItemCut(item_id='item_2', heard_ms=0), OutputItemCut(item_id='item_1', heard_ms=0))
+    assert summary(session_core.all_messages())[0].startswith('r1 [assistant:Checking.@0, call:c1')
 
 
 def test_a_response_ended_by_the_connection_with_nothing_said_is_not_recorded() -> None:

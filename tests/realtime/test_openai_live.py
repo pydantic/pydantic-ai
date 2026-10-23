@@ -38,6 +38,7 @@ from pydantic_ai.messages import (
     CachePoint,
     DocumentUrl,
     FilePart,
+    FunctionToolResultEvent,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -2576,11 +2577,15 @@ async def test_audio_a_delegated_call_splits_from_its_words_is_not_recorded_as_s
     streamed: list[SpeechPart] = []
     with _patched_connect(ws):
         async with agent.realtime(model).session() as session:
-            # Every frame arrives, and the call is answered; closing the session then ends the reply that made it.
-            with anyio.move_on_after(1):
+            # Once the split-off audio streamed and the call was answered, closing the session ends the reply.
+            answered = False
+            with anyio.fail_after(5):
                 async for event in session:  # pragma: no branch
                     if isinstance(event, PartStartEvent) and isinstance(event.part, SpeechPart):
                         streamed.append(event.part)
+                    answered = answered or isinstance(event, FunctionToolResultEvent)
+                    if answered and len(streamed) == 2:
+                        break
 
     # The audio was still streamed, for playback, as a part of its own.
     assert len(streamed) == 2

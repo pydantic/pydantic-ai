@@ -1154,8 +1154,10 @@ class SessionCore:
                 if not (isinstance(part, SpeechPart) and part.transcript is None and part.audio is None)
             ]
         for item_id, (_, part) in response.closed_parts.items():
-            if isinstance(part, SpeechPart):
-                self._recorded_items[item_id] = (response, next(i for i, p in enumerate(parts) if p is part))
+            # (A part left out above has nothing in history to cut.)
+            index = next((i for i, p in enumerate(parts) if p is part), None)
+            if isinstance(part, SpeechPart) and index is not None:
+                self._recorded_items[item_id] = (response, index)
                 self._recorded_items.move_to_end(item_id)
         while len(self._recorded_items) > MAX_CUTTABLE_OUTPUT_ITEMS:
             self._recorded_items.popitem(last=False)
