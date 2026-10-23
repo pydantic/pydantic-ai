@@ -6,7 +6,7 @@ terminal path through `configure` with scripted widget runners.
 
 import io
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import TypeGuard
 
@@ -159,7 +159,9 @@ def token(loader: PluginLoader[None]) -> str | None:
     """What the next run connects with."""
     capability = only(loader)
     assert callable(capability.auth)
-    return capability.auth(RunContext(deps=None, model=TestModel(), usage=RunUsage()))
+    token = capability.auth(RunContext(deps=None, model=TestModel(), usage=RunUsage()))
+    assert not isinstance(token, Awaitable)
+    return token
 
 
 async def run(commands: Commands, text: str) -> str:

@@ -199,7 +199,7 @@ class ZaiModel(OpenAIChatModel):
         return _ZaiChatCompletion.model_validate(response.model_dump(warnings=False))
 
     @override
-    def _map_finish_reason(self, key: _ZaiFinishReason) -> FinishReason | None:
+    def _map_finish_reason(self, key: _ZaiFinishReason) -> FinishReason | None:  # pyright: ignore[reportIncompatibleMethodOverride]
         return _ZAI_FINISH_REASON_MAP.get(key)
 
     @property

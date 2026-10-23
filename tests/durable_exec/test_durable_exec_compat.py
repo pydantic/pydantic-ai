@@ -677,6 +677,7 @@ def test_call_tool_result_carries_every_tool_manager_control_flow_exception() ->
                         'id': None,
                         'provider_name': None,
                         'provider_details': None,
+                        'citations': None,
                         'part_kind': 'text',
                     }
                 ],
