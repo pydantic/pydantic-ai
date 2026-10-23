@@ -45,12 +45,13 @@ jobs:
           path: ${{ runner.temp }}/canary-reports
 
       - name: Install the typed-boundary dependency
-        # Pydantic's whole dependency closure at its `uv.lock` versions, and `--no-deps` so pip resolves
-        # nothing else: this job holds a write-scoped token, so no new release may reach it.
+        # The `pydantic` pin every triage-script job shares, plus its whole dependency closure and
+        # `--no-deps` so pip resolves nothing else: this job holds a write-scoped token, so no new
+        # release may reach it.
         run: >-
-          python3 -m pip install --quiet --no-deps
-          'pydantic==2.13.5' 'pydantic-core==2.46.5' 'typing-extensions==4.16.0'
-          'annotated-types==0.7.0' 'typing-inspection==0.4.4'
+          python3 -m pip install --quiet 'pydantic==2.13.4'
+          'pydantic-core==2.46.4' 'typing-extensions==4.16.0' 'annotated-types==0.7.0' 'typing-inspection==0.4.4'
+          --no-deps
 
       - name: File or update the canary issues
         env:
