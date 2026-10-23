@@ -165,6 +165,18 @@ Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, wh
 Adding a workspace to an agent changes the tasks its flows run, so let running flows finish before
 you deploy the change.
 
+Workspace task cache keys include the run's [`run_id`][pydantic_ai.tools.RunContext.run_id] and a
+per-run call sequence. With distinct, stable explicit `run_id=` values, concurrent runs keep their
+own environments even when their arrival order changes on flow retry. Automatically derived run
+IDs still depend on arrival order, so pass explicit IDs for concurrent branches that can reorder.
+
+!!! warning "Upgrading workspace task cache keys"
+
+    Persisted workspace task results from versions before this change use different cache keys.
+    Retrying an in-flight flow across the upgrade re-executes workspace calls, which can create a
+    new environment instead of reattaching the original one. Let in-flight workspace flows finish
+    before upgrading. No manual cache deletion is required.
+
 Event stream handler and capability tasks include the agent's name in their cache key, so two agents in one
 flow never share a cached result. A flow retried across the upgrade that introduced this re-runs those tasks
 once instead of reading them from the cache.

@@ -332,13 +332,20 @@ def _revealed_deferred_tool_order(
 
     Deferred entries are outside Anthropic's cache key, so this is a determinism rule, not a cache rule.
     A mid-run newcomer (`introduced_tool_names`) is declared deferred for the same reason and joins them.
+
+    Without a tool-search surface, `resolve_request_tools` declares a deferred tool from the first request,
+    so its reveal leaves it where earlier requests sent it: moving it would reorder entries already sent.
     """
     tool_defs = model_request_parameters.tool_defs
+    pre_declared = not any(isinstance(tool, ToolSearchTool) for tool in model_request_parameters.native_tools)
     return [
         name
         for name in discovered_tool_names_in_order(messages)
         if name in tool_defs
-        and (tool_defs[name].defer_loading or name in model_request_parameters.introduced_tool_names)
+        and (
+            name in model_request_parameters.introduced_tool_names
+            or (tool_defs[name].defer_loading and not pre_declared)
+        )
         and tool_defs[name].with_native is None
         and model_request_parameters.visibility_of(name) == 'deferred'
     ]
