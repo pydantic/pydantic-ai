@@ -13,11 +13,12 @@ import base64
 import itertools
 import json
 import warnings
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from datetime import UTC
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import anyio
 import pytest
@@ -3914,7 +3915,19 @@ async def test_a_reattach_that_lands_after_close_is_not_used() -> None:
     dead = _SignallingDeadWebSocket([])
     connection = OpenAILiveConnection(dead, reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
     tasks_before = asyncio.all_tasks()
-    events = asyncio.create_task(_first_events(connection, 1))
+
+    async def first_event() -> Any:
+        # The receive loop itself, closed explicitly, so what the check below finds left running is the connection's
+        # own doing rather than the event loop's cleanup of an abandoned generator.
+        frames = cast('AsyncGenerator[Sequence[Any]]', connection.frames())
+        try:
+            frame = await anext(frames)
+        finally:
+            await frames.aclose()
+        [error] = [event for event in frame if isinstance(event, RealtimeSessionErrorEvent)]
+        return error
+
+    events = asyncio.create_task(first_event())
     await reattaching.wait()
     sending = asyncio.create_task(connection.send(ToolResult('call_1', output='14C')))
     await dead.send_failed.wait()
@@ -3923,13 +3936,11 @@ async def test_a_reattach_that_lands_after_close_is_not_used() -> None:
         await sending
     release.set()
     # Closed, the receive loop gives up on re-attaching, and says so.
-    [error] = await events
+    error = await events
     assert isinstance(error, RealtimeSessionErrorEvent) and not error.recoverable
     assert late.closed
     assert late.sent == []
     assert connection._ws is dead  # pyright: ignore[reportPrivateUsage]
-    # Nothing is left running, once the event loop has finalized the stream `_first_events` stopped reading.
-    await asyncio.sleep(0)
     assert asyncio.all_tasks() <= tasks_before
 
 
