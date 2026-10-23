@@ -29,7 +29,6 @@ from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
-from ..computer_use import COMPUTER_KIND, SAFETY_CHECKS, computer_tool
 from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, TEXT_DOCUMENT_MEDIA_TYPES
 from .._http import to_httpx2_timeout
 from .._instrumentation import get_instructions
@@ -45,6 +44,11 @@ from .._utils import (
     number_to_datetime,
 )
 from ..capabilities.abstract import AbstractCapability
+from ..computer_use import (
+    COMPUTER_KIND,
+    SAFETY_CHECKS,
+    _computer_tool,  # pyright: ignore[reportPrivateUsage]
+)
 from ..exceptions import (
     ModelConnectionError,
     SuspendedResponseExpired,
@@ -3154,7 +3158,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             elif isinstance(item, ResponseCompactionItem):
                 items.append(_map_compaction_item(item, self.system))
             elif isinstance(item, responses.ResponseComputerToolCall):
-                if computer_def := computer_tool(model_request_parameters):
+                if computer_def := _computer_tool(model_request_parameters):
                     items.append(
                         _map_computer_call(
                             item,
@@ -3858,7 +3862,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """The `computer` tool when this model takes it as OpenAI's native computer tool."""
         if not self.profile.get('openai_supports_computer_tool', False):
             return None
-        return computer_tool(model_request_parameters)
+        return _computer_tool(model_request_parameters)
 
     def _get_native_tools(  # noqa: C901
         self, model_request_parameters: ModelRequestParameters
@@ -5482,7 +5486,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
                     if isinstance(chunk.item, responses.ResponseComputerToolCall) and (
-                        computer_def := computer_tool(self.model_request_parameters)
+                        computer_def := _computer_tool(self.model_request_parameters)
                     ):
                         call_id = _response_tool_call_id(
                             chunk.item.call_id,

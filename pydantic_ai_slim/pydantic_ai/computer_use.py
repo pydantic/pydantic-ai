@@ -29,7 +29,6 @@ __all__ = (
     'ComputerToolAction',
     'Screenshot',
     'Wait',
-    'computer_tool',
 )
 
 
@@ -82,7 +81,7 @@ COMPUTER_KIND = ToolKind._core('computer', args=_ComputerArgs, content=_Computer
 """The kind of the `computer` tool, which model adapters send as their provider's native computer tool."""
 
 
-def computer_tool(model_request_parameters: ModelRequestParameters) -> ToolDefinition | None:
+def _computer_tool(model_request_parameters: ModelRequestParameters) -> ToolDefinition | None:
     """The `computer` tool among a request's tools, which a model adapter may send as its provider's native tool.
 
     Only a tool the request shows in full: a deferred, withheld or history-added one stays a function tool, which
