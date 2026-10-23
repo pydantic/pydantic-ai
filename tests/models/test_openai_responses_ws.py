@@ -7,6 +7,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, 
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from copy import copy
 from dataclasses import dataclass, field
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Literal, get_type_hints
 from unittest.mock import Mock
@@ -2296,7 +2297,16 @@ async def test_other_async_backends_warn_and_use_http(
     assert sockets.connect_count == 0
 
 
-@pytest.mark.parametrize('auth_mode', ['sigv4', 'native-bearer'])
+@pytest.mark.parametrize(
+    'auth_mode',
+    [
+        pytest.param(
+            'sigv4',
+            marks=pytest.mark.skipif(find_spec('botocore') is None, reason='SigV4 signing needs `openai[bedrock]`'),
+        ),
+        'native-bearer',
+    ],
+)
 @pytest.mark.skipif(not bedrock_mantle_imports_successful(), reason='bedrock-mantle not installed')
 async def test_bedrock_mantle_native_auth_warns_and_uses_http(
     allow_model_requests: None,
