@@ -142,6 +142,33 @@ editing, geometry, and normalized settings.
 GPT Image models require a verified organization on a paid usage tier: on an unverified organization every request fails
 with a rate-limit error before anything generates. Complex prompts can take up to two minutes to process.
 
+## Structured output schemas
+
+For ordinary, non-fine-tuned models used with [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] or
+[`OpenAIChatGPTProvider`][pydantic_ai.providers.openai_chatgpt.OpenAIChatGPTProvider], which serves the same public
+OpenAI API, string fields with `min_length` or `max_length` keep those bounds in strict structured outputs. Fine-tuned
+`ft:` models use a conservative schema transformer because OpenAI documents additional Structured Outputs restrictions
+for those models.
+The strict tuple and string-bound support described here has not been verified against the Codex backend, so
+[`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider] retains its existing schema handling.
+
+A one-item tuple such as `tuple[int]` can remain strict: its single allowed element is represented as a typed array
+`items` schema. Multi-item fixed tuples such as `tuple[int, int, int, int]` still use `prefixItems`; OpenAI strict mode
+does not support that tuple schema, so inferred strictness falls back to non-strict mode and explicitly strict
+[`ToolOutput`][pydantic_ai.output.ToolOutput] or [`NativeOutput`][pydantic_ai.output.NativeOutput] raises a
+[`UserError`][pydantic_ai.exceptions.UserError]. The same rules apply to function tool parameters in
+[strict mode](../tools-advanced.md#strict-mode). To keep an exact item count in strict mode, use a bounded list:
+
+```python
+from typing import Annotated
+
+from pydantic import BaseModel, Field
+
+
+class BoundingBox(BaseModel):
+    coordinates: Annotated[list[int], Field(min_length=4, max_length=4)]
+```
+
 ## Model settings
 
 You can customize model behavior using [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]:
