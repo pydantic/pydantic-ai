@@ -1,4 +1,4 @@
-"""Requesting Anthropic citations and mapping the citations a response carries to `Citation`s."""
+"""Requesting Anthropic citations, mapping the citations a response carries to `Citation`s, and replaying them from history."""
 
 from __future__ import annotations as _annotations
 
