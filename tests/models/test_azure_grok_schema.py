@@ -5,12 +5,13 @@ import httpx2
 import pytest
 from pydantic import JsonValue, TypeAdapter
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, NativeOutput
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -20,25 +21,31 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not ins
 @pytest.mark.parametrize('api', ['chat', 'responses'])
 @pytest.mark.parametrize('strict', [None, True])
 @pytest.mark.parametrize(
-    'provider_name,model_name,inlined',
+    'provider_name,model_name,inlined,native_output',
     [
-        ('azure', 'grok-4-1-fast-reasoning', True),
-        ('azure', 'Grok-4-1-fast-reasoning', True),
-        ('azure', 'gpt-4o', False),
-        ('azure', 'DeepSeek-R1', False),
-        ('openai', 'grok-4-1-fast-reasoning', False),
+        ('azure', 'grok-4-1-fast-reasoning', True, False),
+        ('azure', 'Grok-4-1-fast-reasoning', True, False),
+        ('azure', 'gpt-4o', False, False),
+        ('azure', 'DeepSeek-R1', False, False),
+        ('openai', 'grok-4-1-fast-reasoning', False, False),
+        ('azure', 'grok-4-1-fast-reasoning', True, True),
+        ('azure', 'gpt-4o', False, True),
+        ('openai', 'grok-4-1-fast-reasoning', False, True),
+        ('azure-custom', 'grok-4-1-fast-reasoning', False, True),
     ],
 )
 async def test_azure_grok_tool_schema(
     allow_model_requests: None,
     api: Literal['chat', 'responses'],
     strict: bool | None,
-    provider_name: Literal['azure', 'openai'],
+    provider_name: Literal['azure', 'azure-custom', 'openai'],
     model_name: str,
     inlined: bool,
+    native_output: bool,
 ):
     """Capture the SDK's actual request; Azure acceptance is reporter-verified, not simulated here."""
     bodies: list[dict[str, JsonValue]] = []
+    content = '{"replacements": [{"old_text": "old", "new_text": "new"}]}' if native_output else 'hello'
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         bodies.append(TypeAdapter(dict[str, JsonValue]).validate_json(request.content))
@@ -51,7 +58,7 @@ async def test_azure_grok_tool_schema(
                     'created': 0,
                     'model': model_name,
                     'choices': [
-                        {'index': 0, 'message': {'role': 'assistant', 'content': 'hello'}, 'finish_reason': 'stop'}
+                        {'index': 0, 'message': {'role': 'assistant', 'content': content}, 'finish_reason': 'stop'}
                     ],
                 },
             )
@@ -69,7 +76,7 @@ async def test_azure_grok_tool_schema(
                         'type': 'message',
                         'role': 'assistant',
                         'status': 'completed',
-                        'content': [{'type': 'output_text', 'text': 'hello', 'annotations': []}],
+                        'content': [{'type': 'output_text', 'text': content, 'annotations': []}],
                     }
                 ],
             },
@@ -80,22 +87,33 @@ async def test_azure_grok_tool_schema(
         old_text: str
         new_text: str
 
+    @dataclass
+    class Edits:
+        replacements: list[Replacement]
+
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         endpoint = 'https://example.services.ai.azure.com/openai/v1'
         provider = (
             AzureProvider(azure_endpoint=endpoint, api_key='test', http_client=client)
-            if provider_name == 'azure'
+            if provider_name != 'openai'
             else OpenAIProvider(base_url=endpoint, api_key='test', http_client=client)
         )
-        model = (OpenAIChatModel if api == 'chat' else OpenAIResponsesModel)(model_name, provider=provider)
-        agent = Agent(model)
+        profile = (
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
+            if provider_name == 'azure-custom'
+            else None
+        )
+        model = (OpenAIChatModel if api == 'chat' else OpenAIResponsesModel)(
+            model_name, provider=provider, profile=profile
+        )
+        agent = Agent(model, output_type=NativeOutput(Edits, strict=strict)) if native_output else Agent(model)
 
         @agent.tool_plain(strict=strict)
         def edit_file(path: str, replacements: list[Replacement] | None = None) -> str:
             """Edit a file by exact string replacement."""
             return 'ok'  # pragma: no cover
 
-        assert (await agent.run('Say hi.')).output == 'hello'
+        assert (await agent.run('Say hi.')).output == (Edits([Replacement('old', 'new')]) if native_output else 'hello')
 
     assert len(bodies) == 1
     tools = bodies[0]['tools']
@@ -130,3 +148,17 @@ async def test_azure_grok_tool_schema(
         expected['$defs'] = {'Replacement': replacement}
     assert parameters == expected
     assert tool.get('strict', False) == (strict is True)
+
+    if native_output:
+        output_format = bodies[0]['response_format'] if api == 'chat' else bodies[0]['text']
+        assert isinstance(output_format, dict)
+        output_format = output_format['json_schema'] if api == 'chat' else output_format['format']
+        assert isinstance(output_format, dict)
+        assert output_format['schema'] == {
+            'type': 'object',
+            'properties': {'replacements': {'type': 'array', 'items': {'$ref': '#/$defs/Replacement'}}},
+            'required': ['replacements'],
+            'additionalProperties': False,
+            '$defs': {'Replacement': replacement},
+        }
+        assert output_format['strict'] is True

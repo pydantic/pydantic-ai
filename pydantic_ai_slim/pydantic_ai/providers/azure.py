@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Self, overload
 from urllib.parse import urlparse
 
 from pydantic_ai import ModelProfile
-from pydantic_ai._json_schema import JsonSchema
+from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformerWithOutputOverride
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -399,7 +399,9 @@ class AzureProvider(_OpenAICompatibleProvider):
         )
 
 
-class _AzureGrokJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
+class _AzureGrokJsonSchemaTransformer(OpenAIJsonSchemaTransformer, JsonSchemaTransformerWithOutputOverride):
+    output_object_transformer = OpenAIJsonSchemaTransformer
+
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict)
         self.prefer_inlined_defs = True

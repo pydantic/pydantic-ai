@@ -138,11 +138,11 @@ model = OpenAIResponsesModel(
 agent = Agent(model)
 ```
 
-Azure Grok rejects tool schemas containing local `$ref` and `$defs`. `AzureProvider` inlines non-recursive definitions for the Grok family while retaining OpenAI's schema conversion, including nested `additionalProperties: false`. The same profile applies with [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]. Recursive schemas cannot be fully inlined.
+Azure Grok rejects tool schemas containing local `$ref` and `$defs`. `AzureProvider` inlines non-recursive tool-schema definitions for the Grok family while retaining OpenAI's schema conversion, including nested `additionalProperties: false`. Native structured-output schemas keep the existing OpenAI conversion. The same profile applies with [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]. Recursive schemas cannot be fully inlined.
 
 ### Custom profile with `OpenAIProvider`
 
-The generic `openai:` prefix and [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] select OpenAI profiles even when `OPENAI_BASE_URL` or `base_url` points to Azure. To keep that provider, pass an explicit custom profile combining OpenAI's schema conversion with definition inlining. [`InlineDefsJsonSchemaTransformer`][pydantic_ai.profiles.InlineDefsJsonSchemaTransformer] alone does not apply the OpenAI conversion required by this endpoint.
+The generic `openai:` prefix and [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] select OpenAI profiles even when `OPENAI_BASE_URL` or `base_url` points to Azure. To keep that provider, pass an explicit custom profile combining OpenAI's schema conversion with definition inlining. This custom profile also inlines non-recursive native structured-output schemas. [`InlineDefsJsonSchemaTransformer`][pydantic_ai.profiles.InlineDefsJsonSchemaTransformer] alone does not apply the OpenAI conversion required by this endpoint.
 
 ```python {gateway_toggle="skip"}
 from pydantic.json_schema import JsonSchemaValue
