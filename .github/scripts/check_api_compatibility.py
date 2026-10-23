@@ -20,8 +20,8 @@ PACKAGES = {
     'pydantic_clai2': 'src/pydantic_clai2',
 }
 # The `clai2` web UI and the `workspaces` plugin behind it are application code, not an SDK for others to build on,
-# so their changes need no compatibility waiver. Each excludes the module and its submodules.
-EXCLUDED_MODULES = (
+# so their changes need no compatibility waiver. Each excludes every module in the package.
+EXCLUDED_PACKAGES = (
     'pydantic_clai2.builtin_plugins.web',
     'pydantic_clai2.builtin_plugins.workspaces',
 )
@@ -106,13 +106,9 @@ def main() -> None:
 
 
 def is_excluded(finding: Finding, search_path: str) -> bool:
-    """Whether the finding is in a file of one of `EXCLUDED_MODULES` under `search_path`."""
+    """Whether the finding is in a file of one of `EXCLUDED_PACKAGES` under `search_path`."""
     path = Path(finding.path)
-    for module in EXCLUDED_MODULES:
-        location = Path(search_path, *module.split('.'))
-        if path.is_relative_to(location) or path == location.with_suffix('.py'):
-            return True
-    return False
+    return any(path.is_relative_to(Path(search_path, *package.split('.'))) for package in EXCLUDED_PACKAGES)
 
 
 def load_waivers(path: Path) -> dict[tuple[str, str], Waiver]:
