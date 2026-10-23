@@ -111,6 +111,17 @@ class TestComputerUse:
             'error': "the fake display cannot perform 'hold_key'",
         }
 
+    async def test_a_failed_last_action_skips_nothing(self) -> None:
+        agent = Agent(
+            _scripted([{'type': 'hold_key', 'keys': ['shift'], 'seconds': 1}]),
+            capabilities=[InMemoryProvider().capability(), ComputerUse(settle_seconds=0)],
+        )
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+        assert tool_return.content == [
+            "Action 1 of 1 (hold_key) failed: the fake display cannot perform 'hold_key'. Screenshot attached (1280x800).",
+            SCREENSHOT,
+        ]
+
     @pytest.mark.parametrize(
         'actions,pauses',
         [
