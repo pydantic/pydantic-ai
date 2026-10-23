@@ -35,6 +35,7 @@ from __future__ import annotations as _annotations
 
 from collections import Counter
 from collections.abc import Callable, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Literal, assert_never
 
@@ -103,7 +104,8 @@ def idempotence_violations(
     contract, pinned in `tests/models/test_model.py` by `test_prepare_messages_keeps_history_identity_when_*`.
     """
     once = transform(history)
-    return ['history.not_idempotent'] if transform(once) != once else []
+    snapshot = deepcopy(once)
+    return ['history.not_idempotent'] if transform(once) != snapshot else []
 
 
 def _is_synthesized(part: ModelRequestPart | ModelResponsePart) -> bool:
@@ -274,34 +276,37 @@ def duplicate_call_id_violations(messages: Sequence[WireMessage], *, across_mess
 
 
 def call_pairing_violations(messages: Sequence[WireMessage], *, results_follow_their_call: bool) -> list[str]:
-    """`wire.orphan_result`, `wire.unanswered_call`: every result answers an earlier call, and every call is answered.
+    """`wire.orphan_result`, `wire.unanswered_call`: every result answers one earlier call, and every call is answered.
 
-    With `results_follow_their_call`, a result must answer a call of the nearest earlier message that is not itself
-    made of results, as Anthropic, Bedrock and OpenAI Chat require: OpenAI Chat rejects a `tool` message that does not
-    follow an assistant message with `tool_calls`.
+    Each result consumes one call of its id, so a call repeated under one id needs as many results. With
+    `results_follow_their_call`, a result must answer a call of the nearest earlier message that is not itself made of
+    results, as Anthropic, Bedrock and OpenAI Chat require: OpenAI Chat rejects a `tool` message that does not follow
+    an assistant message with `tool_calls`.
     """
     violations: list[str] = []
-    calls: list[str] = []
-    answered: set[str] = set()
-    previous_calls: list[str] = []
+    pending: Counter[str] = Counter()
+    previous: Counter[str] = Counter()
     for message in messages:
-        message_calls: list[str] = []
+        message_calls: Counter[str] = Counter()
         for block in message.blocks:
             match block.kind:
                 case 'call':
-                    message_calls.append(block.value)
+                    message_calls[block.value] += 1
                 case 'result':
-                    if block.value not in (previous_calls if results_follow_their_call else calls):
+                    scope = previous if results_follow_their_call else pending
+                    if scope[block.value] <= 0:
                         violations.append('wire.orphan_result')
-                    answered.add(block.value)
+                    for counter in (previous, pending):
+                        if counter[block.value] > 0:
+                            counter[block.value] -= 1
                 case 'text' | 'other':
                     pass
                 case _:
                     assert_never(block.kind)
-        calls += message_calls
+        pending.update(message_calls)
         if message_calls or all(block.kind != 'result' for block in message.blocks):
-            previous_calls = message_calls
-    return violations + ['wire.unanswered_call' for call_id in dict.fromkeys(calls) if call_id not in answered]
+            previous = Counter(message_calls)
+    return violations + ['wire.unanswered_call'] * sum(pending.values())
 
 
 _ASSISTANT_ROLES = frozenset({'assistant', 'model'})

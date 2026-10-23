@@ -138,6 +138,16 @@ def test_not_idempotent():
     ]
 
 
+def test_not_idempotent_in_place():
+    """A transform that grows its input in place and returns it is caught against a snapshot of its first output."""
+
+    def grow(messages: list[ModelMessage]) -> list[ModelMessage]:
+        messages.append(ModelRequest.user_text_prompt('Again'))
+        return messages
+
+    assert idempotence_violations(grow, [ModelRequest.user_text_prompt('Hi')]) == ['history.not_idempotent']
+
+
 def test_body_changed():
     assert body_changes({'role': 'user', 'content': 'Hello'}, {'role': 'user', 'content': 'Hello!'}) == [
         'wire.body_changed'
@@ -324,6 +334,30 @@ def test_result_after_a_text_turn_does_not_follow_its_call():
         ]
     )
     assert call_pairing_violations(wire, results_follow_their_call=False) == []
+    assert call_pairing_violations(wire, results_follow_their_call=True) == ['wire.orphan_result']
+
+
+def test_repeated_call_answered_once():
+    """A call repeated under one id needs a result per call; one result leaves the other call unanswered."""
+    wire = chat_completions_wire(
+        [
+            {'role': 'assistant', 'tool_calls': [{'id': 'call_0'}, {'id': 'call_0'}]},
+            {'role': 'tool', 'tool_call_id': 'call_0', 'content': 'a'},
+        ]
+    )
+    assert call_pairing_violations(wire, results_follow_their_call=False) == ['wire.unanswered_call']
+    assert call_pairing_violations(wire, results_follow_their_call=True) == ['wire.unanswered_call']
+
+
+def test_second_result_for_one_call_is_an_orphan():
+    wire = chat_completions_wire(
+        [
+            {'role': 'assistant', 'tool_calls': [{'id': 'call_0'}]},
+            {'role': 'tool', 'tool_call_id': 'call_0', 'content': 'a'},
+            {'role': 'tool', 'tool_call_id': 'call_0', 'content': 'b'},
+        ]
+    )
+    assert call_pairing_violations(wire, results_follow_their_call=False) == ['wire.orphan_result']
     assert call_pairing_violations(wire, results_follow_their_call=True) == ['wire.orphan_result']
 
 
