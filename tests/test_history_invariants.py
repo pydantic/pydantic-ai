@@ -361,6 +361,20 @@ def test_second_result_for_one_call_is_an_orphan():
     assert call_pairing_violations(wire, results_follow_their_call=True) == ['wire.orphan_result']
 
 
+def test_result_after_a_mixed_message_does_not_follow_its_call():
+    """A message that mixes results with text closes the run of result messages that follows a call.
+
+    Built from wire messages directly: the projections combine consecutive same-role turns, as their APIs do.
+    """
+    wire = [
+        WireMessage('assistant', [WireBlock('call', 'call_0'), WireBlock('call', 'call_1')]),
+        WireMessage('user', [WireBlock('result', 'call_0'), WireBlock('text', 'And?')]),
+        WireMessage('user', [WireBlock('result', 'call_1')]),
+    ]
+    assert call_pairing_violations(wire, results_follow_their_call=False) == []
+    assert call_pairing_violations(wire, results_follow_their_call=True) == ['wire.orphan_result']
+
+
 def test_unanswered_call():
     wire = google_wire([{'role': 'model', 'parts': [{'function_call': {'id': 'call_1', 'name': 'lookup'}}]}])
     assert call_pairing_violations(wire, results_follow_their_call=False) == ['wire.unanswered_call']

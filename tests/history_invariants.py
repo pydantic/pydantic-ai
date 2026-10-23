@@ -279,9 +279,9 @@ def call_pairing_violations(messages: Sequence[WireMessage], *, results_follow_t
     """`wire.orphan_result`, `wire.unanswered_call`: every result answers one earlier call, and every call is answered.
 
     Each result consumes one call of its id, so a call repeated under one id needs as many results. With
-    `results_follow_their_call`, a result must answer a call of the nearest earlier message that is not itself made of
-    results, as Anthropic, Bedrock and OpenAI Chat require: OpenAI Chat rejects a `tool` message that does not follow
-    an assistant message with `tool_calls`.
+    `results_follow_their_call`, a result must answer a call of the nearest earlier message that is not made of results
+    alone, as Anthropic, Bedrock and OpenAI Chat require: OpenAI Chat rejects a `tool` message that does not follow an
+    assistant message with `tool_calls`. A message that mixes results with text closes the run of result messages.
     """
     violations: list[str] = []
     pending: Counter[str] = Counter()
@@ -304,7 +304,7 @@ def call_pairing_violations(messages: Sequence[WireMessage], *, results_follow_t
                 case _:
                     assert_never(block.kind)
         pending.update(message_calls)
-        if message_calls or all(block.kind != 'result' for block in message.blocks):
+        if message_calls or not message.blocks or any(block.kind != 'result' for block in message.blocks):
             previous = Counter(message_calls)
     return violations + ['wire.unanswered_call'] * sum(pending.values())
 
