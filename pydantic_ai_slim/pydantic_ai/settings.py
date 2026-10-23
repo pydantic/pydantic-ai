@@ -597,9 +597,9 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic: documents, including those returned by tools, and Web Fetch
-    * Bedrock, on Anthropic models: TXT and PDF documents, including those returned by tools
-    * xAI: inline citations
+    * Anthropic (documents, including those returned by tools, and Web Fetch)
+    * Bedrock (TXT and PDF documents, including those returned by tools, on Anthropic models)
+    * xAI (inline citations)
 
     Only used when the output is text. On Anthropic models, a `tool_choice` that forces a tool call raises a
     `UserError` when the request has something to cite. Providers that always cite ignore this setting. See
