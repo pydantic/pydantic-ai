@@ -111,7 +111,7 @@ print(WebSearchTool in profile.get('supported_native_tools', frozenset()))
 #> True
 ```
 
-The profile also says which kinds of file the model accepts: [`supports_image_input`][pydantic_ai.profiles.ModelProfile.supports_image_input], [`supports_document_input`][pydantic_ai.profiles.ModelProfile.supports_document_input] (narrowed to particular document types by [`supported_document_media_types`][pydantic_ai.profiles.ModelProfile.supported_document_media_types]), [`supports_audio_file_input`][pydantic_ai.profiles.ModelProfile.supports_audio_file_input] and [`supports_video_input`][pydantic_ai.profiles.ModelProfile.supports_video_input]. Each model class turns off what its API can't take, whatever the profile says: [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel], for example, reads neither audio nor video, and only PDF and plain-text documents. A file a tool returns that the model can't take is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance).
+The profile also says which kinds of file the model accepts: [`supports_image_input`][pydantic_ai.profiles.ModelProfile.supports_image_input], [`supports_document_input`][pydantic_ai.profiles.ModelProfile.supports_document_input] (narrowed to particular document types by [`supported_document_media_types`][pydantic_ai.profiles.ModelProfile.supported_document_media_types]), [`supports_audio_file_input`][pydantic_ai.profiles.ModelProfile.supports_audio_file_input] and [`supports_video_input`][pydantic_ai.profiles.ModelProfile.supports_video_input]. Each model class turns off what its API can't take, whatever the profile says: [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel], for example, reads neither audio nor video, and only PDF and plain-text documents. A file a tool returns that the model can't take is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance), and the [File Understanding](../capabilities/file-understanding.md) capability reads the same flags to decide which files to describe in text first.
 
 `model.profile` is usually the fully *resolved* profile: keys from [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] are merged with the provider's defaults, so `profile.get('supports_tools')` returns a value. If you supply `profile=` as a callable (or otherwise have a partial profile dict), pass the default as the fallback, `profile.get('supports_tools', DEFAULT_PROFILE['supports_tools'])` (after importing `DEFAULT_PROFILE`), to tolerate missing keys.
 Individual model adapters expose their resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] is different: it has no single profile because its candidate models may have different capabilities. Inspect the profile of each model in `fallback_model.models` instead. Don't confuse profiles with [Capabilities](../capabilities/overview.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
@@ -182,6 +182,8 @@ The Groq, Cohere and GitHub providers take a legacy `httpx.AsyncClient` instead,
 
 To implement support for a model API that's not already supported, you will need to subclass the [`Model`][pydantic_ai.models.Model] abstract base class.
 For streaming, you'll also need to implement the [`StreamedResponse`][pydantic_ai.models.StreamedResponse] abstract base class.
+
+A subclass with dataclass equality, including one that inherits it, compares its `settings` and `profile` along with its dataclass fields. A subclass that hashes by identity, such as a direct non-dataclass subclass of `Model` or a direct `@dataclass(eq=False)` subclass, compares by identity. Its `repr` shows its `model_name`, any dataclass fields, and its `settings` and `profile` when set. Define `__eq__` or `__repr__` on the subclass to replace either.
 
 The best place to start is to review the source code for existing implementations, e.g. [`OpenAIChatModel`](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/models/openai.py).
 
@@ -280,7 +282,7 @@ these categories, whichever provider it came from:
 |---|---|
 | [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] | A rate limit was reached, e.g. an HTTP 429. Waiting and retrying may help. |
 | [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] | The provider said the account's quota, credits, or billing is exhausted, e.g. an HTTP 402 or OpenAI's `insufficient_quota`. Waiting won't help. |
-| [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] | The provider or model is temporarily unavailable, e.g. an HTTP 503 or a gRPC `UNAVAILABLE`. |
+| [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] | The provider or model is temporarily unavailable, e.g. an HTTP 503 or a gRPC `UNAVAILABLE` sent by the provider. |
 | [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError] | The provider said it's unavailable because it's overloaded, e.g. an HTTP 529 or Anthropic's `overloaded_error`. A subclass of `ModelUnavailableError`. |
 | [`ModelServerError`][pydantic_ai.exceptions.ModelServerError] | The provider failed with another server error, e.g. an HTTP 500, 502, or 504. |
 | [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] | The request could not reach the provider, or its response could not be read. Its [`phase`][pydantic_ai.exceptions.ModelConnectionError.phase] says whether the request may have reached the provider. |
@@ -358,7 +360,8 @@ available as [`hint`][pydantic_ai.exceptions.ModelHTTPError.hint].
     the same error instead, so they're handled the same way:
 
     - xAI's gRPC status codes are mapped to their HTTP equivalents, like `RESOURCE_EXHAUSTED` to 429. These have
-      `headers=None`.
+      `headers=None`. A gRPC error the client raised itself, because it couldn't connect, lost the connection, or
+      reached its `timeout`, is a `ModelConnectionError` or `ModelTimeoutError` instead, as with other providers.
     - OpenRouter errors parsed from a 200-OK response report the error's own `code`.
     - An error sent inside an already open stream gets the status of the same error before the stream opens, like
       529 for Anthropic's `overloaded_error`. These have

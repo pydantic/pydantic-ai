@@ -2560,9 +2560,14 @@ def test_rate_limit_retry_transport_hands_the_last_429_to_the_sdk():
 @pytest.mark.parametrize(
     'error_code',
     [
+        '1113',
         '1308',
         '1309',
         '1310',
+        '1311',
+        '1313',
+        '1314',
+        '1315',
         '1316',
         '1317',
         '1318',
@@ -3252,12 +3257,28 @@ def test_emit_result_error_subtype():
     assert obj['subtype'] == 'error' and obj['is_error'] is True
 
 
+def _zai_429_body(code: str | int) -> dict[str, object]:
+    """The error body the Anthropic SDK decodes from a Z.ai 429."""
+    return {
+        'type': 'error',
+        'error': {'type': 'rate_limit_error', 'code': code, 'message': f'[{code}][provider detail]'},
+        'request_id': 'request-1',
+    }
+
+
 @pytest.mark.parametrize(
     ('error', 'expected_kind', 'expected_status'),
     [
         (ModelHTTPError(401, 'test-model', {'error': {'type': 'authentication_error'}}), 'authentication', 401),
         (ModelHTTPError(403, 'test-model', {'error': {'type': 'permission_error'}}), 'authentication', 403),
         (ModelHTTPError(429, 'test-model', {'error': {'type': 'rate_limit_error'}}), 'rate_limit', 429),
+        (ModelHTTPError(429, 'test-model', None), 'rate_limit', 429),
+        (ModelHTTPError(429, 'glm-5.3-flash', _zai_429_body('1302')), 'rate_limit', 429),
+        (ModelHTTPError(429, 'glm-5.3-flash', _zai_429_body('1305')), 'rate_limit', 429),
+        (ModelHTTPError(429, 'glm-5.3-flash', _zai_429_body('1113')), 'plan_limit', 429),
+        (ModelHTTPError(429, 'glm-5.3-flash', _zai_429_body('1310')), 'plan_limit', 429),
+        (ModelHTTPError(429, 'glm-5.3-flash', _zai_429_body(1311)), 'plan_limit', 429),
+        (ModelHTTPError(429, 'glm-5.3-flash', _zai_429_body('9999')), 'rate_limit', 429),
         (ModelHTTPError(402, 'test-model', {'error': {'type': 'payment_required_error'}}), 'other', 402),
         (UsageLimitExceeded('request limit'), 'request_limit', None),
         (shim.RunTimeLimitExceeded(), 'time_limit', None),

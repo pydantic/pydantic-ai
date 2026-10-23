@@ -193,6 +193,42 @@ descendants), `read_only=False` (`True` registers only read tools), `content_has
   arguments validate). Only `read_file` has a typed return part (`ReadFileReturnPart`, successful
   returns only).
 
+
+## SmartSearch
+
+Plain-English code search (`.smart_search`, no extra). One tool,
+`smart_search(query, directory='.', glob=None, limit=5, candidates=128)`, returns a
+`SmartSearchResult` (`matches`, `omitted_matches`, `coverage`, `warnings`). Files are listed with
+`rg --files` in the workspace (needs `rg` on the workspace `PATH`; hidden on a workspace that cannot run
+commands), cut into line windows (Python: along its `ast`), shortlisted with BM25, and each shortlisted
+snippet is judged by a model.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+from pydantic_ai_harness import SmartSearch
+
+agent = Agent('test', capabilities=[LocalWorkspace('.'), SmartSearch(model='test')])
+```
+
+- `model` is **required**: any Pydantic AI model or name. A decision model is recommended: `'system-one:<name>'`
+  (or a `SystemOneModel`) for any model behind the System One API (needs `SYSTEM_ONE_BASE_URL`), or
+  `'typesafe:jev-latest'`. A named judge gets a 30 s request timeout; an instance keeps its own `settings`.
+- `threshold=0.5` (tuned for Jev; retune for another judge), `concurrency=8`, `guidance=None`
+  (default discovery instructions; `''` for none).
+- `cache_index=False`: on, keeps up to four directories' indexes (per `glob`) in memory for the agent's
+  life; later searches re-read files but re-chunk only changed ones (content hash), and parallel searches
+  of one directory build it once. A search is capped at 200,000 files (after `glob`), 50M lines and 2 GiB
+  (`ModelRetry`).
+- Each judged snippet is one request in the run's usage (tokens too), checked against its `UsageLimits`.
+  A search judges at most half of what `request_limit` (default 50) has left after one kept for the model's
+  next turn (24 on a first search), best-ranked first, and warns; with none left it fails. Raise
+  `request_limit` for full searches. A failed judgment fails
+  the search as a tool failure the model sees.
+- Sends the query, snippets and paths to the judge's provider; `directory` must be inside the working
+  directory (symlinks followed), else `ModelRetry`.
+
 ## Shell
 
 Default tools `run_command`, `start_command`, `check_command`, `stop_command`; `tools=['shell']`
@@ -483,7 +519,10 @@ a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises `UserErro
 `run_macroscope_review(base=None)` runs `macroscope codereview --raw` in the workspace and returns a
 `MacroscopeReview` of `MacroscopeIssue` findings; the agent fixes them with its other tools. No extra,
 but the `macroscope` CLI must be installed and signed in **inside the workspace**. Options: `base`,
-`command='macroscope'`, `timeout=600.0`, `guidance` (`None` default text, `''` none). Pair with `Coder`
+`command='macroscope'`, `timeout=600.0`, `guidance` (`None` default text, `''` none), `id='macroscope'`
+(keyword-only; capability and toolset id, so two with the same `id` merge or raise, and it works under
+durable execution; a Temporal activity gets `timeout` + 30s). A review the CLI stopped early still returns
+its findings, with `status='timed_out'` or `'interrupted'`. Pair with `Coder`
 or `FileSystem`/`Shell`: `Agent(..., capabilities=[LocalWorkspace('.'), Coder(), Macroscope(base='main')])`.
 
 ## LocalStack
