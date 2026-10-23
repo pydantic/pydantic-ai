@@ -154,7 +154,7 @@ class ModelProfile(TypedDict, total=False):
     computer_use_coordinate_grid: int
     """The grid the model points at the screen on when it doesn't use pixels. Default: unset, meaning pixels.
 
-    With `1000`, the [`ComputerUse`][pydantic_ai.capabilities.ComputerUse] capability asks the model for
+    With `1000`, a computer-use capability, such as Pydantic AI Harness's `ComputerUse`, asks the model for
     coordinates from 0 to 999 across the width and height of the screenshot, and scales them to pixels. Gemini
     models are trained on that grid and miss small targets by over 100 pixels when asked for pixels.
     """
