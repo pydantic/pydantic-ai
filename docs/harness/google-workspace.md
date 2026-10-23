@@ -33,7 +33,7 @@ print(result.output)
 | --- | --- |
 | Not set, `None`, or `''` | `GOOGLE_ACCESS_TOKEN`. If that is not set either, creating the agent raises an error. |
 | An access token | That token, for every run. |
-| A function | Called at the start of each run. The token it returns is used for that run. If it returns `None` or `''`, that run has no Google Workspace tools. A function never uses `GOOGLE_ACCESS_TOKEN`, and returning `'oauth'` raises an error. |
+| A function | Called at the start of each run, and can be async. The token it returns is used for that run. If it returns `None` or `''`, that run has no Google Workspace tools. A function never uses `GOOGLE_ACCESS_TOKEN`, and returning `'oauth'` raises an error. |
 
 Use a fixed token for a script that always acts as one account. In an app where each user connects their own Google account, pass a function that reads the current user's token from the run's deps:
 
@@ -62,7 +62,7 @@ agent = Agent(
 
 Each run opens its own connections with the token the function returns.
 
-Your app owns the OAuth flow: store each user's refresh token, exchange it for an access token before the run (this can be async), and put that in the deps; the function only reads it. Access tokens expire after about an hour, and the capability does not refresh them: it reads a fixed token once when the agent is created, and a function's token once at the start of each run.
+Your app owns the OAuth flow: store each user's refresh token and exchange it for an access token. Before each run, put that in the deps, or do the exchange in an async `auth` function. Access tokens expire after about an hour, and the capability does not refresh them: it reads a fixed token once when the agent is created, and a function's token once at the start of each run.
 
 With durable execution such as Temporal, read the credential from the run's deps rather than from a global, since the function may run in another process.
 

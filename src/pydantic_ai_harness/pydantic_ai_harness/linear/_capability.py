@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
 from pydantic_ai.capabilities import AbstractCapability
@@ -33,8 +33,10 @@ class Linear(AbstractCapability[AgentDepsT]):
     the toolset still uses `linear`, but the capability is not combined with others.
     """
     description: str | None = 'Use Linear issues, projects, and teams.'
-    auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
-    """A Linear API key or token, or a function of the run context that returns one.
+    auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
+        default=None, repr=False
+    )
+    """A Linear API key or token, or a sync or async function of the run context that returns one.
 
     `'oauth'` signs in through the browser on your own machine.
 
