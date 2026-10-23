@@ -546,12 +546,13 @@ class DispatchSnapshots:
     `__dataclass_fields__` alone, so those contexts add these fields to that set whenever the
     payload carried them. Otherwise each copy made inside a durable unit, such as a tool's
     `prepare` context, would lose them. The fields are `repr=False` because `RunContext.__repr__`
-    walks the same instance fields: without it, every reconstructed context would print all three sets.
+    walks the same instance fields: without it, every reconstructed context would print all four snapshots.
     """
 
     available_tool_names: set[str] = field(repr=False)
     active_capability_ids: set[str] = field(repr=False)
     _deferred_capability_ids: set[str] = field(repr=False)
+    _tool_names_by_kind: dict[str, str] = field(repr=False)
 
 
 def enqueue_not_supported_message(unit_noun: str, container_noun: str) -> str:

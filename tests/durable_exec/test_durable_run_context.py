@@ -22,8 +22,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
 
-pytestmark = pytest.mark.anyio
-
 
 @dataclass
 class Progress(CustomEvent):

@@ -207,6 +207,25 @@ be mistaken for run state. Override `unavailable_field_message` to word that err
 Your users can subclass your context and override `serialize_run_context` to carry more fields.
 Temporal's [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] is one such subclass.
 
+The other building blocks an out-of-process engine works with:
+
+- [`DurableOperationConfig`][pydantic_ai.durable_exec.DurableOperationConfig] is the protocol
+  `RoleBasedOperationConfig` implements, for engines that resolve config their own way.
+- [`ResultCodec`][pydantic_ai.durable_exec.ResultCodec] and
+  [`CacheIdentity`][pydantic_ai.durable_exec.CacheIdentity] are the `result_codec` and
+  `cache_identity` of a `DurableOperation`: how its result crosses the boundary, and which inputs a
+  hash-keyed engine uses as its cache key.
+- [`CallToolResult`][pydantic_ai.durable_exec.CallToolResult],
+  [`DynamicToolsResult`][pydantic_ai.durable_exec.DynamicToolsResult] and
+  [`WorkspaceCallResult`][pydantic_ai.durable_exec.WorkspaceCallResult] are the result types of the
+  tool call, dynamic toolset discovery and workspace operations. A capability operation's result
+  type is [`capability_operation_result_type`][pydantic_ai.durable_exec.capability_operation_result_type]
+  applied to its [`CapabilityMethodDeclaration`][pydantic_ai.durable_exec.CapabilityMethodDeclaration]'s
+  `result_type`. Pass these to your codec when an engine decodes results itself.
+- [`ModelRequestContextProjection`][pydantic_ai.durable_exec.ModelRequestContextProjection] is the
+  serializable form of a model request context, which carries a live model that cannot cross the
+  boundary.
+
 ## Persisted names and recovery
 
 Operation names are persisted compatibility data. They do not depend on the Python class name.
