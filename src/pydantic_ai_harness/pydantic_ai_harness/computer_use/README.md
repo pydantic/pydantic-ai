@@ -90,4 +90,3 @@ finds the checks on the call's `provider_details`. Without a way to approve call
   size limit.
 - Inside a [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model), every model gets pixel coordinates, since the
   fallback has no profile of its own. Gemini 3 models point less accurately in pixels than on their own grid.
-
