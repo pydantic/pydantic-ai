@@ -25,7 +25,7 @@ from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.skills import Skills
 from pydantic_clai2 import Session, chat
-from pydantic_clai2._app import create_shell, create_stock_agent
+from pydantic_clai2._app import create_stock_agent
 from pydantic_clai2.builtin_plugins.coder import DEFAULT_SKILL_FOLDERS, CoderPlugin, CoderSettings, CoderSource
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings, Settings
@@ -41,6 +41,7 @@ from pydantic_clai2.plugins import (
     load_plugin,
 )
 from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.runtime.session_runtime import create_shell
 from tests.clai2.dialog_script import Back, Pick, ScriptedDialogs
 
 PromptT = TypeVar('PromptT')
@@ -301,6 +302,26 @@ class TestSkillFoldersAboveTheLaunchDirectory:
         assert [command.name for command in loaded.commands] == ['review', 'release']
         assert 'Root review' not in output.getvalue()
 
+    async def test_the_sessions_directory_is_searched_not_the_processs(
+        self, tmp_path: Path, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Skills come from `host.workspace` and the repository around it, wherever the process is."""
+        (project / '.git').mkdir()
+        write_skill(project / '.agents' / 'skills', 'release')
+        (project / 'src').mkdir()
+        write_skill(tmp_path / 'elsewhere' / '.agents' / 'skills', 'stray')
+        monkeypatch.chdir(tmp_path / 'elsewhere')
+        host = PluginHost[None](
+            name='coder',
+            console=Console(file=io.StringIO()),
+            settings={'repo_context': False, 'sub_agents': False, 'skill_folders': ['.agents/skills']},
+            workspace=lambda: project / 'src',
+        )
+        plugin = CoderPlugin[None].from_host(host)
+        await plugin.prepare()
+
+        assert [command.name for command in collect(plugin).commands] == ['release']
+
     async def test_the_walk_stops_at_the_git_root(self, tmp_path: Path, project: Path) -> None:
         write_skill(tmp_path / '.agents' / 'skills', 'outside')
         (project / '.git').mkdir()
@@ -364,18 +385,17 @@ class TestSkillInvocationFrontmatter:
         assert list(loaded.commands) == []
         assert '- background: Background.' in seen.instructions
 
-    async def test_ignored_frontmatter_is_reported_at_load(self, project: Path) -> None:
+    async def test_frontmatter_for_other_clients_loads_without_a_notice(self, project: Path) -> None:
         library = project / '.agents' / 'skills'
         (library / 'review').mkdir(parents=True)
         (library / 'review' / 'SKILL.md').write_text(
             '---\ndescription: Review.\nallowed-tools: Read\ncontext: fork\n---\n', encoding='utf-8'
         )
 
-        _, output = await load_coder()
+        loaded, output = await load_coder()
 
-        assert output.getvalue() == (
-            'Ignoring unsupported Agent Skill behavioral frontmatter fields: review: allowed-tools, context\n'
-        )
+        assert [command.name for command in loaded.commands] == ['review']
+        assert output.getvalue() == ''
 
 
 class TestSkillCatalog:
@@ -561,7 +581,7 @@ def _inputs(monkeypatch: pytest.MonkeyPatch, values: list[str]) -> None:
         async def prompt_async(self, label: str, **kwargs: object) -> str:
             return values.pop(0)
 
-    monkeypatch.setattr('pydantic_clai2._app.PromptSession', Prompt)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
 
 
 class TestSkillCommands:

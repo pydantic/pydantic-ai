@@ -100,6 +100,10 @@ agent = Agent(model)
 ...
 ```
 
+Use [`NativeOutput`][pydantic_ai.output.NativeOutput] for Fireworks' schema-constrained structured output.
+Fireworks enforces the schema through its OpenAI-compatible `response_format` parameter.
+As the [Fireworks structured output documentation](https://docs.fireworks.ai/structured-responses/structured-response-formatting) describes, `pattern` enforcement is best-effort: unsupported regex constructs, such as lookahead and lookbehind, are ignored, leaving the field as an unconstrained string. Pydantic AI still validates the output, so a value that doesn't match the pattern triggers an output retry.
+
 ## Heroku AI
 
 To use [Heroku AI](https://www.heroku.com/ai), first create an API key.
@@ -109,7 +113,7 @@ You can set the `HEROKU_INFERENCE_KEY` and (optionally) `HEROKU_INFERENCE_URL` e
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('heroku:claude-sonnet-4-5')
+agent = Agent('heroku:claude-4-5-sonnet')
 ...
 ```
 
@@ -121,7 +125,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.heroku import HerokuProvider
 
 model = OpenAIChatModel(
-    'claude-sonnet-4-5',
+    'claude-4-5-sonnet',
     provider=HerokuProvider(api_key='your-heroku-inference-key'),
 )
 agent = Agent(model)
@@ -385,6 +389,10 @@ with `base_url='https://api.tsubasa.sh/v1'` and pass the value of your
 `TSUBASA_API_KEY` environment variable as `api_key`. Use this provider with
 [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], selecting
 `tsubasa-fast` or `tsubasa-pro` as the model name.
+
+## Non-standard finish reasons
+
+When an OpenAI-compatible API returns a `finish_reason` outside the five that OpenAI defines, `OpenAIChatModel` keeps the response, gives it a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `None`, and keeps the raw value in [`provider_details['finish_reason']`][pydantic_ai.messages.ModelResponse.provider_details].
 
 ## Model profile
 

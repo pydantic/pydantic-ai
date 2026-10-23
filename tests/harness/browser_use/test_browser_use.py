@@ -28,6 +28,7 @@ from browser_use.llm.messages import BaseMessage
 from browser_use.llm.views import ChatInvokeCompletion
 from browser_use.telemetry.service import ProductTelemetry
 from browser_use.telemetry.views import BaseTelemetryEvent
+from browser_use.tools.registry.service import Registry
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import Agent
@@ -50,6 +51,9 @@ from pydantic_ai_harness.browser_use import (
 )
 
 T = TypeVar('T', bound=BaseModel)
+
+_LOCAL_FILE_RULES = ['[fF][iI][lL][eE]://*', '[!a-zA-Z]*/*', '*[\t\n\r]*/*']
+"""The prohibited-URL patterns that keep `file://` unreachable in any spelling Chromium accepts."""
 
 
 @pytest.fixture
@@ -101,6 +105,18 @@ class _FakeChatModel:
 class _Facts(BaseModel):
     name: str
     price_usd: int
+
+
+class _Pins(BaseModel):
+    owner: str
+    pins: list[int]
+    active: bool
+
+
+class _Typed(BaseModel):
+    """Action parameters browser-use fills secret placeholders into."""
+
+    text: str
 
 
 def _validation_error() -> ValidationError:
@@ -238,7 +254,12 @@ class TestBrowserUseToolset:
         [request] = factory.requests
         assert request.llm is llm
         assert request.use_vision == 'auto'
-        assert request.sensitive_data == secrets
+        assert request.sensitive_data == {
+            'http*://example.com': secrets,
+            'http*://www.example.com': secrets,
+            'http*://example.org': secrets,
+            'http*://www.example.org': secrets,
+        }
         assert request.extend_system_message == 'Never submit forms.'
         session = request.browser_session
         assert session.browser_profile.headless is False
@@ -259,7 +280,7 @@ class TestBrowserUseToolset:
         session_profile = factory.requests[0].browser_session.browser_profile
         assert session_profile.headless is True
         assert session_profile.block_ip_addresses is True
-        assert session_profile.prohibited_domains == ['file://*', 'localhost', 'localhost.*', '*.localhost']
+        assert session_profile.prohibited_domains == [*_LOCAL_FILE_RULES, 'localhost', 'localhost.*', '*.localhost']
         # In 'call' scope the sub-agent may tear the session down itself; the
         # tool kills it in `finally` regardless.
         assert not session_profile.keep_alive
@@ -275,7 +296,7 @@ class TestBrowserUseToolset:
         assert session_profile.allowed_domains == ['http*://docs.example.com']
         assert session_profile.user_agent == 'harness-test'
         assert session_profile.block_ip_addresses is True
-        assert session_profile.prohibited_domains == ['file://*', 'localhost', 'localhost.*', '*.localhost']
+        assert session_profile.prohibited_domains == [*_LOCAL_FILE_RULES, 'localhost', 'localhost.*', '*.localhost']
 
     async def test_sensitive_data_disables_cross_origin_iframes_without_a_profile(
         self, kill_calls: list[BrowserSession]
@@ -345,7 +366,7 @@ class TestBrowserUseToolset:
             ),
             (
                 {'trusted.example', 'localhost'},
-                {'http*://trusted.example', 'http*://www.trusted.example'},
+                ['http*://trusted.example', 'http*://www.trusted.example'],
             ),
         ],
     )
@@ -353,7 +374,7 @@ class TestBrowserUseToolset:
         self,
         kill_calls: list[BrowserSession],
         profile_allowed_domains: list[str] | set[str],
-        expected_allowed_domains: list[str] | set[str],
+        expected_allowed_domains: list[str],
     ) -> None:
         factory = _success_factory()
 
@@ -368,7 +389,7 @@ class TestBrowserUseToolset:
 
         session_profile = factory.requests[0].browser_session.browser_profile
         assert session_profile.allowed_domains == expected_allowed_domains
-        assert session_profile.prohibited_domains == ['file://*', 'localhost', 'localhost.*', '*.localhost']
+        assert session_profile.prohibited_domains == [*_LOCAL_FILE_RULES, 'localhost', 'localhost.*', '*.localhost']
 
     @pytest.mark.parametrize(
         'capability',
@@ -427,7 +448,7 @@ class TestBrowserUseToolset:
 
         session_profile = factory.requests[0].browser_session.browser_profile
         assert session_profile.block_ip_addresses is False
-        assert session_profile.prohibited_domains == ['file://*']
+        assert session_profile.prohibited_domains == _LOCAL_FILE_RULES
 
     async def test_private_network_setting_overrides_browser_profile(self, kill_calls: list[BrowserSession]) -> None:
         factory = _success_factory()
@@ -462,6 +483,7 @@ class TestBrowserUseToolset:
         assert factory.requests[0].browser_session.browser_profile.prohibited_domains == [
             'blocked.example',
             'file://*',
+            *_LOCAL_FILE_RULES,
         ]
 
     async def test_session_killed_after_success(self, kill_calls: list[BrowserSession]) -> None:
@@ -633,7 +655,7 @@ class TestBrowserUseToolset:
         assert isinstance(agent, BrowserUseAgent)
         assert agent.task == 'check example.com'
         assert agent.llm is llm
-        assert agent.sensitive_data == secrets
+        assert agent.sensitive_data == {'http*://example.com': secrets, 'http*://www.example.com': secrets}
         assert agent.settings.use_judge is False
         assert agent.settings.flash_mode is True
         assert isinstance(agent.judge_llm, PydanticAIChatModel)
@@ -819,6 +841,38 @@ class TestBrowserAgentSettings:
         assert seen['tools'] is custom_tools
         assert 'read_file' not in custom_tools.registry.registry.actions
         assert 'upload_file' not in custom_tools.registry.registry.actions
+
+    @pytest.mark.parametrize(
+        'sensitive_data',
+        [None, {'https://example.com': {'x_password': 'hunter2'}}],
+    )
+    def test_disables_javascript_evaluation_with_secrets(
+        self, monkeypatch: pytest.MonkeyPatch, sensitive_data: dict[str, str | dict[str, str]] | None
+    ) -> None:
+        """Page scripts are not navigations, so the allowlist cannot stop one sending a substituted secret."""
+        seen: dict[str, object] = {}
+
+        def record_init(self: object, **kwargs: object) -> None:
+            seen.update(kwargs)
+
+        monkeypatch.setattr(BrowserUseAgent, '__init__', record_init)
+        default_browser_agent(
+            BrowserTask(
+                task='task',
+                llm=_FakeChatModel(),
+                browser_session=BrowserSession(),
+                use_vision=True,
+                output_schema=None,
+                sensitive_data=sensitive_data,
+                extend_system_message=None,
+                settings=BrowserAgentSettings(),
+            )
+        )
+
+        tools = seen['tools']
+        assert isinstance(tools, Tools)
+        actions = tools.registry.registry.actions  # pyright: ignore[reportUnknownMemberType]
+        assert ('evaluate' in actions) is (sensitive_data is None)
 
 
 def _distinctly_valued_settings() -> BrowserAgentSettings:
@@ -1167,7 +1221,10 @@ class TestSensitiveDataSafety:
             'http*://safe.example',
             'http*://www.safe.example',
         ]
-        assert request.sensitive_data == {'x_password': 'hunter2'}
+        assert request.sensitive_data == {
+            'http*://safe.example': {'x_password': 'hunter2'},
+            'http*://www.safe.example': {'x_password': 'hunter2'},
+        }
 
     async def test_toolset_snapshots_profile_allowlist_with_flat_secrets(
         self, kill_calls: list[BrowserSession]
@@ -1197,6 +1254,229 @@ class TestSensitiveDataSafety:
                 allowed_domains=[],
                 sensitive_data={'x_password': 'hunter2'},
             )
+
+    async def test_secret_values_are_redacted_from_the_result(self, kill_calls: list[BrowserSession]) -> None:
+        """browser-use substitutes a placeholder in every action, the final `done` text included.
+
+        So a sub-agent that writes `<secret>x_password</secret>` in its answer returns the real
+        value, which would otherwise reach the host model, its message history, and its spans.
+        """
+        history = _FakeHistory(
+            result='pw=hunter2, long=hunter2-long, a=one, b=two, kept=plain text',
+            success=True,
+        )
+        factory = _FakeFactory(_FakeBrowserAgent(history))
+        capability = BrowserUse[None](
+            allowed_domains=['safe.example'],
+            sensitive_data={
+                'x_password': 'hunter2',
+                'https://a.example': {'x_pass': 'one', 'x_long': 'hunter2-long', 'x_empty': ''},
+                'https://b.example': {'x_pass': 'two'},
+            },
+            browser_agent=factory,
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert result == (
+            'pw=<secret>x_password</secret>, long=<secret>x_long</secret>, '
+            'a=<secret>x_pass</secret>, b=<secret>x_pass</secret>, kept=plain text'
+        )
+
+    async def test_a_placeholder_left_in_the_result_is_kept_whole(self, kill_calls: list[BrowserSession]) -> None:
+        """Off the allowlist browser-use leaves the placeholder, which can contain a secret value."""
+        history = _FakeHistory(result='typed <secret>x_password</secret>, not secret', success=True)
+        capability = BrowserUse[None](
+            sensitive_data={'https://safe.example': {'x_password': 'secret'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert result == 'typed <secret>x_password</secret>, not <secret>x_password</secret>'
+
+    async def test_secret_values_are_redacted_from_step_errors(self, kill_calls: list[BrowserSession]) -> None:
+        history = _FakeHistory(step_errors=['typed hunter2 into a field that rejected it'])
+        capability = BrowserUse[None](
+            sensitive_data={'https://safe.example': {'x_password': 'hunter2'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert result == (
+            'The browser agent stopped without producing a result '
+            '(typed <secret>x_password</secret> into a field that rejected it).'
+        )
+
+    async def test_a_secret_in_a_non_string_schema_field_keeps_the_json_valid(
+        self, kill_calls: list[BrowserSession]
+    ) -> None:
+        """A secret that is a number in the schema output becomes a placeholder string, not broken JSON."""
+        pins = _Pins(owner='me', pins=[1234, 5678], active=True)
+        history = _FakeHistory(result=pins.model_dump_json(), success=True, structured=pins)
+        capability = BrowserUse[None](
+            output_schema=_Pins,
+            sensitive_data={'https://safe.example': {'x_pin': '1234'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert json.loads(result) == {'owner': 'me', 'pins': ['<secret>x_pin</secret>', 5678], 'active': True}
+
+    async def test_secret_values_are_redacted_from_schema_json(self, kill_calls: list[BrowserSession]) -> None:
+        """JSON escapes a `"` in the value, so the escaped form is redacted too."""
+        facts = _Facts(name='pa"ssé', price_usd=1)
+        history = _FakeHistory(result=facts.model_dump_json(), success=True, structured=facts)
+        capability = BrowserUse[None](
+            output_schema=_Facts,
+            sensitive_data={'https://safe.example': {'x_password': 'pa"ssé'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert json.loads(result) == {'name': '<secret>x_password</secret>', 'price_usd': 1}
+
+    @pytest.mark.parametrize('secret', ['hunter2', 'sk-' + 'A1b2C3d4' * 8, 'it\'s "quoted"'])
+    async def test_secret_values_are_redacted_from_a_schema_retry(
+        self, kill_calls: list[BrowserSession], secret: str
+    ) -> None:
+        """A validation error quotes the input it rejected as a truncated `repr()`, which can hold the secret."""
+        with pytest.raises(ValidationError) as rejected:
+            _Facts.model_validate({'name': 'Pro', 'price_usd': secret})
+        history = _FakeHistory(result=secret, success=True, structured_error=rejected.value)
+        capability = BrowserUse[None](
+            output_schema=_Facts,
+            sensitive_data={'https://safe.example': {'x_password': secret}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        with pytest.raises(ModelRetry) as caught:
+            await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert caught.value.message == (
+            'The browser agent finished, but its result did not match the configured output schema: '
+            'price_usd: Input should be a valid integer, unable to parse string as an integer'
+        )
+        assert secret[:8] not in caught.value.message
+
+    async def test_flat_secrets_are_scoped_to_the_allowlist(self, kill_calls: list[BrowserSession]) -> None:
+        """browser-use substitutes a flat secret on any page, `data:` URLs included, which no allowlist blocks.
+
+        Keyed by the allowlist instead, browser-use's own substitution fills it in only there,
+        and a domain-scoped value the caller wrote for the same placeholder still wins.
+        """
+        factory = _success_factory()
+        capability = BrowserUse[None](
+            allowed_domains=['safe.example', 'https://login.safe.example/sso', 'https://api.safe.example?v=1'],
+            sensitive_data={
+                'x_password': 'hunter2',
+                'https://safe.example': {'x_password': 'scoped'},
+                'http*://www.safe.example': {'x_password': 'www-only'},
+            },
+            browser_agent=factory,
+        )
+
+        await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        sensitive_data = factory.requests[0].sensitive_data
+        assert sensitive_data is not None
+        registry = Registry[None]()
+        substituted = {
+            url: registry._replace_sensitive_data(  # pyright: ignore[reportPrivateUsage]
+                _Typed(text='<secret>x_password</secret>'), sensitive_data, url
+            ).model_dump()['text']
+            for url in [
+                'https://safe.example/login',
+                'https://www.safe.example/',
+                'https://login.safe.example/sso/start',
+                'https://api.safe.example/v1',
+                'data:text/html,<input>',
+                'https://attacker.test/',
+            ]
+        }
+        assert substituted == {
+            'https://safe.example/login': 'scoped',
+            'https://www.safe.example/': 'www-only',
+            'https://login.safe.example/sso/start': 'hunter2',
+            'https://api.safe.example/v1': 'hunter2',
+            'data:text/html,<input>': '<secret>x_password</secret>',
+            'https://attacker.test/': '<secret>x_password</secret>',
+        }
+
+    async def test_domain_scoped_secrets_are_forwarded_unchanged(self, kill_calls: list[BrowserSession]) -> None:
+        factory = _success_factory()
+        secrets: dict[str, str | dict[str, str]] = {'https://safe.example': {'x_password': 'hunter2'}}
+        capability = BrowserUse[None](allowed_domains=['safe.example'], sensitive_data=secrets, browser_agent=factory)
+
+        await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert factory.requests[0].sensitive_data == secrets
+
+    @pytest.mark.parametrize('own_tools', [False, True])
+    async def test_a_custom_factory_gets_settings_tools_without_evaluate_beside_secrets(
+        self, kill_calls: list[BrowserSession], own_tools: bool
+    ) -> None:
+        """A custom factory that forwards `settings.tools` gets the default factory's `evaluate` removal."""
+        configured = Tools[None]() if own_tools else None
+        factory = _success_factory()
+        capability = BrowserUse[None](
+            allowed_domains=['safe.example'],
+            sensitive_data={'https://safe.example': {'x_password': 'hunter2'}},
+            agent_settings=BrowserAgentSettings(tools=configured, display_files_in_done_text=False),
+            browser_agent=factory,
+        )
+
+        await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        tools = factory.requests[0].settings.tools
+        assert isinstance(tools, Tools)
+        if configured is None:
+            assert tools.display_files_in_done_text is False
+        else:
+            assert tools is configured
+        actions = tools.registry.registry.actions
+        # Only `evaluate`: the file actions stay a custom factory's own choice, as without secrets.
+        assert 'evaluate' not in actions
+        assert {'read_file', 'upload_file'} <= set(actions)
+
+    async def test_a_custom_factory_gets_the_configured_settings_without_secrets(
+        self, kill_calls: list[BrowserSession]
+    ) -> None:
+        factory = _success_factory()
+        capability = BrowserUse[None](agent_settings=BrowserAgentSettings(), browser_agent=factory)
+
+        await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert factory.requests[0].settings.tools is None
+
+    async def test_a_directly_built_toolset_scopes_flat_secrets_to_a_domain_glob(
+        self, kill_calls: list[BrowserSession]
+    ) -> None:
+        """The capability rejects host globs beside flat secrets; a toolset built directly skips that check."""
+        factory = _success_factory()
+        toolset = BrowserUseToolset[None](
+            browser_agent=factory,
+            llm=None,
+            browser_profile=None,
+            allowed_domains=['*.example.com'],
+            block_ip_addresses=True,
+            headless=None,
+            max_steps=10,
+            use_vision=True,
+            output_schema=None,
+            sensitive_data={'x_password': 'hunter2'},
+            extend_system_message=None,
+            settings=BrowserAgentSettings(),
+            session_scope='call',
+            cdp_url=None,
+        )
+
+        await toolset.browse_web(_ctx(), 'task')
+
+        assert factory.requests[0].sensitive_data == {'http*://*.example.com': {'x_password': 'hunter2'}}
 
 
 class TestSessionScope:
@@ -1453,6 +1733,7 @@ class TestLocalFileNavigation:
         ('allowed_domains', 'block_ip_addresses'),
         [
             (None, True),
+            (None, False),
             (['*'], False),
             (['example.com'], True),
             (['*.example.com'], True),
@@ -1469,6 +1750,12 @@ class TestLocalFileNavigation:
             'file:///etc/passwd',
             'file:/etc/passwd',
             'FILE:///etc/passwd',
+            'FILE://localhost/etc/passwd',
+            'File://localhost/etc/passwd',
+            ' file://localhost/etc/passwd',
+            '\nfile://localhost/etc/passwd',
+            'fi\tle://localhost/etc/passwd',
+            'file://local\nhost/etc/passwd',
             'file:///C:/Windows/win.ini',
         ],
     )
@@ -1481,6 +1768,8 @@ class TestLocalFileNavigation:
     @pytest.mark.parametrize(
         ('allowed_domains', 'block_ip_addresses', 'url'),
         [
+            (None, False, 'https://example.com/?next=file://localhost/etc/passwd'),
+            (None, False, 'http://localhost:3000/'),
             (['*'], False, 'https://example.com/'),
             (['example.com'], True, 'https://example.com/'),
             (['example.com'], True, 'https://www.example.com/'),
@@ -1490,7 +1779,7 @@ class TestLocalFileNavigation:
         ],
     )
     async def test_http_navigation_survives_the_file_restriction(
-        self, allowed_domains: list[str], block_ip_addresses: bool, url: str
+        self, allowed_domains: list[str] | None, block_ip_addresses: bool, url: str
     ) -> None:
         session = await self._resolved_session(allowed_domains, block_ip_addresses)
         assert await self._navigation_allowed(session, url) is True
@@ -1575,3 +1864,67 @@ class TestLocalFileNavigation:
         assert await self._navigation_allowed(session, 'file://intranet.example/etc/passwd') is False
         assert await self._navigation_allowed(session, 'http://intranet.example/x') is True
         assert await self._navigation_allowed(session, 'https://intranet.example/x') is False
+
+    async def test_a_set_allowlist_still_admits_its_hosts(self, kill_calls: list[BrowserSession]) -> None:
+        """browser-use matches a set by exact hostname, so normalized entries are passed as a list."""
+        factory = _success_factory()
+        await (
+            BrowserUse[None](
+                browser_profile=BrowserProfile(allowed_domains={'example.com', 'localhost'}),
+                block_ip_addresses=False,
+                browser_agent=factory,
+            )
+            .get_toolset()
+            .browse_web(_ctx(), 'task')
+        )
+        session = factory.requests[0].browser_session
+
+        assert await self._navigation_allowed(session, 'https://example.com/') is True
+        assert await self._navigation_allowed(session, 'https://www.example.com/') is True
+        assert await self._navigation_allowed(session, 'http://localhost:3000/') is True
+        assert await self._navigation_allowed(session, 'https://attacker.test/') is False
+        assert await self._navigation_allowed(session, 'file://localhost/etc/passwd') is False
+
+    @pytest.mark.parametrize('entry', ['Example.com', 'HTTPS://Example.COM', 'Http*://EXAMPLE.com'])
+    async def test_an_upper_case_entry_admits_its_host(self, entry: str) -> None:
+        session = await self._resolved_session([entry], True)
+        assert await self._navigation_allowed(session, 'https://example.com/') is True
+
+    def test_an_allowlist_browser_use_would_match_by_exact_hostname_is_rejected(self) -> None:
+        """At 100 entries browser-use converts the list to a set, which no normalized entry matches."""
+        with pytest.raises(ValueError, match='by exact hostname only'):
+            BrowserUse[None](allowed_domains=[f'site{index}.com' for index in range(50)])
+
+    def test_an_allowlist_just_under_browser_use_s_set_threshold_is_accepted(self) -> None:
+        """49 bare hostnames normalize to 98 entries, which browser-use still matches as patterns."""
+        capability = BrowserUse[None](allowed_domains=[f'site{index}.com' for index in range(49)])
+        assert capability.allowed_domains is not None
+
+    async def test_a_narrowed_scheme_glob_gets_a_path_boundary(self, kill_calls: list[BrowserSession]) -> None:
+        """Narrowing `*://host` to `http`/`https` must not leave a bare prefix that matches `host.attacker.test`.
+
+        Built directly, the toolset normalizes once, so the narrowed entries need the boundary on that pass.
+        """
+        factory = _success_factory()
+        toolset = BrowserUseToolset[None](
+            browser_agent=factory,
+            llm=None,
+            browser_profile=None,
+            allowed_domains=['*://trusted.example'],
+            block_ip_addresses=True,
+            headless=None,
+            max_steps=10,
+            use_vision=True,
+            output_schema=None,
+            sensitive_data=None,
+            extend_system_message=None,
+            settings=BrowserAgentSettings(),
+            session_scope='call',
+            cdp_url=None,
+        )
+        await toolset.browse_web(_ctx(), 'task')
+        session = factory.requests[0].browser_session
+
+        assert session.browser_profile.allowed_domains == ['http://trusted.example/*', 'https://trusted.example/*']
+        assert await self._navigation_allowed(session, 'https://trusted.example/page') is True
+        assert await self._navigation_allowed(session, 'https://trusted.example.attacker.test/') is False

@@ -14,7 +14,7 @@ else:
     # union member collapses onto the numeric one it already allows.
     Timeout = legacy_httpx.Timeout if legacy_httpx is not None else float
 
-ThinkingEffort: TypeAlias = Literal['minimal', 'low', 'medium', 'high', 'xhigh']
+ThinkingEffort: TypeAlias = Literal['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 """The string effort levels for thinking/reasoning configuration."""
 
 ThinkingLevel: TypeAlias = bool | ThinkingEffort
@@ -22,11 +22,11 @@ ThinkingLevel: TypeAlias = bool | ThinkingEffort
 
 - `True`: Enable thinking with the provider's default effort.
 - `False`: Disable thinking (silently ignored on always-on models).
-- `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`: Enable thinking at a specific effort level.
+- `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'`: Enable thinking at a specific effort level.
 
 Not all providers support all levels. When a level is not natively supported,
-it maps to the closest available value (e.g. `'xhigh'` -> `'high'` on providers
-that don't support it, `'minimal'` -> `'low'` on providers without a minimal level).
+it maps to the closest available value (e.g. `'xhigh'` and `'max'` -> `'high'` on providers
+that don't support them, `'minimal'` -> `'low'` on providers without a minimal level).
 """
 
 CacheRetention: TypeAlias = Literal['5m', '30m', '1h']
@@ -143,6 +143,13 @@ class ModelSettings(TypedDict, total=False):
     These lists are parsed and checked against the wire by
     `tests/models/test_model_settings_support.py`, so keep the `* Name` bullet shape and put any nuance in
     parentheses after the name.
+
+    A model ignores a setting it doesn't support, so the same settings work across models. For the settings
+    whose absence changes what the request guarantees (`timeout`, `max_retries`, `stop_sequences`,
+    `parallel_tool_calls=False`, `extra_headers` and `extra_body`), it emits an
+    [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]; the others, like `temperature`,
+    are ignored silently. A model class declares what it ignores in
+    [`Model.unsupported_settings`][pydantic_ai.models.Model.unsupported_settings].
 
     Being listed means Pydantic AI sends the setting, not that the service honors it: the
     OpenAI-compatible model classes forward whatever the OpenAI schema accepts, and an individual
@@ -269,6 +276,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Google (numeric seconds only, not `httpx.Timeout`)
@@ -321,11 +329,13 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Google (keeps the delays and status codes of the provider's `retry_options`)
     * Groq
-    * Mistral (`0` only, which turns off a `retry_config` set on the client)
+    * Mistral (`0` only, which turns off a `retry_config` set on the client; other values are ignored without a
+      warning)
     * Cohere
     * Cerebras
     * Crusoe
@@ -345,6 +355,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI (some models, not o1)
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Groq
@@ -518,6 +529,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Google
@@ -541,13 +553,15 @@ class ModelSettings(TypedDict, total=False):
 
     - `True`: Enable thinking with the provider's default effort level.
     - `False`: Disable thinking (silently ignored if the model always thinks).
-    - `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`: Enable thinking at a specific effort level.
+    - `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'`: Enable thinking at a specific effort level.
 
     When omitted, the model uses its default behavior (which may include thinking
     for reasoning models).
 
     Provider-specific thinking settings (e.g., `anthropic_thinking`,
-    `openai_reasoning_effort`) take precedence over this unified field.
+    `openai_reasoning_effort`) take precedence over this unified field. When one comes from a broader
+    scope than this field, such as the model's `settings` while this is set for a run, a `UserWarning`
+    names both.
 
     Listed below are the model classes that translate this field onto the request. A class whose models
     always reason and take no thinking parameter is not listed at all (Cohere); where only some of a
@@ -655,6 +669,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Groq
@@ -674,6 +689,31 @@ class ModelSettings(TypedDict, total=False):
     On the OpenAI-derived models that build their own `extra_body` (Cerebras, OpenRouter, Snowflake,
     Z.AI), the model's own derived keys overwrite yours when the keys collide.
     """
+
+
+ModelSettingName: TypeAlias = Literal[
+    'max_tokens',
+    'temperature',
+    'top_p',
+    'top_k',
+    'timeout',
+    'request_timeout',
+    'max_retries',
+    'parallel_tool_calls',
+    'tool_choice',
+    'seed',
+    'presence_penalty',
+    'frequency_penalty',
+    'logit_bias',
+    'stop_sequences',
+    'extra_headers',
+    'thinking',
+    'cache',
+    'service_tier',
+    'extra_body',
+]
+"""The name of a [`ModelSettings`][pydantic_ai.settings.ModelSettings] field, as listed in a model class's
+[`unsupported_settings`][pydantic_ai.models.Model.unsupported_settings]."""
 
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:

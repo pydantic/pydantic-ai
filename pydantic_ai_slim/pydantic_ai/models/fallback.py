@@ -23,6 +23,7 @@ from pydantic_ai._model_request_attempts import AttemptStart, failed_attempt, re
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import PeekableAsyncStream, await_maybe, get_first_param_type
 
+from .._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from ..messages import ModelRequestAttempt, ModelResponse
 from ..profiles import ModelProfile
@@ -31,6 +32,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _SettingsLayer,  # pyright: ignore[reportPrivateUsage]
     infer_model,
 )
 from ._request_timeout import (
@@ -126,7 +128,7 @@ class FallbackModel(Model):
             fallback_models: The names or instances of the fallback models to use upon failure.
             fallback_on: Conditions that trigger fallback to the next model. Accepts:
 
-                - A tuple of exception types: `(ModelAPIError, RateLimitError)`
+                - A tuple of exception types: `(ModelRateLimitError, ModelUnavailableError)`
                 - An exception handler (sync or async): `lambda exc: isinstance(exc, MyError)`
                 - A response handler (sync or async): `def check(r: ModelResponse) -> bool`
                 - A sequence mixing all of the above: `[ModelAPIError, exc_handler, response_handler]`
@@ -255,9 +257,9 @@ class FallbackModel(Model):
 
         If a previous response set `state='suspended'`, the request is routed directly
         to the pinned continuation model, bypassing the fallback chain. If the pinned model
-        raises a fallback-eligible error during continuation, the messages are rewound
-        (stripping the suspended response and trailing continuation request) and the
-        normal fallback chain is tried.
+        raises a fallback-eligible error during continuation, or its response is rejected by a
+        response handler, the messages are rewound (stripping the suspended response and
+        trailing continuation request) and the normal fallback chain is tried.
         """
         exceptions: list[Exception] = []
         rejected_responses: list[ModelResponse] = []
@@ -275,7 +277,8 @@ class FallbackModel(Model):
             start = AttemptStart()
             deadline = _pinned_request_deadline(suspended_response, pinned, model_settings)
             try:
-                _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
+                with suppress_unsupported_setting_warnings():
+                    _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                 prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                 with enforce_request_deadline(deadline):
                     response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
@@ -284,29 +287,41 @@ class FallbackModel(Model):
                 if not await self._should_fallback(exc):
                     self._set_span_attributes(pinned, prepared_parameters)
                     raise
-                # Best-effort cancel the suspended server-side job we're abandoning before rewinding
-                # and retrying the chain. `FallbackModel` swallows the error, so the graph's own
-                # cancel path never sees it; without this an OpenAI background job would keep running
-                # and billing while the chain issues a duplicate request.
-                with suppress(Exception):
-                    await pinned.cancel_suspended_response(suspended_response)
-                messages = _rewind_messages(messages)
-                rewound = True
+                failure: Exception | ModelResponse = exc
                 exceptions.append(exc)
-                self._record_failed_attempt(pinned, attempts, exc, start=start, duration=duration)
-                # Fall through to normal chain below
+                # The job the suspended response points at may still be running.
+                abandoned_response = suspended_response
             else:
-                if response.state == 'suspended':
-                    _stamp_continuation(response, pinned)
-                    carry_deadline(response, deadline)
-                self._set_span_attributes(pinned, prepared_parameters)
-                return response
+                duration = start.elapsed()
+                if not await self._should_fallback(response):
+                    if response.state == 'suspended':
+                        _stamp_continuation(response, pinned)
+                        carry_deadline(response, deadline)
+                    self._set_span_attributes(pinned, prepared_parameters)
+                    return response
+                failure = response
+                rejected_responses.append(response)
+                # A rejected response that is still suspended points at a job that is still running;
+                # a finished one has no job left to cancel.
+                abandoned_response = response if response.state == 'suspended' else None
+            # Best-effort cancel the suspended server-side job we're abandoning before rewinding
+            # and retrying the chain. `FallbackModel` swallows the failure, so the graph's own
+            # cancel path never sees it; without this an OpenAI background job would keep running
+            # and billing while the chain issues a duplicate request.
+            if abandoned_response is not None:
+                with suppress(Exception):
+                    await pinned.cancel_suspended_response(abandoned_response)
+            messages = _rewind_messages(messages)
+            rewound = True
+            self._record_failed_attempt(pinned, attempts, failure, start=start, duration=duration)
+            # Fall through to normal chain below
 
         for model in self.models:
             prepared_parameters = model_request_parameters
             start = AttemptStart()
             try:
-                _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
+                with suppress_unsupported_setting_warnings():
+                    _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
                 prepared_messages = model.prepare_messages(messages, model_request_parameters)
                 deadline = start_request_deadline(model, model_settings)
@@ -378,7 +393,8 @@ class FallbackModel(Model):
                 start = AttemptStart()
                 deadline = _pinned_request_deadline(suspended_response, pinned, model_settings)
                 try:
-                    _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
+                    with suppress_unsupported_setting_warnings():
+                        _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                     streamed_response = await stack.enter_async_context(
                         _request_stream_until_first_event(
@@ -425,7 +441,8 @@ class FallbackModel(Model):
                 prepared_parameters = model_request_parameters
                 start = AttemptStart()
                 try:
-                    _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
+                    with suppress_unsupported_setting_warnings():
+                        _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = model.prepare_messages(messages, model_request_parameters)
                     deadline = start_request_deadline(model, model_settings)
                     streamed_response = await stack.enter_async_context(
@@ -530,6 +547,11 @@ class FallbackModel(Model):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return model_settings, model_request_parameters
+
+    def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
+        # Each candidate resolves `thinking` itself, and checks its own `settings` in its `prepare_request`.
+        for model in self.models:
+            model._warn_if_thinking_overridden(layers)
 
     def prepare_messages(
         self,

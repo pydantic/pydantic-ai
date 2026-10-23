@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import KW_ONLY, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -11,6 +12,7 @@ from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._workspace import require_workspace
 from pydantic_ai_harness.pydantic_ai_docs._toolset import PydanticAIDocsToolset, PydanticAIDocsTopic
 
@@ -66,10 +68,24 @@ class PydanticAIDocs(AbstractCapability[AgentDepsT]):
     cache: bool = True
     """If `True`, each returned doc is memoized for one agent run."""
 
+    _: KW_ONLY
+    id: str | None = 'pydantic_ai_docs'
+    """Stable capability ID, so its instructions are addressable and `defer_loading=True` needs none.
+
+    An agent has one `read_pyai_docs` tool, so two `PydanticAIDocs` sharing this `id` are one docs source
+    stated twice when they agree, and an error when they differ. To keep two, give each its own `id` and
+    wrap them in `PrefixTools`, since their tool names are the same.
+    """
+
     _cache: dict[PydanticAIDocsTopic, str] = field(
         default_factory=dict[PydanticAIDocsTopic, str], init=False, repr=False, compare=False
     )
     """In-memory doc cache shared with toolsets created during one run."""
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one docs source stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> PydanticAIDocs[AgentDepsT]:
         """Return a fresh per-run cache so workspace-local content cannot cross runs."""
