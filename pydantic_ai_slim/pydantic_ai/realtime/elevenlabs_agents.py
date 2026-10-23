@@ -59,7 +59,6 @@ except ImportError as _import_error:  # pragma: no cover
 
 from .. import _utils
 from .._http import legacy_httpx
-from .._instrumentation import get_instructions
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
@@ -97,7 +96,7 @@ from ._lifecycle import (
     ResponseEnded,
     StaleEvent,
 )
-from ._utils import inject_trace_context, require_pcm_audio, resolve_advertised_tools
+from ._utils import inject_trace_context, require_pcm_audio, resolve_advertised_tools, session_instructions
 from .codec import (
     AudioDelta,
     InputTranscript,
@@ -1417,7 +1416,7 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
     ) -> AsyncGenerator[ElevenLabsAgentsRealtimeConnection]:
         settings = cast('ElevenLabsAgentsRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         self._check_settings(settings)
-        instructions = get_instructions(messages, model_request_parameters) or ''
+        instructions = session_instructions(messages, model_request_parameters)
         tools = model_request_parameters.function_tools or []
         advertised_tools, tool_choice = resolve_advertised_tools(tools, settings.get('tool_choice'))
         if (tool_choice[0] if isinstance(tool_choice, tuple) else tool_choice) == 'required':

@@ -133,7 +133,8 @@ class MontyRunState:
     call goes through `portal`, opened with the pool and closed after it.
     """
 
-    monty_sandbox_url: str | None = None
+    monty_sandbox_url: str | None = field(default=None, repr=False)
+    """May carry credentials, so it stays out of `repr`."""
     pool: AsyncMonty | AsyncMontyWebsocket | None = None
     session: AsyncMontySession | None = None
     portal: BlockingPortal | None = None
