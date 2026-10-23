@@ -259,9 +259,7 @@ History follows the order of the provider's own conversation:
   records [text phases](../models/openai.md#text-phases).
 
 If a reported speech segment never receives a transcript, the session still records its retained audio or
-a content-less `SpeechPart`, at the latest when the session closes. The exception is GPT-Live, which always
-transcribes its speech: there, untranscribed audio is a piece a tool call [split off from its words](openai.md#gpt-live-provider-specific-quirks),
-and a reply with transcribed speech records no content-less part for it.
+a content-less `SpeechPart`, at the latest when the session closes.
 
 With transcription disabled:
 
