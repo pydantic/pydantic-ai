@@ -346,11 +346,12 @@ newest N screenshots, dropping older ones 25 at a time; history keeps all).
 
 Gotchas:
 
-- A call whose `provider_details` carries safety checks waits for approval even without
-  `require_approval`; an unattended run approves with `HandleDeferredToolCalls`.
+- A call whose `provider_details` carries safety checks (OpenAI) needs approval even without
+  `require_approval`; give the agent a deferred tool handler such as `HandleDeferredToolCalls`, or a
+  flagged call ends the run with an error.
 - Gemini 3 models get a 0-999 coordinate grid (profile `computer_use_coordinate_grid`), scaled to
   pixels; inside a `FallbackModel` every model gets pixels.
-- Under durable execution each action and screenshot is its own workspace operation.
+- Under durable execution a retried action may repeat a click that already happened.
 
 ## See also
 
