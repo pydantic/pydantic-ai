@@ -334,10 +334,10 @@ class ModelRequestParameters:
     """
 
     instruction_visibility: dict[str, InstructionVisibility] | None = None
-    """Maps the id of each addressable part in [`instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts] to how it reaches the model.
+    """Maps the ids of the parts in [`instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts] that don't reach the model in the prefix to how they do.
 
-    Keyed by the id as a string (`'capability:refunds'`), and set by the agent. A part with no id, or an id
-    with no entry, is `'prefix'`: use
+    Keyed by the id as a string (`'capability:refunds'`), and set by the agent; `None` when every part is in
+    the prefix. A part with no id, or an id with no entry, is `'prefix'`: use
     [`instruction_visibility_of`][pydantic_ai.models.ModelRequestParameters.instruction_visibility_of]
     rather than reading the dict.
     """

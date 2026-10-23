@@ -676,6 +676,7 @@ def test_model_request_context_projection_payload_golden() -> None:
             'allow_text_output': True,
             'allow_image_output': False,
             'instruction_parts': None,
+            'instruction_visibility': None,
             'thinking': None,
             'cache': None,
         },

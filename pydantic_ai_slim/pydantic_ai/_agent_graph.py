@@ -1118,12 +1118,8 @@ async def _prepare_request_parameters(
         instruction_parts=[*(instruction_parts or []), *loaded_instruction_parts]
         if loaded_instruction_parts
         else instruction_parts,
-        instruction_visibility={
-            **{str(part.id): 'prefix' for part in instruction_parts or [] if part.id is not None},
-            **{str(part.id): 'via_history' for part in loaded_instruction_parts if part.id is not None},
-        }
-        if instruction_parts or loaded_instruction_parts
-        else None,
+        instruction_visibility={str(part.id): 'via_history' for part in loaded_instruction_parts if part.id is not None}
+        or None,
     )
 
 
