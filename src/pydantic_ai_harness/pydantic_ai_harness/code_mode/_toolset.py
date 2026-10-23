@@ -1191,7 +1191,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         # Determine execution mode for sandbox tool calls:
         # - global_sequential: selected through the parallel execution mode context var.
-        #   Checked with empty calls to isolate the context var from per-tool flags.
         # - sequential_tools: per-tool `sequential` flags on ToolDefinition.
         #   These tools are rendered as `def` (sync) and resolved inline.
         global_sequential = global_mode_is_sequential(tool_manager.get_parallel_execution_mode)

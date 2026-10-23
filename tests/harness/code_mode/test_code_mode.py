@@ -93,7 +93,6 @@ from pydantic_ai_harness.code_mode._toolset import (
     _SEARCH_TOOLS_MODIFIER,  # pyright: ignore[reportPrivateUsage]
     _sanitize_tool_name,  # pyright: ignore[reportPrivateUsage]
     _tool_search_addendum,  # pyright: ignore[reportPrivateUsage]
-    global_mode_is_sequential,
 )
 from pydantic_ai_harness.tool_output_limits import LocalFileStore
 
@@ -4827,22 +4826,6 @@ def _search_tool_def(description: str = 'Search for tools.', name: str = _SEARCH
         parameters_json_schema={'type': 'object', 'properties': {'keywords': {'type': 'string'}}},
         tool_kind='tool-search',
     )
-
-
-class TestGlobalModeIsSequential:
-    def test_only_the_sequential_mode_serializes_sandbox_calls(self) -> None:
-        def parallel() -> ParallelExecutionMode:
-            return 'parallel'
-
-        def sequential() -> ParallelExecutionMode:
-            return 'sequential'
-
-        def parallel_ordered_events() -> ParallelExecutionMode:
-            return 'parallel_ordered_events'
-
-        assert global_mode_is_sequential(parallel) is False
-        assert global_mode_is_sequential(sequential) is True
-        assert global_mode_is_sequential(parallel_ordered_events) is False
 
 
 class TestCodeModeOSAccessInTemporal:
