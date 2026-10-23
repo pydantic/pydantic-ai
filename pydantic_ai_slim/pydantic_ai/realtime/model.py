@@ -13,13 +13,13 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, Protocol
 from typing_extensions import TypeAliasType
 
 from .._genai_prices import lookup_context_window, preload_pricing_data
+from .._unsupported_settings import warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UserError
 from ..messages import ModelMessage
 from ..models import ModelRequestParameters
 from ..models._abstract import AbstractModel
 from ..native_tools import AbstractNativeTool
-from ..settings import ModelSettingName
 from ..tools import ToolDefinition
 from .codec import RealtimeConnection
 from .profiles import (
@@ -30,7 +30,7 @@ from .profiles import (
     RealtimeModelProfileSpec,
     merge_realtime_profile,
 )
-from .settings import RealtimeModelSettings
+from .settings import RealtimeModelSettingName, RealtimeModelSettings
 
 if TYPE_CHECKING:
     from ..providers import Provider
@@ -205,6 +205,15 @@ class WebRTCAnswer:
     """The call handle the server sideband session attaches to."""
 
 
+_GUARANTEE_SETTINGS: dict[RealtimeModelSettingName, str] = {
+    'parallel_tool_calls': '',
+    'async_tool_calls': ' Its tool calls always run asynchronously.',
+    'reconnect': ' A dropped connection ends the session.',
+}
+"""The realtime settings a model warns about ignoring, with a hint to append to the warning, as
+`GUARANTEE_SETTINGS` lists them for standard models."""
+
+
 class RealtimeModel(AbstractModel):
     """Abstract base class for realtime model providers.
 
@@ -222,15 +231,15 @@ class RealtimeModel(AbstractModel):
     settings: RealtimeModelSettings | None = None
     """Model settings used as defaults for realtime sessions."""
 
-    unsupported_settings: ClassVar[frozenset[ModelSettingName]] = frozenset()
+    unsupported_settings: ClassVar[frozenset[RealtimeModelSettingName]] = frozenset()
     """The shared [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] fields this model class ignores.
 
     Works like [`Model.unsupported_settings`][pydantic_ai.models.Model.unsupported_settings]: when a session sets one
-    that changes what it guarantees (`parallel_tool_calls=False` with function tools), opening it emits an
-    [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]; the tuning knobs among them,
-    like `max_tokens`, are ignored silently. Empty by default, so a model class that declares nothing never warns.
-    `tool_choice` and `thinking` aren't listed here: a forced `tool_choice` raises on every realtime model, and
-    `thinking` is resolved through the profile.
+    that changes what it guarantees (`parallel_tool_calls=False` with function tools, or a `reconnect` policy),
+    opening it emits an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]; the tuning
+    knobs among them, like `max_tokens`, are ignored silently. Empty by default, so a model class that declares
+    nothing never warns. `tool_choice`, `thinking` and `async_tool_calls` aren't listed here: a forced `tool_choice`
+    raises on every realtime model, and the other two are resolved through the profile.
     """
 
     _profile: RealtimeModelProfileSpec | None = None
@@ -277,6 +286,27 @@ class RealtimeModel(AbstractModel):
             else:
                 settings.update(model_settings)
         return settings
+
+    def _warn_unsupported_settings(
+        self, model_settings: RealtimeModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> None:
+        """Warn about each set setting that changes what the session guarantees and that this model ignores.
+
+        As [`Model.prepare_request`][pydantic_ai.models.Model.prepare_request] does for a request, once per session.
+        A model whose profile's `async_tool_call_mode` is `'always'` ignores `async_tool_calls=False` too.
+        """
+        if not model_settings:
+            return
+        unsupported: set[str] = set(self.unsupported_settings)
+        if self.profile.get('async_tool_call_mode', 'never') == 'always':
+            unsupported.add('async_tool_calls')
+        warn_unsupported_settings(
+            self.model_id,
+            model_settings,
+            unsupported,
+            has_function_tools=bool(model_request_parameters.function_tools),
+            guarantees=_GUARANTEE_SETTINGS,
+        )
 
     def _async_tool_calls(self, model_settings: RealtimeModelSettings | None) -> bool:
         """Whether this session's tool calls run asynchronously, for adapters that have to say so on the wire.

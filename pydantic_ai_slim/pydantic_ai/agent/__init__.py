@@ -83,7 +83,6 @@ from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._run_context import dispatch_event_stream, set_current_run_context
 from .._template import validate_from_spec_args
-from .._unsupported_settings import warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
     AbstractCapability,
@@ -4462,12 +4461,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     '`SpeechPart` instead.'
                 )
 
-            # As `Model.prepare_request` does for a standard request, once per session.
-            warn_unsupported_settings(
-                resolved.model.model_id,
-                resolved.model_settings or {},
-                resolved.model.unsupported_settings,
-                has_function_tools=bool(resolved.model_request_parameters.function_tools),
+            resolved.model._warn_unsupported_settings(  # pyright: ignore[reportPrivateUsage]
+                resolved.model_settings, resolved.model_request_parameters
             )
 
             connection_manager = (

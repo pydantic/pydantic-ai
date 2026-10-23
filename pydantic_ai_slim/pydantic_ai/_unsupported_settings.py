@@ -24,6 +24,9 @@ These change what a request guarantees, so ignoring one silently would surprise 
 tuning knobs that a model ignores silently, so the same settings work across models.
 """
 
+_TOOL_CALL_GUARANTEES = frozenset({'parallel_tool_calls', 'async_tool_calls'})
+"""Settings that are a guarantee only when `False` and the request offers function tools."""
+
 SUPPRESSED_WARNINGS: ContextVar[frozenset[ModelSettingName]] = ContextVar(
     'unsupported_setting_warnings_suppressed', default=frozenset()
 )
@@ -52,21 +55,21 @@ def warn_unsupported_settings(
     unsupported: Iterable[str],
     *,
     has_function_tools: bool,
+    guarantees: Mapping[str, str] = GUARANTEE_SETTINGS,
     stacklevel: int = 3,
 ) -> None:
-    """Warn about each set setting in `GUARANTEE_SETTINGS` that the model `model_id` ignores (`unsupported`).
+    """Warn about each set setting in `guarantees` that the model `model_id` ignores (`unsupported`).
 
-    Shared by `Model.prepare_request` and the realtime session, so both follow the same rule.
+    Shared by `Model.prepare_request` and the realtime session, which passes its own `guarantees`, so both
+    follow the same rule.
     """
     unsupported = frozenset(unsupported)
     suppressed = SUPPRESSED_WARNINGS.get()
-    for name, hint in GUARANTEE_SETTINGS.items():
+    for name, hint in guarantees.items():
         if name not in settings or name not in unsupported or name in suppressed:
             continue
-        # Only `False` is a guarantee, and only a request with function tools can make parallel calls.
-        if name == 'parallel_tool_calls' and (
-            settings.get('parallel_tool_calls') is not False or not has_function_tools
-        ):
+        # For these, only `False` is a guarantee, and only one about how function tools are called.
+        if name in _TOOL_CALL_GUARANTEES and (settings.get(name) is not False or not has_function_tools):
             continue
         warnings.warn(
             f'The `{name}` setting is not supported by model {model_id!r} and will be ignored.{hint}',

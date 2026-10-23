@@ -103,7 +103,10 @@ class RealtimeModelSettings(TypedDict, total=False):
     Only models whose profile's
     [`async_tool_call_mode`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode] is
     `'optional'` offer a choice, and every one of them defaults to off. The others ignore this setting,
-    since they either always or never run tool calls asynchronously.
+    since they either always or never run tool calls asynchronously. A model that always does warns about an
+    ignored `False` (with function tools) with an
+    [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning], as a standard model does
+    for a guarantee it can't keep.
 
     Supported by: the Gemini native-audio models and `gemini-3.8-live`.
     """
@@ -139,9 +142,9 @@ class RealtimeModelSettings(TypedDict, total=False):
     `None` turns transcription off on every provider that can disable it. OpenAI GPT-Live, Eleven Realtime,
     and ElevenLabs Agents always transcribe, so on them `None` leaves transcription on.
     A *pinned* id applies only to the providers that
-    transcribe with a separate model. Gemini transcribes natively, with no model to point at, and
-    ignores it (`google_input_transcription` configures Gemini's own transcription); OpenAI GPT-Live and
-    Eleven Realtime raise a [`UserError`][pydantic_ai.exceptions.UserError] for one.
+    transcribe with a separate model, and the others ignore it, as a standard model ignores a tuning knob it
+    doesn't support: Gemini transcribes natively (`google_input_transcription` configures its own
+    transcription), and OpenAI GPT-Live, Eleven Realtime, and ElevenLabs Agents transcribe with their own model.
 
     Supported by: OpenAI, Azure OpenAI, Gemini (`None` only), and xAI.
     """
@@ -224,8 +227,29 @@ class RealtimeModelSettings(TypedDict, total=False):
     resumption would lose the conversation.
 
     Supported by: OpenAI, Azure OpenAI, Gemini, xAI, Eleven Realtime, and OpenAI GPT-Live, which forks a session stored
-    with `openai_live_store=True` and otherwise replays the local history into a new one.
+    with `openai_live_store=True` and otherwise replays the local history into a new one. ElevenLabs Agents
+    can't resume a conversation, so it ignores a policy with an
+    [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning], and a drop ends the session.
     """
+
+
+RealtimeModelSettingName = TypeAliasType(
+    'RealtimeModelSettingName',
+    Literal[
+        'max_tokens',
+        'parallel_tool_calls',
+        'async_tool_calls',
+        'tool_choice',
+        'input_transcription_model',
+        'output_modality',
+        'thinking',
+        'turn_detection',
+        'handshake_timeout',
+        'reconnect',
+    ],
+)
+"""The names of the [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] fields, as
+[`ModelSettingName`][pydantic_ai.settings.ModelSettingName] is for `ModelSettings`."""
 
 
 KnownRealtimeTranscriptionModelName = TypeAliasType(

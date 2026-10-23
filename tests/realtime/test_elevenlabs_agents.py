@@ -25,7 +25,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, NativeToolCallPart, NativeToolReturnPart, PartStartEvent, RequestUsage
-from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelHTTPError, UnsupportedSettingWarning, UserError
 from pydantic_ai.messages import (
     BinaryAudio,
     BinaryContent,
@@ -376,11 +376,20 @@ def test_rejects_non_elevenlabs_provider() -> None:
 # --- settings the WebSocket cannot honor ---------------------------------------------------------
 
 
-async def test_reconnect_policy_raises() -> None:
-    model = _model(RestRecorder(agent_json()), settings=ElevenLabsAgentsRealtimeModelSettings(reconnect={}))
-    with pytest.raises(UserError, match='not resumed after a drop'):
+async def test_reconnect_policy_is_ignored_with_a_warning() -> None:
+    """A conversation isn't resumed after a drop, so a `reconnect` policy warns, as an ignored guarantee does."""
+    settings = ElevenLabsAgentsRealtimeModelSettings(reconnect={})
+    model = _model(RestRecorder(agent_json()), settings=settings)
+    with pytest.warns(
+        UnsupportedSettingWarning, match='`reconnect` setting is not supported.*A dropped connection ends'
+    ):
+        model._warn_unsupported_settings(settings, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    # The session still opens; a drop ends it, as without a policy.
+    ws = FakeWebSocket([HANDSHAKE_FRAME])
+    with patched_connect(ws):
         async with _connect(model):
-            pass  # pragma: no cover
+            pass
 
 
 async def test_turn_detection_config_raises() -> None:

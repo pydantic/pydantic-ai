@@ -198,8 +198,9 @@ Of the shared settings:
   are ignored; tune turn-taking on the agent's `conversation_config.turn` instead.
 - `input_transcription_model` is ignored: ASR drives the agent pipeline, so input is always transcribed,
   even with `None`.
-- `reconnect` raises: a dropped connection ends the session, and a reconnect policy would silently start a
-  conversation that remembers nothing.
+- `reconnect` is ignored with an
+  [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]: a conversation can't be
+  resumed, so a dropped connection ends the session rather than starting one that remembers nothing.
 - `max_tokens`, `parallel_tool_calls`, `async_tool_calls`, and `thinking` have no per-conversation
   surface and are ignored, matching the [shared settings contract](overview.md#shared-settings);
   `parallel_tool_calls=False` warns with an
@@ -287,7 +288,7 @@ parameter's description only when the local schema declares one.
 | Usage | Limited parameter support | Context tokens only, with `context_usage` in the agent's `client_events`; no cost (see [Usage and cost](#usage-and-cost)) |
 | Context window | Limited parameter support | Known only once the agent reports `context_usage`: `session.context_window_used` then gives the share of the LLM's context in use (see [Usage and cost](#usage-and-cost)) |
 | Session duration | Limited parameter support | Capped by the agent's [maximum conversation duration](https://elevenlabs.io/docs/eleven-agents/customization/conversation-flow) (600 s by default, up to 7,200 s, set on the agent, not per conversation); at the cap the session gets a non-recoverable `RealtimeSessionErrorEvent` and raises a [`RealtimeError`][pydantic_ai.realtime.RealtimeError] |
-| State-restoring reconnect | Unsupported | A dropped connection ends the session, and `reconnect` raises, see [Provider session limits](lifecycle.md#provider-session-limits) |
+| State-restoring reconnect | Unsupported | A dropped connection ends the session, and `reconnect` is ignored with a warning, see [Provider session limits](lifecycle.md#provider-session-limits) |
 
 See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.md),
 [Tools](tools.md), and [Connection lifecycle](lifecycle.md) for the provider-agnostic workflows.
@@ -453,8 +454,7 @@ Of the shared settings, `parallel_tool_calls` and `thinking` are ignored the sam
 
 [Input transcription](audio.md#input-transcription) is always on: each spoken turn's transcript arrives whole
 once the turn is committed, usually after the reply has started. It takes no model, so
-`input_transcription_model` only accepts `'auto'` (the default); `None` still leaves transcripts on, and any
-other value raises a `UserError`.
+`input_transcription_model` is ignored: `None` still leaves transcripts on, and a pinned model ID has no effect.
 
 ### Feature support and limitations
 

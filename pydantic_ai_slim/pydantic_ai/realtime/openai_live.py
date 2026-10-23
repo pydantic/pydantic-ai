@@ -109,7 +109,6 @@ from ..usage import RequestUsage
 from ._inferred_lifecycle import InferredLifecycle
 from ._lifecycle import AnswersRevised, InputId, LifecycleEvent, RealtimeFrame, ResponseStatus, ToolCallsAbandoned
 from ._openai_protocol import (
-    AUTO_TRANSCRIPTION_MODEL,
     RealtimeHandshakeError,
     _without_media as without_media,  # pyright: ignore[reportPrivateUsage]
     expect_event,
@@ -2212,21 +2211,15 @@ class OpenAILiveModel(RealtimeModel):
         return input_rate
 
     def _reject_unsupported(self, settings: OpenAILiveModelSettings) -> None:
-        """Refuse settings whose requirement Live cannot honor, rather than silently ignoring it.
+        """Refuse push-to-talk, which Live cannot provide, rather than silently ignoring it.
 
         Settings Live merely can't tune are ignored, as on a standard model: `max_tokens`, the
-        `TurnDetection` knobs, and `input_transcription_model=None` (Live always transcribes).
+        `TurnDetection` knobs, and `input_transcription_model` (Live always transcribes, with its own model).
         """
         if settings.get('turn_detection') is False:
             raise UserError(
                 'OpenAI GPT-Live does not support manual turn-taking: Live owns turn detection, so '
                 '`turn_detection=False` cannot be set.'
-            )
-        # Live always transcribes with its own model, which is what the `'auto'` default asks for.
-        if (transcription_model := settings.get('input_transcription_model')) not in (AUTO_TRANSCRIPTION_MODEL, None):
-            raise UserError(
-                'OpenAI GPT-Live does not support choosing a transcription model, so `input_transcription_model` '
-                f"can only be `'auto'` or `None` (Live always transcribes); got {transcription_model!r}."
             )
 
     def _live_url(self) -> str:

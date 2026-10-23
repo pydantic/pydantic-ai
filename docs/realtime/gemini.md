@@ -61,7 +61,8 @@ differs from every other Live model in three ways the model handles for you:
   possible" here rather than "off", since the model has no off.
 - **Its tool calls are always asynchronous.** Its profile's
   [`async_tool_call_mode`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode] is
-  `'always'`, since the model has no blocking mode, so an explicit `async_tool_calls=False` is ignored.
+  `'always'`, since the model has no blocking mode, so an explicit `async_tool_calls=False` is ignored, with an
+  [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] when the session has tools.
 - **Its spoken filler doesn't end the turn.** Gemini closes the filler's response and says the
   interaction is still in progress, so the filler and the tool call it was stalling for are recorded
   as one `ModelResponse`, and `RealtimeTurnCompleteEvent` and

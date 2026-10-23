@@ -323,19 +323,12 @@ def test_shared_parallel_tool_calls_reaches_the_backend(model: OpenAILiveModel) 
     assert responses['parallel_tool_calls'] is False
 
 
-@pytest.mark.parametrize(
-    'setting,value',
-    [
-        ('turn_detection', False),
-        ('input_transcription_model', 'gpt-transcribe'),
-    ],
-)
-async def test_unsupported_settings_raise_before_connecting(model: OpenAILiveModel, setting: str, value: Any) -> None:
-    """A requirement Live cannot meet (push-to-talk, a chosen transcription model) fails rather than being ignored."""
-    with pytest.raises(UserError, match='GPT-Live does not support'):
+async def test_push_to_talk_raises_before_connecting(model: OpenAILiveModel) -> None:
+    """Push-to-talk is a requirement Live cannot meet, so it fails rather than being ignored."""
+    with pytest.raises(UserError, match='GPT-Live does not support manual turn-taking'):
         async with model.connect(
             messages=[],
-            model_settings={setting: value},  # pyright: ignore[reportArgumentType]
+            model_settings=OpenAILiveModelSettings(turn_detection=False),
             model_request_parameters=ModelRequestParameters(),
         ):
             pass  # pragma: no cover
@@ -3147,8 +3140,16 @@ async def test_unsupported_settings_raise_before_answering_an_offer() -> None:
         OpenAILiveModelSettings(turn_detection={'sensitivity': 'high', 'silence_duration_ms': 400}),
         OpenAILiveModelSettings(input_transcription_model='auto'),
         OpenAILiveModelSettings(input_transcription_model=None),
+        OpenAILiveModelSettings(input_transcription_model='gpt-transcribe'),
     ],
-    ids=['max_tokens', 'turn_detection=True', 'turn_detection_knobs', 'transcription=auto', 'transcription=None'],
+    ids=[
+        'max_tokens',
+        'turn_detection=True',
+        'turn_detection_knobs',
+        'transcription=auto',
+        'transcription=None',
+        'transcription=pinned',
+    ],
 )
 async def test_settings_live_cannot_tune_are_ignored(settings: OpenAILiveModelSettings) -> None:
     """As on a standard model, a tuning knob Live has no control for is ignored, so shared settings work everywhere."""

@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from decimal import Decimal
 from threading import Event as ThreadEvent
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast, get_args, get_type_hints
 from uuid import UUID
 
 import anyio
@@ -81,6 +81,7 @@ from pydantic_ai.realtime import (
     RealtimeInputTranscriptionErrorEvent,
     RealtimeModel,
     RealtimeModelProfile,
+    RealtimeModelSettingName,
     RealtimeModelSettings,
     RealtimeResponseInterruptedEvent,
     RealtimeSession as _RealtimeSession,
@@ -7951,6 +7952,43 @@ async def test_agent_realtime_session_warns_when_parallel_tool_calls_false_is_ig
     assert [str(warning.message) for warning in record] == snapshot(
         ["The `parallel_tool_calls` setting is not supported by model 'fake:fake-realtime' and will be ignored."]
     )
+
+
+def test_realtime_model_setting_name_lists_every_realtime_model_settings_field() -> None:
+    assert set(get_args(RealtimeModelSettingName.__value__)) == set(get_type_hints(RealtimeModelSettings))
+
+
+async def test_agent_realtime_session_warns_when_async_tool_calls_false_is_ignored() -> None:
+    """A model whose tool calls always run asynchronously can't honor `async_tool_calls=False`, so it says so."""
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def lookup() -> str:  # pragma: no cover
+        return 'found'
+
+    always = FakeRealtimeModel(
+        FakeRealtimeConnection([ResponseDone()]),
+        profile=RealtimeModelProfile(**_profile(), async_tool_call_mode='always'),
+    )
+    with pytest.warns(UnsupportedSettingWarning, match='`async_tool_calls` setting .* always run asynchronously'):
+        async with agent.realtime(always, model_settings=RealtimeModelSettings(async_tool_calls=False)).session():
+            pass
+
+    # A model that offers the choice honors it, and `True` on an always-async model asks for what it does anyway.
+    optional = FakeRealtimeModel(
+        FakeRealtimeConnection([ResponseDone()]),
+        profile=RealtimeModelProfile(**_profile(), async_tool_call_mode='optional'),
+    )
+    always = FakeRealtimeModel(
+        FakeRealtimeConnection([ResponseDone()]),
+        profile=RealtimeModelProfile(**_profile(), async_tool_call_mode='always'),
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UnsupportedSettingWarning)
+        async with agent.realtime(optional, model_settings=RealtimeModelSettings(async_tool_calls=False)).session():
+            pass
+        async with agent.realtime(always, model_settings=RealtimeModelSettings(async_tool_calls=True)).session():
+            pass
 
 
 @pytest.mark.parametrize(
