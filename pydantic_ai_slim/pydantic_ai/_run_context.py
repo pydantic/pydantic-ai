@@ -76,6 +76,31 @@ class EventStreamBuffer(list[_messages.AgentStreamEvent]):
         for waiter in self.waiters:
             waiter.set()
 
+    async def dispatch_emitted_event(self, ctx: RunContext[object], event: _messages.AgentStreamEvent) -> None:
+        """Await an installed emission handler after immediate capability listeners."""
+        assert self.emit_handler is not None and self.emit_handler_active is not None
+        if not self.emit_handler_active():
+            await dispatch_event_immediate(ctx, event)
+            return
+        # Reserve this emission before immediate listeners yield to the stream consumer.
+        # A FIFO per object also handles emitting the same event instance more than once.
+        settled = anyio.Event()
+        self.pending_emit_handlers.setdefault(id(event), []).append(settled)
+        try:
+            try:
+                await dispatch_event_immediate(ctx, event)
+            except BaseException:
+                # A caught listener error leaves the event buffered. Its stream position
+                # still needs durability delivery, since the emit handler never started.
+                pending = self.pending_emit_handlers[id(event)]
+                pending.remove(settled)
+                if not pending:
+                    del self.pending_emit_handlers[id(event)]
+                raise
+            await self.emit_handler(ctx, event)
+        finally:
+            settled.set()
+
 
 async def dispatch_event_immediate(ctx: RunContext[Any], event: _messages.AgentStreamEvent) -> None:
     """Dispatch an immediately dispatched capability event and mark it for stream deduplication."""
@@ -904,24 +929,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # An `await` inserted between the two would open a window for a concurrent stream
         # consumer to drain the buffered event and dispatch it a second time.
         buffer = self._event_stream_buffer
-        settled: anyio.Event | None = None
-        if (
-            isinstance(buffer, EventStreamBuffer)
-            and buffer.emit_handler is not None
-            and (buffer.emit_handler_active is None or buffer.emit_handler_active())
-        ):
-            # Reserve this emission before immediate listeners yield to the stream consumer.
-            # A FIFO per object also handles emitting the same event instance more than once.
-            settled = anyio.Event()
-            buffer.pending_emit_handlers.setdefault(id(event), []).append(settled)
-        try:
+        if isinstance(buffer, EventStreamBuffer) and buffer.emit_handler is not None:
+            await buffer.dispatch_emitted_event(self, event)
+        else:
             await dispatch_event_immediate(self, event)
-            if settled is not None:
-                assert isinstance(buffer, EventStreamBuffer) and buffer.emit_handler is not None
-                await buffer.emit_handler(self, event)
-        finally:
-            if settled is not None:
-                settled.set()
         return event
 
     def enqueue(

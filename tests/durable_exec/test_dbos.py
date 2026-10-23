@@ -2889,6 +2889,61 @@ async def test_dbos_emission_handler_waits_for_immediate_listeners(dbos: DBOS) -
     assert observed == [True] * 3
 
 
+@pytest.mark.parametrize('from_tool', [False, True])
+async def test_dbos_caught_immediate_listener_error_keeps_buffered_event(dbos: DBOS, from_tool: bool) -> None:
+    handled: list[DBOSDecisionEvent] = []
+    fail_next = False
+
+    async def emit_events(ctx: RunContext[object]) -> None:
+        nonlocal fail_next
+        event = DBOSDecisionEvent()
+        if not from_tool:
+            # Before a stream exists, a successful emission of the same object is still queued.
+            await ctx.emit(event)
+        fail_next = True
+        with pytest.raises(RuntimeError, match='listener failed'):
+            await ctx.emit(event)
+
+    class Decisions(Capability[object]):
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            if not from_tool:
+                await emit_events(ctx)
+
+        async def on_event(self, ctx: RunContext[object], *, event: AgentStreamEvent) -> None:
+            if isinstance(event, DBOSDecisionEvent):
+                if fail_next:
+                    await asyncio.sleep(0)
+                    raise RuntimeError('listener failed')
+                event.decided = True
+
+    capability = Decisions(id='caught_decisions')
+
+    @capability.tool
+    async def work(ctx: RunContext[object]) -> str:
+        if from_tool:
+            await emit_events(ctx)
+        return 'done'
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSDecisionEvent):
+                handled.append(event)
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='caught_immediate_error',
+        capabilities=[capability, DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    await run_workflow()
+    assert len(handled) == (1 if from_tool else 2)
+
+
 async def test_dbos_workflow_level_emit_reaches_durable_handler(dbos: DBOS) -> None:
     """A capability event emitted at workflow level reaches the durability handler's own step."""
     seen: list[str] = []
