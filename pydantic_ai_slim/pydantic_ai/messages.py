@@ -4573,7 +4573,7 @@ def post_compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessag
     ]
 
 
-def _post_compaction_window_start(messages: Sequence[ModelMessage]) -> tuple[int, int]:  # pyright: ignore[reportUnusedFunction]
+def _post_compaction_window_start(messages: Sequence[ModelMessage]) -> tuple[int, int]:
     """Where [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] begins, as a message index and a part index.
 
     That's the latest [`CompactionPart`][pydantic_ai.messages.CompactionPart], or `(0, 0)` without one. For code that
