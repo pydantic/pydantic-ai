@@ -1,6 +1,6 @@
 # GitHub
 
-Let an agent read and change GitHub repositories, issues, pull requests, and other resources. `GitHub` gives the agent the tools in GitHub's default tool groups, including tools that make changes; `toolsets` picks other groups. The credential you connect with decides what those tools can reach.
+Let an agent read and change GitHub repositories, issues, pull requests, and other resources. By default it gets the tools in GitHub's default tool groups, which include tools that make changes; `toolsets` picks other groups. The token's permissions decide what those tools can reach.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
@@ -64,9 +64,9 @@ def github_token(ctx: RunContext[Deps]) -> str | None:
 agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[GitHub(auth=github_token)])
 ```
 
-Each run connects as its own user, so concurrent runs never share an account. `read_only`, `toolsets`, and `url` still apply to every run.
+Each run connects as its own user, so concurrent runs never share an account. `read_only`, `lockdown`, `toolsets`, and `url` still apply to every run.
 
-Your app gets each user's token, stores it, and refreshes it. For example, a "Connect GitHub" button that signs them in through your GitHub App with OAuth and saves the user access token to their account, or a settings page where each user pastes their own personal access token. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
+Your app gets, stores, and refreshes each user's token: for example, a "Connect GitHub" button that signs the user in through your GitHub App and saves the user access token, or a settings page where each user pastes a personal access token. Load the token before each run (this can be async) and put it in the deps; the `auth` function only reads it.
 
 When users differ in more than their credential, such as a user whose organization is on a GitHub Enterprise Cloud data-residency endpoint, build the whole capability for each run with a [dynamic capability](https://pydantic.dev/docs/ai/capabilities/custom/#dynamically-building-a-capability):
 
@@ -99,13 +99,13 @@ With durable execution such as Temporal, read the credential from the run's deps
 
 ## Provider settings
 
-`toolsets=['repos', 'issues', 'actions']` picks which of GitHub's tool groups the server offers. Leave it unset to get the server's default groups. `read_only=True` asks the server for its read-only mode, and also drops any tool the server does not mark as read-only; if none are marked, the agent gets no GitHub tools and emits an `MCPReadOnlyNoToolsWarning`. Set `url` to use a GitHub Enterprise Cloud endpoint; it must be an `https://` URL. A plain `http://` URL sends the token unencrypted, so it emits a `HarnessDeprecationWarning` and will raise in a future release.
+`toolsets=['repos', 'issues', 'actions']` picks which of GitHub's tool groups the server offers. Leave it unset to get the server's default groups. `read_only=True` asks the server for its read-only mode, and also drops any tool the server does not mark as read-only; if none are marked, the agent gets no GitHub tools and emits an `MCPReadOnlyNoToolsWarning`. `lockdown=True` asks GitHub to withhold issue, pull request, and comment content in public repositories written by users without push access; some tools return an error instead. GitHub describes it as a best-effort content filter, not a security boundary: other tools can still return that content. Set `url` to use a GitHub Enterprise Cloud endpoint; it must be an `https://` URL. A plain `http://` URL sends the token unencrypted, so it emits a `HarnessDeprecationWarning` and will raise in a future release.
 
 The capability does not limit which repositories the agent can reach. Set that with the token's or GitHub App's permissions. To send other headers, or to use custom authentication, pass a configured `client`.
 
 ## Untrusted content
 
-Tool results include text written by anyone who can open an issue, pull request, or comment in a repository the token can read. That text can contain instructions aimed at the agent. With a token that reads private repositories and writes to public ones, such instructions can lead the agent to copy private content into a public issue or pull request. Use `read_only=True`, a token limited to the repositories the task needs, approval for write tools (below), or [Prompt Injection Defender](https://pydantic.dev/docs/ai/harness/prompt-injection-defender/).
+Tool results include text written by anyone who can open an issue, pull request, or comment in a repository the token can read. That text can contain instructions aimed at the agent. With a token that reads private repositories and writes to public ones, such instructions can lead the agent to copy private content into a public issue or pull request. Use `read_only=True`, `lockdown=True` (best-effort), a token limited to the repositories the task needs, approval for write tools (below), or [Prompt Injection Defender](https://pydantic.dev/docs/ai/harness/prompt-injection-defender/).
 
 ## Tool selection and approval
 
@@ -128,9 +128,9 @@ Handle the approval requests with the [deferred tools workflow](https://pydantic
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, a plain-HTTP local server, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth`, `url`, or `toolsets` raises an error. With a client, `read_only=True` keeps only the tools the server marks as read-only, instead of asking the server for read-only mode. `include_instructions=False` stops the server's instructions from reaching the model.
+Pass `client` when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, a plain-HTTP local server, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth`, `url`, `toolsets`, or `lockdown` raises an error. With a client, `read_only=True` keeps only the tools the server marks as read-only, instead of asking the server for read-only mode. `include_instructions=False` stops the server's instructions from reaching the model.
 
-A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections whose tool names overlap, give them distinct `id`s and add [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/).
+A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately.
 
 ## Telemetry
 

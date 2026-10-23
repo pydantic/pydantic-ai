@@ -2,7 +2,7 @@
 
 import json
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -237,7 +237,7 @@ def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) ->
         return 'low'
     elif thinking == 'medium':
         return 'medium' if 'medium' in supported_efforts else 'high'
-    elif thinking in ('high', 'xhigh'):
+    elif thinking in ('high', 'xhigh', 'max'):
         return 'high'
     else:
         assert_never(thinking)
@@ -816,6 +816,10 @@ class XaiModel(Model[AsyncClient]):
             return reasoning_effort != 'none'
         return super()._request_thinks(model_settings, model_request_parameters)
 
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # A set `xai_reasoning_effort` replaces the unified mapping in `_create_chat`.
+        return ('xai_reasoning_effort',) if 'xai_reasoning_effort' in model_settings else ()
+
     def _get_tool_choice(
         self,
         model_settings: XaiModelSettings,
@@ -1242,6 +1246,7 @@ class XaiStreamedResponse(StreamedResponse):
                 content=tool_result_content,
                 tool_call_id=tool_call.id,
                 provider_name=self.system,
+                provider_details=_failed_tool_call_details(tool_call),
             )
             if builtin_tool_name == XSearchTool.kind:
                 x_search_return_parts[return_vendor_id] = return_part
@@ -1660,6 +1665,16 @@ def _build_mcp_tool_call_args(tool_call: chat_pb2.ToolCall) -> dict[str, Any]:
     }
 
 
+def _failed_tool_call_details(tool_call: chat_pb2.ToolCall) -> dict[str, Any] | None:
+    """The `provider_details` that mark a server-side tool call's return part as failed, or `None` if it didn't fail.
+
+    `XaiModel._map_builtin_tool_return_part` reads them to replay the call as failed.
+    """
+    if tool_call.status == chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_FAILED:
+        return {'status': 'failed', 'error': tool_call.error_message}
+    return None
+
+
 def _create_tool_call_part(
     tool_call: chat_pb2.ToolCall,
     tool_result_content: dict[str, Any] | str | None,
@@ -1686,13 +1701,6 @@ def _create_tool_call_part(
     if is_server_side_tool:
         builtin_tool_name = _get_builtin_tool_name(tool_call)
         status = tool_call.status
-        provider_details: dict[str, Any] | None = None
-
-        if status == chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_FAILED:
-            provider_details = {
-                'status': 'failed',
-                'error': tool_call.error_message,
-            }
 
         # If we know the message role (non-streamed responses), use it to decide call vs return.
         # Note: FAILED is always a return part (it may be emitted on an assistant message without a separate ROLE_TOOL
@@ -1705,7 +1713,7 @@ def _create_tool_call_part(
                     content=tool_result_content,
                     tool_call_id=tool_call.id,
                     provider_name=provider_name,
-                    provider_details=provider_details,
+                    provider_details=_failed_tool_call_details(tool_call),
                 ),
             )
         else:

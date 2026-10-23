@@ -1,3 +1,4 @@
+# description: Measures weekly gh-aw agentic-workflow spend from existing run artifacts and posts the report to Slack.
 name: Agent Spend Report
 
 # Weekly waste report for the `gh-aw` agentic workflows, delivered privately to

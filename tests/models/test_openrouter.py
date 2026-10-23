@@ -861,6 +861,44 @@ async def test_openrouter_streamed_reasoning_details_are_preserved(
     ]
 
 
+async def test_openrouter_streamed_reasoning_without_details_is_preserved(allow_model_requests: None) -> None:
+    """A streamed `reasoning` delta without `reasoning_details` falls back to the base mapping, like `_process_thinking`.
+
+    Mock-based rather than VCR — no recorded OpenRouter stream carries `reasoning` without `reasoning_details`,
+    so the chunks are hand-built.
+    """
+
+    def chunk(delta: dict[str, str], *, finish_reason: str | None = None) -> ChatCompletionChunk:
+        return _OpenRouterChatCompletionChunk.model_validate(
+            {
+                'id': 'gen-123',
+                'choices': [{'index': 0, 'delta': {'role': 'assistant', **delta}, 'finish_reason': finish_reason}],
+                'created': 1704067200,
+                'model': 'deepseek/deepseek-r1',
+                'object': 'chat.completion.chunk',
+                'provider': 'DeepSeek',
+            }
+        )
+
+    mock_client = MockOpenAI.create_mock_stream(
+        [
+            chunk({'content': '', 'reasoning': 'Adding '}),
+            chunk({'content': '', 'reasoning': 'two and two.'}),
+            chunk({'content': '4'}, finish_reason='stop'),
+        ]
+    )
+    model = OpenRouterModel('deepseek/deepseek-r1', provider=OpenRouterProvider(openai_client=mock_client))
+
+    async with model_request_stream(model, [ModelRequest.user_text_prompt('What is 2+2?')]) as stream:
+        async for _ in stream:
+            pass
+
+    assert stream.get().parts == [
+        ThinkingPart(content='Adding two and two.', id='reasoning', provider_name='openrouter'),
+        TextPart(content='4'),
+    ]
+
+
 async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None:
     """Test _process_provider_details when _map_openrouter_provider_details returns empty dict."""
     from unittest.mock import patch

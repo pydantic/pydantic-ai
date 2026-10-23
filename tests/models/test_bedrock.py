@@ -44,6 +44,7 @@ from pydantic_ai import (
     RetryFeedbackPart,
     RetryInfo,
     RunContext,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -2659,6 +2660,20 @@ async def test_bedrock_opus_5_thinking_uses_native_output(
     assert 'toolConfig' not in sent
     assert sent['outputConfig']['textFormat']['type'] == 'json_schema'
     assert result.output == 42
+
+
+async def test_bedrock_anthropic_unified_max_effort(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Sonnet 4.6 accepts `max` but not `xhigh`, so unified `thinking='max'` reaches Converse as `effort='max'`."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking='max'))
+
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result = await agent.run('What is 2+2? Reply with just the number.')
+
+    assert result.output
+    assert [sent['additionalModelRequestFields'] for sent in sent_requests] == snapshot(
+        [{'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'max'}}]
+    )
 
 
 async def test_bedrock_fable_5_thinking_offers_output_tool_unforced(
@@ -7299,6 +7314,22 @@ async def test_document_url_unsupported_format(bedrock_provider: BedrockProvider
 
     with pytest.raises(UserError, match='Unsupported document format: rtf'):
         await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+
+async def test_response_speech_part_raises_user_error(bedrock_provider: BedrockProvider):
+    """An unconverted `SpeechPart` in a response raises the `UserError` that names `prepare_messages`.
+
+    `Agent` runs `prepare_messages`, which converts it, so only a direct `Model.request()` reaches this mapping.
+    """
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Hi there')]),
+    ]
+
+    with pytest.raises(UserError, match='`SpeechPart` cannot be sent to this model as-is'):
+        await model._map_messages(messages, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
 
 
 async def test_uploaded_file_unsupported_video_media_type(

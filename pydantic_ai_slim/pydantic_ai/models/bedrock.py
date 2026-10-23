@@ -865,6 +865,30 @@ class BedrockConverseModel(Model[BaseClient]):
         profile = cast(BedrockModelProfile, self.profile)
         return _effective_thinking_type(model_settings, model_request_parameters, profile) is not None
 
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_build_additional_model_request_fields` leaves alone the fields the user set: the variant's thinking
+        # field, and on adaptive Claude models the `output_config` an effort-level `thinking` maps its effort to.
+        fields = model_settings.get('bedrock_additional_model_requests_fields')
+        if not isinstance(fields, Mapping):
+            return ()
+        profile = self.profile
+        variant = profile.get('bedrock_thinking_variant', None)
+        effort_replaced = (
+            'output_config' in fields
+            and isinstance(model_settings.get('thinking'), str)
+            and profile.get('bedrock_supports_adaptive_thinking', False)
+            and profile.get('bedrock_supports_effort', False)
+        )
+        if (
+            (variant == 'anthropic' and ('thinking' in fields or effort_replaced))
+            or (variant == 'openai' and 'reasoning_effort' in fields)
+            or (variant == 'openai_responses' and 'reasoning' in fields)
+            or (variant == 'qwen' and 'reasoning_config' in fields)
+            or (variant == 'xai' and 'reasoning' in fields)
+        ):
+            return ('bedrock_additional_model_requests_fields',)
+        return ()
+
     def _default_structured_output_mode(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> StructuredOutputMode:
@@ -1286,14 +1310,15 @@ class BedrockConverseModel(Model[BaseClient]):
                     'medium': 'high',
                     'high': 'high',
                     'xhigh': 'high',
+                    'max': 'high',
                 }
                 existing['reasoning_config'] = level_map[thinking]
         elif variant == 'xai' and 'reasoning' not in existing:
             # Grok always reasons on Converse, so `thinking=False` is silently ignored (like gpt-oss). `True` leaves
             # the effort out where the profile records that the model's own default applies then (Grok 4.7: `high`).
             if thinking is not False and not (thinking is True and profile.get('grok_default_effort_omitted', False)):
-                # Grok accepts `low`/`medium`/`high`/`xhigh` but not `minimal`, so that folds to `low`;
-                # `True` picks `medium` like the other always-on effort-based variants.
+                # Grok accepts `low`/`medium`/`high`/`xhigh` but not `minimal`, so that folds to `low` and `max`
+                # to `xhigh`; `True` picks `medium` like the other always-on effort-based variants.
                 effort_map: dict[ThinkingLevel, str] = {
                     True: 'medium',
                     'minimal': 'low',
@@ -1301,6 +1326,7 @@ class BedrockConverseModel(Model[BaseClient]):
                     'medium': 'medium',
                     'high': 'high',
                     'xhigh': 'xhigh',
+                    'max': 'xhigh',
                 }
                 existing['reasoning'] = {'effort': effort_map[thinking]}
 
@@ -1698,6 +1724,9 @@ class BedrockConverseModel(Model[BaseClient]):
                     elif isinstance(item, CompactionPart | FilePart):
                         # Compaction and file parts are not sent back to models that don't support them.
                         pass  # pragma: no cover
+                    elif isinstance(item, SpeechPart):
+                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
@@ -2295,7 +2324,9 @@ def _add_anthropic_thinking_fields(existing: dict[str, Any], thinking: ThinkingL
                 and 'output_config' not in existing
             ):
                 effort = resolve_anthropic_effort(
-                    thinking, supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False)
+                    thinking,
+                    supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False),
+                    supports_max=profile.get('anthropic_supports_max_effort', True),
                 )
                 existing['output_config'] = {'effort': effort}
     elif thinking is False:
