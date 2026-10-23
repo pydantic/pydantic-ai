@@ -533,9 +533,11 @@ agent's host. No extra. Tools: `aws_cli` (command without `aws` or `--endpoint-u
 and `localstack_health`.
 
 `LocalStack(allowed_services=['s3', 'dynamodb'])` connects to an instance you started;
-`LocalStack(manage_container=True)` starts a fresh Docker container per run. `allowed_services`/`denied_services` are mutually exclusive. The default image needs
-`LOCALSTACK_AUTH_TOKEN` (forwarded automatically); concurrent managed runs need distinct ports. The AWS
-CLI can read and write host files (`file://`, `s3 cp`).
+`LocalStack(manage_container=True)` starts a fresh Docker container per run on the `endpoint_url` port, so
+concurrent runs must share one inside `async with agent:`. `allowed_services`/`denied_services` are mutually
+exclusive. The default image needs `LOCALSTACK_AUTH_TOKEN` (forwarded automatically). The AWS CLI can read
+and write host files (`file://`, `s3 cp`), but gets its own empty AWS config and credentials files instead of
+`~/.aws/config` and `~/.aws/credentials`.
 
 ## CLAI 2
 

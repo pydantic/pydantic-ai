@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryContent,
     FinalResultEvent,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -728,21 +729,240 @@ class TestInputGuardrailRedaction:
         seen, model = _request_prompts_model()
         agent = Agent(model, capabilities=[_AppendSecretToPrompt(), InputGuardrail(guard=redact_secrets)])
 
-        await agent.run('hello')
+        result = await agent.run('hello')
 
         assert seen == [['hello\ncontext: [redacted:anthropic_key]']]
+        # Rewritten in place, the prompt is the history's own part, so one rewrite clears it everywhere.
+        assert _SECRET not in str(result.all_messages())
 
-    async def test_a_request_only_copy_of_the_prompt_is_the_part_rewritten(self):
-        """The copy the model is sent is redacted; the history keeps the original the copy was made from."""
+    async def test_replace_of_a_copied_prompt_also_redacts_the_history(self):
+        """The copy goes to the model and the original stays in the history, so both are redacted."""
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
         seen, model = _request_prompts_model()
-        agent = Agent(model, capabilities=[_CopyPromptWithSecret(), InputGuardrail(guard=redact_secrets)])
+        agent = Agent(model, capabilities=[_CopyPrompt(), _AppendNote(), InputGuardrail(guard=redact_secrets)])
+        agent.instrument = InstrumentationSettings(tracer_provider=provider)
+
+        result = await agent.run(f'my key is {_SECRET}')
+
+        assert seen == [['my key is [redacted:anthropic_key]', 'note: be brief']]
+        assert _SECRET not in str(result.all_messages())
+        # The history got the same replacement, so the one redaction span covers both.
+        assert [span.name for span in exporter.get_finished_spans()].count('guardrail redacted input') == 1
+        part = result.all_messages()[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert part.content == 'my key is [redacted:anthropic_key]'
+
+    async def test_a_changed_copy_leaves_a_clean_history_prompt_alone(self):
+        """The guard allows the original's own text, so only the copy's request-only secret is redacted."""
+        seen, model = _request_prompts_model()
+        agent = Agent(
+            model, capabilities=[_CopyPrompt(suffix=f'\ncontext: {_SECRET}'), InputGuardrail(guard=redact_secrets)]
+        )
 
         result = await agent.run('hello')
 
         assert seen == [['hello\ncontext: [redacted:anthropic_key]']]
-        first = result.all_messages()[0]
-        assert isinstance(first, ModelRequest)
-        assert [part.content for part in first.parts if isinstance(part, UserPromptPart)] == ['hello']
+        part = result.all_messages()[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert part.content == 'hello'
+
+    async def test_a_changed_copy_has_the_history_prompt_screened_on_its_own_text(self):
+        """The history gets the redaction of its own text, not the copy's request-only suffix."""
+        seen, model = _request_prompts_model()
+        agent = Agent(model, capabilities=[_CopyPrompt(suffix='\nctx'), InputGuardrail(guard=redact_secrets)])
+
+        result = await agent.run(f'my key is {_SECRET}')
+
+        assert seen == [['my key is [redacted:anthropic_key]\nctx']]
+        part = result.all_messages()[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert part.content == 'my key is [redacted:anthropic_key]'
+
+    async def test_a_multimodal_original_of_a_redacted_text_copy_is_a_usage_error(self):
+        """Writing the redaction back would drop the original's attachments, as for any multimodal prompt."""
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        agent = Agent(TestModel(), capabilities=[_FlattenPrompt(), InputGuardrail(guard=redact_secrets)])
+        agent.instrument = InstrumentationSettings(tracer_provider=provider)
+
+        with pytest.raises(UserError, match='multimodal prompt'):
+            await agent.run([f'my key is {_SECRET}', ImageUrl(url='https://example.com/image.png')])
+
+        # Spans are recorded only once every rewrite has succeeded, so a failed one leaves none.
+        assert 'guardrail redacted input' not in [span.name for span in exporter.get_finished_spans()]
+
+    async def test_a_changed_copy_calls_the_guard_twice_and_traces_both_redactions(self):
+        """The history's redaction differs from the copy's, so it gets its own span."""
+        screened: list[str] = []
+
+        def guard(prompt: str) -> GuardrailResult:
+            screened.append(prompt)
+            return redact_secrets(prompt)
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        agent = Agent(
+            TestModel(custom_output_text='ok'), capabilities=[_CopyPrompt(suffix='\nctx'), InputGuardrail(guard=guard)]
+        )
+        agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=True)
+
+        await agent.run(f'my key is {_SECRET}')
+
+        assert screened == [f'my key is {_SECRET}\nctx', f'my key is {_SECRET}']
+        replacements = [
+            (span.attributes or {}).get('guardrail.replacement')
+            for span in exporter.get_finished_spans()
+            if span.name == 'guardrail redacted input'
+        ]
+        assert replacements == ['my key is [redacted:anthropic_key]\nctx', 'my key is [redacted:anthropic_key]']
+
+    async def test_a_changed_copy_whose_original_is_allowed_leaves_the_history_alone(self):
+        calls: list[str] = []
+
+        def guard(prompt: str) -> GuardrailResult:
+            calls.append(prompt)
+            return redact_secrets(prompt) if len(calls) == 1 else GuardrailResult.allow()
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        seen, model = _request_prompts_model()
+        agent = Agent(model, capabilities=[_CopyPrompt(suffix='\nctx'), InputGuardrail(guard=guard)])
+        agent.instrument = InstrumentationSettings(tracer_provider=provider)
+
+        result = await agent.run(f'my key is {_SECRET}')
+
+        assert seen == [['my key is [redacted:anthropic_key]\nctx']]
+        part = result.all_messages()[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert part.content == f'my key is {_SECRET}'
+        assert [span.name for span in exporter.get_finished_spans()].count('guardrail redacted input') == 1
+
+    async def test_a_block_on_the_history_original_blocks_the_run_before_any_rewrite(self):
+        """The original is what later steps replay, so a guard that blocks it ends the run as a first block would."""
+        calls: list[str] = []
+
+        def guard(prompt: str) -> GuardrailResult:
+            calls.append(prompt)
+            return redact_secrets(prompt) if len(calls) == 1 else GuardrailResult.block('blocked original')
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        seen, model = _request_prompts_model()
+        agent = Agent(model, capabilities=[_CopyPrompt(suffix='\nctx'), InputGuardrail(guard=guard)])
+        agent.instrument = InstrumentationSettings(tracer_provider=provider)
+
+        result = await agent.run(f'my key is {_SECRET}')
+
+        assert result.output == 'blocked original'
+        assert seen == []
+        assert len(calls) == 2
+        names = [span.name for span in exporter.get_finished_spans()]
+        assert 'guardrail redacted input' not in names
+        assert 'guardrail blocked input' in names
+
+    async def test_a_retry_on_the_history_original_is_a_usage_error(self):
+        calls: list[str] = []
+
+        def guard(prompt: str) -> GuardrailResult:
+            calls.append(prompt)
+            return redact_secrets(prompt) if len(calls) == 1 else GuardrailResult.retry('again')
+
+        agent = Agent(TestModel(), capabilities=[_CopyPrompt(suffix='\nctx'), InputGuardrail(guard=guard)])
+
+        with pytest.raises(UserError, match=r'cannot return GuardrailResult\.retry'):
+            await agent.run(f'my key is {_SECRET}')
+
+    async def test_every_copy_of_the_prompt_sent_to_the_model_is_redacted(self):
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        seen, model = _request_prompts_model()
+        agent = Agent(model, capabilities=[_RepeatPrompt(), InputGuardrail(guard=redact_secrets)])
+        agent.instrument = InstrumentationSettings(tracer_provider=provider)
+
+        result = await agent.run(f'my key is {_SECRET}')
+
+        assert seen == [['my key is [redacted:anthropic_key]', 'my key is [redacted:anthropic_key]']]
+        part = result.all_messages()[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert part.content == 'my key is [redacted:anthropic_key]'
+        assert [span.name for span in exporter.get_finished_spans()].count('guardrail redacted input') == 1
+
+    async def test_a_copy_is_redacted_when_a_request_only_message_is_appended_after_it(self):
+        """A whole `ModelRequest` appended for this request is not taken for the prompt."""
+        seen, model = _request_prompts_model_all()
+        agent = Agent(model, capabilities=[_CopyAndAppendRequest(), InputGuardrail(guard=redact_secrets)])
+
+        result = await agent.run(f'my key is {_SECRET}')
+
+        assert seen == [['my key is [redacted:anthropic_key]', 'injected note']]
+        part = result.all_messages()[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert part.content == 'my key is [redacted:anthropic_key]'
+
+    async def test_a_changed_copy_beside_same_text_copies_is_left_alone(self):
+        """The guard's verdict is on the prompt's text, so a changed copy sharing its timestamp is not rewritten."""
+        screened: list[str] = []
+
+        def guard(prompt: str) -> GuardrailResult:
+            screened.append(prompt)
+            return redact_secrets(prompt)
+
+        seen, model = _request_prompts_model()
+        agent = Agent(model, capabilities=[_CopyWithChangedSibling(), InputGuardrail(guard=guard)])
+
+        result = await agent.run(f'my key is {_SECRET}')
+
+        assert screened == [f'my key is {_SECRET}']
+        assert seen == [['my key is [redacted:anthropic_key]', 'a changed copy']]
+        part = result.all_messages()[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert part.content == 'my key is [redacted:anthropic_key]'
+
+    async def test_a_redacted_copy_is_not_replayed_unredacted_after_a_tool_call(self):
+        """Later steps send the history, which the guard does not screen again, so it must already be clean."""
+        requests: list[str] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            requests.append(str(messages))
+            if len(requests) == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='ping', args={})])
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        agent = Agent(
+            FunctionModel(respond), capabilities=[_CopyPrompt(suffix='\nctx'), InputGuardrail(guard=redact_secrets)]
+        )
+
+        @agent.tool_plain
+        def ping() -> str:
+            return 'pong'
+
+        await agent.run(f'my key is {_SECRET}')
+
+        assert len(requests) == 2
+        assert not any(_SECRET in request for request in requests)
+
+    async def test_a_later_block_rewrites_neither_a_copied_prompt_nor_the_history(self):
+        """A block ends the chain before any rewrite, so the redaction an earlier guard proposed is not applied."""
+        seen, model = _request_prompts_model()
+        agent = Agent(
+            model,
+            capabilities=[_CopyPrompt(), InputGuardrail(guard=[redact_secrets, lambda _: GuardrailResult.block('no')])],
+        )
+
+        result = await agent.run(f'my key is {_SECRET}')
+
+        assert result.output == 'no'
+        assert seen == []
+        part = result.all_messages()[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert part.content == f'my key is {_SECRET}'
 
 
 class TestInputGuardrailSequential:
@@ -1453,22 +1673,23 @@ class TestFindPromptPart:
     """Unit tests for `_find_prompt_part` and `_prompt_text`."""
 
     def test_returns_the_most_recent_prompt_in_the_history(self):
+        second = UserPromptPart(content='second')
         messages: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart(content='first')]),
             ModelResponse(parts=[TextPart(content='assistant')]),
-            ModelRequest(parts=[UserPromptPart(content='second')]),
+            ModelRequest(parts=[second]),
         ]
         run_ctx, _ = _build_ctx_and_req(messages=messages)
-        part = _find_prompt_part(run_ctx, messages)
-        assert part is not None
-        assert part.content == 'second'
+        assert _find_prompt_part(run_ctx, messages) == ([second], None)
 
     def test_skips_a_part_that_is_not_in_the_history(self):
         prompt = UserPromptPart(content='the prompt')
         history: list[ModelMessage] = [ModelRequest(parts=[prompt])]
         request: list[ModelMessage] = [ModelRequest(parts=[prompt, _added('reminder')])]
         run_ctx, _ = _build_ctx_and_req(messages=history)
-        assert _find_prompt_part(run_ctx, request) is prompt
+        (part,), original = _find_prompt_part(run_ctx, request)
+        assert part is prompt
+        assert original is None
 
     def test_a_copied_prompt_is_not_mistaken_for_an_earlier_turn(self):
         earlier = UserPromptPart(content='earlier turn', timestamp=_EARLIER)
@@ -1481,7 +1702,9 @@ class TestFindPromptPart:
         copied = dataclasses.replace(prompt)
         request: list[ModelMessage] = [*history[:2], ModelRequest(parts=[copied])]
         run_ctx, _ = _build_ctx_and_req(messages=history)
-        assert _find_prompt_part(run_ctx, request) is copied
+        (part,), original = _find_prompt_part(run_ctx, request)
+        assert part is copied
+        assert original is prompt
 
     def test_a_copied_prompt_is_found_before_a_part_appended_after_it(self):
         prompt = UserPromptPart(content='the prompt')
@@ -1489,7 +1712,9 @@ class TestFindPromptPart:
         history: list[ModelMessage] = [ModelRequest(parts=[prompt])]
         request: list[ModelMessage] = [ModelRequest(parts=[copied, _added('reminder')])]
         run_ctx, _ = _build_ctx_and_req(messages=history)
-        assert _find_prompt_part(run_ctx, request) is copied
+        (part,), original = _find_prompt_part(run_ctx, request)
+        assert part is copied
+        assert original is prompt
 
     def test_a_copied_prompt_is_found_after_a_part_put_in_front_of_it(self):
         """Position does not decide: a part an outer capability puts before the copy is not taken for it."""
@@ -1498,7 +1723,9 @@ class TestFindPromptPart:
         history: list[ModelMessage] = [ModelRequest(parts=[prompt])]
         request: list[ModelMessage] = [ModelRequest(parts=[_added('reminder'), copied])]
         run_ctx, _ = _build_ctx_and_req(messages=history)
-        assert _find_prompt_part(run_ctx, request) is copied
+        (part,), original = _find_prompt_part(run_ctx, request)
+        assert part is copied
+        assert original is prompt
 
     def test_a_copied_prompt_is_found_before_a_message_appended_after_it(self):
         """A whole request-only message appended after the prompt's does not take the copy's place."""
@@ -1507,7 +1734,9 @@ class TestFindPromptPart:
         history: list[ModelMessage] = [ModelRequest(parts=[prompt])]
         request: list[ModelMessage] = [ModelRequest(parts=[copied]), ModelRequest(parts=[_added('injected')])]
         run_ctx, _ = _build_ctx_and_req(messages=history)
-        assert _find_prompt_part(run_ctx, request) is copied
+        (part,), original = _find_prompt_part(run_ctx, request)
+        assert part is copied
+        assert original is prompt
 
     def test_a_copied_prompt_is_found_after_history_trimmed_from_the_start(self):
         earlier = UserPromptPart(content='earlier turn', timestamp=_EARLIER)
@@ -1520,7 +1749,9 @@ class TestFindPromptPart:
         copied = dataclasses.replace(prompt)
         request: list[ModelMessage] = [ModelRequest(parts=[copied]), ModelRequest(parts=[_added('injected')])]
         run_ctx, _ = _build_ctx_and_req(messages=history)
-        assert _find_prompt_part(run_ctx, request) is copied
+        (part,), original = _find_prompt_part(run_ctx, request)
+        assert part is copied
+        assert original is prompt
 
     def test_a_copy_with_changed_text_is_found_by_its_timestamp(self):
         prompt = UserPromptPart(content='the prompt')
@@ -1528,7 +1759,22 @@ class TestFindPromptPart:
         history: list[ModelMessage] = [ModelRequest(parts=[prompt])]
         request: list[ModelMessage] = [ModelRequest(parts=[_added('reminder'), changed, _added('note')])]
         run_ctx, _ = _build_ctx_and_req(messages=history)
-        assert _find_prompt_part(run_ctx, request) is changed
+        (part,), original = _find_prompt_part(run_ctx, request)
+        assert part is changed
+        assert original is prompt
+
+    def test_every_copy_with_the_prompt_text_is_returned(self):
+        """Two copies with the prompt's text cannot be told apart, and the verdict on that text applies to both."""
+        prompt = UserPromptPart(content='the prompt')
+        first, second = dataclasses.replace(prompt), dataclasses.replace(prompt)
+        history: list[ModelMessage] = [ModelRequest(parts=[prompt])]
+        request: list[ModelMessage] = [ModelRequest(parts=[first, _added('reminder'), second])]
+        run_ctx, _ = _build_ctx_and_req(messages=history)
+        parts, original = _find_prompt_part(run_ctx, request)
+        assert len(parts) == 2
+        assert parts[0] is first
+        assert parts[1] is second
+        assert original is prompt
 
     def test_the_prompt_text_decides_between_several_same_timestamp_copies(self):
         """When several parts carry the prompt's timestamp, the one with the prompt's text is the copy."""
@@ -1538,7 +1784,9 @@ class TestFindPromptPart:
         history: list[ModelMessage] = [ModelRequest(parts=[prompt])]
         request: list[ModelMessage] = [ModelRequest(parts=[other, copied])]
         run_ctx, _ = _build_ctx_and_req(messages=history)
-        assert _find_prompt_part(run_ctx, request) is copied
+        (part,), original = _find_prompt_part(run_ctx, request)
+        assert part is copied
+        assert original is prompt
 
     def test_falls_back_to_the_latest_part_when_the_copy_cannot_be_told_apart(self):
         prompt = UserPromptPart(content='the prompt')
@@ -1547,7 +1795,7 @@ class TestFindPromptPart:
         history: list[ModelMessage] = [ModelRequest(parts=[prompt])]
         request: list[ModelMessage] = [ModelRequest(parts=[first, second])]
         run_ctx, _ = _build_ctx_and_req(messages=history)
-        assert _find_prompt_part(run_ctx, request) is second
+        assert _find_prompt_part(run_ctx, request) == ([second], None)
 
     def test_falls_back_to_the_latest_part_when_the_request_was_rebuilt(self):
         prompt = UserPromptPart(content='the prompt')
@@ -1559,21 +1807,20 @@ class TestFindPromptPart:
         rebuilt = _added('rebuilt')
         request: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart(content='sys'), rebuilt])]
         run_ctx, _ = _build_ctx_and_req(messages=history)
-        assert _find_prompt_part(run_ctx, request) is rebuilt
+        (part,), original = _find_prompt_part(run_ctx, request)
+        assert part is rebuilt
+        assert original is None
 
     def test_falls_back_to_the_latest_part_when_none_is_in_the_history(self):
-        request: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart(content='copied prompt'), UserPromptPart(content='latest')])
-        ]
+        latest = UserPromptPart(content='latest')
+        request: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='copied prompt'), latest])]
         run_ctx, _ = _build_ctx_and_req(messages=[])
-        part = _find_prompt_part(run_ctx, request)
-        assert part is not None
-        assert part.content == 'latest'
+        assert _find_prompt_part(run_ctx, request) == ([latest], None)
 
     def test_returns_none_when_no_user_prompt_part(self):
         messages: list[ModelMessage] = [ModelResponse(parts=[TextPart(content='only model parts here')])]
         run_ctx, _ = _build_ctx_and_req(messages=messages)
-        assert _find_prompt_part(run_ctx, messages) is None
+        assert _find_prompt_part(run_ctx, messages) == ([], None)
 
     def test_stringifies_non_str_content(self):
         assert _prompt_text(['multimodal', 'content']) == str(['multimodal', 'content'])
@@ -1766,25 +2013,6 @@ class _AppendNote(AbstractCapability[Any]):
 
 
 @dataclasses.dataclass
-class _CopyPromptWithSecret(AbstractCapability[Any]):
-    """Replaces the user prompt part with a changed copy for this request only, leaving the history's part alone."""
-
-    async def wrap_model_request(
-        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
-    ) -> ModelResponse:
-        last = request_context.messages[-1]
-        assert isinstance(last, ModelRequest)
-        parts = [
-            dataclasses.replace(part, content=f'{part.content}\ncontext: {_SECRET}')
-            if isinstance(part, UserPromptPart)
-            else part
-            for part in last.parts
-        ]
-        request_context.messages[-1] = dataclasses.replace(last, parts=parts)
-        return await handler(request_context)
-
-
-@dataclasses.dataclass
 class _AppendSecretToPrompt(AbstractCapability[Any]):
     """Rewrites the user prompt part in place, as a prompt rewriter would."""
 
@@ -1796,6 +2024,120 @@ class _AppendSecretToPrompt(AbstractCapability[Any]):
         prompt = next(part for part in last.parts if isinstance(part, UserPromptPart))
         assert isinstance(prompt.content, str)
         prompt.content = f'{prompt.content}\ncontext: {_SECRET}'
+        return await handler(request_context)
+
+
+@dataclasses.dataclass
+class _CopyPrompt(AbstractCapability[Any]):
+    """Replaces the user prompt part of this request with a copy, as a capability that rebuilds parts would.
+
+    A `suffix` is added to the copy's text only, for request-only context.
+    """
+
+    suffix: str = ''
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        last = request_context.messages[-1]
+        assert isinstance(last, ModelRequest)
+        request_context.messages[-1] = dataclasses.replace(
+            last,
+            parts=[
+                dataclasses.replace(part, content=f'{part.content}{self.suffix}')
+                if isinstance(part, UserPromptPart)
+                else part
+                for part in last.parts
+            ],
+        )
+        return await handler(request_context)
+
+
+@dataclasses.dataclass
+class _CopyAndAppendRequest(AbstractCapability[Any]):
+    """Sends a copy of the prompt part and appends a request-only `ModelRequest` after its message."""
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        last = request_context.messages[-1]
+        assert isinstance(last, ModelRequest)
+        copied = [dataclasses.replace(part) if isinstance(part, UserPromptPart) else part for part in last.parts]
+        request_context.messages = [
+            *request_context.messages[:-1],
+            dataclasses.replace(last, parts=copied),
+            ModelRequest(parts=[UserPromptPart(content='injected note')]),
+        ]
+        return await handler(request_context)
+
+
+def _request_prompts_model_all() -> tuple[list[list[str]], FunctionModel]:
+    """A model that records the text of every `UserPromptPart` in every message of the first request."""
+    seen: list[list[str]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(
+            [
+                str(part.content)
+                for message in messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, UserPromptPart)
+            ]
+        )
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    return seen, FunctionModel(respond)
+
+
+@dataclasses.dataclass
+class _CopyWithChangedSibling(AbstractCapability[Any]):
+    """Sends a copy of the prompt part and a changed copy of it, both keeping its timestamp."""
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        last = request_context.messages[-1]
+        assert isinstance(last, ModelRequest)
+        prompts = [part for part in last.parts if isinstance(part, UserPromptPart)]
+        siblings = [dataclasses.replace(prompts[-1]), dataclasses.replace(prompts[-1], content='a changed copy')]
+        request_context.messages[-1] = dataclasses.replace(last, parts=siblings)
+        return await handler(request_context)
+
+
+@dataclasses.dataclass
+class _RepeatPrompt(AbstractCapability[Any]):
+    """Sends the model the user prompt part twice, as two copies, as a prompt-repetition capability would."""
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        last = request_context.messages[-1]
+        assert isinstance(last, ModelRequest)
+        copies = [dataclasses.replace(part) for part in last.parts if isinstance(part, UserPromptPart)]
+        repeated = [dataclasses.replace(part) for part in copies[-1:]]
+        request_context.messages[-1] = dataclasses.replace(last, parts=[*copies, *repeated])
+        return await handler(request_context)
+
+
+@dataclasses.dataclass
+class _FlattenPrompt(AbstractCapability[Any]):
+    """Sends the model a text copy of a multimodal prompt, keeping only its text parts."""
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        last = request_context.messages[-1]
+        assert isinstance(last, ModelRequest)
+        request_context.messages[-1] = dataclasses.replace(
+            last,
+            parts=[
+                dataclasses.replace(part, content=' '.join(c for c in part.content if isinstance(c, str)))
+                if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+                else part
+                for part in last.parts
+            ],
+        )
         return await handler(request_context)
 
 

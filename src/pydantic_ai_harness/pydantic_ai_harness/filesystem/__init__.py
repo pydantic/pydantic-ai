@@ -1,6 +1,7 @@
 """Filesystem capability: gives agents configurable, bounded file system access."""
 
 from pydantic_ai_harness.filesystem._capability import FileSystem
+from pydantic_ai_harness.filesystem._content import Replacement
 from pydantic_ai_harness.filesystem._events import (
     FILE_SYSTEM_EVENTS,
     MAX_DIFF_SOURCE_CHARS,
@@ -55,7 +56,6 @@ from pydantic_ai_harness.filesystem._toolset import (
     READ_ONLY_TOOL_NAMES,
     RIPGREP_TOOL_NAMES,
     FileSystemToolset,
-    Replacement,
 )
 
 __all__ = [
