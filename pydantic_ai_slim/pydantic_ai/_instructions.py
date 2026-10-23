@@ -436,6 +436,9 @@ class LoadedInstructionValues:
     _loading: dict[str, str] = field(default_factory=dict[str, str], repr=False)
     """The capability each `load_capability` call seen so far loads, keyed by tool call id."""
 
+    _changed: set[str] = field(default_factory=set[str], repr=False)
+    """The capabilities whose value an instruction change delivered, rather than their load return."""
+
     @classmethod
     def of(cls, messages: Iterable[ModelMessage]) -> LoadedInstructionValues:
         """The values at the end of `messages`."""
@@ -453,6 +456,7 @@ class LoadedInstructionValues:
         if isinstance(part, CompactionPart):
             self.values.clear()
             self._loading.clear()
+            self._changed.clear()
         elif isinstance(part, LoadCapabilityCallPart):
             if part.capability_id is not None:
                 self._loading[part.tool_call_id] = part.capability_id
@@ -461,17 +465,24 @@ class LoadedInstructionValues:
                 # Moved to the end, so the values stay in load order.
                 self.values.pop(capability_id, None)
                 self.values[capability_id] = part.instructions
+                self._changed.discard(capability_id)
 
     def tracks(self, part: ModelRequestPart | ModelResponsePart) -> TypeGuard[InstructionDeltaPart]:
         """Whether `part` is a change to a loaded capability's block."""
         return isinstance(part, InstructionDeltaPart) and _loaded_block_capability_id(part.id) in self.values
 
     def apply(self, change: InstructionDeltaPart) -> str | None:
-        """Fold in a change `tracks` accepted, returning the value it replaces."""
+        """Fold in a change `tracks` accepted, returning the value it replaces if an earlier change delivered it.
+
+        That's the only text the change may be rendered as a diff against. A load return is tool output, which
+        a UI client can edit and sanitization keeps, so a diff against it could quote the client's text in the
+        system voice: the first change after a load is rendered in full.
+        """
         capability_id = _loaded_block_capability_id(change.id)
         assert capability_id is not None
-        previous = self.values[capability_id]
+        previous = self.values[capability_id] if capability_id in self._changed else None
         self.values[capability_id] = change.content
+        self._changed.add(capability_id)
         return previous
 
 
