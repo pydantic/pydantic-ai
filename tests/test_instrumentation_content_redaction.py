@@ -78,6 +78,8 @@ with try_import() as mcp_installed:
     from pydantic_ai._mcp_compat import is_mcp_sdk_v2
     from pydantic_ai.mcp import MCPToolset
 
+MCP_SDK_V2 = mcp_installed() and is_mcp_sdk_v2()
+
 pytestmark = [
     pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed'),
 ]
@@ -410,7 +412,7 @@ async def test_a_url_mcp_toolsets_hostname_derived_id_is_masked(
     """
     app = guidance_server_app
     client: httpx.AsyncClient | httpx2.AsyncClient
-    if is_mcp_sdk_v2():
+    if MCP_SDK_V2:
         client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
     else:
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
