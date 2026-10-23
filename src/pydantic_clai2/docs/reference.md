@@ -2141,7 +2141,8 @@ the transcript. CLAI's own sessions show no label. CLAI records it as the tag
 an earlier CLAI has no such tag: it keeps its label while its subtitle still names the
 original session, as in `Claude Code session ID`, and the first background name after
 that adds the tag. One renamed by background naming before then shows no label until
-you open it again from `/resume claude` or `/resume codex` before continuing it.
+you open it again from the `/resume` browser or with `/resume claude|codex ID`, before
+continuing it in CLAI.
 
 #### Background names
 

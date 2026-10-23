@@ -511,6 +511,9 @@ def test_browser_says_where_sessions_came_from(tmp_path: Path) -> None:
     assert re.search(r'Codex copy +Codex · 4 msgs / 0 tok\n.*#flags\n', frame)
     assert re.search(r'CLAI session +2 msgs / 0 tok\n.*#cli', frame)
     assert '#from:' not in frame
+    # A narrow pane drops the tokens, label included, before it squeezes the title.
+    narrow = re.sub(r'\x1b\[[0-9;]*m', '', '\n'.join(browser.frame(width=40, height=20)))
+    assert re.search(r'Codex copy +Codex · 4 msgs\n', narrow)
 
 
 async def test_import_rejects_a_session_without_a_conversation(tmp_path: Path) -> None:
