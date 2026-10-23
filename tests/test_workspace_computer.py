@@ -8,7 +8,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import UserError
-from pydantic_ai.computer_use import ComputerArgs
+from pydantic_ai.computer_use import ComputerToolAction
 from pydantic_ai.workspaces import (
     Click,
     ComputerAction,
@@ -138,7 +138,7 @@ def test_has_display_follows_wrappers_without_io() -> None:
 
 
 def test_the_computer_tool_schema_requires_type_first_and_only_declared_fields() -> None:
-    schema = TypeAdapter(ComputerArgs).json_schema()['$defs']
+    schema = TypeAdapter(list[ComputerToolAction]).json_schema()['$defs']
     assert {'Click', 'Wait', 'Screenshot'} <= set(schema)
     assert all(definition['required'][0] == 'type' for name, definition in schema.items() if name != 'Point')
     # Every required name must exist: Gemini rejects a schema that requires an undeclared property.
