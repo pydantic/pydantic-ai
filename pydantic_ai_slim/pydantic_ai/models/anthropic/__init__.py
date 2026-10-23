@@ -16,9 +16,7 @@ from ..._thinking_part import render_replayed_thinking
 from ..._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from ..._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ...capabilities.abstract import AbstractCapability
-from ...exceptions import (
-    UserError,
-)
+from ...exceptions import UserError
 from ...messages import (
     ERROR_OUTCOMES,
     AudioUrl,
@@ -62,9 +60,7 @@ from ...native_tools import (
     WebFetchTool,
     WebSearchTool,
 )
-from ...native_tools._tool_search import (
-    ToolSearchTool,
-)
+from ...native_tools._tool_search import ToolSearchTool
 from ...output import StructuredOutputMode
 from ...profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ...profiles.anthropic import (
@@ -103,11 +99,7 @@ from .. import (
     get_user_agent,
 )
 from .._decode_errors import check_json_response, map_decode_errors
-from .._prompt_cache import (
-    excess_cache_points,
-    previous_tail_needing_breakpoint,
-    split_cache_setting,
-)
+from .._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint, split_cache_setting
 from .._sdk_retries import with_max_retries
 from .._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 
@@ -236,9 +228,7 @@ try:
         BetaWebSearchToolResultBlockParamContentParam,
         beta_tool_result_block_param,
     )
-    from anthropic.types.beta.beta_advisor_tool_result_block_param import (
-        Content as AdvisorToolResultBlockParamContent,
-    )
+    from anthropic.types.beta.beta_advisor_tool_result_block_param import Content as AdvisorToolResultBlockParamContent
     from anthropic.types.beta.beta_user_location_param import BetaUserLocationParam
     from anthropic.types.beta.beta_web_fetch_tool_result_block_param import (
         Content as WebFetchToolResultBlockParamContent,
@@ -256,10 +246,12 @@ try:
     )
     from ._citations import (
         check_citations_tool_choice,
+        citations_fit_text,
         citations_included,
         citations_provider_details,
         fetched_page,
         fetched_pages_from_history,
+        map_citation_for_replay,
         map_citations,
         with_document_citations,
     )
@@ -2505,7 +2497,25 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         for response_part in message.parts:
             if isinstance(response_part, TextPart):
                 if response_part.content:
-                    assistant_content_params.append(BetaTextBlockParam(text=response_part.content, type='text'))
+                    text_block = BetaTextBlockParam(text=response_part.content, type='text')
+                    raw_citations = (response_part.provider_details or {}).get('citations')
+                    if (
+                        response_part.provider_name == self.system
+                        and isinstance(raw_citations, list)
+                        and citations_fit_text(response_part)
+                        # Only web search citations are sent back, and clients without web search, such as Bedrock,
+                        # reject them.
+                        and WebSearchTool in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+                        and (
+                            citations := [
+                                param
+                                for citation in cast(list[object], raw_citations)
+                                if _utils.is_str_dict(citation) and (param := map_citation_for_replay(citation))
+                            ]
+                        )
+                    ):
+                        text_block['citations'] = citations
+                    assistant_content_params.append(text_block)
             elif isinstance(response_part, ToolCallPart):
                 assistant_content_params.append(
                     BetaToolUseBlockParam(

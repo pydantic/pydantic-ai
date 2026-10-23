@@ -11,6 +11,7 @@ from anthropic.types.beta import (
     BetaCitationPageLocation,
     BetaCitationsConfigParamParam,
     BetaCitationsWebSearchResultLocation,
+    BetaCitationWebSearchResultLocationParam,
     BetaMessageParam,
     BetaPlainTextSource,
     BetaRequestDocumentBlockParam,
@@ -30,6 +31,7 @@ from ...messages import (
     ModelMessage,
     ModelResponse,
     NativeToolReturnPart,
+    TextPart,
     WebCitationSource,
 )
 from ...native_tools import WebFetchTool
@@ -155,6 +157,43 @@ def map_citations(
 
 def citations_provider_details(citations: Sequence[BetaTextCitation]) -> dict[str, Any]:
     return {'citations': [citation.model_dump(mode='json') for citation in citations]}
+
+
+def citations_fit_text(part: TextPart) -> bool:
+    """Whether a text part is still the block Anthropic cited, so its citations can be sent back.
+
+    Anthropic cites whole blocks, so each citation covers the whole text. One that doesn't, because the text was
+    edited or joined with other text, such as by a UI adapter, would vouch for text it never cited.
+    """
+    return bool(part.citations) and all(
+        citation.anchor == ContentCitationAnchor(start=0, end=len(part.content)) for citation in part.citations or []
+    )
+
+
+def map_citation_for_replay(citation: dict[str, Any]) -> BetaCitationWebSearchResultLocationParam | None:
+    """Rebuild a web search citation Anthropic returned from its raw data on the text part, or return `None`.
+
+    Document citations aren't sent back: they name their document by its position in the request, which changes when
+    history is edited, and the citation can't tell which document it was.
+    """
+    if citation.get('type') != 'web_search_result_location':
+        return None
+    cited_text, url, title = citation.get('cited_text'), citation.get('url'), citation.get('title')
+    encrypted_index = citation.get('encrypted_index')
+    if (
+        not isinstance(cited_text, str)
+        or not isinstance(url, str)
+        or not isinstance(title, str | None)
+        or not isinstance(encrypted_index, str)
+    ):
+        return None
+    return BetaCitationWebSearchResultLocationParam(
+        type='web_search_result_location',
+        url=url,
+        title=title,
+        cited_text=cited_text,
+        encrypted_index=encrypted_index,
+    )
 
 
 def with_document_citations(
