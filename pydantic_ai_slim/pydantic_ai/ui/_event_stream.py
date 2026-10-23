@@ -883,7 +883,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         that rebuilds history from the event stream, so the next request keeps the prompt cache.
 
         Args:
-            event: The thinking effort delta event.
+            event: The model settings delta event.
         """
         return  # pragma: no cover
         yield  # Make this an async generator

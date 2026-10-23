@@ -1891,6 +1891,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # `_translate_thinking` sends an explicit effort instead of the one unified `thinking` maps to.
         return ('openai_reasoning_effort',) if model_settings.get('openai_reasoning_effort') else ()
 
+    def _overrides_unified_effort(self, model_settings: Mapping[str, object]) -> bool:
+        return bool(self._settings_overriding_thinking(model_settings))
+
     def _supports_tool_forcing(
         self, model_settings: OpenAIChatModelSettings, model_request_parameters: ModelRequestParameters
     ) -> bool:

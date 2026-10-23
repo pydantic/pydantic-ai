@@ -401,6 +401,13 @@ def test_anthropic_explicit_effort_overrides_the_unified_level():
     assert model._overrides_unified_effort({'thinking': 'high'}) is False  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+def test_openai_chat_explicit_effort_overrides_the_unified_level():
+    model = OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(api_key='test-key'))
+    assert model._overrides_unified_effort({'openai_reasoning_effort': 'high'}) is True  # pyright: ignore[reportPrivateUsage]
+    assert model._overrides_unified_effort({'thinking': 'high'}) is False  # pyright: ignore[reportPrivateUsage]
+
+
 def _effort_parts_by_request(messages: list[ModelMessage]) -> list[list[ModelSettingsDeltaPart]]:
     return [
         [part for part in message.parts if isinstance(part, ModelSettingsDeltaPart)]
