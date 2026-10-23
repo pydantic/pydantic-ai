@@ -99,7 +99,7 @@ _SANDBOX_LIMIT_MARKERS = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass
 class MontyServer(Generic[AgentDepsT]):
     """A Monty server that runs `CodeMode`'s sandboxed code instead of local workers.
 
@@ -134,9 +134,14 @@ class MontyServer(Generic[AgentDepsT]):
 
 
 def executor_from_sandbox_url(
-    owner: str, executor: MontyServer[AgentDepsT] | None, monty_sandbox_url: str | None
+    owner: str,
+    executor: MontyServer[AgentDepsT] | Mapping[str, Any] | None,
+    monty_sandbox_url: str | None,
 ) -> MontyServer[AgentDepsT] | None:
     """The `executor` to use, converting the deprecated `monty_sandbox_url` into a `MontyServer`."""
+    if isinstance(executor, Mapping):
+        # An agent spec passes the server's fields as a mapping.
+        executor = MontyServer[AgentDepsT](**executor)
     if monty_sandbox_url is None:
         return executor
     if executor is not None:
@@ -950,6 +955,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     # The key an `executor.auth` function returned for this run, set by `for_run`.
     _executor_auth: str | None = field(default=None, init=False, repr=False, compare=False)
+    _executor_auth_resolved: bool = field(default=False, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         # Converted once here, so the copies `for_run` and `for_run_step` make do not warn again.
@@ -964,12 +970,15 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         if self.executor is not None and callable(self.executor.auth):
             key = self.executor.auth(ctx)
             new_self._executor_auth = await key if inspect.isawaitable(key) else key
+            new_self._executor_auth_resolved = True
         return new_self
 
     def _connect_headers(self) -> dict[str, str] | None:
         """The headers this run sends when it dials `executor`, or `None` for local workers or none to send."""
         if self.executor is None:
             return None
+        if callable(self.executor.auth) and not self._executor_auth_resolved:
+            raise UserError('A `MontyServer.auth` function needs a run context: use the toolset through an agent run.')
         auth = self._executor_auth if callable(self.executor.auth) else self.executor.auth
         headers = dict(self.executor.headers or {})
         if auth:
@@ -1444,14 +1453,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     raise UserError(
                         f'The Monty server refused the connection ({rejected.group(1)}): '
                         'check the key passed as `MontyServer.auth`.'
-                    ) from e
+                    ) from None  # Monty's message quotes the URL, which may carry credentials
                 # A dial failure quotes the configured URL, which may carry credentials in its
-                # userinfo, path, or query; keep it and any header values out of the transcript-bound
-                # retry message.
+                # userinfo, path, or query; keep it out of the transcript-bound retry message.
                 error_text = error_text.replace(self.executor.url, '<MontyServer.url>')
-                headers = (run_state.connect_headers or {}).values()
-                for secret in filter(None, (value.removeprefix('Bearer ') for value in headers)):
-                    error_text = error_text.replace(secret, '<redacted>')
             raise ModelRetry(
                 'Code execution failed and the session was reset. Re-run any imports, recreate '
                 f'any state you need, and try again.\n{capture.prepend_to(error_text)}{started_calls()}'

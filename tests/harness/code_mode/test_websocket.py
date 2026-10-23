@@ -113,6 +113,23 @@ def test_deprecated_sandbox_url_becomes_executor() -> None:
     assert toolset.executor == MontyServer('wss://sandbox.example.com/monty')
 
 
+def test_spec_mapping_becomes_executor() -> None:
+    """An agent spec passes `executor` as a mapping of the server's fields."""
+    capability = CodeMode[None].from_spec(executor={'url': 'wss://sandbox.example.com/monty', 'auth': 'k-123'})
+    assert isinstance(capability, CodeMode)
+    assert capability.executor == MontyServer('wss://sandbox.example.com/monty', auth='k-123')
+
+
+async def test_auth_function_needs_a_run() -> None:
+    """Entered without `for_run`, a toolset has no run context to call `auth` with, so it says so."""
+    toolset = CodeModeToolset[None](
+        FunctionToolset(), executor=MontyServer('wss://sandbox.example.com/monty', auth=lambda ctx: 'k-123')
+    )
+    with pytest.raises(UserError, match='needs a run context'):
+        async with toolset:
+            pass  # pragma: no cover
+
+
 def test_deprecated_sandbox_url_and_executor_rejected() -> None:
     """Passing both forms is ambiguous, so it raises rather than picking one."""
     with pytest.raises(UserError, match='Pass `executor` only'):
@@ -206,6 +223,7 @@ async def test_refused_key_is_a_user_error() -> None:
             await agent.run('dial with a bad key', deps=_Deps(monty_key='k-run'))
 
     assert 'k-run' not in str(raised.value)
+    assert raised.value.__cause__ is None and raised.value.__suppress_context__
     (request,) = seen
     assert request.headers['Authorization'] == 'Bearer k-run'
     assert request.headers['X-Proxy'] == 'p-1'

@@ -561,7 +561,8 @@ To send a different key per run, pass a sync or async function of the run contex
 `auth=lambda ctx: ctx.deps.monty_key`. It is called once at the start of each run; inside a Temporal
 workflow it runs in workflow code, so it must return the same key when the workflow replays. Pass
 `headers` for anything else a proxy in front of the server needs. A server that refuses the key
-raises `UserError` rather than a retry for the model.
+raises `UserError` rather than a retry for the model. In an agent spec, write the server as a
+mapping: `executor: {url: 'wss://...', auth: '...'}`.
 
 Use `wss://` unless the server is on a network you trust. The connection carries the tool calls your
 agent executes and their results, so anyone who can intercept it can choose what your tools run.
