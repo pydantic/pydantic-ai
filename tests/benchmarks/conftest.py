@@ -40,7 +40,7 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
             ):
                 loaded.add(path.relative_to(root).as_posix())
     manifest = Path(__file__).with_name('dependencies.json')
-    if session.config.getoption('--benchmark-write-dependencies'):
+    if session.config.getoption('benchmark_write_dependencies'):
         manifest.write_text(json.dumps({'loaded': sorted(loaded)}, indent=2) + '\n')
         return
     dependencies = TypeAdapter(dict[str, list[str]]).validate_json(manifest.read_text())['loaded']

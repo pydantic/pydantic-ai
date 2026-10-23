@@ -35,7 +35,9 @@ def test_dependency_guard_detects_new_runtime_import(
     module.__file__ = str(tmp_path / 'pydantic_ai_slim' / 'pydantic_ai' / 'providers' / 'new.py')
     monkeypatch.setitem(sys.modules, module.__name__, module)
     monkeypatch.setattr(request.config, 'args', ['tests/benchmarks'])
-    monkeypatch.setattr(request.config.option, 'benchmark_write_dependencies', mode == 'write')
+    # Xdist workers can collect this conftest after receiving the controller's option namespace.
+    monkeypatch.delattr(request.config.option, 'benchmark_write_dependencies', raising=False)
+    monkeypatch.setattr(request.config.option, 'benchmark_write_dependencies', mode == 'write', raising=False)
     if mode == 'write':
         conftest.pytest_sessionfinish(request.session)
         assert json.loads(manifest.read_text()) == expected
