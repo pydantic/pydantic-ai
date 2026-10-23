@@ -26,6 +26,7 @@ from pydantic_ai import (
     BinaryContent,
     CachePoint,
     Citation,
+    CitationSource,
     ContentCitationAnchor,
     DocumentCitationSource,
     DocumentUrl,
@@ -440,6 +441,45 @@ def test_anthropic_character_citation_not_on_fetched_page_is_a_document_citation
             anchor=ContentCitationAnchor(start=0, end=6),
         )
     ]
+
+
+@pytest.mark.parametrize(
+    ('pages', 'url'),
+    [
+        pytest.param(
+            [('https://example.com/a', 'Terms: 30 days.'), ('https://example.com/a', 'Terms: 30 days.')],
+            'https://example.com/a',
+            id='same-page-fetched-twice',
+        ),
+        pytest.param(
+            [('https://example.com/a', 'Terms: 30 days.'), ('https://example.com/b', 'Terms: 30 days.')],
+            None,
+            id='two-pages-match',
+        ),
+    ],
+)
+def test_anthropic_fetched_page_url_only_when_one_page_matches(pages: list[tuple[str, str]], url: str | None):
+    """A citation only gets a fetched page's URL when one page matches; otherwise it stays a document source.
+
+    Unit test: no recording fetches two pages with the same text.
+    """
+    citation = BetaCitationCharLocation(
+        cited_text='Terms',
+        document_index=1,
+        document_title='Terms',
+        start_char_index=0,
+        end_char_index=5,
+        type='char_location',
+    )
+
+    [mapped] = _map_citations([citation], 'answer', pages) or []
+
+    expected: CitationSource = (
+        WebCitationSource(url, title='Terms', excerpts=['Terms'])
+        if url
+        else DocumentCitationSource(title='Terms', excerpts=['Terms'])
+    )
+    assert mapped.sources == [expected]
 
 
 def test_anthropic_citation_without_source_fields_is_skipped():
