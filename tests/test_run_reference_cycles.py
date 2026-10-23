@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import gc
 import weakref
 from collections.abc import AsyncIterator, Generator
@@ -12,11 +13,23 @@ from typing import Literal
 import pytest
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RequestUsage
+
+from ._inline_snapshot import snapshot
+from .conftest import IsNow, IsStr
 
 
 @dataclass
@@ -39,17 +52,19 @@ async def three_steps(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
     return ModelResponse(parts=[TextPart('done')])
 
 
-async def three_streamed_steps(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
-    if sum(isinstance(message, ModelResponse) for message in messages) < 3:
-        yield {0: DeltaToolCall(name='lookup', json_args='{}')}
-    else:
-        yield 'done'
-
-
 @pytest.mark.usefixtures('no_gc')
 @pytest.mark.parametrize('complete', [False, True])
 async def test_stream_releases_tool_context_cycles(complete: bool) -> None:
     managers: list[ToolManager[Deps]] = []
+
+    async def three_streamed_steps(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if sum(isinstance(message, ModelResponse) for message in messages) < 3:
+            yield {0: DeltaToolCall(name='lookup', json_args='{}')}
+        else:
+            yield 'done'
+
     agent = Agent(FunctionModel(stream_function=three_streamed_steps), deps_type=Deps)
 
     @agent.tool
@@ -130,7 +145,78 @@ async def test_retained_run_keeps_result_and_messages() -> None:
     assert run.result is not None
     assert run.result.output == 'done'
     assert run.result.all_messages() == run.all_messages()
-    assert len(run.all_messages()) == 8
+    assert run.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=datetime.UTC))],
+                timestamp=IsNow(tz=datetime.UTC),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='lookup', args={}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:three_steps:',
+                timestamp=IsNow(tz=datetime.UTC),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='lookup', content='result', timestamp=IsNow(tz=datetime.UTC), tool_call_id=IsStr()
+                    )
+                ],
+                timestamp=IsNow(tz=datetime.UTC),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='lookup', args={}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=52, output_tokens=4),
+                model_name='function:three_steps:',
+                timestamp=IsNow(tz=datetime.UTC),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='lookup', content='result', timestamp=IsNow(tz=datetime.UTC), tool_call_id=IsStr()
+                    )
+                ],
+                timestamp=IsNow(tz=datetime.UTC),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='lookup', args={}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=53, output_tokens=6),
+                model_name='function:three_steps:',
+                timestamp=IsNow(tz=datetime.UTC),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='lookup', content='result', timestamp=IsNow(tz=datetime.UTC), tool_call_id=IsStr()
+                    )
+                ],
+                timestamp=IsNow(tz=datetime.UTC),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=54, output_tokens=7),
+                model_name='function:three_steps:',
+                timestamp=IsNow(tz=datetime.UTC),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
     del run
     assert ref() is None
 
