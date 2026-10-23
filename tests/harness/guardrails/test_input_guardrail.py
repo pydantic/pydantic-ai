@@ -616,6 +616,62 @@ class TestInputGuardrailRedaction:
 
         assert seen == []
 
+    async def test_a_resumed_request_with_several_prompt_parts_is_screened_whole(self):
+        """Core reports the parts combined as `ctx.prompt`, so text in an earlier part cannot slip past the guard."""
+        seen_prompts: list[str] = []
+
+        def guard(prompt: str) -> GuardrailResult:
+            seen_prompts.append(prompt)
+            return GuardrailResult.block('blocked') if 'forbidden' in prompt else GuardrailResult.allow()
+
+        seen, model = _recording_model()
+        agent = Agent(model, capabilities=[InputGuardrail(guard=guard)])
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('forbidden text'), UserPromptPart('harmless')])
+        ]
+
+        result = await agent.run(None, message_history=history)
+
+        assert result.output == 'blocked'
+        assert seen_prompts == ["['forbidden text', 'harmless']"]
+        assert seen == []
+
+    async def test_replace_on_a_prompt_of_several_parts_is_a_usage_error(self):
+        """One replacement cannot be split back over the parts the guard saw as one text."""
+        seen, model = _recording_model()
+        agent = Agent(model, capabilities=[InputGuardrail(guard=lambda _: GuardrailResult.replace('[redacted]'))])
+        history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('my secret'), UserPromptPart('harmless')])]
+
+        with pytest.raises(UserError, match='prompt made of 2 parts'):
+            await agent.run(None, message_history=history)
+
+        assert seen == []
+
+    async def test_a_reminder_beside_a_single_part_prompt_is_not_part_of_it(self):
+        """A part an outer capability adds for this request only does not make the prompt multi-part."""
+        seen_prompts: list[str] = []
+
+        def guard(prompt: str) -> bool:
+            seen_prompts.append(prompt)
+            return True
+
+        sent: list[list[object]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append([part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)])
+            return ModelResponse(parts=[TextPart(content='ok')])
+
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[SystemReminders(reminders=[Reminder('be brief', tag=None)]), InputGuardrail(guard=guard)],
+        )
+        history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hello')])]
+
+        await agent.run(None, message_history=history)
+
+        assert len(sent) == 1 and sent[0][0] == 'hello' and 'be brief' in str(sent[0][1:])
+        assert seen_prompts == ['hello']
+
     async def test_a_multimodal_prompt_the_guard_allows_reaches_the_model_intact(self):
         seen, model = _recording_model()
         image = BinaryContent(data=b'\x89PNG', media_type='image/png')
