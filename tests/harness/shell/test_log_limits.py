@@ -96,7 +96,8 @@ class _ReadsHeldUntilWritten(_FirstReadMarked):
         if 'tail -c +' in script and 'tail -c +1 ' not in script:
             with anyio.fail_after(10):
                 while not (self.markers / 'written').exists():
-                    await anyio.sleep(0.01)
+                    # A slow event poller may not read again until `written` exists, so nothing is held.
+                    await anyio.sleep(0.01)  # pragma: lax no cover
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 

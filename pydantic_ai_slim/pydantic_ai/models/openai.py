@@ -151,6 +151,7 @@ from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_deco
 from ._prompt_cache import split_cache_setting
 from ._sdk_retries import with_max_retries
 from ._tool_choice import (
+    ResolvedToolChoice,
     resolve_tool_choice,
     support_tool_forcing,
     tool_forcing_unavailable_reason,
@@ -3559,10 +3560,34 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             for name, visibility in (model_request_parameters.tool_visibility or {}).items()
             if visibility == 'via_history' and name not in post_trim_revealed
         }
-        if lost_reveals:
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        # A stored response keeps its input, so whatever a request moves into or out of it carries over to every
+        # request that continues it. Decided by the setting, whatever it resolves to.
+        uses_server_side_state = (
+            model_settings.get('openai_previous_response_id') is not None
+            or model_settings.get('openai_conversation_id') is not None
+        )
+        # Before GPT-5.6, a `tool_choice` naming a tool that only an `additional_tools` item declares is
+        # rejected ("Tool choice '<name>' not found in 'tools' parameter."), by name and in `allowed_tools`
+        # alike, and so is declaring it in both places. A `'via_history'` tool the choice names is redeclared
+        # in `tools` for this request instead, and the item leaves it out. Only such a request pays the cache miss.
+        # With server-side state the item stays: a stored response without it would hide the tool from every
+        # request that continues it, and redeclaring a forced name next to an item it holds gets a 500.
+        chosen_reveals: set[str] = set()
+        if (
+            isinstance(resolved_tool_choice, tuple)
+            and not profile.get('openai_responses_tool_choice_accepts_additional_tools', False)
+            and not uses_server_side_state
+        ):
+            chosen_reveals = {
+                name
+                for name in resolved_tool_choice[1]
+                if model_request_parameters.visibility_of(name) == 'via_history'
+            }
+        if redeclared := lost_reveals | chosen_reveals:
             tool_visibility: dict[str, ToolVisibility] = {
                 **(model_request_parameters.tool_visibility or {}),
-                **dict.fromkeys(sorted(lost_reveals), 'visible'),
+                **dict.fromkeys(sorted(redeclared), 'visible'),
             }
             wire_request_parameters = replace(model_request_parameters, tool_visibility=tool_visibility)
         history_declared_tool_names = {
@@ -3570,7 +3595,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             for tool in wire_request_parameters.function_tools
             if wire_request_parameters.visibility_of(tool.name) == 'via_history'
         }
-        function_tools, tool_choice = self._get_responses_tool_choice(model_settings, wire_request_parameters)
+        function_tools, tool_choice = self._get_responses_tool_choice(
+            resolved_tool_choice, model_settings, wire_request_parameters
+        )
         extra_native_tools = model_settings.get('openai_native_tools', ())
         tools: list[responses.ToolParam] = (
             self._get_native_tools(wire_request_parameters) + list(extra_native_tools) + function_tools
@@ -3596,11 +3623,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             and profile.get('openai_supports_prompt_cache_breakpoints', False)
             # A `'user'` system prompt role can't be told apart from a real user turn.
             and system_prompt_role != 'user'
-            # A stored response keeps its input, so instructions relocated there would be replayed
-            # to any request that continues it, next to that request's own instructions. Only
-            # requests that don't use server-side state relocate them, whatever the setting resolves to.
-            and model_settings.get('openai_previous_response_id') is None
-            and model_settings.get('openai_conversation_id') is None
+            # Instructions relocated into a stored response's input would be replayed to any request
+            # that continues it, next to that request's own instructions.
+            and not uses_server_side_state
             # A dynamic system prompt changes between requests, so it can't sit in the cached prefix.
             and not _has_dynamic_system_prompt(messages)
             # A compaction item retains the window's leading system items, so they aren't resent.
@@ -4002,6 +4027,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     def _get_responses_tool_choice(
         self,
+        resolved_tool_choice: ResolvedToolChoice,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[responses.FunctionToolParam], ResponsesToolChoice | None]:
@@ -4012,8 +4038,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             Note: builtin tools are handled separately and should be added to this list.
         """
         openai_profile = self.profile
-
-        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
         tool_choice: ResponsesToolChoice | None
         if resolved_tool_choice in ('auto', 'none'):
@@ -4046,7 +4070,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     mode=effective_mode,
                     # Ignore names that are not currently available, keeping declaration order.
                     # `tool_defs` rather than `declared_tool_defs`: a `'via_history'` tool travels in an
-                    # `additional_tools` item instead of `tools`, and the API accepts it in `allowed_tools`.
+                    # `additional_tools` item instead of `tools`, which GPT-5.6 and later accept in
+                    # `allowed_tools`; for earlier models `_build_responses_request_params` redeclares it
+                    # unless the request uses server-side state.
                     tools=[
                         {'type': 'function', 'name': n} for n in model_request_parameters.tool_defs if n in tool_names
                     ],
