@@ -30,8 +30,8 @@ EXCLUDED_PACKAGES = (
 # module, and `griffecli` crashes against it. A bump of either package can reword or add findings, which changes
 # their fingerprints.
 GRIFFECLI_VERSION = '2.3.0'
-# Without it Griffe treats every import as private, so a `from ._module import Name as Name` re-export such as
-# `pydantic_ai.models.KnownModelName` is never checked.
+# Without it Griffe treats an import its module's `__all__` doesn't list as private, so a
+# `from ._module import Name as Name` re-export such as `pydantic_ai.models.KnownModelName` is never checked.
 GRIFFE_PUBLIC_REDUNDANT_ALIASES_VERSION = '0.3.2'
 _FINDING_RE = re.compile(r'^(?P<path>.*):(?P<line>\d+): (?P<message>.*)$')
 _ATTRIBUTE_VALUE_CHANGED = ': Attribute value was changed: '
