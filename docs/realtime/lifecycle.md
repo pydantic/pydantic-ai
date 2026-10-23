@@ -80,7 +80,7 @@ Without a policy, an unexpected provider close raises
 [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from the session iterator.
 
 On a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) the same policy applies to an
-unexpected drop (except on GPT-Live, whose sideband is not reconnected), but a *clean* close is treated as the browser hanging up: the sideband is a control
+unexpected drop, but a *clean* close is treated as the browser hanging up: the sideband is a control
 channel, so a normal close ends iteration without a session error or reconnect attempt even when a
 `reconnect` policy is set. The close frame alone can't distinguish a hangup from a
 WebSocket-terminating proxy closing the sideband cleanly mid-call (a restart or graceful rotation),
@@ -92,7 +92,12 @@ connections at the infrastructure layer rather than relying on the `reconnect` p
 On OpenAI, Azure OpenAI, and xAI, Pydantic AI replays local message history into the new session.
 Prior transcript turns survive; in-flight audio does not. GPT-Live does the same by default, or forks a
 session stored with `openai_live_store=True`, so the new session has the whole conversation on OpenAI's
-side.
+side. A GPT-Live WebRTC sideband re-attaches to the call's own session instead, which carried on while it
+was away: the conversation, the reply under way, and the tool calls waiting for their results all carry
+over, so it reports `state_restored=True`. Live sends a re-attached sideband the last few seconds of
+events again, which Pydantic AI skips where it already handled them; what happened before that, in a
+longer gap, is lost. So on a sideband re-attach, `state_restored=True` means the call's own session carried on,
+not that nothing was missed: a user turn or tool call from a longer gap is not in the history.
 
 Replay sends text, not audio, so a spoken user turn with no transcript (input transcription is off,
 or its transcript never arrived) replays as the text `[The user spoke; no transcript is available.]`.
