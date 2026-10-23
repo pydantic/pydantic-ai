@@ -54,7 +54,7 @@ When the default isn't obvious, **decide it with a live probe, not an opinion** 
 
 ## Step 3 — Capability gating
 
-Detect support with a provider-prefixed **`ModelProfile` flag**, and read only the flag where the feature is used — never an inline `isinstance`, model-name or `base_url` check (`profiles/AGENTS.md`). Gate at the layer(s) that actually vary:
+Detect support with a provider-prefixed **`ModelProfile` flag**. Where the feature is used, read only the flag or the adapter's own declaration — never an inline `isinstance`, model-name or `base_url` check (`profiles/AGENTS.md`). Gate at the layer(s) that actually vary:
 
 - **model/family** → a flag in the family's profile function (`google_supports_strict_tool_definition` in `profiles/google.py`);
 - **one provider's API** → a flag set in that provider's `Provider.model_profile()` (`bedrock_supports_prompt_caching` in `providers/bedrock.py`);
