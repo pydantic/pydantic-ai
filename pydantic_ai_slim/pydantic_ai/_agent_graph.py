@@ -312,8 +312,8 @@ def resolve_conversation(
     message_history: Sequence[_messages.ModelMessage] | None,
     usage: _usage.RunUsage | None,
     conversation_id: str | None,
-) -> tuple[Sequence[_messages.ModelMessage] | None, _usage.RunUsage | None, str | None]:
-    """Resolve a `conversation` argument into the three arguments it stands in for.
+) -> tuple[Sequence[_messages.ModelMessage] | None, _usage.RunUsage | None, str | None, str | None]:
+    """Resolve a `conversation` argument into the three arguments it stands in for, plus its revision.
 
     The usage is copied on the way out. A run accumulates into the `RunUsage` it is handed, so
     passing the conversation's own object would make running from a conversation change it —
@@ -321,7 +321,7 @@ def resolve_conversation(
     branch from. `copy` covers the mutable `details` mapping too, per `UsageBase.__copy__`.
     """
     if conversation is None:
-        return message_history, usage, conversation_id
+        return message_history, usage, conversation_id, None
 
     if conflicts := [
         name
@@ -338,7 +338,7 @@ def resolve_conversation(
             f'Pass the conversation on its own, or pass its pieces yourself.'
         )
 
-    return conversation.messages, copy(conversation.usage), conversation.conversation_id
+    return conversation.messages, copy(conversation.usage), conversation.conversation_id, conversation.revision
 
 
 def resolve_run_id(
@@ -396,6 +396,12 @@ class GraphAgentState:
     Resolved from the `conversation_id` argument to `Agent.run` (etc.), the most recent
     `conversation_id` on `message_history`, or a freshly generated UUID7. See the
     `Agent.iter` docstring for the resolution priority.
+    """
+    conversation_revision: str | None = None
+    """The [`revision`][pydantic_ai.conversation.Conversation.revision] of the conversation this run was given, if any.
+
+    Carried to the result's `conversation` unchanged, so a store can tell whether the conversation
+    was saved by someone else while this run was going.
     """
     metadata: dict[str, Any] | None = None
     last_max_tokens: int | None = None

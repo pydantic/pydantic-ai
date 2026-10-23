@@ -65,6 +65,7 @@ def test_plain_result_round_trip_and_serialized_shape() -> None:
     assert set(result_data) == snapshot(
         {
             'conversation_id',
+            'conversation_revision',
             'messages',
             'metadata',
             'new_message_index',
@@ -432,6 +433,10 @@ def test_validation_schema_publishes_the_shape_the_validator_accepts() -> None:
                 'usage': {'$ref': '#/$defs/RunUsage'},
                 'run_id': {'title': 'Run Id', 'type': 'string'},
                 'conversation_id': {'title': 'Conversation Id', 'type': 'string'},
+                'conversation_revision': {
+                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                    'title': 'Conversation Revision',
+                },
                 'metadata': {
                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                     'title': 'Metadata',
