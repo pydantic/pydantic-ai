@@ -644,6 +644,10 @@ class GoogleModel(Model[Client]):
         `google_thinking_levels` of `MINIMAL` and `HIGH`; on Vertex AI they keep the full scale. A
         `google_thinking_levels` set by the provider or the `profile=` argument takes precedence.
 
+        On Vertex AI, `gemini-3.1-pro-preview` can turn thinking off with `thinking_budget=0`, so it isn't
+        marked always-on there and gets `google_disables_thinking_with_zero_budget`, unless the provider or
+        the `profile=` argument already set that flag.
+
         `ImageGenerationTool` is only supported when `supports_image_output` is true, so a text model
         falls back to the local tool an `ImageGeneration` capability provides.
         """
@@ -663,6 +667,15 @@ class GoogleModel(Model[Client]):
             and not self._is_google_cloud
         ):
             return {**profile, 'google_thinking_levels': frozenset(('MINIMAL', 'HIGH'))}
+        # Google documents Gemini 3 Pro as unable to turn thinking off, and the Gemini API 400s
+        # `thinking_budget=0` for it, but Vertex (`global`) accepts it and returns no thoughts: verified live
+        # 2026-10-23 on `gemini-3.1-pro-preview` and its `-customtools` variant, 8 of 8 reasoning prompts.
+        if (
+            self._model_name.startswith('gemini-3.1-pro-preview')
+            and 'google_disables_thinking_with_zero_budget' not in profile
+            and self._is_google_cloud
+        ):
+            return {**profile, 'google_disables_thinking_with_zero_budget': True, 'thinking_always_enabled': False}
         return profile
 
     @classmethod
@@ -1060,6 +1073,8 @@ class GoogleModel(Model[Client]):
                 # ("Budget 0 is invalid. This model only works in thinking mode."), so it gets its minimum budget.
                 if profile.get('thinking_always_enabled', False):
                     return ThinkingConfigDict(thinking_budget=_GEMINI_2_5_PRO_MIN_THINKING_BUDGET)
+                return ThinkingConfigDict(thinking_budget=0)
+            if profile.get('google_disables_thinking_with_zero_budget', False):
                 return ThinkingConfigDict(thinking_budget=0)
             # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
             return ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile)))

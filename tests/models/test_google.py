@@ -611,6 +611,21 @@ async def test_google_model_vertex_labels(
     assert result.output == snapshot('The capital of France is Paris.\n')
 
 
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_google_vertex_gemini_3_1_pro_thinking_false_turns_thinking_off(
+    allow_model_requests: None, vertex_provider: GoogleProvider, vcr: Cassette
+):  # pragma: lax no cover
+    """Vertex accepts `thinking_budget=0` on Gemini 3.1 Pro, which the Gemini API rejects, and then doesn't think."""
+    model = GoogleModel('gemini-3.1-pro-preview', provider=vertex_provider)
+    agent = Agent(model=model, model_settings=ModelSettings(thinking=False))
+    result = await agent.run(
+        'A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost?'
+    )
+    assert single_request_body(vcr)['generationConfig']['thinkingConfig'] == {'thinking_budget': 0}
+    assert result.usage.output_reasoning_tokens == 0
+    assert not any(isinstance(part, ThinkingPart) for part in result.response.parts)
+
+
 async def test_google_model_iter_stream(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.')
