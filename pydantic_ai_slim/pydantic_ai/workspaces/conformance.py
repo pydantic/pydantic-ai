@@ -32,7 +32,7 @@ from .computer import (
 )
 from .protocol import (
     SupportsCommands,
-    SupportsComputerUse,
+    SupportsDisplay,
     SupportsRealpath,
     UnsupportedComputerActionError,
     WorkspaceBackend,
@@ -51,10 +51,10 @@ def _commands(backend: WorkspaceBackend) -> SupportsCommands:
     return backend
 
 
-def _computer(backend: WorkspaceBackend) -> SupportsComputerUse:
+def _computer(backend: WorkspaceBackend) -> SupportsDisplay:
     if not Workspace(backend).has_display:
         pytest.skip('backend has no display')
-    assert isinstance(backend, SupportsComputerUse)
+    assert isinstance(backend, SupportsDisplay)
     return backend
 
 
