@@ -37,7 +37,7 @@ _ERROR_TYPE_STATUS_CODES = {
 }
 
 
-def _error_status_code(error: APIStatusError) -> int:
+def error_status_code(error: APIStatusError) -> int:
     """The HTTP status of an Anthropic error, including one reported in a stream after a 200 response.
 
     An error event in a stream arrives after the response status was already 200, so the SDK raises it with that
@@ -65,7 +65,7 @@ def is_expired_container_error(error: APIStatusError) -> bool:
 
     Anthropic answers an expired container with a 404 `not_found_error`, and earlier with a 500.
     """
-    status_code = _error_status_code(error)
+    status_code = error_status_code(error)
     if status_code == 500:
         return True
     error_body = reported_error_body(error.body)
@@ -92,7 +92,7 @@ def map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> Ge
                 # Anthropic reports an exhausted prepaid balance as a 400, identifiable only by its message.
                 category = ModelQuotaExceededError
         provider_error_type = error_type if isinstance(error_type, str) else None
-        if (status_code := _error_status_code(e)) >= 400:
+        if (status_code := error_status_code(e)) >= 400:
             suggested_model_id = None
             if error_type == 'not_found_error' and error_message == f'model: {model_name}':
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)

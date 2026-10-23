@@ -201,13 +201,13 @@ _BUILTIN_TOOL_KIND_BY_SERVER_TOOL_USE_NAME: dict[str, str] = {
 }
 
 
-def _anthropic_code_execution_tool_provider_details(
+def anthropic_code_execution_tool_provider_details(
     tool_name: _AnthropicCodeExecutionProviderDetailToolName,
 ) -> dict[str, _AnthropicCodeExecutionProviderDetailToolName]:
     return {_ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL: tool_name}
 
 
-def _anthropic_caller_provider_details(
+def anthropic_caller_provider_details(
     caller: BetaDirectCaller | BetaServerToolCaller | BetaServerToolCaller20260120 | None,
 ) -> dict[str, Any]:
     # A `direct` caller is the implicit default (the server tool was invoked directly, not from within a
@@ -229,7 +229,7 @@ def add_anthropic_caller_param(
     if not _utils.is_str_dict(caller):
         return
 
-    # Re-emit whatever caller `_anthropic_caller_provider_details` stored. That producer only stores
+    # Re-emit whatever caller `anthropic_caller_provider_details` stored. That producer only stores
     # genuine SDK callers, so replaying the stored value as-is keeps the read/write paths symmetric and
     # forward-compatible with new caller types, rather than dropping any not in a hardcoded allow-list.
     block['caller'] = caller  # pyright: ignore[reportGeneralTypeIssues]
@@ -287,7 +287,7 @@ def map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) 
             tool_name=kind,
             args=tool_args,
             tool_call_id=item.id,
-            provider_details=_anthropic_caller_provider_details(item.caller) or None,
+            provider_details=anthropic_caller_provider_details(item.caller) or None,
         )
         if item.name == 'code_execution':
             part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
@@ -297,10 +297,10 @@ def map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) 
         # carried on the typed call part. bm25 emits `{"query": "..."}`, regex emits
         # `{"pattern": "..."}`. The variant goes on `provider_details` so same-provider
         # replay can pick the original tool name back out.
-        normalized_args = _normalize_tool_search_args(tool_args, item.name)
+        normalized_args = normalize_tool_search_args(tool_args, item.name)
         provider_details: dict[str, Any] = {
             'strategy': 'regex' if item.name == 'tool_search_tool_regex' else 'bm25',
-            **_anthropic_caller_provider_details(item.caller),
+            **anthropic_caller_provider_details(item.caller),
         }
         return NativeToolSearchCallPart(
             provider_name=provider_name,
@@ -315,8 +315,8 @@ def map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) 
             args=tool_args,
             tool_call_id=item.id,
             provider_details={
-                **_anthropic_code_execution_tool_provider_details('bash_code_execution'),
-                **_anthropic_caller_provider_details(item.caller),
+                **anthropic_code_execution_tool_provider_details('bash_code_execution'),
+                **anthropic_caller_provider_details(item.caller),
             },
         )
     if item.name == 'text_editor_code_execution':
@@ -326,8 +326,8 @@ def map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) 
             args=tool_args,
             tool_call_id=item.id,
             provider_details={
-                **_anthropic_code_execution_tool_provider_details('text_editor_code_execution'),
-                **_anthropic_caller_provider_details(item.caller),
+                **anthropic_code_execution_tool_provider_details('text_editor_code_execution'),
+                **anthropic_caller_provider_details(item.caller),
             },
         )
     if item.name == 'advisor':
@@ -338,12 +338,12 @@ def map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) 
             tool_name=AdvisorTool.kind,
             args=tool_args,
             tool_call_id=item.id,
-            provider_details=_anthropic_caller_provider_details(item.caller) or None,
+            provider_details=anthropic_caller_provider_details(item.caller) or None,
         )
     assert_never(item.name)
 
 
-def _normalize_tool_search_args(tool_args: dict[str, Any] | None, tool_name: str) -> ToolSearchArgs:
+def normalize_tool_search_args(tool_args: dict[str, Any] | None, tool_name: str) -> ToolSearchArgs:
     """Normalize an Anthropic `tool_search_tool_*.input` payload into `ToolSearchArgs`.
 
     Wire keys differ by variant: bm25 emits `{"query": "..."}`, regex emits
@@ -381,7 +381,7 @@ def finalize_streamed_tool_search_call_part(part: NativeToolSearchCallPart) -> N
     # input key (`pattern` vs `query`) is honored.
     strategy = (part.provider_details or {}).get('strategy')
     tool_name = 'tool_search_tool_regex' if strategy == 'regex' else 'tool_search_tool_bm25'
-    return replace(part, args=_normalize_tool_search_args(parsed, tool_name))
+    return replace(part, args=normalize_tool_search_args(parsed, tool_name))
 
 
 def map_tool_search_tool_result_block(
@@ -419,7 +419,7 @@ def map_web_search_tool_result_block(item: BetaWebSearchToolResultBlock, provide
         tool_name=WebSearchTool.kind,
         content=web_search_tool_result_content_ta.dump_python(item.content, mode='json'),
         tool_call_id=item.tool_use_id,
-        provider_details=_anthropic_caller_provider_details(item.caller) or None,
+        provider_details=anthropic_caller_provider_details(item.caller) or None,
     )
 
 
@@ -452,7 +452,7 @@ def map_bash_code_execution_tool_result_block(
         tool_name=CodeExecutionTool.kind,
         content=bash_code_execution_tool_result_content_ta.dump_python(item.content, mode='json'),
         tool_call_id=item.tool_use_id,
-        provider_details=_anthropic_code_execution_tool_provider_details('bash_code_execution'),
+        provider_details=anthropic_code_execution_tool_provider_details('bash_code_execution'),
     )
 
 
@@ -469,7 +469,7 @@ def map_text_editor_code_execution_tool_result_block(
         tool_name=CodeExecutionTool.kind,
         content=text_editor_code_execution_tool_result_content_ta.dump_python(item.content, mode='json'),
         tool_call_id=item.tool_use_id,
-        provider_details=_anthropic_code_execution_tool_provider_details('text_editor_code_execution'),
+        provider_details=anthropic_code_execution_tool_provider_details('text_editor_code_execution'),
     )
 
 
@@ -480,7 +480,7 @@ def map_web_fetch_tool_result_block(item: BetaWebFetchToolResultBlock, provider_
         # Store just the content field (BetaWebFetchBlock) which has {content, type, url, retrieved_at}
         content=item.content.model_dump(mode='json'),
         tool_call_id=item.tool_use_id,
-        provider_details=_anthropic_caller_provider_details(item.caller) or None,
+        provider_details=anthropic_caller_provider_details(item.caller) or None,
     )
 
 

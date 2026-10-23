@@ -56,7 +56,7 @@ def report_input_transformations(
 _COMPACTION_TOKEN_KEYS = ('input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens')
 
 
-def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) -> dict[str, int]:
+def extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) -> dict[str, int]:
     """Extract Anthropic usage into a flat dict, preserving the web search count and iteration totals.
 
     Anthropic's top-level `input_tokens`/`output_tokens` exclude both compaction and advisor iteration
@@ -194,7 +194,7 @@ def map_usage(
 
     # In streaming, usage appears in different events.
     # The values are cumulative, meaning new values should replace existing ones entirely.
-    details = (existing_usage.details if existing_usage else {}) | _extract_usage_details(response_usage)
+    details = (existing_usage.details if existing_usage else {}) | extract_usage_details(response_usage)
     # The one-hour count is capped at the total it's part of: after a compaction iteration's cache write, the final
     # event resets `cache_creation_input_tokens` without resending the split, so the start event's one-hour count
     # would otherwise survive, both in streamed usage and in a message accumulated from a stream. This assumes a

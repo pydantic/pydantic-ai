@@ -110,7 +110,6 @@ from .._prompt_cache import (
 )
 from .._sdk_retries import with_max_retries
 from .._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
-from ._containers import is_tool_result_only
 
 
 def _native_tool_is_a_tools_entry(tool: AbstractNativeTool) -> bool:
@@ -255,6 +254,7 @@ try:
         last_message_content,
         raise_earlier_breakpoint_ttls,
     )
+    from ._containers import is_tool_result_only
     from ._errors import is_expired_container_error, map_api_errors
     from ._message_passes import (
         anchor_system_messages,

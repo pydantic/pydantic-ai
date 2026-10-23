@@ -144,11 +144,11 @@ def place_system_messages_before_generation(anthropic_messages: list[BetaMessage
             target += 1
         if target == index + 1:
             continue
-        _leave_cache_boundary_behind(anthropic_messages, index)
+        leave_cache_boundary_behind(anthropic_messages, index)
         anthropic_messages.insert(target - 1, anthropic_messages.pop(index))
 
 
-def _leave_cache_boundary_behind(anthropic_messages: list[BetaMessageParam], index: int) -> None:
+def leave_cache_boundary_behind(anthropic_messages: list[BetaMessageParam], index: int) -> None:
     """Keep a sliding `system` entry's cache boundary at the position it was authored at.
 
     A `CachePoint` that ends a request lands on the entry's final block, because the entry renders

@@ -76,11 +76,11 @@ def blocks_before_request_scoped_text(
     `_map_message` builds has a list body.
     """
     blocks = cast(list[BetaContentBlockParam], message['content'])
-    end, remaining = _request_scoped_suffix_start(blocks, texts, _text_block_text)
+    end, remaining = _request_scoped_suffix_start(blocks, texts, text_block_text)
     return blocks[:end], remaining
 
 
-def _text_block_text(block: BetaContentBlockParam) -> str | None:
+def text_block_text(block: BetaContentBlockParam) -> str | None:
     return block.get('text') if is_str_dict(block) and block.get('type') == 'text' else None
 
 

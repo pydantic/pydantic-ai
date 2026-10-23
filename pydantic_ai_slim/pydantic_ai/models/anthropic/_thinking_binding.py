@@ -49,7 +49,7 @@ class AnthropicStaleThinkingBlockWarning(Warning):
     """
 
 
-def _can_add_drop_block(thinking: dict[str, object] | Omit) -> bool:
+def can_add_drop_block(thinking: dict[str, object] | Omit) -> bool:
     """Whether a request may add `drop_block` to its wire `thinking` object.
 
     Not when the caller set a `block_binding` of their own, and not for a thinking type other than
@@ -71,11 +71,11 @@ def is_stale_thinking_block_error(
     Scoped to models that bind and to requests that set no `block_binding` of their own, through the
     typed `thinking` config or through `extra_body`: an explicit `'error'` is a caller asking to
     fail, and an explicit `'drop_block'` cannot produce this error. A thinking type other than
-    `adaptive` is out too; see `_can_add_drop_block`.
+    `adaptive` is out too; see `can_add_drop_block`.
     """
     if error.status_code != 400 or not profile.get('anthropic_binds_thinking_blocks', False):
         return False
-    if not _can_add_drop_block(thinking):
+    if not can_add_drop_block(thinking):
         return False
     reported = reported_error_body(error.body)
     return (
@@ -99,7 +99,7 @@ def drop_stale_thinking_blocks(thinking: dict[str, object] | Omit) -> dict[str, 
     return {'type': 'adaptive', **configured, 'block_binding': _ANTHROPIC_DROP_STALE_THINKING_BLOCKS}
 
 
-def _history_dropped_stale_thinking_blocks(
+def history_dropped_stale_thinking_blocks(
     messages: list[ModelMessage],
     *,
     compaction_boundary: ModelResponse | None = None,
@@ -153,8 +153,8 @@ def thinking_with_stale_block_history(
     """Resolve request parameters that keep a prior request-local drop active for this history."""
     keep_dropping = (
         profile.get('anthropic_binds_thinking_blocks', False)
-        and _can_add_drop_block(effective_thinking)
-        and _history_dropped_stale_thinking_blocks(
+        and can_add_drop_block(effective_thinking)
+        and history_dropped_stale_thinking_blocks(
             messages,
             compaction_boundary=compaction_boundary,
             include_count_tokens_recovery=include_count_tokens_recovery,

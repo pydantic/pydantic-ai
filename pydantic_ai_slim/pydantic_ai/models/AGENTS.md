@@ -39,8 +39,8 @@ Rendering history into a request must be deterministic and must keep every messa
 <!-- rule:9 -->
 - Place provider-specific code in the provider's own module (`models/{provider}.py`, or the `models/{provider}/` package), not shared modules — add functions consistently across all providers even if some are simple — Maintains clear architectural boundaries and prevents shared compatibility layers from accumulating provider-specific logic that becomes hard to maintain
 - Turn a provider module into a `models/{provider}/` package once its module-level helpers form concerns that a reader of the `Model` class can skip. `models/anthropic/` is the reference layout:
-  - `__init__.py` holds the `Model` subclass and the public API. List every public name in `__all__`: the API docs render a name that `__init__.py` imports only when `__all__` lists it.
-  - Each other concern gets its own `_*.py` submodule. A submodule name that another module imports has no leading underscore. A name used only inside its submodule keeps the underscore.
+  - `__init__.py` defines the `Model` subclass and exposes the public API. Import a public name defined in a submodule into `__init__.py` and list it in `__all__`: the API docs render an imported name only when `__all__` lists it.
+  - Each other concern gets its own `_*.py` submodule. A function in a `_*.py` submodule has no leading underscore: the module name already marks it private.
   - The package's own `AGENTS.md` holds the rules for that provider alone. Add a `CLAUDE.md` symlink to it, and list it in the root `AGENTS.md`.
 
 A model should read reveal modes through `self.tool_deferral_mode` and
