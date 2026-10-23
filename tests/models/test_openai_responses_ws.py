@@ -52,6 +52,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import NativeOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers import Provider
+from pydantic_ai.providers.gateway import gateway_provider
 
 from ..conftest import try_import
 from ..durable_exec.test_durable_operation import (
@@ -2220,6 +2221,7 @@ async def test_sdk_api_errors_during_websocket_connection_are_mapped(
     ('setup', 'reason'),
     [
         pytest.param('azure', 'not supported for Azure OpenAI models', id='azure'),
+        pytest.param('gateway', "the Pydantic AI Gateway doesn't serve Responses WebSockets", id='gateway'),
         pytest.param(
             'openai-chatgpt',
             "the 'openai-chatgpt' provider adds its OAuth credentials to HTTP requests only",
@@ -2246,6 +2248,10 @@ async def test_setup_that_can_never_use_a_socket_warns_and_uses_http(
                 http_client=client,
             )
             model = websocket_model(AzureProvider(openai_client=azure_client))
+        elif setup == 'gateway':
+            model = websocket_model(
+                gateway_provider('openai', api_key='test', base_url='https://gateway.example/proxy', http_client=client)
+            )
         elif setup == 'openai-chatgpt':
             credentials = OpenAIChatGPTCredentials(
                 client_id='client', access_token='access', refresh_token='refresh', scope='chatgpt.tokens.use.direct'

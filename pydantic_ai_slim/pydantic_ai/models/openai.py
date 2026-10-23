@@ -2865,6 +2865,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Why this model can never send a request over a Responses WebSocket, or `None` when it can."""
         if _is_azure(self.client, self._provider.name):
             return 'Responses WebSockets are not supported for Azure OpenAI models.'
+        if self._provider.model_id_namespace.startswith('gateway/'):
+            # The gateway's handshake on its Responses route fails with a 503 while HTTP succeeds (live, 2026-10-22).
+            return "the Pydantic AI Gateway doesn't serve Responses WebSockets."
         if isinstance(self._provider, OAuthCredentialsProvider):
             return (
                 f'the {self.system!r} provider adds its OAuth credentials to HTTP requests only, '

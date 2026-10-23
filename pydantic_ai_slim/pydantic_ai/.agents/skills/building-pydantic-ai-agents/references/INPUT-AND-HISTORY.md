@@ -56,7 +56,7 @@ Important distinctions:
 
 ### Continue OpenAI Responses on a WebSocket
 
-Install `pydantic-ai-slim[openai-responses-websocket]`, then set `model_settings={'openai_transport': 'websocket'}` on the model, agent or run.
+Install `pydantic-ai-slim[openai-responses-websocket]`, then set `model_settings=OpenAIResponsesModelSettings(openai_transport='websocket')` on the model, agent or run (a plain dict fails type checking, since `openai_transport` isn't a `ModelSettings` key).
 Other models ignore the setting, so code that takes a model string doesn't change.
 Each run opens a socket on its first request and closes it at the end; wrap back-to-back runs, or an app's lifetime, in `async with agent:` or `async with model:` to keep one socket.
 Socket requests default `openai_previous_response_id` to `'auto'`, so tool round trips send only their new input. A single-request run pays the handshake for nothing.
