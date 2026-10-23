@@ -276,7 +276,8 @@ async def evaluate(
 
 def _guard_name(guard: GuardCallable) -> str:
     """A guard's name for a message, without its `repr`, which can show bound arguments such as keys."""
-    return getattr(guard, '__qualname__', type(guard).__name__)
+    target: object = guard.func if isinstance(guard, functools.partial) else guard
+    return getattr(target, '__qualname__', None) or type(target).__name__
 
 
 def is_guard_chain(guard: object) -> TypeIs[Sequence[GuardCallable]]:
