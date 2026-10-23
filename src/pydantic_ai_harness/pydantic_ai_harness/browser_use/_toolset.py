@@ -196,6 +196,31 @@ def _exclude_localhost_allowlist_entries(allowed_domains: list[str]) -> list[str
     return filtered
 
 
+def _session_prohibited_domains(
+    prohibited_domains: list[str] | set[str] | None,
+    *,
+    block_ip_addresses: bool,
+    allowed_domains: list[str] | set[str] | None,
+) -> list[str]:
+    """The profile's prohibited patterns plus the harness's `file://` and, when blocking IPs, localhost rules.
+
+    browser-use matches a prohibited list of `DOMAIN_OPTIMIZATION_THRESHOLD` or more entries
+    (which it converts to a set) by exact hostname only, which would disable those rules, so
+    such a list is rejected. An allowlist replaces the prohibited list in browser-use's
+    navigation guard, so the size only matters without one.
+    """
+    merged = list(prohibited_domains or ())
+    rules = [*_LOCAL_FILE_PATTERNS, *(_LOCALHOST_PATTERNS if block_ip_addresses else ())]
+    merged.extend(rule for rule in rules if rule not in merged)
+    if not allowed_domains and len(merged) >= DOMAIN_OPTIMIZATION_THRESHOLD:
+        raise ValueError(
+            f"`prohibited_domains` grows to {len(merged)} entries with the harness's own rules, but browser-use "
+            f'matches a list of {DOMAIN_OPTIMIZATION_THRESHOLD} or more entries by exact hostname only, which would '
+            'disable the `file://` and localhost rules. Use fewer entries, or set `allowed_domains`.'
+        )
+    return merged
+
+
 def _secret_scope(pattern: str) -> str:
     """The browser-use `sensitive_data` domain key matching the same sites as a normalized allowlist entry.
 
@@ -611,13 +636,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         headless = self._headless
         if headless is None and self._browser_profile is None:
             headless = True
-        browser_profile = self._browser_profile
-        if browser_profile is None:
-            browser_profile = BrowserProfile(prohibited_domains=_LOCAL_FILE_PATTERNS)
-        else:
-            prohibited_domains = list(browser_profile.prohibited_domains or ())
-            prohibited_domains.extend(pattern for pattern in _LOCAL_FILE_PATTERNS if pattern not in prohibited_domains)
-            browser_profile = browser_profile.model_copy(update={'prohibited_domains': prohibited_domains})
+        browser_profile = self._browser_profile if self._browser_profile is not None else BrowserProfile()
         # `BrowserSession` lets a non-`None` `allowed_domains` replace the profile's own
         # list, so the profile allowlist only reaches the navigation guard when the
         # direct one is absent. Normalization also runs in `BrowserUse.__post_init__`,
@@ -628,18 +647,19 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         )
         if allowed_domains is not None:
             allowed_domains = _normalize_allowed_domains(allowed_domains)
-        if self._sensitive_data is not None:
-            browser_profile = browser_profile.model_copy(update={'cross_origin_iframes': False})
-        if self._block_ip_addresses:
-            if allowed_domains is not None:
+            if self._block_ip_addresses:
                 allowed_domains = _exclude_localhost_allowlist_entries(allowed_domains)
-            prohibited_domains = list(browser_profile.prohibited_domains or ())
-            prohibited_domains.extend(pattern for pattern in _LOCALHOST_PATTERNS if pattern not in prohibited_domains)
-            browser_profile = browser_profile.model_copy(
-                update={'block_ip_addresses': True, 'prohibited_domains': prohibited_domains}
-            )
-        else:
-            browser_profile = browser_profile.model_copy(update={'block_ip_addresses': False})
+        update: dict[str, object] = {
+            'block_ip_addresses': self._block_ip_addresses,
+            'prohibited_domains': _session_prohibited_domains(
+                browser_profile.prohibited_domains,
+                block_ip_addresses=self._block_ip_addresses,
+                allowed_domains=allowed_domains,
+            ),
+        }
+        if self._sensitive_data is not None:
+            update['cross_origin_iframes'] = False
+        browser_profile = browser_profile.model_copy(update=update)
         return BrowserSession(
             cdp_url=self._cdp_url,
             browser_profile=browser_profile,
@@ -674,8 +694,8 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         """The tool result for a finished run: text, schema JSON, or a failure report."""
         result = history.final_result()
         if result is None:
-            step_errors = [self._redact(error) for error in history.errors() if error]
-            detail = '; '.join(step_errors) if step_errors else 'no further details'
+            step_errors = [error for error in history.errors() if error]
+            detail = self._redact('; '.join(step_errors)) if step_errors else 'no further details'
             return f'The browser agent stopped without producing a result ({detail}).'
         answer = self._render_answer(result, history)
         # The verdict is applied to whatever the answer turned out to be, schema JSON included:
@@ -743,9 +763,23 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         return self._render_result(history)
 
     def _redact_json(self, value: JsonValue) -> JsonValue:
-        """`value` with every secret in its strings replaced; any other leaf holding one becomes a redacted string."""
+        """`value` with every secret in its strings replaced; any other leaf holding one becomes a redacted string.
+
+        Raises `ModelRetry` when two keys of one object redact to the same text, which a
+        placeholder shared by domain-scoped secrets allows, rather than dropping one of them.
+        """
         if isinstance(value, dict):
-            return {self._redact(key): self._redact_json(item) for key, item in value.items()}
+            redacted_object: dict[str, JsonValue] = {}
+            for key, item in value.items():
+                redacted_key = self._redact(key)
+                if redacted_key in redacted_object:
+                    raise ModelRetry(
+                        'The browser agent finished, but more than one key in its result redacts to '
+                        f'`{redacted_key}`, so redacting it would drop an entry. '
+                        'Ask for a result that is not keyed by secret values.'
+                    )
+                redacted_object[redacted_key] = self._redact_json(item)
+            return redacted_object
         if isinstance(value, list):
             return [self._redact_json(item) for item in value]
         if isinstance(value, str):
