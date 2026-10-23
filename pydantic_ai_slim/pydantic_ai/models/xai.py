@@ -1691,7 +1691,8 @@ def _create_tool_call_part(
         provider_name: The provider name for builtin tools.
         message_role: The role of the message containing the tool call, if available. For server-side tools in
             non-streamed responses, xAI emits tool *calls* on `ROLE_ASSISTANT` messages and tool *results* on
-            `ROLE_TOOL` messages; in those cases, role should take precedence over tool status.
+            `ROLE_TOOL` messages, so for a server-side tool `ROLE_TOOL` gives the return part and any other role the
+            call part.
 
     Returns:
         Tuple of (vendor_part_id, part).
