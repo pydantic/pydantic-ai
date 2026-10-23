@@ -15,7 +15,7 @@ from pydantic_ai_harness.localstack._toolset import LocalStackOperations, LocalS
 
 _INSTRUCTIONS = (
     'You have access to an emulated AWS environment powered by LocalStack at {endpoint_url}. '
-    'Use the `aws_cli` tool to run AWS CLI commands against it — pass the command without the '
+    'Use the `aws_cli` tool to run AWS CLI commands against it. Pass the command without the '
     'leading `aws` and without `--endpoint-url`; the endpoint, region, and credentials are '
     'injected automatically. Use `localstack_health` to see which AWS services are available. '
     'This is a local emulator: resources are not real AWS resources and may be reset when '
@@ -28,7 +28,7 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     """Access to an emulated AWS environment via LocalStack.
 
     Gives the agent AWS CLI tooling wired to a running LocalStack instance, so it
-    can provision and interact with AWS services (S3, DynamoDB, SQS, Lambda, …)
+    can provision and interact with AWS services (S3, DynamoDB, SQS, Lambda, etc.)
     without touching real AWS. Start LocalStack separately (`localstack start` or
     its Docker image) before running the agent, or set `manage_container=True`
     to have the capability start a container for you.
