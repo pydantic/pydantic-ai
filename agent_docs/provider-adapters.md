@@ -6,7 +6,10 @@
 
 Every cross-provider feature reaches every adapter. When an adapter absorbs one as another branch inside its mapper, the mapper nests deeper with each feature, and each adapter solves the same concern its own way. These rules give each concern one shape, so a new feature adds one flat arm per adapter.
 
-Apply them to the code you add. Where existing code diverges, leave it unless your change is the one that aligns it: aligning an adapter usually changes the request bytes it sends, and the root `AGENTS.md` scope rules govern that change.
+Apply them to the code you add. Aligning existing code that diverges is its own PR, never part of an unrelated change.
+
+- A structural alignment, such as moving a mapper to the dispatch shape or onto a shared cache helper, keeps request bodies byte-identical. Prove it by diffing the request bodies captured on `main` and on the branch. Cassette replay doesn't compare bodies (`tests/conftest.py::RequestCapture`), so a green replay proves nothing.
+- A behavioral alignment, such as dropping empty thinking or raising on an unknown native tool kind, changes what the adapter sends. Treat it as a fix under the root `AGENTS.md` scope rules, and call out each change it makes.
 
 Paths are relative to `pydantic_ai_slim/pydantic_ai/`.
 
