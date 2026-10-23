@@ -144,13 +144,18 @@ class TestLinear:
         assert ids == ['tenant-linear']
 
     @pytest.mark.parametrize('id', [None, ''])
-    def test_unset_id_means_the_default(self, id: str | None) -> None:
-        capability = Linear[None](id=id, auth='linear-token')
-        assert (capability.id, capability.get_toolset().id) == ('linear', 'linear')
+    def test_unset_id_connects_under_the_default_id(self, id: str | None) -> None:
+        assert Linear[None](id=id, auth='linear-token').get_toolset().id == 'linear'
 
-    def test_unset_ids_that_differ_raise_when_the_agent_is_built(self) -> None:
-        with pytest.raises(UserError, match="Capability id 'linear' is used by multiple Linear capabilities"):
-            Agent(TestModel(), capabilities=[Linear(id=None, auth='a'), Linear(id=None, auth='b')])
+    def test_unset_ids_are_not_combined(self) -> None:
+        # Without an id there is nothing to combine on, so differing settings keep working as separate connections.
+        Agent(
+            TestModel(),
+            capabilities=[
+                Linear(id=None, auth='a', include_instructions=False),
+                Linear(id=None, auth='b', include_instructions=False),
+            ],
+        )
 
     def test_client_accepts_empty_auth(self) -> None:
         # The `auth` table documents `''` as unset, so it does not conflict with `client`.

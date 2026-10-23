@@ -28,8 +28,8 @@ class Linear(AbstractCapability[AgentDepsT]):
     """Stable capability ID, also used for the Linear MCP toolset, so `defer_loading=True` needs none.
 
     Each `Linear` is one connection to one Linear account. Two with the same `id` and settings are one connection, and
-    two with the same `id` but different settings raise. Give each its own `id` to keep both. `None` or `''` means
-    the default, `linear`.
+    two with the same `id` but different settings raise. Give each its own `id` to keep both. With `None` or `''`
+    the toolset still uses `linear`, but the capability is not combined with others.
     """
     description: str | None = 'Use Linear issues, projects, and teams.'
     auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
@@ -48,8 +48,6 @@ class Linear(AbstractCapability[AgentDepsT]):
     """Your own MCP client or transport, for full control of the connection. It cannot be combined with `auth`."""
 
     def __post_init__(self) -> None:
-        # The toolset always needs an id, so normalize here and let `combine` see the id the toolset uses.
-        self.id = self.id or _ID
         if self.client is not None and self.auth:
             raise UserError('`client` owns the connection, so it cannot be combined with `auth`.')
 
@@ -60,9 +58,10 @@ class Linear(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the Linear tools."""
+        id = self.id or _ID
         if self.client is not None:
             toolset: AbstractToolset[AgentDepsT] = MCPToolset(
-                self.client, id=self.id, include_instructions=self.include_instructions
+                self.client, id=id, include_instructions=self.include_instructions
             )
             if self.read_only:
                 return read_only_toolset(toolset)
@@ -70,7 +69,7 @@ class Linear(AbstractCapability[AgentDepsT]):
         if callable(self.auth):
             token = self.auth
             # Registered once under a fixed `id`, as durable execution requires; filled per run.
-            return DynamicToolset(lambda ctx: self._connect_for_run(token(ctx)), per_run_step=False, id=self.id)
+            return DynamicToolset(lambda ctx: self._connect_for_run(token(ctx)), per_run_step=False, id=id)
         return self._connect(self.auth)
 
     def _connect_for_run(self, auth: str | None) -> MCPToolset[AgentDepsT] | None:
@@ -82,7 +81,7 @@ class Linear(AbstractCapability[AgentDepsT]):
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
         return MCPToolset(
             'https://mcp.linear.app/mcp/readonly' if self.read_only else 'https://mcp.linear.app/mcp',
-            id=self.id,
+            id=self.id or _ID,
             auth=credential(auth, env='LINEAR_ACCESS_TOKEN', service='Linear'),
             include_instructions=self.include_instructions,
         )
