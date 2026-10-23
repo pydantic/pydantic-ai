@@ -1435,6 +1435,17 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
             id='expired-token',
         ),
         pytest.param(
+            # Transient despite its 403: AWS says to try again once the Marketplace subscription is processed.
+            lambda: _bedrock_error(
+                'MPAgreementBeingCreated',
+                'Your AWS Marketplace subscription for this model is still being processed. Try again after 15 minutes.',
+                403,
+            ),
+            {ModelHTTPError, ModelUnavailableError},
+            {'status_code': 403, 'provider_error_code': 'MPAgreementBeingCreated'},
+            id='marketplace-agreement-being-created',
+        ),
+        pytest.param(
             lambda: _bedrock_error('ResourceNotFoundException', 'Model not found.', 404),
             _NOT_FOUND,
             {'status_code': 404, 'provider_error_code': 'ResourceNotFoundException'},

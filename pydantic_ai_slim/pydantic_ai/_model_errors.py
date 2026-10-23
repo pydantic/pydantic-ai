@@ -196,6 +196,11 @@ def bedrock_code_category(code: str | None, message: object) -> HTTPErrorCategor
             return ModelServerError
         case 'serviceunavailableexception' | 'modelnotreadyexception':
             return ModelOverloadedError if says_overloaded(message) else ModelUnavailableError
+        case 'mpagreementbeingcreated':
+            # A 403 while the account's AWS Marketplace subscription to the model is still being processed; AWS says
+            # to try again after 15 minutes, so it's not a permanent authorization failure.
+            # https://docs.aws.amazon.com/bedrock/latest/userguide/troubleshooting-api-error-codes.html#ts-mp-agreement-created
+            return ModelUnavailableError
         case 'validationexception' if isinstance(message, str) and any(
             m in message.lower() for m in _BEDROCK_CONTEXT_WINDOW_MESSAGES
         ):

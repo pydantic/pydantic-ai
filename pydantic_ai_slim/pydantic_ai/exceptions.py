@@ -777,6 +777,10 @@ class ModelAuthenticationError(ModelRequestRejectedError):
     `AccessDeniedException`, `UnrecognizedClientException` or `ExpiredTokenException`. Check the API key or
     credentials, and that they have access to the model. A subclass of
     [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError].
+
+    A 403 the provider says to retry is not one: Bedrock's `MPAgreementBeingCreated`, sent while the account's AWS
+    Marketplace subscription to the model is being processed, is a
+    [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError].
     """
 
 
