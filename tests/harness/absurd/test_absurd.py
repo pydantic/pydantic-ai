@@ -7,7 +7,7 @@ disambiguation and checkpoint storage are Absurd's own.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Callable
 from datetime import datetime
 from typing import Any
 
@@ -84,6 +84,12 @@ def _tool_calling_model(*calls: ToolCallPart, counter: dict[str, int] | None = N
         return ModelResponse(parts=list(calls))
 
     return FunctionModel(fn, model_name='fn')
+
+
+def _circular_dict() -> dict[str, object]:
+    value: dict[str, object] = {}
+    value['self'] = value
+    return value
 
 
 def _late_toolset(calls: dict[str, int]) -> FunctionToolset[object]:
@@ -653,7 +659,17 @@ class TestToolResults:
         assert returned(second.all_messages()) == returned(first.all_messages()) == [value]
         assert calls['calls'] == 1
 
-    async def test_unserializable_result_fails_without_rerunning_the_tool(self, absurd: AsyncAbsurd) -> None:
+    @pytest.mark.parametrize(
+        ('make_result', 'reason'),
+        [
+            (object, "Unable to serialize unknown type: <class 'object'>"),
+            (_circular_dict, 'Circular reference detected (id repeated)'),
+        ],
+        ids=['unknown-type', 'circular'],
+    )
+    async def test_unserializable_result_fails_without_rerunning_the_tool(
+        self, absurd: AsyncAbsurd, make_result: Callable[[], object], reason: str
+    ) -> None:
         # The tool has already run when its result fails to serialize, so the failure is checkpointed
         # and a retry raises it again instead of repeating the tool's side effect.
         calls = {'calls': 0}
@@ -662,7 +678,7 @@ class TestToolResults:
         @toolset.tool_plain
         def charge() -> object:
             calls['calls'] += 1
-            return object()
+            return make_result()
 
         agent = Agent(
             _tool_calling_model(ToolCallPart('charge')),
@@ -675,14 +691,13 @@ class TestToolResults:
             with pytest.raises(UnserializableStepResultError, match='could not be serialized'):
                 await agent.run('go')
         stored = await checkpoints(absurd, ctx.task_id)
-        assert stored['opaque__function_toolset__tools.call_tool:charge'] == snapshot(
-            {
-                '__pydantic_ai_harness_absurd_tool_result__': {
-                    'kind': 'unserializable',
-                    'error': "Absurd stores each step result as JSON, and this one could not be serialized: Unable to serialize unknown type: <class 'object'>. If it is a tool result, return a JSON-serializable value from the tool.",
-                }
+        assert stored['opaque__function_toolset__tools.call_tool:charge'] == {
+            '__pydantic_ai_harness_absurd_tool_result__': {
+                'kind': 'unserializable',
+                'error': f'Absurd stores each step result as JSON, and this one could not be serialized: {reason}. '
+                'If it is a tool result, return a JSON-serializable value from the tool.',
             }
-        )
+        }
         async with reenter_running_task(absurd, ctx.task_id):
             with pytest.raises(UnserializableStepResultError, match='could not be serialized'):
                 await agent.run('go')
