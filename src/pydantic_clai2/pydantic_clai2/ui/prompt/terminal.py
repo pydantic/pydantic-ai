@@ -169,6 +169,7 @@ class Terminal(Generic[DepsT, OutputT]):
             pinned=lambda: self._shown().speculation.row(),
             spinner=lambda: self._shown().spinners.active(),
             panel=lambda glyph: (*self._shown().tasks.rows(glyph), *self._shown().forks.rows(glyph)),
+            queue_changed=lambda: self._shown().live_session.changed(),
         )
         try:
             async with self.editor.opened():

@@ -15,6 +15,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai_harness.subagents import is_task_report
 from pydantic_clai2.plugins import Conversation
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
@@ -59,7 +60,7 @@ def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
             isinstance(part, (ToolReturnPart, RetryFeedbackPart)) for part in message.parts
         ):
             continue
-        prompts = [part for part in message.parts if isinstance(part, UserPromptPart)]
+        prompts = [part for part in message.parts if isinstance(part, UserPromptPart) and not is_task_report(part)]
         if not prompts:
             continue
         content = [
