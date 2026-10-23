@@ -101,6 +101,6 @@ agent = Agent(model, output_type=NativeOutput(CityLocation))
 !!! note "Ollama Cloud does not enforce `json_schema` yet"
     Ollama Cloud's inference backend accepts `response_format` with `json_schema` without error but does not apply grammar-constrained decoding, so schemas are silently not enforced. See [ollama/ollama#12362](https://github.com/ollama/ollama/issues/12362) for the upstream tracking issue.
 
-    When [`OllamaModel`][pydantic_ai.models.ollama.OllamaModel] detects a Cloud path — either a `base_url` on `ollama.com` or a model name ending in `-cloud` — it automatically disables `supports_json_schema_output` on the profile.
+    When [`OllamaModel`][pydantic_ai.models.ollama.OllamaModel] detects a Cloud path — either a `base_url` on `ollama.com` or a model name ending in `-cloud` or `:cloud` (such as `gpt-oss:20b-cloud` or `glm-5.3:cloud`) — it automatically disables `supports_json_schema_output` on the profile.
 
     If you use [`NativeOutput`][pydantic_ai.output.NativeOutput] with an Ollama Cloud model, you'll get a clear [`UserError`][pydantic_ai.exceptions.UserError] instead of a silent retry loop. Use the default [`ToolOutput`][pydantic_ai.output.ToolOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput] instead — both work on Cloud.
