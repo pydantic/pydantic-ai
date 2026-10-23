@@ -259,7 +259,9 @@ Gotchas:
   `async with BrowserUse(...) as browser:`. Under `TemporalDurability`, `Agent(...)` raises
   `UserError` with either scope (its toolset has no stable id).
 - Default `'call'` scope launches one Chromium per concurrent call.
-- `file://` navigation is always prohibited. The default factory removes `read_file` and `upload_file`.
+- `file://` navigation is always prohibited. Without an allowlist, a `browser_profile.prohibited_domains`
+  that reaches 100 entries with the harness's `file://` and localhost rules raises `ValueError`.
+  The default factory removes `read_file` and `upload_file`.
   With `sensitive_data` set, every factory's `settings.tools` drops `evaluate`; a factory that builds
   its own `Tools` must drop it too.
 - browser-use's per-run telemetry event (task, visited URLs, result) is off for the capability's

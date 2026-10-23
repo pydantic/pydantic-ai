@@ -1992,10 +1992,19 @@ class TestLocalFileNavigation:
         assert await self._navigation_allowed(session, 'FILE://localhost/etc/passwd') is False
         assert await self._navigation_allowed(session, 'https://site1.com/') is False
 
-    def test_an_allowlist_makes_a_large_prohibited_list_irrelevant(self) -> None:
+    async def test_an_allowlist_makes_a_large_prohibited_list_irrelevant(self) -> None:
         """browser-use ignores the prohibited list once an allowlist is set."""
         profile = BrowserProfile(prohibited_domains=[f'site{index}.com' for index in range(120)])
-        BrowserUse[None](browser_profile=profile, allowed_domains=['example.com'])
+        factory = _success_factory()
+        await (
+            BrowserUse[None](browser_profile=profile, allowed_domains=['example.com'], browser_agent=factory)
+            .get_toolset()
+            .browse_web(_ctx(), 'task')
+        )
+        session = factory.requests[0].browser_session
+
+        assert await self._navigation_allowed(session, 'https://example.com/') is True
+        assert await self._navigation_allowed(session, 'FILE://localhost/etc/passwd') is False
 
     async def test_a_directly_built_toolset_rejects_a_large_prohibited_list(self) -> None:
         toolset = BrowserUseToolset[None](
