@@ -9,8 +9,8 @@ from typing import Literal
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, read_only_toolset
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset
+from pydantic_ai_harness._mcp import credential, per_run_connection, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset
@@ -95,15 +95,11 @@ class GoogleWorkspace(AbstractCapability[AgentDepsT]):
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the tools for the selected products, with names prefixed by product."""
         toolset = (
-            DynamicToolset(self._connect_for_run, per_run_step=False, id=self.id)
+            per_run_connection(self.auth, self._connect, id=self.id, expects='an access token')
             if callable(self.auth)
             else self._connect(self.auth)
         )
         return read_only_toolset(toolset) if self.read_only else toolset
-
-    def _connect_for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
-        auth = self.auth(ctx) if callable(self.auth) else self.auth
-        return self._connect(auth) if auth else None
 
     def _connect(self, auth: str | None) -> AbstractToolset[AgentDepsT]:
         auth = credential(auth, env='GOOGLE_ACCESS_TOKEN', service='Google Workspace')
