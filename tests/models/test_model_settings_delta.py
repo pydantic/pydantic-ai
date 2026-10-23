@@ -9,6 +9,7 @@ request-level effort, as before.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, cast
 
 import pytest
@@ -23,20 +24,34 @@ from pydantic_ai import (
     TextPart,
     UserPromptPart,
 )
+from pydantic_ai.direct import model_request
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentedModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as openai_imports_successful:
+    from openai.types.chat import ChatCompletionMessage
     from openai.types.responses import ResponseOutputMessage, ResponseOutputText
     from openai.types.responses.response_output_message import Content
 
-    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
+    from .mock_openai import (
+        MockOpenAI,
+        MockOpenAIResponses,
+        completion_message as chat_completion_message,
+        get_mock_chat_completion_kwargs as get_mock_chat_kwargs,
+        get_mock_responses_kwargs,
+        response_message,
+    )
 
 with try_import() as anthropic_imports_successful:
     from anthropic import (
@@ -356,8 +371,6 @@ async def test_openai_explicit_effort_records_no_unified_level(allow_model_reque
     Otherwise a later run would pin the request-level effort to that unified level, which the first request never
     sent, and move the cached prefix this exists to keep.
     """
-    from pydantic_ai.models.fallback import FallbackModel
-    from pydantic_ai.models.instrumented import InstrumentedModel
 
     mock_client = MockOpenAIResponses.create_mock([_responses_text('Shelf 12, bin 1.'), _responses_text('Shelf 40.')])
     model = OpenAIResponsesModel('gpt-6.1-sol', provider=OpenAIProvider(openai_client=mock_client))
@@ -386,3 +399,102 @@ def test_anthropic_explicit_effort_overrides_the_unified_level():
     model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key='test-key'))
     assert model._overrides_unified_effort({'anthropic_effort': 'high'}) is True  # pyright: ignore[reportPrivateUsage]
     assert model._overrides_unified_effort({'thinking': 'high'}) is False  # pyright: ignore[reportPrivateUsage]
+
+
+def _effort_parts_by_request(messages: list[ModelMessage]) -> list[list[ModelSettingsDeltaPart]]:
+    return [
+        [part for part in message.parts if isinstance(part, ModelSettingsDeltaPart)]
+        for message in messages
+        if isinstance(message, ModelRequest)
+    ]
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_fallback_candidate_defaults_decide_the_recorded_effort(allow_model_requests: None):
+    """The effort is the one the candidate sends, with its own `settings` merged in, not the wrapper's settings."""
+
+    mock_client = MockOpenAIResponses.create_mock(
+        [_responses_text('one'), _responses_text('two'), _responses_text('3')]
+    )
+    candidate = OpenAIResponsesModel(
+        'gpt-6.1-sol', provider=OpenAIProvider(openai_client=mock_client), settings=ModelSettings(thinking='high')
+    )
+    agent = Agent(FallbackModel(candidate))
+
+    first = await agent.run('Where is item 12?', model_settings=ModelSettings(thinking='low'))
+    second = await agent.run(
+        'And item 40?', message_history=first.all_messages(), model_settings=ModelSettings(thinking='high')
+    )
+    # The candidate's own default is still `'high'`, so leaving the run setting out changes nothing.
+    third = await agent.run('And item 41?', message_history=second.all_messages())
+
+    assert _effort_parts_by_request(third.all_messages()) == [
+        [ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)],
+        [ModelSettingsDeltaPart(settings={'thinking': 'high'})],
+        [],
+    ]
+    last_request = get_mock_responses_kwargs(mock_client)[2]
+    assert last_request['reasoning']['effort'] == 'low'
+    assert [item for item in last_request['input'] if item.get('type') == 'configuration_update'] == [
+        {'type': 'configuration_update', 'reasoning': {'effort': 'high'}}
+    ]
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_fallback_candidates_that_disagree_record_no_effort(allow_model_requests: None):
+    """A request whose candidates would send different efforts claims none, so it goes out at request level.
+
+    The first candidate overrides the unified effort with a provider-specific one and fails, so the second serves
+    the request at the unified effort. Recording can't know which will serve it, so it opens a window naming no
+    effort, and the serving candidate sends the current effort at request level with no markers.
+    """
+
+    class OverridingModel(FunctionModel):
+        def _overrides_unified_effort(self, model_settings: Mapping[str, object]) -> bool:
+            return True
+
+    def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(status_code=500, model_name='overriding', body=None)
+
+    mock_client = MockOpenAIResponses.create_mock([_responses_text('one'), _responses_text('two')])
+    serving = OpenAIResponsesModel('gpt-6.1-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    first = await Agent(serving).run('Where is item 12?', model_settings=ModelSettings(thinking='low'))
+    second = await Agent(FallbackModel(OverridingModel(fail), serving)).run(
+        'And item 40?', message_history=first.all_messages(), model_settings=ModelSettings(thinking='xhigh')
+    )
+
+    assert _effort_parts_by_request(second.all_messages()) == [
+        [ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)],
+        [ModelSettingsDeltaPart(settings={'thinking': None}, top_level=True)],
+    ]
+    request = get_mock_responses_kwargs(mock_client)[1]
+    assert request['reasoning']['effort'] == 'xhigh'
+    assert not any(item.get('type') == 'configuration_update' for item in request['input'])
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_agent_history_works_with_direct_requests(allow_model_requests: None):
+    """A history an agent run recorded effort parts in goes through `model_request`, at the effort it asks for.
+
+    The parts are removed rather than replayed: a direct call records nothing, so an earlier change sent in place
+    would override the effort it sets.
+    """
+
+    first = await Agent(TestModel()).run('Where is item 12?', model_settings=ModelSettings(thinking='low'))
+    second = await Agent(TestModel()).run(
+        'And item 40?', message_history=first.all_messages(), model_settings=ModelSettings(thinking='xhigh')
+    )
+    history = [*second.all_messages(), ModelRequest(parts=[UserPromptPart('And item 41?')])]
+
+    chat_client = MockOpenAI.create_mock(chat_completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    chat = OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(openai_client=chat_client))
+    await model_request(chat, history, model_settings=ModelSettings(thinking='medium'))
+    assert get_mock_chat_kwargs(chat_client)[0]['reasoning_effort'] == 'medium'
+
+    responses_client = MockOpenAIResponses.create_mock(_responses_text('ok'))
+    responses_model = OpenAIResponsesModel('gpt-6.1-sol', provider=OpenAIProvider(openai_client=responses_client))
+    await model_request(responses_model, history, model_settings=ModelSettings(thinking='medium'))
+    request = get_mock_responses_kwargs(responses_client)[0]
+    assert request['reasoning']['effort'] == 'medium'
+    assert not any(item.get('type') == 'configuration_update' for item in request['input'])

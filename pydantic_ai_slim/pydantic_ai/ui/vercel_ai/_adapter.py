@@ -559,9 +559,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             and (effort_part := model_settings_delta_from_payload(part.data)) is not None
                         ):
                             # Streamed at the start of the model request that records it, so the AI SDK
-                            # attaches it to the assistant message. It belongs at the end of that request:
-                            # after the step's held-back tool returns, or on the request already open.
-                            if pending_returns:
+                            # attaches it to the assistant message. It belongs at the end of that request, after
+                            # everything delivered into it: after the messages enqueued into the step if there are
+                            # any, otherwise after the step's held-back tool returns, or on the request already open.
+                            if pending_enqueued:
+                                pending_enqueued.append(ModelRequest(parts=[effort_part]))
+                            elif pending_returns:
                                 pending_returns.append(effort_part)
                             else:
                                 builder.add(effort_part)

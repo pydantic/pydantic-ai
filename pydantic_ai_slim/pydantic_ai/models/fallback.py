@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
@@ -27,6 +27,7 @@ from .._unsupported_settings import suppress_warnings as suppress_unsupported_se
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from ..messages import ModelRequestAttempt, ModelResponse
 from ..profiles import ModelProfile
+from ..settings import merge_model_settings
 from . import (
     KnownModelName,
     Model,
@@ -46,7 +47,7 @@ from ._request_timeout import (
 
 if TYPE_CHECKING:
     from ..messages import ModelMessage, ModelResponseStreamEvent
-    from ..settings import ModelSettings
+    from ..settings import ModelSettings, ThinkingEffort
 
 _PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 _FALLBACK_MODEL_ID_KEY = 'fallback_model_id'
@@ -553,9 +554,13 @@ class FallbackModel(Model):
         for model in self.models:
             model._warn_if_thinking_overridden(layers)
 
-    def _overrides_unified_effort(self, model_settings: Mapping[str, object]) -> bool:
-        # The request is recorded once for every candidate, so any of them overriding the effort decides it.
-        return any(model._overrides_unified_effort(model_settings) for model in self.models)
+    def _unified_effort(self, model_settings: ModelSettings | None) -> ThinkingEffort | None:
+        # The request is recorded before a candidate is chosen, so it names an effort only if every candidate would
+        # send the same one, each with its own `settings` merged in. Otherwise it's recorded as naming none, which
+        # sends the effort of whichever candidate serves it as the request-level setting.
+        merged = merge_model_settings(self.settings, model_settings)
+        efforts: set[ThinkingEffort | None] = {model._unified_effort(merged) for model in self.models}
+        return efforts.pop() if len(efforts) == 1 else None
 
     def prepare_messages(
         self,

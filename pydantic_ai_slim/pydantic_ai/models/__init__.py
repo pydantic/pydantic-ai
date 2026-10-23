@@ -1116,11 +1116,21 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def _overrides_unified_effort(self, model_settings: Mapping[str, object]) -> bool:
         """Whether a provider-specific setting in `model_settings` replaces the effort a unified `thinking` level maps to.
 
-        The framework then records the request as naming no effort level, so a
-        [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] never claims a request-level effort
-        the request didn't send. Adapters that render effort changes override it.
+        Adapters that render effort changes override it; see `_unified_effort`.
         """
         return False
+
+    def _unified_effort(self, model_settings: ModelSettings | None) -> ThinkingEffort | None:
+        """The unified effort level this model sends for a request with `model_settings`, or `None` if it sends none.
+
+        `model_settings` are merged over the model's own `settings`, the way `prepare_request` does. `None` when
+        `thinking` names no level, or a provider-specific setting overrides it (`_overrides_unified_effort`), so a
+        [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] never claims a request-level effort
+        the request didn't send.
+        """
+        merged = merge_model_settings(self.settings, model_settings) or {}
+        thinking = merged.get('thinking')
+        return thinking if isinstance(thinking, str) and not self._overrides_unified_effort(merged) else None
 
     def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
         """Warn when a provider-specific setting from a broader layer takes precedence over a narrower `thinking`.

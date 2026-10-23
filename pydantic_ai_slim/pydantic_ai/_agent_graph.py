@@ -106,7 +106,7 @@ from .models._continuation import (
 )
 from .models._request_timeout import enforce_request_deadline, start_request_deadline, without_carried_deadline
 from .output import OutputDataT, OutputSpec, StructuredOutputMode
-from .settings import ModelSettings, merge_model_settings
+from .settings import ModelSettings
 from .tools import (
     AgentNativeTool,
     DeferredToolResult,
@@ -2094,7 +2094,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _record_model_settings_changes(
                 ctx,
                 model,
-                merge_model_settings(model.settings, model_settings),
+                model_settings,
                 messages,
                 _history_recording_targets(ctx, messages),
             )
@@ -3196,10 +3196,9 @@ def _record_model_settings_changes(
     part it already recorded. A part on this step's own request is replaced rather than followed by another,
     since no response has answered it yet.
     """
-    thinking = (model_settings or {}).get('thinking')
-    # A provider-specific effort setting replaces the one `thinking` maps to, so the request names no unified level.
-    overridden = model._overrides_unified_effort(model_settings or {})  # pyright: ignore[reportPrivateUsage]
-    wanted = thinking if isinstance(thinking, str) and not overridden else None
+    # Resolved by the model, with its own `settings` (each candidate's, for a `FallbackModel`) and provider-specific
+    # overrides taken into account, so a request never records an effort it doesn't send.
+    wanted = model._unified_effort(model_settings)  # pyright: ignore[reportPrivateUsage]
     targets = list(requests)
     # A compaction replaces what came before it, including the changes recorded there, so the effort in
     # effect is read from the window after it, and the next request that names a level opens a new one.

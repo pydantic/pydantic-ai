@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
@@ -14,7 +14,7 @@ from ..messages import ModelMessage, ModelResponse
 from ..native_tools import AbstractNativeTool
 from ..profiles import ModelProfile
 from ..providers import Provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingEffort
 from ..usage import RequestUsage
 from . import (
     KnownModelName,
@@ -115,8 +115,8 @@ class WrapperModel(Model):
     def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
         self.wrapped._warn_if_thinking_overridden(layers)
 
-    def _overrides_unified_effort(self, model_settings: Mapping[str, object]) -> bool:
-        return self.wrapped._overrides_unified_effort(model_settings)
+    def _unified_effort(self, model_settings: ModelSettings | None) -> ThinkingEffort | None:
+        return self.wrapped._unified_effort(model_settings)
 
     def prepare_messages(
         self,

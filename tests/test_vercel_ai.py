@@ -162,7 +162,7 @@ with try_import() as starlette_import_successful:
 with try_import() as openai_import_successful:
     from openai.types.chat import ChatCompletionMessage
 
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
     from .models.mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
@@ -12914,3 +12914,64 @@ async def test_model_settings_delta_round_trips_through_client_rebuilt_stream() 
     assert [part for message in loaded for part in message.parts if isinstance(part, ModelSettingsDeltaPart)] == [
         part for message in server_history for part in message.parts if isinstance(part, ModelSettingsDeltaPart)
     ]
+
+
+@pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
+async def test_model_settings_delta_after_enqueued_messages_keeps_its_position() -> None:
+    """An effort change recorded after enqueued content reloads after it, so the provider request is unchanged.
+
+    The tool enqueues a message and the next step raises the effort. The stream sends the enqueued messages and
+    then the change after the tool result; the change has to load after the enqueued message, where server-side
+    history records it, or OpenAI would see the `configuration_update` item move ahead of earlier input.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='work', json_args='{}', tool_call_id='work-1')}
+        else:
+            yield 'done'
+
+    def effort(ctx: RunContext[Any]) -> ModelSettings:
+        return ModelSettings(thinking='high' if ctx.run_step > 1 else 'low')
+
+    agent = Agent(FunctionModel(stream_function=stream_function), model_settings=effort)
+
+    @agent.tool
+    def work(ctx: RunContext[Any]) -> str:
+        ctx.enqueue('Background result: 42')
+        return 'started'
+
+    user = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Go')])
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat-1', messages=[user]), sdk_version=6)
+    server_history: list[ModelMessage] = []
+    chunks = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+        if '[DONE]' not in encoded
+    ]
+    types = [chunk['type'] for chunk in chunks]
+    assert (
+        types.index('tool-output-available')
+        < types.index('data-enqueued-messages')
+        < len(types) - 1 - types[::-1].index('data-model-settings-delta')
+    )
+
+    loaded = VercelAIAdapter.load_messages([user, _reduce_assistant_message(chunks, 'assistant-1')])
+
+    model = OpenAIResponsesModel('gpt-6.1-sol', provider=OpenAIProvider(api_key='test-key'))
+
+    async def rendered(messages: list[ModelMessage]) -> list[Any]:
+        prepared = model.prepare_messages(_clean_message_history(messages))
+        _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+            prepared, OpenAIResponsesModelSettings(), ModelRequestParameters()
+        )
+        return items
+
+    assert await rendered(loaded) == await rendered(server_history)
+    assert [item.get('type') or item.get('role') for item in await rendered(loaded)] == snapshot(
+        ['user', 'function_call', 'function_call_output', 'user', 'configuration_update', 'assistant']
+    )
