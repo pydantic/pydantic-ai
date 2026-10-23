@@ -121,8 +121,12 @@ async def mint_client_secret(
     model_name: str,
     session_config: dict[str, Any],
     expires_after_seconds: int | None,
+    webrtc_url: str | None,
 ) -> RealtimeClientSecret:
-    """`POST .../realtime/client_secrets` to mint an ephemeral browser token bound to `session_config`."""
+    """`POST .../realtime/client_secrets` to mint an ephemeral browser token bound to `session_config`.
+
+    `webrtc_url` is where a browser posts its WebRTC offer with the token, if the provider takes one.
+    """
     payload: dict[str, Any] = {'session': session_config}
     if expires_after_seconds is not None:
         payload['expires_after'] = {'anchor': 'created_at', 'seconds': expires_after_seconds}
@@ -148,6 +152,7 @@ async def mint_client_secret(
     return RealtimeClientSecret(
         value=data.value,
         expires_at=expires_at,
+        webrtc_url=webrtc_url,
         provider_details=provider_details or None,
     )
 
