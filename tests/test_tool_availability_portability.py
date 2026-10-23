@@ -1628,7 +1628,9 @@ async def test_delta_wire_shape_survives_anthropic_google_anthropic_hops(
     for request in (first, third):
         assert 'mid-conversation-tool-changes-2026-07-01' in request['betas']
         assert json.dumps(request['messages'], sort_keys=True).count('"type": "tool_addition"') == 2
-    assert [tool.get('name') for tool in third['tools']][-2:] == ['b_tool', 'a_tool']
+    # Declared deferred from the first request (no search surface), so the reveal keeps them in declaration order.
+    assert third['tools'] == first['tools']
+    assert [tool.get('name') for tool in third['tools']][-2:] == ['a_tool', 'b_tool']
     google_contents = generate.call_args.kwargs['contents']
     announcement = TOOL_AVAILABILITY_ANNOUNCEMENT.format(names='`b_tool`, `a_tool`')
     assert json.dumps(google_contents, default=str).count(f'<system>{announcement}</system>') == 1
