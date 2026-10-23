@@ -347,6 +347,43 @@ async def test_anthropic_replays_only_web_search_citations(
     assert replayed.get('citations') == ([_ANTHROPIC_WEB_SEARCH_CITATION] if kept and fits else None)
 
 
+async def test_anthropic_web_search_citations_not_replayed_without_web_search():
+    """Clients without web search, such as Bedrock, reject web search citations, so they go back as plain text.
+
+    Checked live: Bedrock rejects `web_search_result_location` with a 400. Unit test: it pins the request.
+    """
+    from anthropic import AsyncAnthropicBedrock
+
+    client = mock_anthropic_client(AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com')
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Search the web.')]),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'An answer.',
+                    provider_name='anthropic',
+                    provider_details={'citations': [_ANTHROPIC_WEB_SEARCH_CITATION]},
+                    citations=[
+                        Citation(
+                            sources=[WebCitationSource(url='https://example.com')],
+                            anchor=ContentCitationAnchor(start=0, end=10),
+                        )
+                    ],
+                )
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), AnthropicModelSettings()
+    )
+
+    assert messages[1]['content'] == [{'text': 'An answer.', 'type': 'text'}]
+
+
 @pytest.mark.parametrize('source', ['result-123', 'https://example.com/result'])
 def test_anthropic_client_search_result_citation_is_not_normalized(source: str):
     """Unit test: no recording sends client-provided search results."""

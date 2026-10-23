@@ -2967,6 +2967,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         response_part.provider_name == self.system
                         and isinstance(raw_citations, list)
                         and _citations_fit_text(response_part)
+                        # Only web search citations are sent back, and clients without web search, such as Bedrock,
+                        # reject them.
+                        and WebSearchTool in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
                         and (
                             citations := [
                                 param

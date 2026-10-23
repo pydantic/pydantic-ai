@@ -173,7 +173,7 @@ from:
 
 | Provider | Citations sent back |
 | --- | --- |
-| Anthropic | Web search citations |
+| Anthropic | Web search citations, except on clients without web search, such as Bedrock |
 | OpenAI Responses | Web and file citations, when message IDs are sent, which is the default for reasoning models. See [`openai_send_reasoning_ids`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_send_reasoning_ids] |
 
 Other citations stay on the saved messages, but their text is sent as plain text. That covers document and
