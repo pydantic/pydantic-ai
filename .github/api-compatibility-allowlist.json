@@ -113,6 +113,276 @@
       "fingerprint": "e3cbeaca4cd1a6c06b48a95afcd22e314cd2699e757a3c2b395dd659020b40ae",
       "reason": "The `iban` pattern in the harness `DEFAULT_PII_PATTERNS` gains a `(?=[A-Za-z]{2}\\d{2})` lookahead ahead of its country-code alternation; it matches exactly the same text and only skips the alternation at positions that cannot start an IBAN.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10841"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "aada6c879af0835bc44b8de1df075041d9e0e07ed6322007d9519339a18960ba",
+      "reason": "clai2 web UI internals, not an SDK: the orchestrator now takes the `WebService` itself so workspace sessions run in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "4aef61b87480b5e75d0ca58ec5ca599c61b09a68ac3e46e4790072486f8ed672",
+      "reason": "clai2 web UI internals, not an SDK: the web protocol drops the separate workspaces listing; worktrees are listed under their repository's project.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "7aa20dc036790e3ab1a01156234d9ad1589151941ea5ff2df0131f87207c64ab",
+      "reason": "clai2 web UI internals, not an SDK: the web protocol drops the separate workspaces listing; worktrees are listed under their repository's project.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "7ee678d5349cba1e393231638c183b4c6efecc6f52d661d048751f2cc2748f46",
+      "reason": "clai2 web UI internals, not an SDK: the web protocol drops the separate workspaces listing; worktrees are listed under their repository's project.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "d51e6e302290970272a72f2eb31259bb90e83026ecbd4d99bd72ebf2066fc8e1",
+      "reason": "clai2 web UI internals, not an SDK: opening a workspace now returns the session ID to show instead of a separate page's URL.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "9da17be8f0bf4110e9adf7e58a971569a42f53d8c1d8bc401f3126667963a92d",
+      "reason": "clai2 web UI internals, not an SDK: `WorkspaceTools` takes the `WebService` instead of the host and publish callback, so it can run workspace sessions in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "67c2c0d8b89503cc200c930f1ddcd24ffc65baa03625e4004fa726de4c3290e6",
+      "reason": "clai2 web UI internals, not an SDK: `WorkspaceTools` takes the `WebService` instead of the host and publish callback, so it can run workspace sessions in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "45d7da24a2b037b2f3241445fe93a72172aebd6d66ee0bd29ebeef9ddf3787ca",
+      "reason": "clai2 web UI internals, not an SDK: `WorkspaceTools` reads the host from the `WebService` it now takes, so its own `host` attribute is removed.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "90b63aac1a4ecf950882b8ac9bd227cece584039e647d6b319e9cdfd8aca60f8",
+      "reason": "clai2 web UI internals, not an SDK: `WorkspaceTools.view` takes a workspace ID and follows that workspace's session in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "5a5db2bde535842f8e505f3fac9df9e2ec7cb092b98ce0e30e5f10db4f0b0dde",
+      "reason": "clai2 web UI internals, not an SDK: `WorkspaceTools.view` takes a workspace ID and follows that workspace's session in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "80ed2ef5a9319387f3187d15608df6850e3ba27387f639d61a2ec8c51d9133d7",
+      "reason": "clai2 web UI internals, not an SDK: `session_answer` no longer answers dialogs, so its dialog `value` parameter is removed.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "f56328ab28f0a55850ae197682fa71af93c36502b7c092eb395b2f43b5e038cf",
+      "reason": "clai2 web UI internals, not an SDK: the orchestrator's instructions now say a workspace's session runs in this CLAI rather than in its own process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "f5f2f2e48c957faa9b130ed35cca743c16e154f64503afdd01ded8b062dbbfd7",
+      "reason": "clai2 web UI internals, not an SDK: `Orchestrator` takes the `WebService` instead of the host and publish callback, so it can run workspace sessions in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "86a6f25203f1c1a3881301b74e5f571ccb8830b6cbce8fcacb01e12b75280119",
+      "reason": "clai2 web UI internals, not an SDK: `Orchestrator` takes the `WebService` instead of the host and publish callback, so it can run workspace sessions in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "dd2211a1fb67b728b67aec2e7b19670dc02361dcaa0a7cfce6d81f37d0189da4",
+      "reason": "clai2 web UI internals, not an SDK: `Orchestrator` takes the `WebService` instead of the host and publish callback, so it can run workspace sessions in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "86511b97003e33d7b260a6ea04aaa401e04f8bea1a94547bf9590d4b4869cc44",
+      "reason": "clai2 web UI internals, not an SDK: `Orchestrator.host` now reads the `WebService`'s host, since the orchestrator takes the service to run workspace sessions in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "8d1d5d8f0e9a97723b07246acae18f3a8e8455f508ad6877ee4080b3af7f11c4",
+      "reason": "clai2 web UI internals, not an SDK: `GET /api/workspaces` and its listing helper are removed; the sidebar lists worktrees under their project.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "acf1c7063fe4b64859039291de1578a14bcff2574909b89e2a63b5499248bf59",
+      "reason": "clai2 web UI internals, not an SDK: `open_workspace` takes the `WebService` to start the workspace's session in this process instead of the plugin list for a new process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "8977aad8f3a653426c3dd46b06b7380ba9b11313e0de29e3706f41a45b508b38",
+      "reason": "clai2 web UI internals, not an SDK: `open_workspace` takes the `WebService` to start the workspace's session in this process instead of the plugin list for a new process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "c850330ee6e7d71da2dd68320e67d99aa8467c04b73c47630560aecb72ea904d",
+      "reason": "clai2 web UI internals, not an SDK: a workspace's own CLAI process is gone, so a kind's `model` is retired; older saved values are still read and dropped.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "176e687e5a7ec0a8830c9ba7d185cbd8252daaaaa68f4a4b388b44eb30f55ac9",
+      "reason": "clai2 web UI internals, not an SDK: `Workspaces` drops its `launcher` parameter: there is no separate `clai2 --web` process to launch, as a workspace's sessions run in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "3edee6e41cad63cae579b160ee523fff4bb12d117dba6a89c68cdba42be28f78",
+      "reason": "clai2 web UI internals, not an SDK: `LocalWorktrees` no longer takes a process launcher because workspace sessions run in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "e3a215d3a6bd832811cd303aff3c5bd4470801283dfcf03319f31c23f16fb2b0",
+      "reason": "clai2 web UI internals, not an SDK: `Workspaces.start` managed a workspace's separate `clai2 --web` process, which no longer exists; its sessions run in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "0219387c6b4ed385eb3a20aec87a0313d1b1221ab89b0a464e6d672f357ab0b8",
+      "reason": "clai2 web UI internals, not an SDK: `Workspaces.stop` managed a workspace's separate `clai2 --web` process, which no longer exists; its sessions run in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "a719052e6baa70150416116b58774f08fdb332b6355bcde1739eeb01f8ab1b7c",
+      "reason": "clai2 web UI internals, not an SDK: `Workspaces.token` managed a workspace's separate `clai2 --web` process, which no longer exists; its sessions run in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "80b100fabeb0a3fec4a0981913bde2195fecd417bb1a0e76abac289c9baa4450",
+      "reason": "clai2 web UI internals, not an SDK: `SessionProcess` managed a workspace's separate `clai2 --web` process, which no longer exists; its sessions run in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "9ea3daf69f6cb7e2f0b7d9fa4caedae07b28c1f5d2d8ae286c0bfe6d2e15292f",
+      "reason": "clai2 web UI internals, not an SDK: `Workspace.status` described a workspace's separate process, which no longer exists; records an older CLAI saved still load.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "83d34bea8afd5b669e3f6600cf5c4c68cfaeed0f65f7c626cf4b539a0b290081",
+      "reason": "clai2 web UI internals, not an SDK: `Workspace.model` described a workspace's separate process, which no longer exists; records an older CLAI saved still load.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "56e53d105356372f160e6fdd08ae0933b3d0f4c545cadde0649216c51e5ef294",
+      "reason": "clai2 web UI internals, not an SDK: `Workspace.session` described a workspace's separate process, which no longer exists; records an older CLAI saved still load.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "21907566f45b47e497028463f02783200956299b240306a311ba7f5a200de510",
+      "reason": "clai2 web UI internals, not an SDK: the workspace record drops its process `status`: a workspace's sessions run in this process; records an older CLAI saved still load.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "781678b3d69d9684061d848539f7882c4a532395fc248c8ca395c42b45075d1f",
+      "reason": "clai2 web UI internals, not an SDK: the workspace record drops its process `model`: a workspace's sessions run in this process; records an older CLAI saved still load.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "950c80f2704b9ceb855743a8ba05789a24e9408a02f6002ed20b089a8585e0e4",
+      "reason": "clai2 web UI internals, not an SDK: the workspace record drops its process `session`: a workspace's sessions run in this process; records an older CLAI saved still load.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "f493e7f4aef409b908ef4ef8a0efc255fd034b91cb276c5f1d5784f6a80e545d",
+      "reason": "clai2 web UI internals, not an SDK: `WorkspaceStatus` described a workspace's separate process, which no longer exists; records an older CLAI saved still load.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "4433f219bc2b7fafe15e095dc57f4e0ef25db9e211a41db887f7925cce6ef6f0",
+      "reason": "clai2 web UI internals, not an SDK: `WorkspacesPlugin.open` managed a workspace's separate `clai2 --web` process, which no longer exists; its sessions run in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "b894001a4a740479cbfdcc6ee648d3ea303b94c80f7145b6b6e5cb9bca8eb21d",
+      "reason": "clai2 web UI internals, not an SDK: `workspaces/sessions.py`, the per-workspace `clai2 --web` process launcher, is removed.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "2907f7f8b03e04fad09470f0288caf62c17fde8421a655b921a3f63456ce2e4d",
+      "reason": "clai2 web UI internals, not an SDK: `Backend.start` managed a workspace's separate `clai2 --web` process, which no longer exists; its sessions run in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "961242bcc68544b90b62a0caefafa48ac8f40642cc799fd2642b1dd3294786a1",
+      "reason": "clai2 web UI internals, not an SDK: `Backend.alive` managed a workspace's separate `clai2 --web` process, which no longer exists; its sessions run in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "f0198f38fdf5f8c963dd8f5b8cbb67c4078a0849e3f83574a21420bc8bb1cf6e",
+      "reason": "clai2 web UI internals, not an SDK: `Backend.stop` managed a workspace's separate `clai2 --web` process, which no longer exists; its sessions run in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "3ef11e85f7f668529aa6ff639be6ed94450d82115384e628ad580e7a3b206f12",
+      "reason": "clai2 web UI internals, not an SDK: `LocalWorktrees.launcher` managed a workspace's separate `clai2 --web` process, which no longer exists; its sessions run in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "cc96d3764dc63da05051d0af4f460f5d7c72a610c759b3b77ac31180e23cd533",
+      "reason": "clai2 web UI internals, not an SDK: `LocalWorktrees.start` managed a workspace's separate `clai2 --web` process, which no longer exists; its sessions run in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "febc73dbf328414a9ee59393bf39a307bdbd1a46b6b2acaa6191fe3809407e16",
+      "reason": "clai2 web UI internals, not an SDK: `LocalWorktrees.alive` managed a workspace's separate `clai2 --web` process, which no longer exists; its sessions run in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "425b14aaacd7f186e83977865248b708d6210d10336a75703965f059953b0f4b",
+      "reason": "clai2 web UI internals, not an SDK: `LocalWorktrees.stop` managed a workspace's separate `clai2 --web` process, which no longer exists; its sessions run in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "4f604c8e0f5676522e527b7ebf1f0f67652492d94b820c2e0cd050cbeba15074",
+      "reason": "clai2 web UI internals, not an SDK: `LocalWorktrees` drops its `launcher` parameter: there is no separate `clai2 --web` process to launch, as a workspace's sessions run in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "2be93097a5d94d6d1125aac978e6cc8dd359c653b0c6d04fc64d55a4b0f7e31a",
+      "reason": "clai2 web UI internals, not an SDK: `WorkspaceStatus` described a workspace's separate process, which no longer exists; records an older CLAI saved still load.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "32fc4d46d723d28f551b6424a361637a748880545a6dae831c12e63abc90172e",
+      "reason": "clai2 web UI internals, not an SDK: `SessionProcess` managed a workspace's separate `clai2 --web` process, which no longer exists; its sessions run in this process.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
     }
   ]
 }
