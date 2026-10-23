@@ -1162,9 +1162,17 @@ async def test_openai_chat_fallback_single_tool_uses_allowed_tools(allow_model_r
 @pytest.mark.parametrize(
     ('base_url', 'profile'),
     [
-        pytest.param(None, OpenAIModelProfile(openai_chat_supports_allowed_tools=False), id='opted-out'),
-        pytest.param('http://localhost:8000/v1', OpenAIModelProfile(), id='custom-base-url'),
-        pytest.param('https://openrouter.ai/api/v1', OpenAIModelProfile(), id='compatible-host'),
+        pytest.param(
+            None,
+            OpenAIModelProfile(supports_forced_tool_choice=False, openai_chat_supports_allowed_tools=False),
+            id='opted-out',
+        ),
+        pytest.param(
+            'http://localhost:8000/v1', OpenAIModelProfile(supports_forced_tool_choice=False), id='custom-base-url'
+        ),
+        pytest.param(
+            'https://openrouter.ai/api/v1', OpenAIModelProfile(supports_forced_tool_choice=False), id='compatible-host'
+        ),
     ],
 )
 async def test_openai_chat_fallback_single_tool_filters_tool_defs_without_allowed_tools(
@@ -1176,9 +1184,7 @@ async def test_openai_chat_fallback_single_tool_filters_tool_defs_without_allowe
     may silently ignore `allowed_tools`, which would drop the restriction.
     """
     provider = OpenAIProvider(api_key='test-key', base_url=base_url)
-    m = OpenAIChatModel(
-        'gpt-4o-mini', provider=provider, profile=OpenAIModelProfile(supports_forced_tool_choice=False, **profile)
-    )
+    m = OpenAIChatModel('gpt-4o-mini', provider=provider, profile=profile)
     assert m.profile.get('openai_chat_supports_allowed_tools') is False
     params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=True)
 
