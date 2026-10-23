@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, one_connection, read_only_toolset
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._mcp import credential, per_run_connection, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -31,8 +32,11 @@ class Notion(AbstractCapability[AgentDepsT]):
     one connection stated twice when they agree, and an error when they differ; give each its own `id` to keep both.
     """
     description: str | None = 'Search and change Notion workspace content.'
-    auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
-    """A Notion OAuth access token, `'oauth'` to sign in through the browser locally, or a function of the run context that returns a token.
+    auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
+        default=None, repr=False
+    )
+    """A Notion OAuth access token, `'oauth'` to sign in through the browser locally, or a sync or async function
+    of the run context that returns a token.
 
     Unset, it uses `NOTION_ACCESS_TOKEN`. A function never does: if it returns `None` or `''`, that run has no
     Notion tools.
@@ -51,7 +55,7 @@ class Notion(AbstractCapability[AgentDepsT]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one connection stated twice; two that disagree raise rather than merge."""
-        return one_connection(capabilities)
+        return one_per_id(capabilities)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the Notion MCP toolset."""
@@ -61,20 +65,12 @@ class Notion(AbstractCapability[AgentDepsT]):
                 self.client, id=id, include_instructions=self.include_instructions
             )
         elif callable(self.auth):
-            # Registered once under a fixed `id`, as durable execution requires; filled per run.
-            toolset = DynamicToolset(self._connect_for_run, per_run_step=False, id=id)
+            toolset = per_run_connection(self.auth, self._connect, id=id)
         else:
             toolset = self._connect(self.auth)
         if self.read_only:
             return read_only_toolset(toolset)
         return toolset
-
-    def _connect_for_run(self, ctx: RunContext[AgentDepsT]) -> MCPToolset[AgentDepsT] | None:
-        auth = self.auth(ctx) if callable(self.auth) else self.auth
-        if auth == 'oauth':
-            # FastMCP reads 'oauth' as "log in through a browser", which would hang a server run.
-            raise UserError("The `auth` function must return an API key or token, not 'oauth'.")
-        return self._connect(auth) if auth else None
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
         return MCPToolset(

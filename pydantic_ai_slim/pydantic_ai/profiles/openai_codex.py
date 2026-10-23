@@ -33,5 +33,6 @@ def openai_codex_model_profile(model_name: str) -> ModelProfile:
             supported_cache_retentions=(),
             # Not verified against the Codex backend, which rejects fields the standard endpoint accepts.
             openai_responses_supports_prompt_cache_diagnostics=False,
+            openai_responses_supports_max_reasoning_effort=False,
         ),
     )

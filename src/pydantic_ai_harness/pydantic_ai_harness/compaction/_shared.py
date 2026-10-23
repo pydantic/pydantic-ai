@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
-from typing import TYPE_CHECKING, Protocol, Self, assert_never, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, Self, TypeGuard, assert_never, runtime_checkable
 
 from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start
@@ -37,10 +37,10 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
-    is_multi_modal_content,
 )
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -119,7 +119,7 @@ def _collect_text(messages: Sequence[ModelMessage]) -> list[str]:
 def _request_part_text(part: ModelRequestPart) -> list[str]:
     """Text segments a single request part contributes to the token estimate."""
     if isinstance(part, UserPromptPart):
-        return [_user_prompt_text_for_counting(part)]
+        return [''.join(user_prompt_texts(part))]
     elif isinstance(part, SystemPromptPart):
         return [part.content]
     elif isinstance(part, InstructionDeltaPart):
@@ -210,33 +210,6 @@ def _instructions_text(messages: Sequence[ModelMessage]) -> list[str]:
         if isinstance(msg, ModelRequest) and msg.instructions:
             return [msg.instructions]
     return []
-
-
-def tool_return_text(part: ToolReturnPart) -> str:
-    """The tool return's content as text, with each file named by identifier rather than spelled out.
-
-    A file's `repr` carries its bytes at ~3 characters per byte, so a 1 MB file would be estimated at
-    ~700k tokens and render into a summary prompt as escaped bytes. The reference is the one a
-    text-only tool result gives the model in its place (`ToolReturnPart.model_response_str_and_user_content`).
-    """
-    if not part.files:
-        return str(part.content)
-    return ' '.join(
-        f'See file {item.identifier}.' if is_multi_modal_content(item) else str(item) for item in part.content_items()
-    )
-
-
-def _user_prompt_text_for_counting(part: UserPromptPart) -> str:
-    """Extract text content from a user prompt part for counting."""
-    if isinstance(part.content, str):
-        return part.content
-    texts: list[str] = []
-    for item in part.content:
-        if isinstance(item, str):
-            texts.append(item)
-        elif isinstance(item, TextContent):
-            texts.append(item.content)
-    return ''.join(texts)
 
 
 def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = None) -> int:
@@ -701,6 +674,17 @@ _TOOL_PAIR_SEARCH_RANGE = 5
 """Number of messages to search around a cutoff point for tool-call pairs."""
 
 
+def _is_tool_reply(
+    part: ModelRequestPart,
+) -> TypeGuard[ToolReturnPart | RetryPromptPart]:  # pyright: ignore[reportDeprecated]
+    """Whether *part* answers a tool call, so it is sent paired with that call."""
+    # TODO(v3): remove RetryPromptPart; a caller-passed history can still hold one
+    return isinstance(part, ToolReturnPart) or (
+        isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+        and part.tool_name is not None
+    )
+
+
 def _is_safe_cutoff(
     messages: list[ModelMessage],
     cutoff: int,
@@ -709,7 +693,8 @@ def _is_safe_cutoff(
     """Return True if cutting at *cutoff* does not orphan any tool-call pair.
 
     A tool-call pair is a `ToolCallPart` in a `ModelResponse` together with
-    the corresponding `ToolReturnPart` in a subsequent `ModelRequest`.  Both
+    the corresponding `ToolReturnPart` (a retried call's included), or a legacy
+    `RetryPromptPart` that rejected it, in a subsequent `ModelRequest`.  Both
     sides must end up on the same side of the cut.
     """
     if cutoff >= len(messages):
@@ -736,7 +721,7 @@ def _is_safe_cutoff(
             if not isinstance(later, ModelRequest):
                 continue
             for rpart in later.parts:
-                if isinstance(rpart, ToolReturnPart) and rpart.tool_call_id in call_ids:
+                if _is_tool_reply(rpart) and rpart.tool_call_id in call_ids:
                     call_before = i < cutoff
                     return_before = j < cutoff
                     if call_before != return_before:
@@ -748,10 +733,10 @@ def _is_safe_cutoff(
 def find_safe_cutoff(messages: list[ModelMessage], keep: int) -> int:
     """Find a cutoff index that keeps *keep* tail messages without splitting tool pairs.
 
-    Returns 0 if trimming is unnecessary (fewer messages than *keep*).
+    The newest message is always kept, since in a run it is the request being answered, so a
+    *keep* of 0 keeps one. Returns 0 if trimming is unnecessary (no more messages than *keep*).
     """
-    if keep == 0:
-        return len(messages)
+    keep = max(keep, 1)
     if len(messages) <= keep:
         return 0
 
@@ -775,11 +760,7 @@ def _include_tool_dependencies(messages: list[ModelMessage], cutoff: int) -> int
                     calls[part.tool_call_id] = index
         else:
             for part in message.parts:
-                # TODO(v3): remove RetryPromptPart; a caller-passed history can still hold one
-                if isinstance(part, ToolReturnPart) or (
-                    isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
-                    and part.tool_name is not None
-                ):
+                if _is_tool_reply(part):
                     earliest = min(earliest, calls.get(part.tool_call_id, index))
         dependencies.append(earliest)
 

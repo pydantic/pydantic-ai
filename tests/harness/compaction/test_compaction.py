@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import time
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
@@ -64,7 +65,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
-from pydantic_ai_harness import BackgroundTools
+from pydantic_ai_harness import BackgroundTools, HarnessDeprecationWarning
 from pydantic_ai_harness.compaction import (
     ClampOversizedMessages,
     ClearToolResults,
@@ -246,6 +247,28 @@ def _tool_return(tool_name: str, call_id: str, content: str = 'ok') -> ModelRequ
     return ModelRequest(parts=[ToolReturnPart(tool_name=tool_name, content=content, tool_call_id=call_id)])
 
 
+def _summary_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('summary')])
+
+
+def _retry_history() -> list[ModelMessage]:
+    """A tool call rejected with a legacy retry prompt, its successful retry, and a new user turn.
+
+    A retry stored as `ToolReturnPart(outcome='retried')` is a `ToolReturnPart`, which pairing
+    always covered; a caller-built history can still hold the deprecated `RetryPromptPart`.
+    """
+    # TODO(v3): remove along with `RetryPromptPart`
+    return [
+        _user('start'),
+        _tool_call('lookup', 'a'),
+        ModelRequest(parts=[legacy_retry_prompt_part('bad args', tool_name='lookup', tool_call_id='a')]),
+        _tool_call('lookup', 'b'),
+        _tool_return('lookup', 'b'),
+        _assistant('done'),
+        _user('next'),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # estimate_token_count
 # ---------------------------------------------------------------------------
@@ -421,10 +444,6 @@ class TestIsSafeCutoff:
 
 
 class TestFindSafeCutoff:
-    def test_keep_zero_returns_length(self):
-        msgs: list[ModelMessage] = [_user('a'), _assistant('b')]
-        assert find_safe_cutoff(msgs, 0) == 2
-
     def test_fewer_messages_than_keep(self):
         msgs: list[ModelMessage] = [_user('a')]
         assert find_safe_cutoff(msgs, 5) == 0
@@ -620,6 +639,34 @@ class TestSlidingWindowCompaction:
         result = await sw.before_model_request(ctx, rc)
         # Should not split the tool pair.
         assert _orphan_free(result.messages)
+
+    async def test_keeps_tool_call_with_its_retry_prompt(self):
+        sw = SlidingWindowCompaction(max_messages=1, keep_messages=5, preserve_first_user_message=False)
+        messages = _retry_history()
+        result = await sw.compact(messages, _make_ctx(messages))
+        assert result == messages[1:]
+
+    @pytest.mark.parametrize(('tool_name', 'cutoff'), [('fn', 1), (None, 2)])
+    async def test_keep_tokens_keeps_a_legacy_retry_with_its_call_only_when_it_names_a_tool(
+        self, tool_name: str | None, cutoff: int
+    ):
+        # TODO(v3): remove along with `RetryPromptPart`
+        # A named retry answers the call before it, like a return; an unnamed one asks for a new final output.
+        messages: list[ModelMessage] = [
+            _user('a' * 8),
+            _tool_call('fn', 'tc1'),
+            ModelRequest(parts=[legacy_retry_prompt_part('b' * 4, tool_name=tool_name, tool_call_id='tc1')]),
+            _user('c' * 4),
+        ]
+        sw = SlidingWindowCompaction(max_messages=1, keep_tokens=8, tokenizer=len, preserve_first_user_message=False)
+        result = await sw.compact(messages, _make_ctx(messages))
+        assert result == messages[cutoff:]
+
+    async def test_keep_zero_keeps_the_request_being_answered(self):
+        sw = SlidingWindowCompaction(max_messages=1, keep_messages=0)
+        messages: list[ModelMessage] = [_user('first'), _assistant('ok'), _user('the question now')]
+        result = await sw.compact(messages, _make_ctx(messages))
+        assert _request_texts(result) == ['first', 'the question now']
 
     async def test_keep_tokens_mode(self):
         sw = SlidingWindowCompaction(max_messages=3, keep_tokens=10, preserve_first_user_message=False)
@@ -1015,6 +1062,59 @@ class TestCompaction:
         comp = SummarizingCompaction(model='test', max_messages=10, tool_return_max_chars=None)
         assert comp.tool_return_max_chars is None
 
+    @pytest.mark.parametrize(
+        'summary_prompt',
+        [
+            'Summarize the conversation.',
+            'Summarize {messages} as {format}.',
+            'Return {"summary": ...} for {messages}',
+            '{messages!z}',
+            '{messages} }',
+            '{messages:{messages}}',
+            None,
+        ],
+    )
+    def test_validation_summary_prompt_fields(self, summary_prompt: str | None):
+        with pytest.warns(
+            HarnessDeprecationWarning, match=r'`summary_prompt` must contain a `\{messages\}` placeholder'
+        ) as warned:
+            SummarizingCompaction(model='test', max_messages=10, summary_prompt=summary_prompt)  # pyright: ignore[reportArgumentType]
+        assert warned[0].filename == __file__
+
+    def test_focusing_an_invalid_summary_prompt_does_not_warn_again(self):
+        with pytest.warns(HarnessDeprecationWarning):
+            comp = SummarizingCompaction(model='test', max_messages=10, summary_prompt='Summarize the conversation.')
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            focused = comp.with_focus('the deploy plan')
+        assert focused.summary_prompt == 'Summarize the conversation.\n\nGive particular weight to: the deploy plan'
+
+    def test_summary_prompt_with_escaped_braces_is_accepted(self):
+        comp = SummarizingCompaction(
+            model='test', max_messages=10, summary_prompt='Return {{"summary": ...}} for {messages}'
+        )
+        assert comp.with_focus('the {config} file').summary_prompt.endswith('the {{config}} file')
+
+    async def test_keeps_tool_call_with_its_retry_prompt(self):
+        comp = SummarizingCompaction(
+            model=FunctionModel(_summary_response), max_messages=1, keep_messages=5, preserve_first_user_message=False
+        )
+        messages = _retry_history()
+        summary, *kept = await comp.compact(messages, _make_ctx(messages))
+        assert isinstance(summary, ModelRequest)
+        assert [part.content for part in summary.parts if isinstance(part, SystemPromptPart)] == [
+            f'{SUMMARY_PREFIX}summary'
+        ]
+        assert kept == messages[1:]
+
+    async def test_keep_zero_keeps_the_request_being_answered(self):
+        comp = SummarizingCompaction(
+            model=FunctionModel(_summary_response), max_messages=1, keep_messages=0, preserve_first_user_message=False
+        )
+        messages: list[ModelMessage] = [_user('first'), _assistant('ok'), _user('the question now')]
+        result = await comp.compact(messages, _make_ctx(messages))
+        assert _request_texts(result) == ['the question now']
+
     async def test_no_compaction_below_threshold(self):
         comp = SummarizingCompaction(model='test', max_messages=100)
         messages: list[ModelMessage] = [_user('hi')]
@@ -1296,7 +1396,7 @@ class TestExports:
 
 
 class TestUserPromptMultiModal:
-    """Cover _user_prompt_text_for_counting and _user_prompt_text for non-string UserContent."""
+    """Cover `_request_part_text` and `_user_prompt_text` for non-string UserContent."""
 
     def test_estimate_with_text_content_parts(self):
 
