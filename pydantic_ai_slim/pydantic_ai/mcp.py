@@ -1157,8 +1157,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             if elicitation_handler is not None:
                 self._server_initiated_handlers.append('elicitation_handler')
 
-        self._id_explicit = id is not None
-        self._id = id if id is not None else _host_derived_id(self.client)
+        self._set_id(id)
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
         self.process_tool_call = process_tool_call
@@ -1192,8 +1191,14 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
     @id.setter
     def id(self, value: str | None) -> None:
+        self._set_id(value)
+
+    def _set_id(self, value: str | None) -> None:
         self._id_explicit = value is not None
         self._id = value if value is not None else _host_derived_id(self.client)
+        # A hostname-derived `id` comes from the server URL, so telemetry masks it like the `MCP` capability's
+        # URL-derived ids: in tool definitions' `toolset_id` and in instruction ids. A chosen one is the caller's label.
+        self._telemetry_url_derived_id = None if self._id_explicit else self._id
 
     @property
     def _explicit_id(self) -> str | None:

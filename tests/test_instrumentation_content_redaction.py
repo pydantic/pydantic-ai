@@ -21,6 +21,8 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
+import httpx
+import httpx2
 import pytest
 from opentelemetry.context import Context
 from pydantic import BaseModel, TypeAdapter
@@ -72,6 +74,7 @@ with try_import() as otel_sdk_installed:
 with try_import() as mcp_installed:
     from fastmcp import FastMCP
 
+    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
     from pydantic_ai.mcp import MCPToolset
 
 pytestmark = [
@@ -381,6 +384,66 @@ async def test_url_derived_mcp_name_is_masked_if_run_fails_before_model_request(
     assert 'SENTINEL-path' not in str(agent_span.attributes['pydantic_ai.all_messages'])
     assert isinstance(history[1].parts[0], NativeToolCallPart)
     assert history[1].parts[0].tool_name == tool_name
+
+
+@pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_a_url_mcp_toolsets_hostname_derived_id_is_masked(include_content: bool) -> None:
+    """An `MCPToolset` built from a URL without an `id` takes its hostname, which telemetry masks like other URL-derived ids.
+
+    It reaches spans as tool definitions' `toolset_id` and as the server instructions' id; neither carries it.
+    """
+    server = FastMCP('test', instructions='server guidance')
+
+    @server.tool
+    def ping() -> str:
+        return 'pong'
+
+    app = server.http_app(stateless_http=True, json_response=True)
+    client: httpx.AsyncClient | httpx2.AsyncClient
+    if is_mcp_sdk_v2():
+        client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
+    else:
+        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
+    toolset = MCPToolset('http://testserver/mcp', http_client=client, include_instructions=True)
+    assert toolset.id == 'testserver'
+
+    def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    settings, exporter = redacted_setup(include_content)
+    agent = Agent(FunctionModel(respond), toolsets=[toolset], capabilities=[Instrumentation(settings=settings)])
+    try:
+        async with app.router.lifespan_context(app):
+            await agent.run('go')
+    finally:
+        await client.aclose()
+
+    chat = next(
+        span
+        for span in exporter.get_finished_spans()
+        if span.attributes and span.attributes.get('gen_ai.operation.name') == 'chat'
+    )
+    assert chat.attributes is not None
+    serialized = chat.attributes['model_request_parameters']
+    assert isinstance(serialized, str)
+    parameters = json.loads(serialized)
+    assert [tool['toolset_id'] for tool in parameters['function_tools']] == ['[REDACTED]']
+    assert [part['id'] for part in parameters['instruction_parts']] == ['toolset:[REDACTED]']
+    if not include_content:
+        assert 'testserver' not in serialized
+
+
+def test_a_hostname_derived_id_is_masked_only_while_its_derived():
+    """Choosing an `id` makes it the caller's label, which isn't masked; clearing it derives and masks the hostname again."""
+    toolset = MCPToolset('https://private-tenant.example/mcp')
+    assert toolset._telemetry_url_derived_id == 'private-tenant.example'  # pyright: ignore[reportPrivateUsage]
+    toolset.id = 'chosen'
+    assert toolset._telemetry_url_derived_id is None  # pyright: ignore[reportPrivateUsage]
+    toolset.id = None
+    assert toolset.id == 'private-tenant.example'
+    assert toolset._telemetry_url_derived_id == 'private-tenant.example'  # pyright: ignore[reportPrivateUsage]
+    assert MCPToolset('https://private-tenant.example/mcp', id='docs')._telemetry_url_derived_id is None  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
