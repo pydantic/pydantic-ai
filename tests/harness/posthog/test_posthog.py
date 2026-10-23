@@ -141,6 +141,19 @@ class TestPostHog:
     def test_custom_id_is_forwarded(self, capability: PostHog[str | None]) -> None:
         assert capability.get_toolset().id == 'tenant-posthog'
 
+    @pytest.mark.parametrize(
+        'capability',
+        [
+            PostHog[str | None](id='tenant-posthog', auth='posthog-key', read_only=True),
+            PostHog[str | None](id='tenant-posthog', auth=per_user_token, read_only=True),
+            PostHog[str | None](id='tenant-posthog', client='https://example.com/mcp', read_only=True),
+        ],
+        ids=['token', 'function', 'client'],
+    )
+    def test_read_only_keeps_the_id(self, capability: PostHog[str | None]) -> None:
+        # Durable execution finds a run's held connection by the toolset's `id`.
+        assert capability.get_toolset().id == 'tenant-posthog'
+
     def test_defer_loading_needs_no_id(self) -> None:
         Agent(TestModel(), capabilities=[PostHog(auth='posthog-key', defer_loading=True)])
 

@@ -125,6 +125,19 @@ class TestNotion:
     def test_custom_id_is_forwarded(self, capability: Notion[str | None]) -> None:
         assert capability.get_toolset().id == 'tenant-notion'
 
+    @pytest.mark.parametrize(
+        'capability',
+        [
+            Notion[str | None](id='tenant-notion', auth='token', read_only=True),
+            Notion[str | None](id='tenant-notion', auth=per_user_token, read_only=True),
+            Notion[str | None](id='tenant-notion', client='https://example.com/mcp', read_only=True),
+        ],
+        ids=['token', 'function', 'client'],
+    )
+    def test_read_only_keeps_the_id(self, capability: Notion[str | None]) -> None:
+        # Durable execution finds a run's held connection by the toolset's `id`.
+        assert capability.get_toolset().id == 'tenant-notion'
+
     def test_defer_loading_needs_no_id(self, server: FastMCP) -> None:
         Agent(TestModel(), capabilities=[Notion(client=server, defer_loading=True)])
 

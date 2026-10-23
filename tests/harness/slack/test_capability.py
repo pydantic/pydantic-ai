@@ -135,6 +135,19 @@ class TestSlack:
         assert capability.get_toolset().id == 'tenant-slack'
 
     @pytest.mark.parametrize(
+        'capability',
+        [
+            Slack[str | None](id='tenant-slack', auth='token', read_only=True),
+            Slack[str | None](id='tenant-slack', auth=per_user_token, read_only=True),
+            Slack[str | None](id='tenant-slack', client='https://example.com/mcp', read_only=True),
+        ],
+        ids=['token', 'function', 'client'],
+    )
+    def test_read_only_keeps_the_id(self, capability: Slack[str | None]) -> None:
+        # Durable execution finds a run's held connection by the toolset's `id`.
+        assert capability.get_toolset().id == 'tenant-slack'
+
+    @pytest.mark.parametrize(
         ('capability', 'include'),
         [(Slack[str | None](auth='token'), True), (Slack[str | None](auth='token', include_instructions=False), False)],
         ids=['default', 'disabled'],

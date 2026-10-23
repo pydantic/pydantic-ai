@@ -66,10 +66,12 @@ class _IdentifiedPreparedToolset(PreparedToolset[AgentDepsT]):
         return self.wrapped.id
 
 
-def read_only_toolset(toolset: AbstractToolset[AgentDepsT], *, keep_id: bool = False) -> AbstractToolset[AgentDepsT]:
+def read_only_toolset(toolset: AbstractToolset[AgentDepsT], *, keep_id: bool = True) -> AbstractToolset[AgentDepsT]:
     """Keep tools marked as read-only and warn when the filter removes every tool.
 
-    `keep_id=True` gives the filtered toolset the wrapped toolset's `id`; otherwise it has none, like any wrapper.
+    `keep_id=True`, the default, gives the filtered toolset the wrapped toolset's `id`, because durable execution
+    looks a run's held connection up by that id (`durable_exec/_toolset.py::_run_held_toolset`). Pass
+    `keep_id=False` for a filtered toolset that has none, like any other wrapper.
     """
 
     def prepare_read_only(_ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:

@@ -147,8 +147,9 @@ class TestGitHub:
         [
             GitHub[str | None](id='work-github', auth='token', read_only=True),
             GitHub[str | None](id='work-github', auth=per_user_token, read_only=True),
+            GitHub[str | None](id='work-github', client='https://example.com/mcp', read_only=True),
         ],
-        ids=['token', 'function'],
+        ids=['token', 'function', 'client'],
     )
     def test_hosted_read_only_keeps_the_id(self, capability: GitHub[str | None]) -> None:
         # Durable execution finds a run's held connection by the toolset's `id`.

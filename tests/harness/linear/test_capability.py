@@ -136,6 +136,19 @@ class TestLinear:
     def test_custom_id_is_forwarded(self, capability: Linear[str | None]) -> None:
         assert capability.get_toolset().id == 'tenant-linear'
 
+    @pytest.mark.parametrize(
+        'capability',
+        [
+            Linear[str | None](id='tenant-linear', auth='linear-token', read_only=True),
+            Linear[str | None](id='tenant-linear', auth=per_user_token, read_only=True),
+            Linear[str | None](id='tenant-linear', client='https://example.com/mcp', read_only=True),
+        ],
+        ids=['token', 'function', 'client'],
+    )
+    def test_read_only_keeps_the_id(self, capability: Linear[str | None]) -> None:
+        # Durable execution finds a run's held connection by the toolset's `id`.
+        assert capability.get_toolset().id == 'tenant-linear'
+
     def test_read_only_client_keeps_the_id_on_its_mcp_toolset(self) -> None:
         # The read-only filter wraps the connection, so the id lives on the `MCPToolset` inside it.
         toolset = Linear[None](id='tenant-linear', client='https://example.com/mcp', read_only=True).get_toolset()
