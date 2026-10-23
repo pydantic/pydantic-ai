@@ -33,7 +33,6 @@ from ._operation_names import TemporalOperationNamer
 from ._toolset import (
     ChildWorkflowOperationConfig,
     heartbeating,
-    is_child_workflow_metadata,
     model_response_payload_errors,
 )
 
@@ -125,7 +124,7 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
     async def __call__(self, params: ParamsT, *, config: object | None = None) -> ResultT:
         payload = self._operation.parameter_transport.dump(params)
         resolved_config = cast(TemporalOperationConfigValue, config or self._config)
-        if is_child_workflow_metadata(resolved_config):
+        if 'child_workflow' in resolved_config:
             toolset_id = cast(Any, self._operation.operation_id).toolset_id
             if self.child_workflow is None or self.child_workflow[1] not in registered_child_workflow_names:
                 raise UserError(
