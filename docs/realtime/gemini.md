@@ -103,7 +103,7 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 
 | Setting | Purpose |
 | --- | --- |
-| `google_voice`, `google_language_code` | Voice and output language. `google_multi_speaker` is unsupported on every Live model and raises when the session connects |
+| `google_voice`, `google_language_code` | Voice and output language. A Live session speaks in one voice: the deprecated `google_multi_speaker` raises when the session connects |
 | `google_affective_dialog` | Emotion-aware delivery, on the 2.5 models (not 3.1 Flash Live or the 3.8 models) |
 | `google_proactive_audio` | Model-decided speech on native-audio models; needs a `v1alpha` client (see below). Always on for the 3.8 models |
 | `google_vad` | Exact automatic VAD; fully overrides shared [`turn_detection`](turns.md#automatic-turn-detection) |
