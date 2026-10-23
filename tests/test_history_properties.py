@@ -95,6 +95,15 @@ with try_import() as openai_imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
+# Hypothesis compares the global `random` state before and after each draw and notes this deprecation when it
+# changed. Its own `control.py` documents the false positive: a different thread touching `random` during a draw
+# trips it, and the guard it keeps covers only the states it set itself. Under xdist this module shares a worker
+# with tests that run threads, so the note fired on CI as a flaky error (`filterwarnings = error`). No strategy
+# in `tests/history_strategies.py` uses `random`.
+pytestmark = pytest.mark.filterwarnings(
+    'ignore:Do not use the `random` module inside strategies:hypothesis.errors.HypothesisDeprecationWarning'
+)
+
 
 @given(histories())
 def test_history_survives_serialization(history: list[ModelMessage]):
