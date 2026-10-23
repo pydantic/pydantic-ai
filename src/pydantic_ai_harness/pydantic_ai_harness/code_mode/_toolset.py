@@ -305,11 +305,6 @@ class CodeModeResourceLimits(TypedDict, total=False):
     """
 
 
-def _is_integer(value: object) -> TypeIs[int]:
-    """Whether `value` is an `int`; `bool` subclasses `int` but is never a limit."""
-    return isinstance(value, int) and not isinstance(value, bool)
-
-
 def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited'] | None) -> ResourceLimits:
     """Merge caller overrides onto the `run_code` backstop."""
     if limits == 'unlimited':
@@ -327,16 +322,16 @@ def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited
     max_suspensions: object = 1000 if limits is None else limits.get('max_suspensions', 1000)
     # Monty stores each limit as an unsigned 64-bit integer, or seconds for the duration; anything else fails
     # every snippet. An explicit `None` for memory or duration keeps reaching Monty, which reads it as no limit.
-    if not (_is_integer(max_suspensions) and 1 <= max_suspensions < 2**64):
+    if not (type(max_suspensions) is int and 1 <= max_suspensions < 2**64):
         raise UserError('`max_suspensions` must be an integer of at least 1 and below 2**64')
     if not (
         max_duration_secs is None
         or (
-            (_is_integer(max_duration_secs) or isinstance(max_duration_secs, float)) and 0 < max_duration_secs < 2.0**64
+            (type(max_duration_secs) is int or isinstance(max_duration_secs, float)) and 0 < max_duration_secs < 2.0**64
         )
     ):
         raise UserError('`max_duration_secs` must be a positive number of seconds below 2**64')
-    if not (max_memory is None or (_is_integer(max_memory) and 0 < max_memory < 2**64)):
+    if not (max_memory is None or (type(max_memory) is int and 0 < max_memory < 2**64)):
         raise UserError('`max_memory` must be a positive integer number of bytes below 2**64')
     return {
         'max_feed_duration_secs': max_duration_secs,
