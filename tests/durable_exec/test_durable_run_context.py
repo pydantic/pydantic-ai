@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Any
 
@@ -141,3 +142,20 @@ async def test_revalidate_function_call_rebuilds_the_tool_and_validated_argument
         await revalidate_function_call(
             toolset, ToolsetCallToolParams('gone', tool_args={}, ctx=ctx, tool=None), engine_name='Example'
         )
+
+
+async def test_validation_context_rebuilt_on_a_shallow_copy_leaves_the_original_rebuildable():
+    payloads: list[dict[str, Any]] = []
+    agent = Agent(TestModel(), name='example', deps_type=str, validation_context=lambda ctx: {'tenant': ctx.deps})
+
+    @agent.tool
+    def capture(ctx: RunContext[str]) -> str:
+        payloads.append(_round_trip(ctx))
+        return 'ok'
+
+    await agent.run('hello', deps='acme')
+    original = DurableRunContext.restore(payloads[0], deps='acme', agent=agent, engine_spec=SPEC)
+    shallow = copy.copy(original)
+
+    assert shallow.validation_context == {'tenant': 'acme'}
+    assert original.validation_context == {'tenant': 'acme'}

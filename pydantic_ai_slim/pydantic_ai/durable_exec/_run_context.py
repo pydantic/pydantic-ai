@@ -172,6 +172,10 @@ class DurableRunContext(RunContext[AgentDepsT]):
                 # setting to rebuild from, so it stays guarded like any other uncarried field.
                 value = validation_context_from_agent(agent)(self)
                 self.__dict__['validation_context'] = value
+                # A shallow copy shares the instance field map: give this context its own before
+                # exposing the field, so a copy it was made from (or that was made from it) keeps
+                # rebuilding its own value instead of reading the class default.
+                self.__dict__['__dataclass_fields__'] = dict(object.__getattribute__(self, '__dataclass_fields__'))
                 self._expose_field('validation_context')
                 return value
             raise UserError(self.unavailable_field_message(name))
