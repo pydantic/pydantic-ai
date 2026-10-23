@@ -133,7 +133,7 @@ from ._toolset import (
     validate_dynamic_tool_args,
     wrap_tool_call_result,
 )
-from ._utils import DurableModel, StreamedActivityResult, capture_event_stream, managed_model_scope, unwrap_model
+from ._utils import DurableModel, StreamedModelRequestResult, consume_event_stream, managed_model_scope, unwrap_model
 from ._workspace import (
     WORKSPACE_OPERATION_ID,
     DurableWorkspace,
@@ -190,7 +190,7 @@ def conversation_id_from_run_id(run_id: str) -> str:
 
 class _BoundModelOperations(NamedTuple):
     request: BoundDurableOperation[ModelRequestParams, Any, ModelResponse]
-    request_stream: BoundDurableOperation[ModelRequestParams, Any, StreamedActivityResult]
+    request_stream: BoundDurableOperation[ModelRequestParams, Any, StreamedModelRequestResult]
     compact_messages: BoundDurableOperation[ModelCompactMessagesParams, Any, ModelResponse]
     cancel_suspended_response: BoundDurableOperation[ModelCancelSuspendedResponseParams, Any, None]
 
@@ -1673,8 +1673,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 )
             )
 
-        async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
-            result = await operations.request_stream(
+        async def request_stream_segment(request: ModelRequestContext) -> StreamedModelRequestResult:
+            return await operations.request_stream(
                 ModelRequestParams(
                     model_id,
                     messages=request.messages,
@@ -1683,7 +1683,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     run_context=ctx,
                 )
             )
-            return await self._load_streamed_activity_result(result, request.model_request_parameters)
 
         async def cancel_suspended_response_segment(response: ModelResponse) -> None:
             await operations.cancel_suspended_response(
@@ -1710,11 +1709,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             cancel_suspended_response_segment=cancel_suspended_response_segment,
         )
 
-    async def _load_streamed_activity_result(
-        self, result: object, model_request_parameters: ModelRequestParameters
-    ) -> StreamedActivityResult:
-        return cast(StreamedActivityResult, result)
-
     def _bind_model_operations(
         self, backend: DurableOperationBackend[Any], *, model_id: str | None, model_name: str
     ) -> _BoundModelOperations:
@@ -1729,12 +1723,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             )
         )
         request_stream_operation = backend.bind(
-            DurableOperation(
+            # The result type admits the `StreamedActivityResult` recorded before 2.60, which still replays.
+            DurableOperation[ModelRequestParams, Any, StreamedModelRequestResult](
                 operation_id=ModelRequestId(model_id, streaming=True, model_name=model_name),
                 handler=self._model_request_stream_operation,
-                parameter_transport=self._model_request_parameter_transport(StreamedActivityResult),
+                parameter_transport=self._model_request_parameter_transport(StreamedModelRequestResult),
                 cache_identity=_ModelRequestCacheIdentity(),
-                result_codec=self._typed_result_codec(StreamedActivityResult),
+                result_codec=self._typed_result_codec(StreamedModelRequestResult),
                 config_role='model',
             )
         )
@@ -1783,19 +1778,19 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._stamp_response(response, params.messages)
         return response
 
-    async def _model_request_stream_operation(self, params: ModelRequestParams) -> StreamedActivityResult:
+    async def _model_request_stream_operation(self, params: ModelRequestParams) -> ModelResponse:
         async with self._durable_model_scope(params.model_id, params.run_context) as (model, durable_ctx):
             async with model.request_stream(
                 params.messages, params.model_settings, params.model_request_parameters, durable_ctx
             ) as streamed:
-                events = await capture_event_stream(
+                await consume_event_stream(
                     run_context=durable_ctx,
                     stream=streamed,
                     handler=self._model_stream_event_handler(),
                 )
         response = streamed.get()
         self._stamp_response(response, params.messages)
-        return StreamedActivityResult(response=response, events=events)
+        return response
 
     async def _cancel_suspended_response_operation(self, params: ModelCancelSuspendedResponseParams) -> None:
         if params.run_context is None:

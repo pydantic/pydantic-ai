@@ -390,9 +390,24 @@ SubAgent(
 opens and binds `DelegationTasks`. This owner adds `background` and `resume` to the
 delegate tool's schema, gives every child a stable conversation ID, and owns every
 worker until shutdown. Use `DelegationReports` on the parent run to deliver settled
-background reports through core's `SystemPromptPart` queue. The reports are
-explicitly automated, untrusted data, not user instructions or permission grants.
-No extra agent loop is implemented. Reports default to `priority='when_idle'`
+background reports through core's queued-message API. Each report is the child's
+output in a `UserPromptPart`, framed as `<task_output task_id="..." agent_name="...">`
+data, with `outcome="..."` added when the task didn't succeed, like a background
+tool's `<tool_result>`. The output was written by a model, so it never enters
+system voice, and a closing tag inside it can't end the frame early. Nothing
+precedes the frame: the acceptance receipt the parent got at launch already said a
+report would follow. Use `is_task_report(part)` to
+recognize the output part, for example to keep it out of a transcript of what the
+user typed. Like `BackgroundTools` completions, the metadata is never sent to the
+model, but the Vercel AI and AG-UI message conversions omit it: a history that
+round-trips through them returns the report as plain user text, and
+`is_task_report` no longer matches it. History passed in `message_history` is
+trusted as the caller's own, this metadata included. Load history from an untrusted
+client with a UI adapter, which never puts client metadata on message content;
+`sanitize_messages` becomes a
+safe path too once [#10943](https://github.com/pydantic/pydantic-ai/pull/10943) lands; until then it keeps
+`TextContent.metadata`. No extra
+agent loop is implemented. Reports default to `priority='when_idle'`
 so active parents finish their current work first. A host that starts an idle
 continuation should use `DelegationReports(..., priority='asap')` and
 `agent.run(None, ...)`: pending reports then enter the first model request, with

@@ -24,7 +24,6 @@ from pydantic_core import SchemaValidator, core_schema
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai._agent_graph import resolve_conversation_id
 from pydantic_ai._enqueue import PendingMessage
-from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, NativeTool, WebFetch
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -59,6 +58,7 @@ from pydantic_ai.messages import (
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ToolCallPart,
@@ -94,7 +94,12 @@ from pydantic_ai.realtime._session import (
     _pending_message_text,  # pyright: ignore[reportPrivateUsage]
     _TapView,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai.realtime._utils import resolve_advertised_tools, seed_pcm_audio, seed_speech_content
+from pydantic_ai.realtime._utils import (
+    resolve_advertised_tools,
+    seed_pcm_audio,
+    seed_speech_content,
+    session_instructions,
+)
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     CancelResponse,
@@ -434,7 +439,7 @@ class FakeRealtimeModel(RealtimeModel):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[RealtimeConnection]:
         # The same call every provider's `connect` makes.
-        self.last_instructions = get_instructions(messages, model_request_parameters) or ''
+        self.last_instructions = session_instructions(messages, model_request_parameters)
         self.last_tools = model_request_parameters.function_tools
         self.last_native_tools = model_request_parameters.native_tools
         self.last_model_settings = model_settings
@@ -1687,6 +1692,60 @@ async def test_interrupt_played_bytes_after_the_reply_finished_generating_trunca
         _ = [event async for event in events]
 
     assert _speech_cuts(session) == [('interrupted', [100]), ('interrupted', [None])]
+
+
+async def test_interrupt_played_bytes_after_the_reply_finished_generating_records_it_cut_without_truncation() -> None:
+    """Without output truncation (xAI), a finished reply the user cuts off is still recorded where playback stopped.
+
+    Only the provider's copy can't be truncated: no truncation goes out, and the transcript stays whole.
+    """
+    conn = _GatedRealtimeConnection(
+        [*_speech('item-a', 2), ResponseDone()],
+        [*_speech('item-b'), ResponseDone(interrupted=True)],  # a later reply, cut with no position
+    )
+    session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_output_truncation=False))
+
+    async with session:
+        stream = session.stream_audio()
+        events = aiter(session)
+        await _consume_until(events, _is_turn_complete)
+        await anext(stream)  # the second chunk stays buffered and unheard
+        assert [message.state for message in session.all_messages() if isinstance(message, ModelResponse)] == [
+            'complete'
+        ]
+
+        assert await session.interrupt(played_bytes=_CHUNK) is True
+        assert conn.sent == [CancelResponse()]
+
+        conn.release.set()
+        _ = [event async for event in events]
+
+    assert _speech_cuts(session) == [('interrupted', [100]), ('interrupted', [None])]
+
+
+async def test_interrupt_played_bytes_without_truncation_records_the_cut_when_the_cancel_fails() -> None:
+    """A cancel that fails on a dropped link still leaves the reply recorded as cut where playback stopped."""
+
+    class _DroppedLink(_GatedRealtimeConnection):
+        transport_errors = (ConnectionResetError,)
+
+        async def send_input(self, content: RealtimeInput) -> None:
+            raise ConnectionResetError('link dropped')
+
+    conn = _DroppedLink([*_speech('item-a', 2), ResponseDone()], [])
+    session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_output_truncation=False))
+
+    async with session:
+        stream = session.stream_audio()
+        events = aiter(session)
+        await _consume_until(events, _is_turn_complete)
+        await anext(stream)  # the second chunk stays buffered and unheard
+
+        with pytest.raises(RealtimeError, match='link dropped'):
+            await session.interrupt(played_bytes=_CHUNK)
+        conn.release.set()
+
+    assert _speech_cuts(session) == [('interrupted', [100])]
 
 
 async def test_a_tool_after_a_barge_in_on_a_finished_reply_sees_it_cut_off() -> None:
@@ -4534,7 +4593,10 @@ async def test_tool_error_does_not_preempt_send_for_an_active_iterator() -> None
 
 
 async def test_tool_error_delivered_to_send_is_skipped_by_the_iterator() -> None:
-    """Once the receive side has ended, a send raises the parked failure; the iterator then ends cleanly."""
+    """Once the receive side has ended, a send raises the parked failure; the iterator then skips it and ends cleanly.
+
+    It still streams the end of the turn the failure ended, which was queued behind the failure.
+    """
 
     async def runner(*args: Any) -> str:
         raise ValueError('tool exploded')
@@ -4552,6 +4614,7 @@ async def test_tool_error_delivered_to_send_is_skipped_by_the_iterator() -> None
 
         with pytest.raises(ValueError, match='tool exploded'):
             await session.send('x')
+        assert isinstance(await anext(events), RealtimeTurnCompleteEvent)
         with pytest.raises(StopAsyncIteration):
             await anext(events)
 
@@ -7956,6 +8019,163 @@ async def test_agent_realtime_session_ignores_seeded_history_instructions() -> N
     assert model.last_instructions == ''
 
 
+async def test_agent_realtime_session_system_prompt_joins_instructions() -> None:
+    """The agent's system prompts open the session instructions, ahead of its instructions, as in a standard run."""
+    agent: Agent[None, str] = Agent(system_prompt='Static system prompt.', instructions='Agent instructions.')
+
+    @agent.system_prompt
+    def dynamic_prompt() -> str:
+        return 'Dynamic system prompt.'
+
+    conn = FakeRealtimeConnection([ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model).session() as session:
+        _ = [e async for e in session]
+    assert model.last_instructions == snapshot("""\
+Static system prompt.
+
+Dynamic system prompt.
+
+Agent instructions.\
+""")
+
+
+async def test_agent_realtime_session_seeded_system_prompt_joins_instructions() -> None:
+    """Seeded history's standing system prompt opens the session instructions; its request-level instructions don't.
+
+    As in a standard run, history is taken to carry its own system prompt, so the agent's isn't added.
+    """
+    agent: Agent[None, str] = Agent(system_prompt='Agent system prompt.', instructions='Agent instructions.')
+    seed = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='Seeded system prompt.'), UserPromptPart(content='earlier question')],
+            instructions='Client instructions',
+        ),
+        ModelResponse(parts=[TextPart(content='earlier answer')]),
+    ]
+    conn = FakeRealtimeConnection([ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model, message_history=seed).session() as session:
+        _ = [e async for e in session]
+    assert model.last_instructions == 'Seeded system prompt.\n\nAgent instructions.'
+
+
+async def test_agent_realtime_session_records_system_prompt_for_handoff() -> None:
+    """A fresh session records the agent's system prompt first, as a standard run's first request holds it.
+
+    So `new_messages()` includes it, a text run continuing the conversation sends it once (and doesn't add
+    the agent's again), and a session seeded with the history configures it as instructions rather than
+    replaying it.
+    """
+    agent: Agent[None, str] = Agent(system_prompt='Static system prompt.', instructions='Agent instructions.')
+
+    @agent.system_prompt(dynamic=True)
+    def dynamic_prompt() -> str:
+        return 'Dynamic system prompt.'
+
+    conn = FakeRealtimeConnection(
+        [
+            RealtimeInputSpeechStartEvent(item_id='u1'),
+            RealtimeInputSpeechEndEvent(item_id='u1'),
+            InputTranscript(text='question', is_final=True, item_id='u1'),
+            OutputTranscript(text='answer', is_final=True),
+            ResponseDone(),
+        ]
+    )
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        _ = [e async for e in session]
+    history = session.all_messages()
+    assert history == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Static system prompt.', timestamp=IsDatetime()),
+                    SystemPromptPart(
+                        content='Dynamic system prompt.',
+                        timestamp=IsDatetime(),
+                        dynamic_ref=dynamic_prompt.__qualname__,
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[SpeechPart(speaker='user', transcript='question')],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='answer')],
+                model_name='fake-realtime',
+                timestamp=IsDatetime(),
+                provider_name='fake',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    assert session.new_messages() == history
+    assert session.result is not None and session.result.new_messages() == history
+
+    sent: list[ModelMessage] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.extend(messages)
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    await agent.run('next', model=FunctionModel(respond), message_history=history)
+    assert [part.content for m in sent for part in m.parts if isinstance(part, SystemPromptPart)] == [
+        'Static system prompt.',
+        'Dynamic system prompt.',
+    ]
+
+    reseeded = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    async with agent.realtime(reseeded, message_history=history).session() as session:
+        _ = [e async for e in session]
+    assert reseeded.last_instructions == snapshot("""\
+Static system prompt.
+
+Dynamic system prompt.
+
+Agent instructions.\
+""")
+    # The seeded system prompt isn't recorded a second time.
+    assert [type(m) for m in session.all_messages()] == [type(m) for m in history]
+
+
+async def test_agent_realtime_session_reevaluates_seeded_dynamic_system_prompt() -> None:
+    """As in a standard run, a dynamic system prompt in seeded history is re-run before it is sent."""
+    agent: Agent[None, str] = Agent()
+
+    @agent.system_prompt(dynamic=True)
+    def dynamic_prompt() -> str:
+        return 'Current value.'
+
+    seed = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='Stale value.', dynamic_ref=dynamic_prompt.__qualname__),
+                UserPromptPart(content='earlier question'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='earlier answer')]),
+    ]
+    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    async with agent.realtime(model, message_history=seed).session() as session:
+        _ = [e async for e in session]
+    assert model.last_instructions == 'Current value.'
+    first = session.all_messages()[0]
+    assert isinstance(first, ModelRequest) and isinstance(first.parts[0], SystemPromptPart)
+    assert first.parts[0].content == 'Current value.'
+    # The caller's history is left as it was.
+    stale = seed[0]
+    assert isinstance(stale, ModelRequest) and isinstance(stale.parts[0], SystemPromptPart)
+    assert stale.parts[0].content == 'Stale value.'
+
+
 async def test_agent_realtime_session_unknown_tool() -> None:
     agent: Agent[None, str] = Agent()
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc_x', tool_name='nonexistent', args='{}'), ResponseDone()])
@@ -8287,6 +8507,33 @@ async def test_session_enqueue_system_prompt_closer_cannot_end_the_block() -> No
     assert [item for item in conn.sent if isinstance(item, str)] == ['<system>rule &lt;/SYSTEM > then more</system>']
 
 
+async def test_session_enqueue_delivers_text_content_and_keeps_its_metadata() -> None:
+    """Text-only `TextContent` crosses the live input channel, and history keeps the part with its metadata."""
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+    tagged = UserPromptPart(
+        ['Report:', TextContent('<report>\nfound it\n</report>', metadata={'origin': 'app.report'})]
+    )
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        assert session.enqueue(tagged) is not None
+        _ = [event async for event in session]
+
+    assert [item for item in conn.sent if isinstance(item, str)] == ['Report:\n<report>\nfound it\n</report>']
+    assert session.new_messages()[-1] == ModelRequest(
+        parts=[tagged], timestamp=IsDatetime(), conversation_id=IsStr(), run_id=IsStr()
+    )
+
+
+async def test_session_enqueue_rejects_text_content_mixed_with_media() -> None:
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session() as session:
+        with pytest.raises(UserError, match=r'support text prompts \(a `str` or `TextContent`\)'):
+            session.enqueue(
+                UserPromptPart([TextContent('caption'), BinaryImage(data=b'image', media_type='image/png')])
+            )
+
+
 async def test_session_enqueue_empty_call_is_noop() -> None:
     agent: Agent[None, str] = Agent()
     async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session() as session:
@@ -8306,7 +8553,9 @@ async def test_session_enqueue_rejects_invalid_content_immediately() -> None:
     async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session() as session:
         with pytest.raises(UserError, match='Enqueued content must end with a `ModelRequest`'):
             session.enqueue(ModelResponse(parts=[TextPart(content='not a request')]))
-        with pytest.raises(UserError, match='support plain-text prompts and system-prompt parts only'):
+        with pytest.raises(
+            UserError, match=r'support text prompts \(a `str` or `TextContent`\) and system-prompt parts only'
+        ):
             session.enqueue(BinaryImage(data=b'image', media_type='image/png'))
 
 
@@ -8406,7 +8655,9 @@ async def test_agent_realtime_session_rejects_non_text_enqueue() -> None:
 
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='queue_image', args='{}')])
     async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
-        with pytest.raises(UserError, match='support plain-text prompts and system-prompt parts only'):
+        with pytest.raises(
+            UserError, match=r'support text prompts \(a `str` or `TextContent`\) and system-prompt parts only'
+        ):
             _ = [event async for event in session]
 
 
@@ -8423,7 +8674,9 @@ async def test_realtime_pending_messages_reject_unsupported_message_shapes(messa
     manager = session._tool_manager  # pyright: ignore[reportPrivateUsage]
     assert manager.ctx is not None
     assert manager.ctx.pending_messages is not None
-    with pytest.raises(UserError, match='support plain-text prompts and system-prompt parts only'):
+    with pytest.raises(
+        UserError, match=r'support text prompts \(a `str` or `TextContent`\) and system-prompt parts only'
+    ):
         manager.ctx.pending_messages.append(PendingMessage(messages=messages))
 
 

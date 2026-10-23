@@ -70,6 +70,8 @@ class MoonshotAIProvider(_OpenAICompatibleProvider):
         # `'none'`. This is set here, not in `moonshotai_model_profile`, because that profile is also
         # routed through OpenRouter/Heroku, whose gateways don't share this endpoint quirk.
         is_reasoning = bool(profile and profile.get('supports_thinking'))
+        # Probed live on `api.moonshot.ai`; the other Kimi reasoning ids weren't reachable to verify.
+        supports_max_effort = model_name.lower().startswith(('kimi-k3', 'kimi-k2.6', 'kimi-k2.7'))
 
         # As the MoonshotAI API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly.
@@ -85,6 +87,7 @@ class MoonshotAIProvider(_OpenAICompatibleProvider):
                 openai_chat_thinking_field='reasoning_content',
                 openai_chat_send_back_thinking_parts='field',
                 thinking_always_enabled=is_reasoning,
+                openai_chat_supports_max_reasoning_effort=supports_max_effort,
             ),
         )
 
