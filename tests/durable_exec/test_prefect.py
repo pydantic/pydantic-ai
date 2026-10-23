@@ -4421,6 +4421,37 @@ async def test_prefect_task_wrapped_tool_rejects_cancel() -> None:
         await agent.run('run')
 
 
+async def test_prefect_task_wrapped_sub_agent_self_cancel_is_a_failed_tool_return() -> None:
+    """A sub-agent that cancels itself inside a task-wrapped tool fails that tool call, as it does in-process.
+
+    The task records the cancellation as a result, and the flow side raises it again for the tool
+    executor to turn into a failed tool return.
+    """
+    sub_agent = Agent(TestModel(), name='prefect_self_cancelling_sub_agent')
+
+    @sub_agent.tool
+    async def stop(ctx: RunContext[object]) -> str:
+        ctx.cancel()
+        return 'discarded'
+
+    async def delegate() -> str:
+        return (await sub_agent.run('stop')).output
+
+    agent = Agent(TestModel(), name='prefect_sub_agent_cancel', tools=[delegate], capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> list[str]:
+        result = await agent.run('delegate')
+        return [
+            f'{part.outcome}: {part.content}'
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+    assert await run_agent() == snapshot(['failed: The sub-agent run was cancelled: The agent run was cancelled.'])
+
+
 async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest.MonkeyPatch) -> None:
     """The MCP task path guards enqueue too: a `process_tool_call=` hook receives the run context."""
     mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='enqueue_mcp')

@@ -4479,6 +4479,69 @@ async def test_run_context_cancel_in_activity_surfaces_user_error(client: Client
     )
 
 
+_self_cancelling_sub_agent = Agent(TestModel(), name='self_cancelling_sub_agent')
+
+
+@_self_cancelling_sub_agent.tool
+def _stop_sub_agent(ctx: RunContext[object]) -> str:
+    ctx.cancel()
+    return 'discarded'
+
+
+_sub_agent_delegations: list[None] = []
+
+
+async def _delegate_to_self_cancelling_sub_agent() -> str:
+    _sub_agent_delegations.append(None)
+    return (await _self_cancelling_sub_agent.run('stop')).output
+
+
+_sub_agent_cancel_agent = Agent(
+    TestModel(),
+    name='sub_agent_cancel_agent',
+    tools=[_delegate_to_self_cancelling_sub_agent],
+    capabilities=[TemporalDurability()],
+)
+
+
+@workflow.defn
+class SubAgentCancelWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[str]:
+        result = await _sub_agent_cancel_agent.run(prompt)
+        return [
+            f'{part.outcome}: {part.content}'
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+
+async def test_sub_agent_self_cancel_in_activity_is_a_failed_tool_return(client: Client) -> None:
+    """A sub-agent that cancels itself inside a tool activity fails that tool call, as it does in-process.
+
+    The cancellation crosses the activity boundary as a result, so the activity succeeds once
+    rather than being retried under the default retry policy until the workflow fails.
+    """
+    _sub_agent_delegations.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SubAgentCancelWorkflow],
+        plugins=[AgentPlugin(_sub_agent_cancel_agent)],
+    ):
+        tool_returns = await client.execute_workflow(
+            SubAgentCancelWorkflow.run,
+            args=['delegate'],
+            id=f'{SubAgentCancelWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+
+    assert tool_returns == snapshot(['failed: The sub-agent run was cancelled: The agent run was cancelled.'])
+    assert len(_sub_agent_delegations) == 1
+
+
 # --- Usage mutated inside an activity ---
 
 
