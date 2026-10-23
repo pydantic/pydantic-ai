@@ -158,6 +158,23 @@ Toolsets that implement their own tool listing and calling (i.e. [`FunctionTools
 
 Unlike Temporal and DBOS, Prefect creates a task per call rather than registering its durable units up front, so [capabilities](../capabilities/overview.md) passed to `agent.run(capabilities=[...])` inside a flow are accepted. A capability that contributes an executing toolset is still rejected, by the same guard that rejects `run(toolsets=...)`: the toolset arrives after the agent's toolsets were wrapped. Attach those at agent construction time.
 
+### Durable Capability Operations
+
+Custom [`@durable_operation`](../capabilities/custom.md#durable-capability-operations) calls use the run's
+[`run_id`][pydantic_ai.tools.RunContext.run_id] and a per-operation call sequence in their task cache
+keys. Distinct, stable explicit `run_id=` values keep each run's results attached to that run even
+when runs arrive in a different order on a flow retry. Repeated identical calls within one run
+keep separate recorded results. Automatically derived run IDs still depend on
+arrival order, so pass explicit IDs for branches that can reorder.
+
+!!! warning "Upgrading custom capability task cache keys"
+
+    Persisted custom capability task results from versions before this change use different cache
+    keys. Retrying an in-flight flow across the upgrade re-executes these operations, which can
+    repeat their external effects. Let in-flight flows using custom durable capability operations
+    finish before upgrading. No manual cache deletion is required. Model, tool, workspace, and
+    event stream handler cache keys are unchanged by this update.
+
 ### Workspaces
 
 Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent, and use `ctx.workspace` as in any run. Each workspace call made in flow code (capability hooks, output functions, `result.workspace`) runs as a task; inside a task, such as a tool, calls go straight to the provider.
@@ -361,7 +378,7 @@ Prefect 3.0 provides built-in caching and transactional semantics. A task whose 
 
 * **Task inputs**: A model request's messages, settings and parameters; a tool call's name, arguments, definition and [`tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id] (so two parallel calls to the same tool with the same arguments each execute); the prefixes and renames a dynamic toolset is listed under (so one dynamic toolset under two prefixes keeps a result per prefix); and the run state the task's work can depend on: dependencies, [`metadata`][pydantic_ai.tools.RunContext.metadata], [`validation_context`][pydantic_ai.tools.RunContext.validation_context], the prompt, and the message history.
 
-Per-run identifiers like [`run_id`][pydantic_ai.tools.RunContext.run_id] and [`conversation_id`][pydantic_ai.tools.RunContext.conversation_id], and message timestamps, are deliberately left out, so retries of the same flow run replay recorded results instead of re-executing them. A run with a [`timeout=`](#run-timeouts) is the exception: its tool tasks key on the run's [`deadline`][pydantic_ai.tools.RunContext.deadline], so a tool that sizes its work to the time left doesn't replay a result computed under a different budget. A flow retry keeps the deadline, so its tool results still replay. The default cache policy does include the Prefect flow run ID, so a separate flow run has its own cache scope and executes its tasks afresh.
+Model and tool task cache keys deliberately leave out per-run identifiers like [`run_id`][pydantic_ai.tools.RunContext.run_id] and [`conversation_id`][pydantic_ai.tools.RunContext.conversation_id], and message timestamps, so identical inputs can reuse results across agent runs in the same flow. A run with a [`timeout=`](#run-timeouts) is the exception: its tool tasks key on the run's [`deadline`][pydantic_ai.tools.RunContext.deadline], so a tool that sizes its work to the time left doesn't replay a result computed under a different budget. A flow retry keeps the deadline, so its tool results still replay. The default cache policy does include the Prefect flow run ID, so a separate flow run has its own cache scope and executes its tasks afresh.
 
 **Note**: For user dependencies, `metadata` and `validation_context` to be included in cache keys, they must be serializable (e.g., Pydantic models or basic Python types). Non-serializable values are automatically excluded from cache computation.
 
