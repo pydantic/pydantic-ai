@@ -382,6 +382,10 @@ agent = Agent(model)
 
 Compatibility with one API does not imply support for the other or for every OpenAI feature. `OpenAIProvider` also assumes OpenAI's models: it selects a profile from the model name as if it were an OpenAI model, whatever the `base_url`. For other models, features such as `thinking` or structured output may be ignored or rejected until you configure the [model profile](#model-profile).
 
+## Non-standard finish reasons
+
+When an OpenAI-compatible API returns a `finish_reason` outside the five that OpenAI defines, `OpenAIChatModel` keeps the response, gives it a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `None`, and keeps the raw value in [`provider_details['finish_reason']`][pydantic_ai.messages.ModelResponse.provider_details].
+
 ## Model profile
 
 A model profile tells the model class how to shape requests for a particular model and API: which JSON schema restrictions its tool definitions have, whether tools can be marked as strict, how reasoning is configured, and so on. The providers above select one automatically based on the model name, so you only need this section if a model behind a custom endpoint doesn't work correctly out of the box.
