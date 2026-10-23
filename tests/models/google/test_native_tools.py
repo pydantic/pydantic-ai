@@ -551,6 +551,9 @@ def test_content_model_response_leaves_web_search_sources_out_of_the_tool_respon
 def test_content_model_response_drops_native_tool_ids_minted_for_gemini_parts(monkeypatch: pytest.MonkeyPatch):
     """A `tool_call` / `tool_response` Gemini sent without an id gets one from `generate_tool_call_id`, and the echo
     path must recognize it by `TOOL_CALL_ID_PREFIX`, whatever its value, so the part never reaches Gemini.
+
+    Unit, not VCR: the check only diverges from a hardcoded prefix once `TOOL_CALL_ID_PREFIX` is patched, which a
+    recording can't exercise.
     """
     monkeypatch.setattr(_utils, 'TOOL_CALL_ID_PREFIX', 'minted_')
     response = _process_response(
