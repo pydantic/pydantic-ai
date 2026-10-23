@@ -44,8 +44,6 @@ from pydantic_ai.usage import RunUsage
 
 from .capability_models import simple_model_function, simple_stream_function
 
-pytestmark = pytest.mark.anyio
-
 
 @dataclass(kw_only=True)
 class FileReadEvent(CapabilityEvent, namespace='on_event_files'):

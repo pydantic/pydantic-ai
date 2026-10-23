@@ -1,3 +1,7 @@
+---
+description: "Connect browsers and phone calls to a Pydantic AI realtime voice agent via WebRTC, a WebSocket relay or a Twilio bridge, with keys and tools on your server."
+---
+
 # Connecting a frontend
 
 Keep provider keys, tools, and business logic on the server; connect user devices to your backend,
@@ -8,7 +12,7 @@ client and the provider:
   path on OpenAI and Azure OpenAI: the browser exchanges media directly with the provider (lowest
   latency) while your backend runs the agent over a control-plane sideband.
 - **[Browser → backend WebSocket relay](#browser-backend-websocket-relay)** — works with every
-  provider, including Gemini Live and xAI: the browser streams audio to your backend, which owns the
+  provider, including Gemini Live, xAI, and ElevenLabs Agents: the browser streams audio to your backend, which owns the
   media bridge.
 - **[SIP / telephony bridge](#siptelephony-bridge)** — for phone calls, via a telephony provider.
 
@@ -22,7 +26,7 @@ up all of that; prefer one of the setups above.
 For browser voice agents on OpenAI and Azure OpenAI, the browser carries microphone and speaker
 audio directly over WebRTC while the backend attaches a control-plane **sideband** to the same call.
 Media never touches your backend, so latency stays low, while tools, history, dependencies, and
-provider credentials stay on the server. Gemini Live and xAI do not offer this sideband transport —
+provider credentials stay on the server. Gemini Live, xAI, and ElevenLabs Agents do not offer this sideband transport —
 use the [WebSocket relay](#browser-backend-websocket-relay) there.
 
 ```text
@@ -41,7 +45,7 @@ import asyncio
 from pydantic_ai import Agent
 
 agent = Agent(instructions='You are a concise voice assistant.')
-realtime = agent.realtime('openai:gpt-realtime')
+realtime = agent.realtime('{{ openai:realtime }}')
 sideband_tasks: set[asyncio.Task[None]] = set()
 
 
@@ -69,22 +73,38 @@ short-lived credential for client-led negotiation. Either way the browser is a p
 session and can send provider-native control events, so authorize every server-side tool against
 trusted [`deps`](../dependencies.md), not session instructions supplied to the model.
 
+To continue an earlier conversation, create the `AgentRealtime` per call inside the offer handler,
+`realtime = agent.realtime(model, message_history=...)`, and answer the offer and open the sideband from
+that same object. GPT-Live takes the history when the offer starts the call, and a sideband opened with
+other history refuses to attach; the other providers seed it when the sideband attaches.
+
 !!! warning "The browser can read seeded history"
-    Seeding a sideband session with [`message_history`](history.md) sends those prior turns into the
+    Seeding a WebRTC call with [`message_history`](history.md) sends those prior turns into the
     **shared** provider conversation that the browser is a peer on, so a call participant can read
     them — including confidential tool results — over the data channel (Azure's `webrtcfilter=on`
-    still forwards conversation-item events). Only seed a sideband with history that is safe for the
+    still forwards conversation-item events). Only seed a call with history that is safe for the
     browser to see; keep confidential context in [`deps`](../dependencies.md) and tool logic instead.
 
 A sideband does not own the audio transport: its `send_audio()`, `commit_audio()`, `clear_audio()`,
 and `stream_audio()` methods raise, and `audio_retention` must remain `'transcript_only'`. Enable
-[input transcription](audio.md#input-transcription) when user speech must appear in history, and use
+[input transcription](audio.md#input-transcription) when user speech must appear in history. On
+gpt-realtime and Azure OpenAI, use
 [`RealtimeOutputSpeechStartEvent`][pydantic_ai.realtime.RealtimeOutputSpeechStartEvent] /
 [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent] for speaking
-indicators — [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] clears the provider's
-outbound WebRTC audio buffer so [barge-in](turns.md#barge-in) stops playback. A
-dropped sideband follows the same [reconnect](lifecycle.md#reconnecting) rules, with one wrinkle
-covered there: a clean close is treated as the browser hanging up.
+indicators, and [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] clears the provider's
+outbound WebRTC audio buffer so [barge-in](turns.md#barge-in) stops playback. GPT-Live emits neither
+event and doesn't support `interrupt()` (see
+[its feature support](openai.md#gpt-live-feature-support-and-limitations)). A dropped sideband
+follows the same [reconnect](lifecycle.md#reconnecting) rules (except on GPT-Live, whose sideband
+is not reconnected), with one wrinkle covered there: a clean close is treated as the browser
+hanging up.
+
+Closing a sideband session, or leaving its `async with` block, only detaches your server: the
+browser's call stays up, and billed, until the browser hangs up. To end the call from the server,
+call [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] instead (it works from a
+[tool](tools.md#ending-the-session-from-a-tool) too), or
+[`hang_up(answer.session)`][pydantic_ai.agent.AgentRealtime.hang_up] on `agent.realtime(model)` when
+no sideband is attached. OpenAI supports this for both gpt-realtime and GPT-Live; Azure OpenAI doesn't yet.
 
 The [realtime WebRTC example](../examples/realtime-webrtc.md) demonstrates the full FastAPI and
 browser flow. Provider-specific setup (Azure's Microsoft Entra ID and `webrtcfilter`) lives on the
@@ -92,7 +112,7 @@ browser flow. Provider-specific setup (Azure's Microsoft Entra ID and `webrtcfil
 
 ## Browser → backend WebSocket relay {#browser-backend-websocket-relay}
 
-When the browser can't use WebRTC — or the provider is Gemini Live or xAI — build a WebSocket
+When the browser can't use WebRTC — or the provider is Gemini Live, xAI, or ElevenLabs Agents — build a WebSocket
 endpoint on your backend that accepts the browser's microphone audio and pumps it into
 [`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio], while relaying
 [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] output back for playback. Here
@@ -119,7 +139,7 @@ async def voice_socket(websocket: WebSocket):
         while True:
             yield await websocket.receive_bytes()
 
-    async with agent.realtime('openai:gpt-realtime').session() as session:
+    async with agent.realtime('{{ openai:realtime }}').session() as session:
 
         async def playback():
             async for chunk in session.stream_audio():

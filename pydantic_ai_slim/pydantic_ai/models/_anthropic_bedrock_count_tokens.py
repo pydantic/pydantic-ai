@@ -24,6 +24,9 @@ from pydantic_core import to_json
 from .._utils import is_str_dict
 from ..exceptions import UnexpectedModelBehavior
 
+BEDROCK_ANTHROPIC_VERSION = 'bedrock-2023-05-31'
+"""The request body's `anthropic_version` that Bedrock's InvokeModel API takes for every Claude model."""
+
 if TYPE_CHECKING:
     from anthropic import (
         AsyncAnthropicBedrock,  # pyright: ignore[reportPrivateImportUsage]
@@ -71,7 +74,7 @@ async def count_tokens_via_bedrock(
     `.post()` raises the SDK's `APIStatusError` on non-2xx).
     """
     body: dict[str, object] = {
-        'anthropic_version': 'bedrock-2023-05-31',
+        'anthropic_version': BEDROCK_ANTHROPIC_VERSION,
         'max_tokens': max_tokens,
         'messages': messages,
     }
@@ -105,9 +108,7 @@ async def count_tokens_via_bedrock(
     quoted_model = urllib.parse.quote(model, safe=':')
     encoded_body = base64.b64encode(to_json(body)).decode()
     content = to_json({'input': {'invokeModel': {'body': encoded_body}}})
-    # `cast_to=object` (not `dict[str, object]`): the SDK passes `cast_to` to `issubclass()`, which
-    # raises `TypeError` on a subscripted generic under Python 3.10. `object` returns the raw parsed
-    # JSON body, which we validate explicitly below.
+    # `cast_to=object` returns the raw JSON body for explicit validation below.
     response = await client.post(
         f'/model/{quoted_model}/count-tokens',
         cast_to=object,

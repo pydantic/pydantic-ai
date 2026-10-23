@@ -2,8 +2,9 @@
 
 Tests verify model profile detection for different OpenAI models, particularly the full desired
 reasoning-flag matrix per model version: `openai_supports_reasoning`,
-`openai_reasoning_enabled_by_default`, `openai_supports_reasoning_effort_none`,
-`openai_supports_minimal_reasoning_effort`, and `openai_responses_supports_reasoning_mode`.
+`thinking_enabled_by_default`, `openai_supports_reasoning_effort_none`,
+`openai_supports_minimal_reasoning_effort`, `openai_responses_supports_max_reasoning_effort`, and
+`openai_responses_supports_reasoning_mode`.
 """
 
 from __future__ import annotations as _annotations
@@ -26,6 +27,8 @@ with try_import() as imports_successful:
         openai_model_profile,
         validate_openai_profile,
     )
+    from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -46,6 +49,9 @@ class ReasoningCase:
 
     supports_minimal_reasoning_effort: bool = True
     """The model accepts `reasoning.effort='minimal'`."""
+
+    supports_max_reasoning_effort: bool = False
+    """The Responses API accepts `reasoning.effort='max'` (verified live on 2026-10-21)."""
 
     supports_context: bool = False
     """The Responses API accepts `reasoning.context='all_turns'`."""
@@ -103,6 +109,7 @@ REASONING_CASES = [
         can_be_disabled=True,
         supports_mode=True,
         supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
         supports_context=True,
     ),
     ReasoningCase(
@@ -111,6 +118,7 @@ REASONING_CASES = [
         can_be_disabled=True,
         supports_mode=True,
         supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
         supports_context=True,
     ),
     ReasoningCase(
@@ -119,16 +127,25 @@ REASONING_CASES = [
         can_be_disabled=True,
         supports_mode=True,
         supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
         supports_context=True,
     ),
-    # gpt-6-astra: reasons by default with no `effort='none'`; carries over `reasoning.mode` and
-    # `reasoning.context='all_turns'` from GPT-5.6. Pinned from the model guide
-    # (https://developers.openai.com/api/docs/models/gpt-6-astra); live verification pending access.
+    # gpt-6-astra and gpt-6.1-sol: reason by default with no `effort='none'`; carry over
+    # `reasoning.mode` and `reasoning.context='all_turns'` from GPT-5.6.
     ReasoningCase(
         model='gpt-6-astra',
         enabled_by_default=True,
         supports_mode=True,
         supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
+        supports_context=True,
+    ),
+    ReasoningCase(
+        model='gpt-6.1-sol',
+        enabled_by_default=True,
+        supports_mode=True,
+        supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
         supports_context=True,
     ),
     ReasoningCase(
@@ -137,6 +154,7 @@ REASONING_CASES = [
         can_be_disabled=True,
         supports_mode=True,
         supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
         supports_context=True,
     ),
     ReasoningCase(
@@ -145,6 +163,7 @@ REASONING_CASES = [
         can_be_disabled=True,
         supports_mode=True,
         supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
         supports_context=True,
     ),
     # no reasoning
@@ -166,13 +185,27 @@ def test_reasoning_matrix(case: ReasoningCase):
     profile = openai_model_profile(case.model)
     assert isinstance(profile, dict)
     assert profile.get('openai_supports_reasoning', False) is supports_reasoning
-    assert profile.get('openai_reasoning_enabled_by_default', False) is case.enabled_by_default
+    assert profile.get('thinking_enabled_by_default', False) is case.enabled_by_default
     assert profile.get('openai_supports_reasoning_effort_none', False) is case.can_be_disabled
     assert profile.get('openai_supports_minimal_reasoning_effort', True) is case.supports_minimal_reasoning_effort
+    # Set by `OpenAIProvider`, not the shared profile, which OpenAI-compatible endpoints reuse unverified.
+    assert profile.get('openai_responses_supports_max_reasoning_effort', False) is False
+    provider_profile = OpenAIProvider.model_profile(case.model)
+    assert isinstance(provider_profile, dict)
+    assert provider_profile.get('openai_responses_supports_max_reasoning_effort') is case.supports_max_reasoning_effort
+    # OpenAI's Chat Completions API rejects `max` on every model.
+    assert profile.get('openai_chat_supports_max_reasoning_effort', False) is False
     assert profile.get('openai_responses_supports_reasoning_mode', False) is case.supports_mode
     assert profile.get('openai_responses_supports_reasoning_context', False) is case.supports_context
     assert profile.get('supports_thinking', False) is supports_reasoning
     assert profile.get('thinking_always_enabled', False) is (case.enabled_by_default and not case.can_be_disabled)
+
+
+def test_openai_compatible_endpoints_fall_back_from_max_effort():
+    """`max` is verified only on OpenAI's own Responses API, so an endpoint reusing the OpenAI profile sends `xhigh`."""
+    profile = AzureProvider.model_profile('gpt-5.6-sol')
+    assert isinstance(profile, dict)
+    assert profile.get('openai_responses_supports_max_reasoning_effort', False) is False
 
 
 class TestEncryptedReasoningContent:

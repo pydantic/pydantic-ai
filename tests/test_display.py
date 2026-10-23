@@ -18,7 +18,7 @@ import pydantic_ai
 import pydantic_ai._display as _display
 from pydantic_ai import Agent, ModelMessage, ModelRequest, UserPromptPart, __version__
 from pydantic_ai.agent import _registered_capability_count  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 
@@ -665,6 +665,12 @@ def test_the_fork_handler_hands_back_a_lock_nobody_holds():
 
 
 @pytest.mark.skipif(not hasattr(os, 'fork'), reason='fork is POSIX-only')
+# Forking while another thread holds the lock is the scenario under test. Python 3.12+ warns about forking a
+# multithreaded process; from 3.15, `os.fork()` raises that warning under this suite's `error` filter instead
+# of swallowing it.
+@pytest.mark.filterwarnings(
+    'ignore:This process .* is multi-threaded, use of fork\\(\\) may lead to deadlocks:DeprecationWarning'
+)
 def test_a_banner_does_not_hang_a_process_forked_mid_claim():
     """`fork` clones one thread, so a lock another was holding is held forever in the child.
 
@@ -912,6 +918,15 @@ def test_instrumented_agent_run_is_silent(monkeypatch: pytest.MonkeyPatch, stder
     agent.instrument = True
 
     agent.run_sync('hello')
+
+    assert stderr.getvalue() == ''
+
+
+def test_run_instrumented_by_an_explicit_capability_is_silent(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    """The banner defers to the `Instrumentation` capability that instruments the run, not just `instrument`."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+
+    Agent(TestModel()).run_sync('hello', capabilities=[Instrumentation()])
 
     assert stderr.getvalue() == ''
 

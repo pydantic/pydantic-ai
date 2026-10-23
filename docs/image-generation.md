@@ -1,3 +1,7 @@
+---
+description: "Generate and edit images from Python with the Pydantic AI ImageGenerator API, using GPT Image, Gemini and Grok Imagine models from OpenAI, Google and xAI."
+---
+
 # Image Generation
 
 Pydantic AI provides a provider-agnostic API for generating and editing images with dedicated image models.
@@ -27,7 +31,7 @@ from pathlib import Path
 
 from pydantic_ai import ImageGenerator
 
-generator = ImageGenerator('openai:gpt-image-2')
+generator = ImageGenerator('{{ openai:image }}')
 
 
 async def main():
@@ -74,7 +78,7 @@ Pass reference images through `images` to edit or transform them. The input can 
 ```python {title="image_edit.py"}
 from pydantic_ai import BinaryImage, ImageGenerator
 
-generator = ImageGenerator('google:gemini-3.1-flash-lite-image')
+generator = ImageGenerator('{{ google:image }}')
 
 
 async def replace_subject(source: BinaryImage) -> BinaryImage:
@@ -163,7 +167,7 @@ export GOOGLE_API_KEY='your-api-key'
 
 The `google-cloud:` prefix uses Google Cloud instead, which authenticates with Application Default Credentials rather
 than an API key. See the [Google image-generation notes](models/google.md#image-generation) for provider-specific
-behavior and [Google Cloud configuration](models/google.md#google-cloud-enterprise) for the credential options.
+behavior and [Google Cloud configuration](models/google-cloud.md#authentication) for the credential options.
 
 ### xAI
 
@@ -203,7 +207,7 @@ from pydantic_ai.images.openai import OpenAIImageGenerationModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 model = OpenAIImageGenerationModel(
-    'gpt-image-2',
+    '{{ openai:image.name }}',
     provider=OpenAIProvider(base_url='https://my-provider.com/v1', api_key='your-api-key'),
 )
 generator = ImageGenerator(model)
@@ -224,7 +228,7 @@ from pydantic_ai.images import ImageGenerationSettings
 from pydantic_ai.images.openai import OpenAIImageGenerationSettings
 
 generator = ImageGenerator(
-    'openai:gpt-image-2',
+    '{{ openai:image }}',
     settings=OpenAIImageGenerationSettings(openai_quality='low', openai_output_format='jpeg'),
 )
 
@@ -396,8 +400,8 @@ from pydantic_ai import ImageGenerator
 from pydantic_ai.images.openai import OpenAIImageGenerationSettings
 from pydantic_ai.images.xai import XaiImageGenerationSettings
 
-openai_generator = ImageGenerator('openai:gpt-image-2', settings=OpenAIImageGenerationSettings(openai_n=3))
-xai_generator = ImageGenerator('xai:grok-imagine-image', settings=XaiImageGenerationSettings(xai_n=3))
+openai_generator = ImageGenerator('{{ openai:image }}', settings=OpenAIImageGenerationSettings(openai_n=3))
+xai_generator = ImageGenerator('{{ xai:image }}', settings=XaiImageGenerationSettings(xai_n=3))
 ```
 
 Gemini returns one image per request, so there is no Google equivalent.
@@ -416,7 +420,7 @@ than one image or need per-image metadata such as `revised_prompt`.
 ```python {title="image_generation_result.py"}
 from pydantic_ai import ImageGenerator
 
-generator = ImageGenerator('openai:gpt-image-2')
+generator = ImageGenerator('{{ openai:image }}')
 
 
 async def main():
@@ -469,7 +473,7 @@ Because a block is reported as an exception rather than an empty result, you can
 from pydantic_ai import ImageGenerator
 from pydantic_ai.exceptions import ContentFilterError
 
-generator = ImageGenerator('openai:gpt-image-2')
+generator = ImageGenerator('{{ openai:image }}')
 
 
 async def main():
@@ -501,7 +505,7 @@ from pydantic_ai import ImageGenerator
 
 logfire.configure()
 
-generator = ImageGenerator('openai:gpt-image-2', instrument=True)
+generator = ImageGenerator('{{ openai:image }}', instrument=True)
 
 # Or instrument all image generators globally
 ImageGenerator.instrument_all()
@@ -528,7 +532,7 @@ from pydantic_ai.images import ImageGenerationSettings, TestImageGenerationModel
 
 
 async def test_image_workflow():
-    generator = ImageGenerator('openai:gpt-image-2')
+    generator = ImageGenerator('{{ openai:image }}')
     test_model = TestImageGenerationModel()
 
     with generator.override(model=test_model):
@@ -613,4 +617,6 @@ The direct API and agent image generation serve different use cases:
 | [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | An agent should decide when to generate an image, with native execution when available and a direct image-model fallback otherwise. |
 | [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] | You need direct control over a conversational model provider's native image-generation tool. |
 
-See the [`ImageGeneration` capability](capabilities/image-generation.md) for provider-adaptive agent usage.
+See the [`ImageGeneration` capability](capabilities/image-generation.md) for provider-adaptive agent usage, and
+[Getting the Generated Image](capabilities/image-generation.md#getting-the-generated-image) for reading the image
+back out of an agent run.

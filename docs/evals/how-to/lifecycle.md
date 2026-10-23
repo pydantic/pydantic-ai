@@ -1,3 +1,7 @@
+---
+description: "Control per-case setup, context preparation and teardown in a Pydantic Evals run with CaseLifecycle hooks, such as creating a database for each case."
+---
+
 # Case Lifecycle Hooks
 
 Control per-case setup, context preparation, and teardown during evaluation using [`CaseLifecycle`][pydantic_evals.lifecycle.CaseLifecycle].
@@ -78,6 +82,7 @@ cleaned_up: list[str] = []
 
 class ConditionalCleanup(CaseLifecycle[str, str, dict]):
     async def setup(self) -> None:
+        assert self.case.name is not None
         self.resource_id = self.case.name
 
     async def teardown(

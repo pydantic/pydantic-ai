@@ -1,3 +1,7 @@
+---
+description: "Build multi-agent systems with Pydantic AI: delegate to sub-agents through tools, hand off between agents in your code, or orchestrate them with graphs."
+---
+
 # Multi-agent Applications
 
 There are roughly five levels of complexity when building applications with Pydantic AI:
@@ -33,7 +37,7 @@ You'll generally want to pass [`ctx.usage`][pydantic_ai.tools.RunContext.usage] 
 from pydantic_ai import Agent, RunContext, UsageLimits
 
 joke_selection_agent = Agent(  # (1)!
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     name='joke_selection_agent',  # (2)!
     instructions=(
         'Use the `joke_factory` to generate some jokes, then choose the best. '
@@ -41,7 +45,7 @@ joke_selection_agent = Agent(  # (1)!
     ),
 )
 joke_generation_agent = Agent(  # (3)!
-    'google:gemini-3-flash-preview', name='joke_generation_agent', output_type=list[str]
+    '{{ google:medium }}', name='joke_generation_agent', output_type=list[str]
 )
 
 
@@ -63,7 +67,7 @@ print(result.output)
 print(result.usage)
 """
 RunUsage(
-    cost=Decimal('0.00051200'),
+    cost=Decimal('0.00047625'),
     input_tokens=165,
     output_tokens=24,
     requests=3,
@@ -123,7 +127,7 @@ class ClientAndKey:  # (1)!
 
 
 joke_selection_agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     name='joke_selection_agent',
     deps_type=ClientAndKey,  # (2)!
     instructions=(
@@ -132,7 +136,7 @@ joke_selection_agent = Agent(
     ),
 )
 joke_generation_agent = Agent(
-    'google:gemini-3-flash-preview',
+    '{{ google:medium }}',
     name='joke_generation_agent',
     deps_type=ClientAndKey,  # (4)!
     output_type=list[str],
@@ -173,7 +177,7 @@ async def main():
         print(result.usage)  # (6)!
         """
         RunUsage(
-            cost=Decimal('0.00056350'),
+            cost=Decimal('0.00054750'),
             input_tokens=220,
             output_tokens=32,
             requests=4,
@@ -239,9 +243,9 @@ class Failed(BaseModel):
 
 
 flight_search_agent = Agent[object, FlightDetails | Failed](  # (1)!
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     name='flight_search_agent',
-    output_type=FlightDetails | Failed,  # type: ignore
+    output_type=FlightDetails | Failed,
     instructions=(
         'Use the "flight_search" tool to find a flight '
         'from the given origin to the given destination.'
@@ -288,9 +292,9 @@ class SeatPreference(BaseModel):
 
 # This agent is responsible for extracting the user's seat selection
 seat_preference_agent = Agent[object, SeatPreference | Failed](  # (5)!
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     name='seat_preference_agent',
-    output_type=SeatPreference | Failed,  # type: ignore
+    output_type=SeatPreference | Failed,
     instructions=(
         "Extract the user's seat preference. "
         'Seats A and F are window seats. '
@@ -368,19 +372,17 @@ See the [graph](graph.md) documentation on when and how to use graphs.
 
 ## Deep Agents
 
-Deep agents are autonomous agents that combine multiple architectural patterns and capabilities to handle complex, multi-step tasks reliably. These patterns can be implemented using Pydantic AI's built-in features and (third-party) toolsets:
+Deep agents are autonomous agents that combine multiple architectural patterns and capabilities to handle complex, multi-step tasks reliably. [Pydantic AI Harness](harness/index.md) ships each of these patterns as a capability you can compose with Pydantic AI's built-in features:
 
-- **Planning and progress tracking** — agents break down complex tasks into steps and track their progress, giving users visibility into what the agent is working on. See [Task Management toolsets](toolsets.md#task-management).
-- **File system operations** — reading, writing, and editing files with proper abstraction layers that work across in-memory storage, real file systems, and sandboxed containers. See [File Operations toolsets](toolsets.md#file-operations).
-- **Task delegation** — spawning specialized sub-agents for specific tasks, with isolated context to prevent recursive delegation issues. See [Agent Delegation](#agent-delegation) above.
-- **Sandboxed code execution** — running AI-generated code in isolated environments (typically Docker containers) to prevent accidents. See [Code Execution toolsets](toolsets.md#code-execution).
-- **Context management** — automatic conversation summarization to handle long sessions that would otherwise exceed token limits. See [Processing Message History](message-history.md#processing-message-history).
+- **Planning and progress tracking** — agents break down complex tasks into steps and track their progress, giving users visibility into what the agent is working on. See [`Planning`](harness/planning.md).
+- **File system operations** — reading, writing, and editing files in the run's workspace, on the local machine or in a sandboxed container. See [`FileSystem`](harness/filesystem.md) and [`Shell`](harness/shell.md).
+- **Task delegation** — spawning specialized sub-agents for specific tasks, with isolated context to prevent recursive delegation issues. See [`SubAgents`](harness/subagents.md) and [Agent Delegation](#agent-delegation) above.
+- **Sandboxed code execution** — running AI-generated code in isolated environments to prevent accidents. See [`Shell`](harness/shell.md) with a sandbox backend such as [`DockerSandbox`](harness/docker-sandbox.md), and [`CodeMode`](harness/code-mode.md).
+- **Context management** — automatic conversation compaction to handle long sessions that would otherwise exceed token limits. See [Compaction](capabilities/compaction.md) and the Harness [compaction strategies](harness/compaction.md).
 - **Human-in-the-loop** — approval workflows for dangerous operations like code execution or file deletion. See [Requiring Tool Approval](toolsets.md#requiring-tool-approval).
 - **Durable execution** — preserving agent state across transient API failures and application errors or restarts. See [Durable Execution](durable_execution/overview.md).
 
-In addition, the community maintains packages that bring these concepts together in a more opinionated way:
-
-- [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) by [Vstorm](https://vstorm.co/)
+For a ready-made assembly of these pieces, [`Coder`](harness/coder.md) combines file system, shell, delegation, and context management capabilities into a coding agent you can use whole or take apart.
 
 ## Observing Multi-Agent Systems
 

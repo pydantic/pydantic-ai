@@ -1,3 +1,7 @@
+---
+description: "Evaluate AI agent tool calls with Pydantic Evals: check the agent called the right tools, in the right order, with the right arguments and within budget."
+---
+
 # Agentic Evaluators
 
 Deterministic, span-based evaluators that grade an agent's *trajectory* — the sequence and arguments of tool calls — rather than just its final output.

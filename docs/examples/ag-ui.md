@@ -1,3 +1,7 @@
+---
+description: "Run Pydantic AI agents in the AG-UI Dojo example app to see the AG-UI protocol in action, with tools, shared state and human-in-the-loop interactions."
+---
+
 # Agent User Interaction (AG-UI)
 
 Example of using Pydantic AI agents with the [AG-UI Dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo) example app.

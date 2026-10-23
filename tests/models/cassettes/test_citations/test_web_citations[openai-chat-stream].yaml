@@ -1,0 +1,63 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "189"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content: Find Pydantic AI's GitHub repository and cite it in one sentence.
+        model: gpt-5-search-api
+        stream: true
+        stream_options:
+          include_usage: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "4929"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"chatcmpl-b1613863-dc34-486f-be00-853a637ac9e9","object":"chat.completion.chunk","created":1790763533,"model":"gpt-5-search-api-2025-10-14","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":"Pydantic AI’s GitHub repository is located at `https://github.com/pydantic/p","refusal":null},"finish_reason":null}],"usage":null,"obfuscation":"3aP38eEeCktw"}
+
+        data: {"id":"chatcmpl-1ae33a26-3d4a-4801-8500-f18c91681a7c","object":"chat.completion.chunk","created":1790763533,"model":"gpt-5-search-api-2025-10-14","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"ydantic-ai`, where the project is described as *“How Python does AI: agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end.”* ([github.com](https://github.com/pydantic/pydantic-ai?ref=peerlist&utm_source=openai))"},"finish_reason":null}],"usage":null,"obfuscation":"SeFL5y0"}
+
+        data: {"id":"chatcmpl-5d761c21-2138-4462-9411-cdaa010d9824","object":"chat.completion.chunk","created":1790763533,"model":"gpt-5-search-api-2025-10-14","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"annotations":[{"type":"url_citation","url_citation":{"end_index":335,"start_index":249,"title":"GitHub - pydantic/pydantic-ai at peerlist · GitHub","url":"https://github.com/pydantic/pydantic-ai?ref=peerlist&utm_source=openai"}}]},"finish_reason":"stop"}],"usage":null,"obfuscation":"2AQsICnjCU4K5t"}
+
+        data: {"id":"chatcmpl-5d761c21-2138-4462-9411-cdaa010d9824","object":"chat.completion.chunk","created":1790763533,"model":"gpt-5-search-api-2025-10-14","service_tier":"default","system_fingerprint":null,"choices":[],"usage":{"prompt_tokens":16545,"completion_tokens":84,"total_tokens":16629,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":"XTD"}
+
+        data: [DONE]
+
+  recorded_at: 2026-09-30T10:18:53.837029+00:00

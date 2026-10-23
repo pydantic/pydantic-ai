@@ -1,3 +1,7 @@
+---
+description: "Fix common Pydantic AI realtime voice problems: no audio, a model that never replies or answers twice, echo cutoffs, stalled tools, lost reconnects."
+---
+
 # Realtime troubleshooting
 
 Below are suggestions on how to fix some common problems with realtime sessions, each linking to
@@ -46,9 +50,13 @@ tool lifecycle events and review [concurrent tool execution](tools.md#concurrent
 
 ## A reconnect lost context
 
-Inspect `RealtimeSessionReconnectEvent.state_restored`. If false, begin a fresh conversation; if
-true but a current utterance vanished, that in-flight media was outside the restored completed-turn
-history. See [state restoration](lifecycle.md#state-restoration).
+Inspect `RealtimeSessionReconnectEvent.state_restored`. If false, the drop cut off a turn in flight:
+the session closed any cut reply as interrupted and kept the earlier turns, so ask again or resend
+the cut turn rather than starting over. On Gemini, a drop before the first resumption handle starts
+a fresh session instead: the session's history keeps the earlier turns, but the model no longer has
+them, so restate any context the next turn depends on. If true but a current utterance vanished,
+that in-flight media was outside the restored completed-turn history. See
+[state restoration](lifecycle.md#state-restoration).
 
 ## Gemini reaches its session limit
 
@@ -56,3 +64,17 @@ Set the `reconnect` setting to a [`ReconnectPolicy`][pydantic_ai.realtime.Reconn
 session resumption is enabled automatically alongside it. Recovery uses the latest in-memory server
 handle after the drop. See [Gemini session resumption](gemini.md#session-resumption) and
 [provider session limits](lifecycle.md#provider-session-limits).
+
+## Azure Voice Live fails with "Only Azure voice is supported"
+
+Cascade models such as `gpt-5` and `gpt-4.1` speak only through Azure text-to-speech voices, so
+they reject `openai_voice`. Choose their voice with `azure_voice_live_voice` instead. See
+[Voice Live voices](azure.md#voices).
+
+## ElevenLabs Agents fails to connect
+
+The connect-time preflight raises a [`UserError`][pydantic_ai.exceptions.UserError] naming what to change: an
+override toggle the agent doesn't permit (see
+[Configuration ownership](elevenlabs.md#configuration-ownership)), or a difference between the session's tools and
+the agent's client tools (see [Tool synchronization](elevenlabs.md#tool-synchronization)). A bad API key or an
+unknown agent id raises a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] instead.

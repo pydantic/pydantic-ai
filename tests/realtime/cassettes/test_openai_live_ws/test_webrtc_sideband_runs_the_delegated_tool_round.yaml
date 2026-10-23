@@ -1,0 +1,80 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/live/sessions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2252"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        session:
+          model: gpt-live-1
+          instructions: >-
+            You are a voice assistant. Keep replies short and conversational. When the user
+            asks for something you cannot answer from this conversation alone, delegate the
+            task and tell them you are looking it up.
+          delegation:
+            type: responses
+            responses:
+              model: gpt-5.6-sol
+              instructions: You answer weather questions. Use the `lookup_forecast` tool.
+              tools:
+              - type: function
+                name: lookup_forecast
+                parameters:
+                  additionalProperties: false
+                  properties:
+                    city:
+                      type: string
+                  required:
+                  - city
+                  type: object
+                description: Look up tomorrow's forecast for a city.
+          client:
+            data_channel:
+              allowed_client_events: []
+              allowed_server_events: []
+        transport:
+          type: webrtc
+          sdp: "v=0\r\no=- 3999630482 3999630482 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\na=msid-semantic:WMS *\r\nm=audio 60728 UDP/TLS/RTP/SAVPF 96 9 0 8\r\nc=IN IP4 0.0.0.0\r\na=sendrecv\r\na=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid\r\na=extmap:2 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\na=mid:0\r\na=msid:b8268dcd-fb40-4b78-98c7-1b24b8e63f87 0312f105-f229-4567-b982-07ea19702aeb\r\na=rtcp:9 IN IP4 0.0.0.0\r\na=rtcp-mux\r\na=ssrc:4112556784 cname:541d27a5-70e5-41ee-a8e8-4f4d4bb7c017\r\na=rtpmap:96 opus/48000/2\r\na=rtpmap:9 G722/8000\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=candidate:709cc48ea914c3da3d670ec618fe0cb3 1 udp 2130706431 0.0.0.0 60728 typ host\r\na=candidate:ed965c56f4ffb96ff0b222854037f43e 1 udp 2130706431 0.0.0.0 46093 typ host\r\na=candidate:76a82f60bf1d31afeef555561d342574 1 udp 2130706431 :: 50380 typ host\r\na=end-of-candidates\r\na=ice-ufrag:MICn\r\na=ice-pwd:EBxQdtsiqT3YGtZf0ZtAFn\r\na=fingerprint:sha-256 09:F7:3F:7F:5D:38:30:78:AD:5A:BC:75:F5:94:E4:27:35:9C:2E:9C:F8:86:AF:AA:32:23:17:2E:8F:09:C9:9D\r\na=fingerprint:sha-384 DB:13:10:69:E5:5F:F9:14:54:27:44:37:B6:7A:F4:B4:75:D7:0D:F9:5F:92:4B:31:F2:18:AF:F7:79:75:43:3F:83:CD:2D:19:91:F0:AC:49:0E:80:6F:49:3C:14:D0:12\r\na=fingerprint:sha-512 E9:35:4A:C7:2B:3A:E8:4B:05:CD:DC:13:19:9C:A5:89:9B:A2:2F:FF:95:CA:60:98:74:5E:1D:23:B8:0C:15:78:7A:01:2E:38:EE:4C:28:91:F5:4D:1F:F3:0E:8D:64:F3:81:82:E4:07:C0:F9:85:94:79:28:8C:75:37:DB:A9:3C\r\na=setup:actpass\r\n"
+  response:
+    status: 201
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Request-Id
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - "1480"
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      timing-allow-origin:
+      - "*"
+    body:
+      type: json
+      content:
+        session:
+          id: live_u1_ETFzOp3oNQ1zGJMtWNsdMnMY1YcHcsrZ
+        transport:
+          type: webrtc
+          sdp: "v=0\r\no=- 8709409079857476182 1790641682 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=msid-semantic:WMS *\r\na=fingerprint:sha-256 D7:60:6C:96:93:77:1C:81:A7:A0:C8:44:B1:5B:F2:17:0E:A1:63:22:5D:E1:1D:C0:1F:1B:68:00:D0:6F:EF:C1\r\na=ice-lite\r\na=group:BUNDLE 0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 96 0 8\r\nc=IN IP4 0.0.0.0\r\na=setup:passive\r\na=mid:0\r\na=ice-ufrag:FC0i5A/u1/3oNQ1z\r\na=ice-pwd:E36oBWGxEBOPvJbQwuCKFoIIBVd1OKqw\r\na=rtcp-mux\r\na=rtcp-rsize\r\na=rtpmap:96 opus/48000/2\r\na=fmtp:96 minptime=10;useinbandfec=1\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=ssrc:2733648260 cname:realtimeapi\r\na=ssrc:2733648260 msid:realtimeapi audio\r\na=ssrc:2733648260 mslabel:realtimeapi\r\na=ssrc:2733648260 label:audio\r\na=msid:realtimeapi audio\r\na=sendrecv\r\na=candidate:1352698770 1 udp 2130706431 68.155.152.41 3478 typ host ufrag FC0i5A/u1/3oNQ1z\r\na=candidate:2321888134 1 tcp 1671430143 68.155.152.41 443 typ host tcptype passive ufrag FC0i5A/u1/3oNQ1z\r\na=candidate:727169150 1 udp 2130706431 4.151.200.38 3478 typ host ufrag FC0i5A/u1/3oNQ1z\r\na=candidate:1878291698 1 tcp 1671430143 4.151.200.38 443 typ host tcptype passive ufrag FC0i5A/u1/3oNQ1z\r\na=candidate:2832417414 1 udp 2130706431 20.168.48.117 3478 typ host ufrag FC0i5A/u1/3oNQ1z\r\na=candidate:3818869066 1 tcp 1671430143 20.168.48.117 443 typ host tcptype passive ufrag FC0i5A/u1/3oNQ1z\r\n"
+  recorded_at: 2026-09-29T00:28:03.071895+00:00

@@ -1,3 +1,7 @@
+---
+description: "Choose the right Pydantic Evals evaluators for your task, from fast deterministic checks to LLM judges and span-based evaluation, and combine them in a dataset."
+---
+
 # Evaluators Overview
 
 Evaluators are the core of Pydantic Evals. They analyze task outputs and provide scores, labels, or pass/fail assertions.

@@ -16,15 +16,17 @@ import re
 import subprocess
 import sys
 import warnings
+from collections.abc import Generator
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, Self, cast
 from unittest.mock import AsyncMock
 
 import anyio
 import httpx
+import httpx2
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, ValidationError
@@ -61,6 +63,7 @@ with try_import() as imports_successful:
     from fastmcp.exceptions import McpError, ToolError
     from fastmcp.prompts import Message
     from fastmcp.server import Context, FastMCP
+    from fastmcp.server.dependencies import get_http_request
 
     try:
         from fastmcp.server.tasks import TaskConfig
@@ -69,6 +72,8 @@ with try_import() as imports_successful:
         from fastmcp.utilities.tasks import TaskConfig
     # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
     from mcp import types as mcp_types
+    from starlette.responses import Response
+    from starlette.types import ASGIApp, Receive, Scope, Send
 
     from pydantic_ai import _mcp, mcp as mcp_module
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
@@ -109,10 +114,12 @@ with try_import() as imports_successful:
     from pydantic_ai.messages import TextContent
     from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
+with try_import() as openai_imports_successful:
+    from pydantic_ai.providers.openai import OpenAIProvider
+
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='fastmcp not installed'),
-    pytest.mark.anyio,
 ]
 
 MCP_SDK_V2 = imports_successful() and is_mcp_sdk_v2()
@@ -194,7 +201,9 @@ toolset = MCPToolset(
     auth=httpx2.BasicAuth('user', 'pass'),
     http_client=client,
 )
-assert toolset.client.transport.httpx_client_factory() is client
+borrowed_client = toolset.client.transport.httpx_client_factory()
+assert borrowed_client is not client
+assert borrowed_client.is_closed is False
 
 assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), (
     'the MCP toolset imported httpx'
@@ -202,6 +211,7 @@ assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modu
 """
 
 
+@pytest.mark.subprocess(reason='needs an interpreter where legacy `httpx` cannot be imported')
 @pytest.mark.skipif(not MCP_SDK_V2, reason='fastmcp 3 is itself built on legacy httpx')
 def test_mcp_runs_without_legacy_httpx() -> None:
     result = subprocess.run(
@@ -289,25 +299,83 @@ class TestMCPToolsetConstruction:
         assert isinstance(toolset.client.transport, StreamableHttpTransport)
         assert toolset.client.transport.headers == {'X-Key': 'foo'}
 
-    def test_http_client_kwarg_uses_factory(self):
+    async def test_http_client_kwarg_uses_factory(self):
         client = httpx.AsyncClient()
         toolset = MCPToolset('https://example.com/mcp', http_client=client)
         assert isinstance(toolset.client.transport, StreamableHttpTransport)
         assert toolset.client.transport.httpx_client_factory is not None
-        assert toolset.client.transport.httpx_client_factory() is client
+        borrowed_client = toolset.client.transport.httpx_client_factory()
+        assert borrowed_client is not client
         # FastMCP's StreamableHttpTransport calls the factory with `follow_redirects`, which the
         # mcp SDK's `McpHttpClientFactory` protocol doesn't declare; the factory must accept it.
         factory = _make_httpx_client_factory(client)
-        assert factory(follow_redirects=True) is client
+        assert factory(follow_redirects=True) is not client
 
-    def test_sse_url_with_http_client_uses_factory(self):
+        borrowed_clients = [factory(), factory()]
+        assert borrowed_clients[0] is not borrowed_clients[1]
+        for borrowed_client in borrowed_clients:
+            async with borrowed_client:
+                assert borrowed_client.is_closed is False
+            await borrowed_client.aclose()
+            assert client.is_closed is False
+
+        await client.aclose()
+
+    async def test_sse_url_with_http_client_uses_factory(self):
         client = httpx.AsyncClient()
         toolset = MCPToolset('https://example.com/sse', http_client=client)
         assert isinstance(toolset.client.transport, SSETransport)
         assert toolset.client.transport.httpx_client_factory is not None
-        assert toolset.client.transport.httpx_client_factory() is client
+        assert toolset.client.transport.httpx_client_factory() is not client
         factory = _make_httpx_client_factory(client)
-        assert factory(follow_redirects=True) is client
+        assert factory(follow_redirects=True) is not client
+        await client.aclose()
+
+    @pytest.mark.parametrize(
+        'method_name',
+        ['request', 'send', 'get', 'post', 'put', 'patch', 'delete', 'head', 'options'],
+    )
+    async def test_http_client_factory_applies_auth(self, method_name: str):
+        """Test the private factory because MCP transports only call `stream`, `post`, and `delete`."""
+        authorization_headers: list[str | None] = []
+        httpx_module = cast(Any, httpx2 if MCP_SDK_V2 else httpx)
+
+        async def handle_request(request: Any) -> Any:
+            authorization_headers.append(request.headers.get('Authorization'))
+            return httpx_module.Response(200)
+
+        client = httpx_module.AsyncClient(transport=httpx_module.MockTransport(handle_request))
+        borrowed_client = _make_httpx_client_factory(client)(auth=httpx_module.BasicAuth('user', 'pass'))
+        url = 'https://example.com/mcp'
+
+        if method_name == 'request':
+            await borrowed_client.request('POST', url)
+        elif method_name == 'send':
+            await borrowed_client.send(client.build_request('POST', url))
+        else:
+            await getattr(borrowed_client, method_name)(url)
+
+        assert authorization_headers == ['Basic dXNlcjpwYXNz']
+        await client.aclose()
+
+    async def test_http_client_factory_preserves_per_request_auth(self):
+        """Test the private factory because MCP transports never pass explicit per-call `auth`."""
+        authorization_headers: list[str | None] = []
+        httpx_module = cast(Any, httpx2 if MCP_SDK_V2 else httpx)
+
+        async def handle_request(request: Any) -> Any:
+            authorization_headers.append(request.headers.get('Authorization'))
+            return httpx_module.Response(200)
+
+        client = httpx_module.AsyncClient(transport=httpx_module.MockTransport(handle_request))
+        borrowed_client = _make_httpx_client_factory(client)(auth=httpx_module.BasicAuth('user', 'pass'))
+
+        await borrowed_client.post('https://example.com/mcp', auth=httpx_module.BasicAuth('override', 'auth'))
+        without_factory_auth = _make_httpx_client_factory(client)()
+        await without_factory_auth.delete('https://example.com/mcp')
+
+        assert authorization_headers == ['Basic b3ZlcnJpZGU6YXV0aA==', None]
+        await client.aclose()
 
     def test_http_kwargs_with_non_url_input_raises(self):
         """HTTP-only kwargs (headers/auth/verify/http_client) must error out when the connection
@@ -598,6 +666,71 @@ class TestMCPToolsetIntegration:
             assert toolset.instructions == 'You are an MCP test server.'
         assert toolset.is_running is False
 
+    async def test_http_client_auth_and_lifecycle_across_agent_runs(self):
+        class BearerAuth(httpx.Auth):
+            def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
+                request.headers['Authorization'] = 'Bearer secret'
+                yield request
+
+        class BearerAuth2(httpx2.Auth):
+            def auth_flow(self, request: httpx2.Request) -> Generator[httpx2.Request, httpx2.Response, None]:
+                request.headers['Authorization'] = 'Bearer secret'
+                yield request
+
+        class AuthorizationGuard:
+            def __init__(self, app: ASGIApp) -> None:
+                self.app = app
+                self.authorization_headers: list[str | None] = []
+
+            async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+                # Only HTTP requests reach the guard: the test enters the app's lifespan directly.
+                authorization = next(
+                    (value.decode() for name, value in scope['headers'] if name.lower() == b'authorization'), None
+                )
+                self.authorization_headers.append(authorization)
+                if authorization != 'Bearer secret':
+                    await Response(status_code=401)(scope, receive, send)
+                    return
+
+                await self.app(scope, receive, send)
+
+        server: FastMCP[None] = FastMCP('auth_server')
+
+        @server.tool
+        async def ping() -> str:
+            return 'pong'
+
+        app = server.http_app(stateless_http=True, json_response=True)
+        guarded_app = AuthorizationGuard(app)
+        client: httpx.AsyncClient | httpx2.AsyncClient
+        auth: httpx.Auth | httpx2.Auth
+        if MCP_SDK_V2:
+            client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=guarded_app))
+            auth = BearerAuth2()
+        else:
+            client = httpx.AsyncClient(transport=httpx.ASGITransport(app=guarded_app))
+            auth = BearerAuth()
+
+        try:
+            async with app.router.lifespan_context(app):
+                # The guard rejects requests made through the bare client, without `auth`.
+                assert (await client.post('http://testserver/mcp')).status_code == 401
+                guarded_app.authorization_headers.clear()
+
+                toolset = MCPToolset('http://testserver/mcp', http_client=client, auth=auth)
+                agent = Agent(TestModel(call_tools=['ping']), toolsets=[toolset])
+
+                first_result = await agent.run('ping')
+                second_result = await agent.run('ping')
+
+            assert first_result.output == '{"ping":"pong"}'
+            assert second_result.output == '{"ping":"pong"}'
+            assert guarded_app.authorization_headers
+            assert set(guarded_app.authorization_headers) == {'Bearer secret'}
+            assert client.is_closed is False
+        finally:
+            await client.aclose()
+
     async def test_aexit_called_before_aenter_raises(self, fastmcp_server: FastMCP[None]):
         """Calling `__aexit__` before any `__aenter__` should raise — `_running_count` is 0."""
         toolset = MCPToolset(fastmcp_server)
@@ -620,6 +753,31 @@ class TestMCPToolsetIntegration:
             assert {'echo', 'add', 'boom'} <= set(tools_first)
             # Second call should hit the cache (covers the cached-return branch).
             assert tools_first['echo'].tool_def.description == tools_second['echo'].tool_def.description
+
+    async def test_get_tools_hides_app_only_tools(self, run_context: RunContext):
+        """MCP Apps (SEP-1865) tools whose `_meta.ui.visibility` leaves out `"model"` are hidden from the model."""
+        server: FastMCP[None] = FastMCP('apps_server')
+
+        @server.tool(meta={'ui': {'visibility': ['app']}})
+        async def save_checkpoint() -> None:
+            """Saves the view state; only the UI calls this."""
+
+        @server.tool(meta={'ui': {'visibility': []}})
+        async def hidden_everywhere() -> None:
+            """Visible to neither the model nor the UI."""
+
+        @server.tool(meta={'ui': {'visibility': ['app', 'model']}})
+        async def create_view() -> None:
+            """Opens the view; both the model and the UI call this."""
+
+        @server.tool(meta={'ui': {'resourceUri': 'ui://view'}})
+        async def read_me() -> None:
+            """Carries UI metadata without a `visibility`."""
+
+        toolset = MCPToolset(server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+        assert sorted(tools) == snapshot(['create_view', 'read_me'])
 
     async def test_tool_annotations_keep_the_wire_spelling(
         self, fastmcp_server: FastMCP[None], run_context: RunContext
@@ -1455,6 +1613,31 @@ class TestMCPToolsetIntegration:
                 assert toolset.is_running
         assert 'sampling_handler' not in str(caught[0].message)
 
+    @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+    async def test_agent_sampling_model_outlives_entered_agent(
+        self, fastmcp_server: FastMCP[None], monkeypatch: pytest.MonkeyPatch
+    ):
+        """A sampling model set inside `async with agent:` keeps its client open after the agent context exits.
+
+        With `defer_model_check=True` the agent context enters a model it infers from the model ID and closes
+        that model's client on exit, so MCP sampling must get its own model rather than that one.
+        """
+        monkeypatch.setenv('OPENAI_API_KEY', 'test')
+        # Give each inferred provider its own HTTP client; the autouse test fixture shares one per test.
+        monkeypatch.setattr('pydantic_ai.providers._openai_compatible.create_async_httpx2_client', httpx2.AsyncClient)
+        toolset = MCPToolset(fastmcp_server)
+        agent = Agent('openai-responses:gpt-4o', toolsets=[toolset], defer_model_check=True)
+        async with agent:
+            agent.set_mcp_sampling_model()
+
+        sampling_model = toolset.sampling_model
+        assert sampling_model is not None
+        provider = sampling_model.provider
+        assert isinstance(provider, OpenAIProvider)
+        assert not provider.client.is_closed()
+        async with sampling_model:
+            pass
+
     async def test_sampling_and_elicitation_do_not_warn_on_legacy_session(
         self, fastmcp_server: FastMCP[None], as_legacy_mcp_session: None
     ):
@@ -1593,6 +1776,133 @@ class TestMCPToolsetIntegration:
         async with toolset:
             with pytest.raises(ToolError):
                 await toolset.direct_call_tool('boom', {})
+
+
+def _asgi_http_client(app: ASGIApp) -> httpx.AsyncClient | httpx2.AsyncClient:
+    """An HTTP client of the family the installed FastMCP is built on, routed to an in-process ASGI app."""
+    if MCP_SDK_V2:
+        return httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
+
+
+def _authorization_header(transport: StreamableHttpTransport) -> str | None:
+    """The `Authorization` header the transport's `auth` sets on a request."""
+    assert transport.auth is not None
+    request: Any = (
+        httpx2.Request('POST', 'http://localhost:8000/mcp')
+        if MCP_SDK_V2
+        else httpx.Request('POST', 'http://localhost:8000/mcp')
+    )
+    authorized = next(transport.auth.auth_flow(request))
+    return authorized.headers.get('Authorization')
+
+
+class TestRunContextAuth:
+    """`auth`/`headers` given as a function of the run context: each run connects as its own user."""
+
+    async def test_auth_function_gives_each_concurrent_run_its_own_session(self):
+        users = ['alice', 'bob', 'carol']
+        arrived = 0
+        all_arrived = anyio.Event()
+        server: FastMCP[None] = FastMCP('auth_echo')
+
+        @server.tool
+        async def whoami() -> str:
+            # Hold every run's call until all of them are in flight, so the runs overlap.
+            nonlocal arrived
+            arrived += 1
+            if arrived == len(users):
+                all_arrived.set()
+            await all_arrived.wait()
+            return get_http_request().headers['authorization']
+
+        entered_clients: list[Client[Any]] = []
+
+        class RecordingMCPToolset(MCPToolset[str]):
+            async def __aenter__(self) -> Self:
+                entered_clients.append(self.client)
+                return await super().__aenter__()
+
+        app = server.http_app(stateless_http=True, json_response=True)
+        client = _asgi_http_client(app)
+        try:
+            async with app.router.lifespan_context(app):
+                toolset = RecordingMCPToolset('http://testserver/mcp', http_client=client, auth=lambda ctx: ctx.deps)
+                agent = Agent(TestModel(call_tools=['whoami']), deps_type=str, toolsets=[toolset])
+                async with agent:
+                    # Entering the agent doesn't connect a toolset that resolves `auth` per run.
+                    assert toolset.is_running is False
+                    with anyio.fail_after(10):
+                        results = await asyncio.gather(*(agent.run('who', deps=user) for user in users))
+        finally:
+            await client.aclose()
+
+        assert [result.output for result in results] == [f'{{"whoami":"Bearer {user}"}}' for user in users]
+        # Each run connected a copy with a client of its own; the attached toolset's was never used.
+        run_clients = {id(entered) for entered in entered_clients} - {id(toolset.client)}
+        assert len(run_clients) == len(users)
+
+    async def test_headers_function_is_resolved_into_a_per_run_copy(self):
+        async def headers(ctx: RunContext[str]) -> dict[str, str]:
+            return {'Authorization': f'Bearer {ctx.deps}'}
+
+        toolset = MCPToolset[str]('http://localhost:8000/mcp', headers=headers, id='mcp', max_retries=2)
+        # Settings changed after construction carry over to the run's copy.
+        toolset.max_retries = 3
+        sampling_model = TestModel()
+        toolset.set_sampling_model(sampling_model)
+
+        ctx = RunContext[str](deps='alice', model=TestModel(), usage=RunUsage())
+        run_toolset = await toolset.for_run(ctx)
+
+        assert isinstance(run_toolset, MCPToolset)
+        assert run_toolset is not toolset
+        assert run_toolset.client is not toolset.client
+        assert run_toolset.id == 'mcp'
+        assert run_toolset.max_retries == 3
+        assert run_toolset.sampling_model is sampling_model
+        assert isinstance(run_toolset.client.transport, StreamableHttpTransport)
+        assert run_toolset.client.transport.headers == {'Authorization': 'Bearer alice'}
+        # The copy is the run's own toolset; it isn't copied again.
+        assert await run_toolset.for_run(ctx) is run_toolset
+
+    async def test_function_and_fixed_auth_and_headers_combine(self):
+        ctx = RunContext[str](deps='alice', model=TestModel(), usage=RunUsage())
+
+        toolset = MCPToolset[str](
+            'http://localhost:8000/mcp', auth=lambda ctx: f'token-{ctx.deps}', headers={'X-Tenant': 'acme'}
+        )
+        run_toolset = await toolset.for_run(ctx)
+        assert isinstance(run_toolset.client.transport, StreamableHttpTransport)
+        assert run_toolset.client.transport.headers == {'X-Tenant': 'acme'}
+        assert _authorization_header(run_toolset.client.transport) == 'Bearer token-alice'
+
+        toolset = MCPToolset[str]('http://localhost:8000/mcp', auth='token', headers=lambda ctx: {'X-User': ctx.deps})
+        run_toolset = await toolset.for_run(ctx)
+        assert isinstance(run_toolset.client.transport, StreamableHttpTransport)
+        assert run_toolset.client.transport.headers == {'X-User': 'alice'}
+        assert _authorization_header(run_toolset.client.transport) == 'Bearer token'
+
+    async def test_toolset_resolving_auth_per_run_only_connects_within_a_run(self, run_context: RunContext):
+        toolset = MCPToolset('http://localhost:8000/mcp', auth=lambda ctx: 'token')
+        async with toolset:
+            assert toolset.is_running is False
+        with pytest.raises(UserError, match='can only connect to the server as part of an agent run'):
+            await toolset.list_tools()
+
+        static_toolset = MCPToolset('http://localhost:8000/mcp', auth='token')
+        assert await static_toolset.for_run(run_context) is static_toolset
+
+    async def test_auth_function_cannot_return_oauth(self, run_context: RunContext):
+        toolset = MCPToolset('http://localhost:8000/mcp', auth=lambda ctx: 'oauth')
+        with pytest.raises(UserError, match='which is only supported as a fixed `auth`'):
+            await toolset.for_run(run_context)
+
+    async def test_auth_function_requires_a_url(self, fastmcp_server: FastMCP[None]):
+        with pytest.raises(ValueError, match='only applies to HTTP transports built from a URL string'):
+            MCPToolset(fastmcp_server, auth=lambda ctx: 'token')
+        with pytest.raises(ValueError, match="Cannot pass 'headers' alongside a pre-built"):
+            MCPToolset(Client(fastmcp_server), headers=lambda ctx: {'Authorization': 'Bearer token'})
 
 
 class TestToolResultMapping:
@@ -1953,6 +2263,7 @@ class TestLoadMCPToolsets:
         with pytest.raises(FileNotFoundError):
             load_mcp_toolsets('/nonexistent/path/to/config.json')
 
+    @pytest.mark.subprocess(reason='serves a Streamable HTTP MCP server from a separate process')
     async def test_load_mcp_toolsets_http_entry(self):
         """A URL-configured toolset completes a real Streamable HTTP tool call."""
         process = await anyio.open_process(
