@@ -24,6 +24,7 @@
 - Extract repeated logic into helper methods or top-level functions when patterns recur (e.g., streaming vs non-streaming handlers, serialization, part types, message mappings, model adapters) — Prevents duplication bugs and makes changes easier to apply consistently across all code paths (like both streaming and non-streaming handlers)
 <!-- rule:176 -->
 - Scope helpers and constants to their single usage site — define inline or within the class/function that uses them, not at module level — Reduces namespace pollution, clarifies intent, and prevents accidental reuse of implementation details not designed for broader use
+- When you extract a helper to cut a function's cognitive complexity, make it a private method on the class, or a private function next to its only caller; never a nested `def` — complexipy scores a nested `def` as part of the function that defines it, so nesting the helper removes nothing ([Cognitive Complexity](complexity.md))
 <!-- rule:345 -->
 - Extract duplicated logic (validation, types, activity definitions, transformations) to parent classes or shared utilities — prevents drift and reduces maintenance burden across implementations — Keeping shared code in one place (like `_call_tool_in_activity` in `TemporalWrapperToolset`) prevents inconsistencies when logic evolves across multiple implementations (`TemporalFunctionToolset`, `TemporalMCPServer`, etc.)
 <!-- rule:284 -->
@@ -133,4 +134,5 @@ Check these when working in specific areas:
 - **[API Design & Interfaces](api-design.md)**: When designing or modifying public APIs, parameters, or class interfaces
 - **[Async & Concurrency](concurrency.md)**: When spawning tasks, using task groups or cancel scopes, creating locks/events/streams, writing async context managers or generators, crossing a thread or event-loop boundary, or testing any of it
 - **[Pydantic AI Slim Architecture](pydantic-ai-slim.md)**: When changing agents, tools, output, message history, providers, profiles, capabilities, toolsets, UI adapters, or durable execution
+- **[Cognitive Complexity](complexity.md)**: When pre-commit or CI reports a function's cognitive complexity, or before you add a branch to a function that is already over the limit
 <!-- /braindump -->

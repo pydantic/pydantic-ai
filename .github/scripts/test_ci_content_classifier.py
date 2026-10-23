@@ -314,6 +314,7 @@ def test_harness_only_tier_skips_only_jobs_outside_the_harness():
         assert harness_skip in CONDITIONAL_JOB_ADAPTER.validate_python(jobs[name])['if']
     for name in (
         'quality',
+        'complexity',
         'docs-assets',
         'test',
         'test-all-extras',
@@ -523,8 +524,9 @@ def test_python_test_jobs_use_content_only_output():
         job = CONDITIONAL_JOB_ADAPTER.validate_python(jobs[name])
         assert "needs.classify.outputs.content_only != 'true'" in job['if']
 
-    quality = CONDITIONAL_JOB_ADAPTER.validate_python(jobs['quality'])
-    assert quality['if'] == "needs.classify.outputs.content_only != 'true'"
+    for name in ('quality', 'complexity'):
+        job = CONDITIONAL_JOB_ADAPTER.validate_python(jobs[name])
+        assert job['if'] == "needs.classify.outputs.content_only != 'true'"
 
 
 def test_docs_checks_cover_harness_readmes():
@@ -579,6 +581,7 @@ def test_aggregate_requires_the_selected_lightweight_job():
     assert harness_docs_skips <= harness_skips
     for job in (
         'quality',
+        'complexity',
         'docs-assets',
         'test',
         'test-all-extras',

@@ -13,6 +13,7 @@ allowed-tools:
   - Bash(git merge-base:*)
   - Bash(git rev-parse:*)
   - Bash(git show:*)
+  - Bash(uv run --frozen --only-group lint scripts/check_complexity.py:*)
   - WebSearch
   - WebFetch
   - Agent
@@ -104,6 +105,19 @@ either harness: an allowlist bounds you, never your callee, which is why the bou
 subagent must be enforced by its agent definition. Read a large diff in chunks,
 core implementation before tests. Inspect changed cassettes when they are evidence for changed
 behavior; skip only unchanged or demonstrably irrelevant generated payloads.
+
+## Run the complexity check
+
+Run the policy base's complexity check over the candidate's commits, from the policy-base checkout:
+
+```bash
+uv run --frozen --only-group lint scripts/check_complexity.py --base <merge-base-sha> --head <candidate-head-sha>
+```
+
+The check reads the candidate as git objects, so it executes no candidate content. The command may
+create `.venv` in the policy-base checkout, which is removed with that checkout. Report each function
+and each ignore it fails as a finding. For a function, name the fix that `agent_docs/complexity.md` gives
+for the case the check reports, and check that the fix fits the function.
 
 ## Return the review locally
 
