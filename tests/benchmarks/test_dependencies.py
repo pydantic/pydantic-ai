@@ -11,6 +11,11 @@ import pytest
 from tests.benchmarks import conftest
 
 
+@pytest.fixture
+def blockbuster_enabled() -> bool:
+    return False
+
+
 @pytest.mark.parametrize('mode', ['missing', 'present', 'write'])
 def test_dependency_guard_detects_new_runtime_import(
     tmp_path: Path,
