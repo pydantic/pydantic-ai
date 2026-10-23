@@ -208,6 +208,7 @@ async def test_hooks_see_and_shape_loaded_instructions():
         return request
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.model_request_parameters.instruction_visibility is None
         sent.append([str(part.id) for part in info.model_request_parameters.instruction_parts or []])
         return ModelResponse(parts=[TextPart('Done.')])
 

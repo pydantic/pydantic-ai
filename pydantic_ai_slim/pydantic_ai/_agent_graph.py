@@ -2138,6 +2138,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_request_parameters = replace(
                 model_request_parameters,
                 instruction_parts=update_instruction_history(messages, prefix_parts, recording_targets),
+                instruction_visibility=None,
             )
             update_loaded_instruction_history(
                 messages,
