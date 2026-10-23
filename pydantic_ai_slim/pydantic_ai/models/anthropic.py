@@ -2436,123 +2436,47 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
     ) -> str | list[BetaTextBlockParam]:
         """The top-level `system` parameter: the hoisted system prompt, then one block per instruction part."""
-        instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
+        instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         system_prompt = '\n\n'.join(system_prompt_parts)
-
-        # Build system prompt blocks: each instruction part becomes a separate text block.
-        # When anthropic_cache_instructions is enabled, the cache point goes after the last
-        # static instruction (or at the end if all instructions are static).
         cache_instructions = model_settings.get('anthropic_cache_instructions')
+        if not instruction_parts and not (system_prompt and cache_instructions):
+            return system_prompt
 
-        if instruction_parts or cache_instructions:
-            system_prompt_blocks: list[BetaTextBlockParam] = []
-
-            if system_prompt:
-                system_prompt_blocks.append(BetaTextBlockParam(type='text', text=system_prompt))
-
-            if instruction_parts:
-                for part in instruction_parts:
-                    system_prompt_blocks.append(BetaTextBlockParam(type='text', text=part.content))
-
-            if system_prompt_blocks and cache_instructions:
+        # Each instruction part becomes a separate text block after the system prompt's.
+        leading_texts = [system_prompt] if system_prompt else []
+        system_prompt_blocks = [
+            BetaTextBlockParam(type='text', text=text)
+            for text in [*leading_texts, *(part.content for part in instruction_parts)]
+        ]
+        if cache_instructions:
+            # `instruction_parts` are sorted static-first, so the cache point goes on the last static
+            # instruction block, or on the system prompt block when every instruction is dynamic.
+            cache_block_idx = len(leading_texts) + sum(1 for part in instruction_parts if not part.dynamic) - 1
+            if cache_block_idx >= 0:
                 ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
-                # Find the last block that corresponds to a static instruction.
-                # system_prompt_blocks layout: [system_prompt_block?, ...instruction_blocks]
-                # instruction_parts are sorted static-first, so find the boundary.
-                if instruction_parts:
-                    has_dynamic = any(p.dynamic for p in instruction_parts)
-                    if has_dynamic:
-                        # Cache after the last static instruction block
-                        num_prefix_blocks = 1 if system_prompt else 0
-                        num_static = sum(1 for p in instruction_parts if not p.dynamic)
-                        if num_static > 0:
-                            cache_block_idx = num_prefix_blocks + num_static - 1
-                        else:
-                            # All dynamic: cache the system prompt block if it exists
-                            cache_block_idx = 0 if system_prompt else None
-                    else:
-                        # All static: cache the last block
-                        cache_block_idx = len(system_prompt_blocks) - 1
-                else:
-                    # No instruction parts, just system prompt: cache it
-                    cache_block_idx = 0
+                system_prompt_blocks[cache_block_idx]['cache_control'] = self._build_cache_control(ttl)
+        return system_prompt_blocks
 
-                if cache_block_idx is not None:
-                    system_prompt_blocks[cache_block_idx]['cache_control'] = self._build_cache_control(ttl)
-
-            if system_prompt_blocks:
-                return system_prompt_blocks
-
-        return system_prompt
-
-    async def _map_model_request(  # noqa: C901
+    async def _map_model_request(
         self, message: ModelRequest, standing_prompt_count: int, map_context: _MapMessagesContext
     ) -> None:
         """Append a `ModelRequest`'s user turn, then its `system` entries, to `map_context.anthropic_messages`."""
-        # Only the opening `SystemPromptPart`s in the first request are the run's own system prompt and
-        # hoist to the top-level `system` parameter. Later ones are mid-conversation operator instructions:
-        # where we support them they reach us verbatim (rather than `<system>`-tagged by `prepare_messages`)
-        # and it's on us to render them as a `{'role': 'system'}` entry, so adding an instruction leaves the
-        # cached prefix the top-level `system` parameter sits in untouched. Where we don't,
-        # `prepare_messages` has already rewritten them and none reach this branch — bar the adapter's
-        # direct entry points, `count_tokens` and `request`, where hoisting them is the safe reading.
-        inline_system_prompts = self.profile.get('supports_inline_system_prompts', False)
-        # Narrowed to transports that serve the role, like the flag above. Where this is `False`,
-        # `prepare_messages` has already left out every request-scoped part whose request has been answered.
-        request_scoped_system_prompts = self.profile.get('supports_request_scoped_system_prompts', False)
-        anthropic_messages = map_context.anthropic_messages
-        user_content_params: list[BetaContentBlockParam] = []
-        mid_conversation_system_prompts: list[str] = []
-        request_scoped_prompts: list[str] = []
-        tool_availability_blocks: list[dict[str, Any]] = []
-        # `CachePoint`s authored after a mid-conversation instruction or a tool availability
-        # change, as the number of user blocks that preceded each one. They can't be placed
-        # while mapping: both render after this request's user blocks in the `system` entry
-        # despite being authored before the marker, so whether they fall inside the boundary
-        # depends on whether anything else follows the marker.
-        deferred_cache_points: list[tuple[int, Literal['5m', '1h']]] = []
+        request_context = _MapModelRequestContext()
         for part_index, request_part in enumerate(_sendable_request_parts(message.parts)):
             if isinstance(request_part, SystemPromptPart):
-                if request_part.scope == 'request' and request_scoped_system_prompts:
-                    # Its own entry, so `clear_at` covers it alone. It needs no cache-point
-                    # bookkeeping: it's never inside a cached prefix, and `cache_control` on it
-                    # is a 400.
-                    request_scoped_prompts.append(request_part.content)
-                elif not inline_system_prompts or part_index < standing_prompt_count:
-                    map_context.system_prompt_parts.append(request_part.content)
-                else:
-                    # System-voice parts within one request all precede the same assistant
-                    # response. Rendering an interleaved entry after sibling user content is
-                    # deterministic and preserves the only ordering boundary that matters.
-                    mid_conversation_system_prompts.append(request_part.content)
+                self._map_system_prompt_part(
+                    request_part, part_index < standing_prompt_count, request_context, map_context
+                )
             elif isinstance(request_part, UserPromptPart):
-                async for content in self._map_user_prompt(request_part):
-                    if not isinstance(content, CachePoint):
-                        user_content_params.append(content)
-                    elif mid_conversation_system_prompts or tool_availability_blocks:
-                        deferred_cache_points.append((len(user_content_params), content.ttl))
-                    else:
-                        # A `CachePoint` asks to cache everything up to that point, and it
-                        # normally attaches to the block before it in this same user message.
-                        # A mid-conversation instruction used to leave one there — it was
-                        # folded in as `<system>`-tagged text — and now goes to its own
-                        # `system` entry instead, so `[SystemPromptPart,
-                        # UserPromptPart([CachePoint(), ...])]` arrives here with nothing to
-                        # attach to and used to raise. The boundary is still well defined
-                        # whenever the conversation has a previous message: it's the end of
-                        # that message, which is everything the entry and this turn build on.
-                        # Only a `CachePoint` with no prior content anywhere still raises,
-                        # which is the case the error is actually about.
-                        self._add_cache_control_to_last_param(
-                            user_content_params or _last_message_content(anthropic_messages),
-                            ttl=content.ttl,
-                        )
+                await self._map_user_prompt_part(request_part, request_context, map_context)
             elif isinstance(request_part, (InstructionBaselinePart, InstructionDeltaPart)):
                 raise _unprojected_instruction_delta_error()
             elif isinstance(request_part, ToolAvailabilityDeltaPart):
-                self._map_tool_availability_delta_part(request_part, tool_availability_blocks, map_context)
+                self._map_tool_availability_delta_part(
+                    request_part, request_context.tool_availability_blocks, map_context
+                )
             elif isinstance(request_part, ToolReturnPart):
-                user_content_params.append(await self._map_tool_return_part(request_part, map_context))
+                request_context.user_content_params.append(await self._map_tool_return_part(request_part, map_context))
             elif isinstance(request_part, SpeechPart):  # pragma: no cover
                 # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s.
                 raise _unconverted_speech_part_error()
@@ -2560,13 +2484,75 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 raise _unprepared_part_error(request_part)
             else:
                 assert_never(request_part)
+        self._append_model_request_turns(request_context, map_context.anthropic_messages)
+
+    def _map_system_prompt_part(
+        self,
+        part: SystemPromptPart,
+        standing: bool,
+        request_context: _MapModelRequestContext,
+        map_context: _MapMessagesContext,
+    ) -> None:
+        # Narrowed to transports that serve the role, like `supports_inline_system_prompts` below. Where
+        # this is `False`, `prepare_messages` has already left out every request-scoped part whose
+        # request has been answered.
+        if part.scope == 'request' and self.profile.get('supports_request_scoped_system_prompts', False):
+            # Its own entry, so `clear_at` covers it alone. It needs no cache-point
+            # bookkeeping: it's never inside a cached prefix, and `cache_control` on it
+            # is a 400.
+            request_context.request_scoped_prompts.append(part.content)
+        # Only the opening `SystemPromptPart`s in the first request are the run's own system prompt and
+        # hoist to the top-level `system` parameter. Later ones are mid-conversation operator instructions:
+        # where we support them they reach us verbatim (rather than `<system>`-tagged by `prepare_messages`)
+        # and it's on us to render them as a `{'role': 'system'}` entry, so adding an instruction leaves the
+        # cached prefix the top-level `system` parameter sits in untouched. Where we don't,
+        # `prepare_messages` has already rewritten them and none reach this branch — bar the adapter's
+        # direct entry points, `count_tokens` and `request`, where hoisting them is the safe reading.
+        elif standing or not self.profile.get('supports_inline_system_prompts', False):
+            map_context.system_prompt_parts.append(part.content)
+        else:
+            # System-voice parts within one request all precede the same assistant
+            # response. Rendering an interleaved entry after sibling user content is
+            # deterministic and preserves the only ordering boundary that matters.
+            request_context.mid_conversation_system_prompts.append(part.content)
+
+    async def _map_user_prompt_part(
+        self, part: UserPromptPart, request_context: _MapModelRequestContext, map_context: _MapMessagesContext
+    ) -> None:
+        user_content_params = request_context.user_content_params
+        async for content in self._map_user_prompt(part):
+            if not isinstance(content, CachePoint):
+                user_content_params.append(content)
+            elif request_context.mid_conversation_system_prompts or request_context.tool_availability_blocks:
+                request_context.deferred_cache_points.append((len(user_content_params), content.ttl))
+            else:
+                # A `CachePoint` asks to cache everything up to that point, and it
+                # normally attaches to the block before it in this same user message.
+                # A mid-conversation instruction used to leave one there — it was
+                # folded in as `<system>`-tagged text — and now goes to its own
+                # `system` entry instead, so `[SystemPromptPart,
+                # UserPromptPart([CachePoint(), ...])]` arrives here with nothing to
+                # attach to and used to raise. The boundary is still well defined
+                # whenever the conversation has a previous message: it's the end of
+                # that message, which is everything the entry and this turn build on.
+                # Only a `CachePoint` with no prior content anywhere still raises,
+                # which is the case the error is actually about.
+                self._add_cache_control_to_last_param(
+                    user_content_params or _last_message_content(map_context.anthropic_messages),
+                    ttl=content.ttl,
+                )
+
+    def _append_model_request_turns(
+        self, request_context: _MapModelRequestContext, anthropic_messages: list[BetaMessageParam]
+    ) -> None:
+        user_content_params = request_context.user_content_params
         # A marker that ends the request has the instruction authored before it and nothing
         # authored after it, so the `system` entry's final block is exactly its boundary. A
         # marker with content after it can't have both, and lands where it was authored: the
         # instruction then sits outside the boundary, which caches a prefix of what was asked
         # for rather than more than was asked for.
         system_entry_cache_ttl: Literal['5m', '1h'] | None = None
-        for marked_at, ttl in deferred_cache_points:
+        for marked_at, ttl in request_context.deferred_cache_points:
             if marked_at == len(user_content_params):
                 system_entry_cache_ttl = ttl
             else:
@@ -2575,17 +2561,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 )
         if len(user_content_params) > 0:
             anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
-        if mid_conversation_system_prompts or tool_availability_blocks:
+        if request_context.mid_conversation_system_prompts or request_context.tool_availability_blocks:
             system_content_params: list[BetaContentBlockParam] = [
-                BetaTextBlockParam(text=content, type='text') for content in mid_conversation_system_prompts
+                BetaTextBlockParam(text=content, type='text')
+                for content in request_context.mid_conversation_system_prompts
             ]
-            system_content_params.extend(cast('list[BetaContentBlockParam]', tool_availability_blocks))
+            system_content_params.extend(cast('list[BetaContentBlockParam]', request_context.tool_availability_blocks))
             # The boundary covers the whole system entry, availability blocks included — a
             # terminal `CachePoint` lands on the entry's final block, never inside the entry.
             if system_entry_cache_ttl is not None:
                 self._add_cache_control_to_last_param(system_content_params, ttl=system_entry_cache_ttl)
             anthropic_messages.append(BetaMessageParam(role='system', content=system_content_params))
-        if request_scoped_prompts:
+        if request_context.request_scoped_prompts:
             # Sent with every request, current or not: once a later user turn exists the API stops
             # rendering it, and leaving it in place is what keeps the cached prefix and the thinking
             # blocks bound to it valid. It goes after the request's other system entry so that one
@@ -2593,7 +2580,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             anthropic_messages.append(
                 BetaMessageParam(
                     role='system',
-                    content=[BetaTextBlockParam(text=content, type='text') for content in request_scoped_prompts],
+                    content=[
+                        BetaTextBlockParam(text=content, type='text')
+                        for content in request_context.request_scoped_prompts
+                    ],
                     clear_at='next_user_message',
                 )
             )
@@ -2697,9 +2687,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             is_error=part.outcome in ERROR_OUTCOMES,
         )
 
-    def _map_model_response(self, message: ModelResponse, map_context: _MapMessagesContext) -> None:  # noqa: C901
+    def _map_model_response(self, message: ModelResponse, map_context: _MapMessagesContext) -> None:
         """Append a `ModelResponse`'s assistant turn to `map_context.anthropic_messages`."""
-        anthropic_messages = map_context.anthropic_messages
         assistant_content_params: list[_AssistantContentBlockParam] = []
         carried_thinking_params: list[BetaTextBlockParam] = []
         for response_part in message.parts:
@@ -2722,14 +2711,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             elif isinstance(response_part, NativeToolReturnPart):
                 self._map_native_tool_return_part(response_part, assistant_content_params, map_context)
             elif isinstance(response_part, CompactionPart):
-                if response_part.provider_name == self.system:  # pragma: no branch
-                    compaction_block = BetaCompactionBlockParam(content=response_part.content, type='compaction')
-                    if (
-                        response_part.provider_details
-                        and response_part.provider_details.get('encrypted_content') is not None
-                    ):
-                        compaction_block['encrypted_content'] = response_part.provider_details['encrypted_content']
-                    assistant_content_params.append(compaction_block)
+                self._map_compaction_part(response_part, assistant_content_params)
             elif isinstance(response_part, FilePart):  # pragma: no cover
                 # Files generated by models are not sent back to models that don't themselves generate files.
                 pass
@@ -2738,6 +2720,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 raise _unconverted_speech_part_error()
             else:
                 assert_never(response_part)
+        self._append_model_response_turns(
+            assistant_content_params, carried_thinking_params, map_context.anthropic_messages
+        )
+
+    @staticmethod
+    def _append_model_response_turns(
+        assistant_content_params: list[_AssistantContentBlockParam],
+        carried_thinking_params: list[BetaTextBlockParam],
+        anthropic_messages: list[BetaMessageParam],
+    ) -> None:
         if carried_thinking_params:
             # Reasoning replayed in an assistant turn teaches a model that imitates assistant
             # formatting to write `<thinking>` tags into its visible answers
@@ -2751,6 +2743,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             anthropic_messages.insert(insert_at, BetaMessageParam(role='user', content=carried_thinking_params))
         if len(assistant_content_params) > 0:
             anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
+
+    def _map_compaction_part(
+        self, part: CompactionPart, assistant_content_params: list[_AssistantContentBlockParam]
+    ) -> None:
+        if part.provider_name == self.system:  # pragma: no branch
+            compaction_block = BetaCompactionBlockParam(content=part.content, type='compaction')
+            if part.provider_details and part.provider_details.get('encrypted_content') is not None:
+                compaction_block['encrypted_content'] = part.provider_details['encrypted_content']
+            assistant_content_params.append(compaction_block)
 
     def _map_thinking_part(
         self,
@@ -2787,101 +2788,76 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return
         tool_use_id = _guard_tool_call_id(t=part)
         if part.tool_name == WebSearchTool.kind:
-            server_tool_use_block_param = BetaServerToolUseBlockParam(
-                id=tool_use_id,
-                type='server_tool_use',
-                name='web_search',
-                input=part.args_as_dict(),
-            )
-            _add_anthropic_caller_param(server_tool_use_block_param, part)
-            assistant_content_params.append(server_tool_use_block_param)
+            name, tool_input = 'web_search', part.args_as_dict()
         elif part.tool_name in (
             CodeExecutionTool.kind,
             'bash_code_execution',
             'text_editor_code_execution',
         ):
-            anthropic_tool_name = _get_anthropic_code_execution_tool_name(part)
-            server_tool_use_block_param = BetaServerToolUseBlockParam(
-                id=tool_use_id,
-                type='server_tool_use',
-                name=anthropic_tool_name,
-                input=part.args_as_dict(),
-            )
-            _add_anthropic_caller_param(server_tool_use_block_param, part)
-            assistant_content_params.append(server_tool_use_block_param)
+            name, tool_input = _get_anthropic_code_execution_tool_name(part), part.args_as_dict()
         elif part.tool_name == WebFetchTool.kind:
-            server_tool_use_block_param = BetaServerToolUseBlockParam(
-                id=tool_use_id,
-                type='server_tool_use',
-                name='web_fetch',
-                input=part.args_as_dict(),
-            )
-            _add_anthropic_caller_param(server_tool_use_block_param, part)
-            assistant_content_params.append(server_tool_use_block_param)
+            name, tool_input = 'web_fetch', part.args_as_dict()
         elif part.tool_name == AdvisorTool.kind:
             if not map_context.advisor_active:
                 return
-            server_tool_use_block_param = BetaServerToolUseBlockParam(
-                id=tool_use_id,
-                type='server_tool_use',
-                name='advisor',
-                input=part.args_as_dict(),
-            )
-            _add_anthropic_caller_param(server_tool_use_block_param, part)
-            assistant_content_params.append(server_tool_use_block_param)
+            name, tool_input = 'advisor', part.args_as_dict()
         elif part.tool_name == ToolSearchTool.kind:
-            # Round-trip the native variant (bm25/regex) so we don't
-            # silently rewrite the algorithm. `_map_server_tool_use_block`
-            # stashes it in `provider_details['strategy']`. On the legacy Bedrock
-            # InvokeModel API, `bm25` calls replay as `regex` unless this request
-            # asks for `bm25` (see `_REGEX_DEFAULT_TOOL_SEARCH_CLIENTS`).
-            details = part.provider_details or {}
-            strategy: Literal['bm25', 'regex'] = (
-                'regex'
-                if details.get('strategy') == 'regex'
-                or (isinstance(self.client, _REGEX_DEFAULT_TOOL_SEARCH_CLIENTS) and not map_context.bm25_requested)
-                else 'bm25'
-            )
-            native_name = 'tool_search_tool_regex' if strategy == 'regex' else 'tool_search_tool_bm25'
-            # Rebuild the variant-specific wire shape from the
-            # cross-provider `queries` slot. bm25 expects `{"query": "..."}`,
-            # regex expects `{"pattern": "..."}`. Joining with a space
-            # matches Anthropic's single-string input on either variant.
-            args_dict = part.args_as_dict()
-            if 'queries' in args_dict:
-                raw_queries = args_dict.get('queries')
-                queries: list[str] = (
-                    [q for q in cast('list[Any]', raw_queries) if isinstance(q, str)]
-                    if isinstance(raw_queries, list)
-                    else []
+            name, tool_input = self._map_tool_search_call_input(part, map_context.bm25_requested)
+        else:
+            if (
+                part.tool_name.startswith(MCPServerTool.kind)
+                and (server_id := part.tool_name.split(':', 1)[1])
+                and (args := part.args_as_dict())
+                and (tool_name := args.get('tool_name'))
+                and (tool_args := args.get('tool_args')) is not None
+            ):  # pragma: no branch
+                mcp_tool_use_block_param = BetaMCPToolUseBlockParam(
+                    id=tool_use_id,
+                    type='mcp_tool_use',
+                    server_name=server_id,
+                    name=tool_name,
+                    input=tool_args,
                 )
-                wire_key = 'pattern' if strategy == 'regex' else 'query'
-                wire_input: dict[str, Any] = {wire_key: ' '.join(queries)}
-            else:
-                wire_input = args_dict
-            server_tool_use_block_param = BetaServerToolUseBlockParam(
-                id=tool_use_id,
-                type='server_tool_use',
-                name=native_name,
-                input=wire_input,
-            )
-            _add_anthropic_caller_param(server_tool_use_block_param, part)
-            assistant_content_params.append(server_tool_use_block_param)
-        elif (
-            part.tool_name.startswith(MCPServerTool.kind)
-            and (server_id := part.tool_name.split(':', 1)[1])
-            and (args := part.args_as_dict())
-            and (tool_name := args.get('tool_name'))
-            and (tool_args := args.get('tool_args')) is not None
-        ):  # pragma: no branch
-            mcp_tool_use_block_param = BetaMCPToolUseBlockParam(
-                id=tool_use_id,
-                type='mcp_tool_use',
-                server_name=server_id,
-                name=tool_name,
-                input=tool_args,
-            )
-            assistant_content_params.append(mcp_tool_use_block_param)
+                assistant_content_params.append(mcp_tool_use_block_param)
+            return
+        server_tool_use_block_param = BetaServerToolUseBlockParam(
+            id=tool_use_id,
+            type='server_tool_use',
+            name=name,
+            input=tool_input,
+        )
+        _add_anthropic_caller_param(server_tool_use_block_param, part)
+        assistant_content_params.append(server_tool_use_block_param)
+
+    def _map_tool_search_call_input(
+        self, part: NativeToolCallPart, bm25_requested: bool
+    ) -> tuple[Literal['tool_search_tool_regex', 'tool_search_tool_bm25'], dict[str, Any]]:
+        # Round-trip the native variant (bm25/regex) so we don't
+        # silently rewrite the algorithm. `_map_server_tool_use_block`
+        # stashes it in `provider_details['strategy']`. On the legacy Bedrock
+        # InvokeModel API, `bm25` calls replay as `regex` unless this request
+        # asks for `bm25` (see `_REGEX_DEFAULT_TOOL_SEARCH_CLIENTS`).
+        details = part.provider_details or {}
+        strategy: Literal['bm25', 'regex'] = (
+            'regex'
+            if details.get('strategy') == 'regex'
+            or (isinstance(self.client, _REGEX_DEFAULT_TOOL_SEARCH_CLIENTS) and not bm25_requested)
+            else 'bm25'
+        )
+        native_name = 'tool_search_tool_regex' if strategy == 'regex' else 'tool_search_tool_bm25'
+        # Rebuild the variant-specific wire shape from the
+        # cross-provider `queries` slot. bm25 expects `{"query": "..."}`,
+        # regex expects `{"pattern": "..."}`. Joining with a space
+        # matches Anthropic's single-string input on either variant.
+        args_dict = part.args_as_dict()
+        if 'queries' not in args_dict:
+            return native_name, args_dict
+        raw_queries = args_dict.get('queries')
+        queries: list[str] = (
+            [q for q in cast('list[Any]', raw_queries) if isinstance(q, str)] if isinstance(raw_queries, list) else []
+        )
+        wire_key = 'pattern' if strategy == 'regex' else 'query'
+        return native_name, {wire_key: ' '.join(queries)}
 
     def _map_native_tool_return_part(
         self,
@@ -2912,40 +2888,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             'bash_code_execution',
             'text_editor_code_execution',
         ) and isinstance(part.content, dict | list):
-            match _get_anthropic_code_execution_tool_name(part):
-                case 'code_execution':
-                    assistant_content_params.append(
-                        BetaCodeExecutionToolResultBlockParam(
-                            tool_use_id=tool_use_id,
-                            type='code_execution_tool_result',
-                            content=cast(
-                                BetaCodeExecutionToolResultBlockParamContentParam,
-                                part.content,  # pyright: ignore[reportUnknownMemberType]
-                            ),
-                        )
-                    )
-                case 'bash_code_execution':
-                    assistant_content_params.append(
-                        BetaBashCodeExecutionToolResultBlockParam(
-                            tool_use_id=tool_use_id,
-                            type='bash_code_execution_tool_result',
-                            content=cast(
-                                BashCodeExecutionToolResultBlockParamContent,
-                                part.content,  # pyright: ignore[reportUnknownMemberType]
-                            ),
-                        )
-                    )
-                case 'text_editor_code_execution':  # pragma: no branch
-                    assistant_content_params.append(
-                        BetaTextEditorCodeExecutionToolResultBlockParam(
-                            tool_use_id=tool_use_id,
-                            type='text_editor_code_execution_tool_result',
-                            content=cast(
-                                TextEditorCodeExecutionToolResultBlockParamContent,
-                                part.content,  # pyright: ignore[reportUnknownMemberType]
-                            ),
-                        )
-                    )
+            assistant_content_params.append(_build_code_execution_tool_result_block(part, tool_use_id))
         elif part.tool_name == WebFetchTool.kind and isinstance(part.content, dict):
             block = BetaWebFetchToolResultBlockParam(
                 tool_use_id=tool_use_id,
@@ -3977,6 +3920,24 @@ class _MapMessagesContext:
     rendered_tool_additions: set[str] = field(default_factory=set[str])
 
 
+@dataclass
+class _MapModelRequestContext:
+    """What `AnthropicModel._map_model_request` collects from one `ModelRequest`'s parts before it emits the turns."""
+
+    user_content_params: list[BetaContentBlockParam] = field(default_factory=list[BetaContentBlockParam])
+    mid_conversation_system_prompts: list[str] = field(default_factory=list[str])
+    request_scoped_prompts: list[str] = field(default_factory=list[str])
+    tool_availability_blocks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    # `CachePoint`s authored after a mid-conversation instruction or a tool availability
+    # change, as the number of user blocks that preceded each one. They can't be placed
+    # while mapping: both render after this request's user blocks in the `system` entry
+    # despite being authored before the marker, so whether they fall inside the boundary
+    # depends on whether anything else follows the marker.
+    deferred_cache_points: list[tuple[int, Literal['5m', '1h']]] = field(
+        default_factory=list[tuple[int, Literal['5m', '1h']]]
+    )
+
+
 def _build_custom_tool_search_replay_blocks(
     request_part: ToolReturnPart, deferred_tools_active: bool, declared_tool_names: set[str]
 ) -> tuple[list[BetaToolReferenceBlockParam] | None, str | None]:
@@ -4012,6 +3973,34 @@ def _build_custom_tool_search_replay_blocks(
         if match['name'] in declared_tool_names
     ]
     return refs, request_part.message
+
+
+def _build_code_execution_tool_result_block(
+    part: NativeToolReturnPart, tool_use_id: str
+) -> (
+    BetaCodeExecutionToolResultBlockParam
+    | BetaBashCodeExecutionToolResultBlockParam
+    | BetaTextEditorCodeExecutionToolResultBlockParam
+):
+    match _get_anthropic_code_execution_tool_name(part):
+        case 'code_execution':
+            return BetaCodeExecutionToolResultBlockParam(
+                tool_use_id=tool_use_id,
+                type='code_execution_tool_result',
+                content=cast(BetaCodeExecutionToolResultBlockParamContentParam, part.content),
+            )
+        case 'bash_code_execution':
+            return BetaBashCodeExecutionToolResultBlockParam(
+                tool_use_id=tool_use_id,
+                type='bash_code_execution_tool_result',
+                content=cast(BashCodeExecutionToolResultBlockParamContent, part.content),
+            )
+        case 'text_editor_code_execution':  # pragma: no branch
+            return BetaTextEditorCodeExecutionToolResultBlockParam(
+                tool_use_id=tool_use_id,
+                type='text_editor_code_execution_tool_result',
+                content=cast(TextEditorCodeExecutionToolResultBlockParamContent, part.content),
+            )
 
 
 def _build_tool_search_replay_block(
