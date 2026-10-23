@@ -28,7 +28,7 @@ from pydantic_ai_harness._workspace import metadata_dir, require_workspace, supp
 from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, Job
 from pydantic_ai_harness.shell._limits import file_limit_status, limited_script, validate_file_limit
 from pydantic_ai_harness.shell._persistent import MAX_FOREGROUND_WAIT, CommandMode, run_persistent_command
-from pydantic_ai_harness.shell._policy import is_interactive_command, recoverable
+from pydantic_ai_harness.shell._policy import is_interactive_command, recoverable, run_model_command
 
 RUN_SCOPED_TOOL_NAMES: tuple[str, ...] = ('run_command', 'start_command', 'check_command', 'stop_command')
 """The default tools. Background commands keep running until they exit, `stop_command` stops them, or the workspace ends."""
@@ -382,9 +382,10 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         try:
             try:
                 cwd = shlex.quote(await self._cwd_for(ctx))
-                result = await ctx.workspace.run(
-                    f'cd {cwd} || exit\n{limited_script(actual_command, self._max_file_bytes)}',
-                    shell=True,
+                result = await run_model_command(
+                    ctx.workspace,
+                    lambda cmd: f'cd {cwd} || exit\n{limited_script(cmd, self._max_file_bytes)}',
+                    actual_command,
                     env=self._resolve_env(),
                     timeout=timeout,
                 )
