@@ -75,7 +75,7 @@ while not done:
     # ... decide `next_prompt` and `done` from `result` ...
 ```
 
-`creation.store` is the disk-backed `CapabilityStore` over the same `directory`. `store.load_active()` re-imports every active authored capability and runs the same checks as `author_capability` before returning it for injection into the next run. An entry that fails (corrupt source, construction error, a getter with a wrong return type) is skipped rather than raised, and its error is recorded in the manifest, so one bad capability does not block the others.
+`creation.store` is the disk-backed `CapabilityStore` over the same `directory`. `store.load_active()` re-imports every active authored capability and runs the same checks as `author_capability` before returning it for injection into the next run. An entry that fails (corrupt source, construction error, a getter with a wrong return type) is skipped rather than raised, and its error is recorded in the manifest, so one bad capability does not block the others. Each version of a capability that `load_active()` loads stays imported for the life of the process, so an instance from an earlier run keeps working after the model re-authors it.
 
 ## Persistence
 
@@ -83,9 +83,9 @@ Authored capabilities persist to disk: each is one `<directory>/<name>.py` file,
 
 `manifest.json` records each capability's name, module file, class name, status (`active` or `disabled`), and last validation error. That is the surface a UI can read to show what the agent has authored. The manifest is written atomically (temp file plus `os.replace`), so a crash mid-write does not leave a partial file. A manifest that cannot be read (malformed JSON, or a field value this version does not accept) is read as empty, and `author_capability` and `disable_authored_capability` raise `UserError` instead of replacing it, so its entries are kept until you repair or remove it.
 
-The store serializes its own tool calls, but not other processes or agents: point each `directory` at one agent at a time, or concurrent authoring can lose manifest updates.
+Every store over one `directory` in a process shares a lock around each manifest update, so agents in the same process do not lose each other's updates. Separate processes are not coordinated: point each `directory` at one process at a time.
 
-Capability names are at most 64 lowercase letters, digits, and underscores, starting with a letter. Reusing a name replaces the previous capability of that name. Code that fails validation is still written to disk (so it can be inspected) and recorded with its `last_error` set; `load_active()` skips it.
+Capability names are at most 64 lowercase letters, digits, and underscores, starting with a letter. Reusing a name replaces the previous capability of that name once the new code passes validation. Code that fails is kept on disk so it can be inspected. If the name's current entry has no recorded error (its `last_error` is unset) and its `<name>.py` file still exists, that version stays in place and the rejected code is saved as `<name>.rejected.py`. Otherwise the code is saved as `<name>.py` and recorded with its `last_error` set; `load_active()` skips it.
 
 ## Durable execution
 
@@ -110,7 +110,27 @@ model that it changes nothing.
 
 `CapabilityCreation` executes arbitrary Python in-process at import, construction, and run time. That is the same trust boundary an agent that already runs shell commands and edits files operates under, which is the deliberate choice here. Do not point it at a directory whose contents you would not run yourself, and treat authored capabilities as code the agent is executing on your host.
 
-Authored code first runs when the model calls `author_capability`, not on the next run: validation executes the module body, the constructor, and the static getters in the current run, with the agent process's environment and permissions, even when validation then rejects the code. Validation waits for that code to return, so authored code that blocks also blocks the tool call, and cancelling the run does not interrupt it. Loads from different threads run one at a time, so it also holds up every other authored capability load in the process, including `store.load_active()`.
+Authored code first runs when the model calls `author_capability`, not on the next run: validation executes the module body, the constructor, and the static getters in the current run, with the agent process's environment and permissions, even when validation then rejects the code. If that code blocks, cancelling the run stops waiting for it, but its worker thread runs until the code returns and then finishes the write, so code that passes validation is still saved and loaded by the next `load_active()`; disable it if you did not want it. Other authoring, listing, and disabling calls are not held up by it. `store.load_active()` runs authored code in its calling thread, so an authored module that blocks also blocks that call. Loads of the same source from different threads run one at a time, so it also holds up every other load of that source, such as a `load_active()` call in another thread.
+
+To have a person approve authored code before any of it runs, require approval for `author_capability` with a [`ToolGuardrail`](guardrails.md). The run then ends with a `DeferredToolRequests` output for the call, which you approve or deny as described in [Human-in-the-loop tool approval](../deferred-tools.md#human-in-the-loop-tool-approval):
+
+```python
+from pathlib import Path
+
+from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai_harness import CapabilityCreation, GuardrailResult, ToolGuardrail
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    capabilities=[
+        LocalWorkspace('.'),
+        CapabilityCreation(directory=Path('.authored')),
+        ToolGuardrail(guard=lambda call: GuardrailResult.approve(), tools=['author_capability']),
+    ],
+    output_type=[str, DeferredToolRequests],
+)
+```
 
 If the agent also has file or shell tools (such as `FileSystem` or `Shell`) over a workspace that contains `directory`, as with `LocalWorkspace('.')` and `directory=Path('.authored')`, it can edit authored files and `manifest.json` directly, without going through `author_capability`. Keep `directory` outside that workspace if every authored file should pass through validation.
 

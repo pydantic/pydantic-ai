@@ -211,7 +211,9 @@ whenever `sensitive_data` is configured, BrowserUse:
   so a value the sub-agent writes into its answer does not reach the host
   model. Every occurrence is replaced, including inside other words, so a very
   short value can garble the result. Schema output stays valid JSON: a
-  non-string field holding a secret becomes its placeholder string.
+  non-string field holding a secret becomes its placeholder string, and an
+  object with two keys that redact alike raises `ModelRetry` instead of
+  dropping one.
 
 A domain-scoped secret is still substituted into a navigation made from its own
 domain, so add `allowed_domains` to bound where such a request can go.
@@ -239,7 +241,10 @@ domain, so add `allowed_domains` to bound where such a request can go.
   narrowing it never admits one the caller had excluded. A `browser_profile`
   allowlist given as a set is matched the same way. browser-use matches an
   allowlist of 100 or more entries by exact hostname only, so an allowlist that
-  normalizes to that many raises `ValueError`. The same normalization runs in
+  normalizes to that many raises `ValueError`. Without an allowlist, the same
+  limit applies to `browser_profile.prohibited_domains` once the harness's
+  `file://` rules (and, with `block_ip_addresses`, its localhost rules) are
+  added. The same normalization runs in
   `BrowserUseToolset`, so constructing the toolset directly gets it too.
 - **Private networks.** `block_ip_addresses=True` by default blocks direct IP
   addresses and common localhost hostnames, including when a profile has an

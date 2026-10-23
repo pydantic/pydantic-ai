@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+import anyio
 import httpx
 import pytest
 from exa_py import AsyncExa
@@ -615,6 +619,102 @@ class TestExaSearch:
         assert metadata['web_search'] == {'sources': [{'url': 'https://a.dev', 'title': 'A'}]}
         assert metadata['get_page'] == {'sources': [{'url': 'https://b.dev', 'title': 'B'}]}
         assert metadata['deep_search'] == {'sources': [{'url': 'https://c.dev', 'title': 'C'}]}
+
+
+class _LoopRecordingExa:
+    """Stands in for `exa_py.AsyncExa`, recording the event loop each request runs on."""
+
+    def __init__(self, built: list[_LoopRecordingExa], *, api_key: str) -> None:
+        self.api_key = api_key
+        self.loops: list[asyncio.AbstractEventLoop | None] = []
+        built.append(self)
+
+    def _record_loop(self) -> None:
+        try:
+            self.loops.append(asyncio.get_running_loop())
+        except RuntimeError:
+            self.loops.append(None)  # Trio
+
+    async def search(self, query: str, **kwargs: object) -> SearchResponse[Result]:
+        self._record_loop()
+        return _response(_result())
+
+    async def get_contents(self, urls: str, *, text: TextContentsOptions) -> SearchResponse[Result]:
+        self._record_loop()
+        return _response(_result(text='page text'))
+
+
+class TestDefaultClient:
+    @pytest.fixture
+    def built(self, monkeypatch: pytest.MonkeyPatch) -> list[_LoopRecordingExa]:
+        built: list[_LoopRecordingExa] = []
+
+        def build(*, api_key: str) -> _LoopRecordingExa:
+            return _LoopRecordingExa(built, api_key=api_key)
+
+        monkeypatch.setenv('EXA_API_KEY', 'test-key')
+        monkeypatch.setattr('pydantic_ai_harness.exa._toolset.AsyncExa', build)
+        return built
+
+    def test_rebuilt_on_a_new_event_loop(self, built: list[_LoopRecordingExa]) -> None:
+        """An httpx pool belongs to the loop that opened it, so a second `asyncio.run` needs a new client."""
+        toolset = ExaSearch[None]().get_toolset()
+
+        async def search(query: str) -> None:
+            await toolset.web_search(query)
+
+        asyncio.run(search('a'))
+        asyncio.run(search('b'))
+        assert [len(client.loops) for client in built] == [1, 1]
+        assert built[0].loops[0] is not built[1].loops[0]
+        assert {client.api_key for client in built} == {'test-key'}
+
+    def test_kept_while_the_previous_event_loop_is_running(self, built: list[_LoopRecordingExa]) -> None:
+        """A run still going on the loop the client was last used on, e.g. in another thread, keeps it."""
+        toolset = ExaSearch[None]().get_toolset()
+        searched = threading.Event()
+        release = threading.Event()
+
+        async def search_and_hold() -> None:
+            try:
+                await toolset.web_search('a')
+            finally:
+                searched.set()
+            await asyncio.to_thread(release.wait)
+
+        async def search() -> None:
+            await toolset.web_search('b')
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            held = pool.submit(asyncio.run, search_and_hold())
+            try:
+                assert searched.wait(5)
+                asyncio.run(search())
+            finally:
+                release.set()
+            held.result()
+        assert [len(client.loops) for client in built] == [2]
+        assert built[0].loops[0] is not built[0].loops[1]
+
+    async def test_reused_on_the_same_event_loop(self, built: list[_LoopRecordingExa]) -> None:
+        toolset = ExaSearch[None]().get_toolset()
+        await toolset.web_search('a')
+        await toolset.get_page('https://example.dev/page')
+        assert [len(client.loops) for client in built] == [2]
+
+    def test_kept_on_trio(self, built: list[_LoopRecordingExa]) -> None:
+        """Trio has no asyncio loop to compare, so the client is kept."""
+        pytest.importorskip('trio')
+        toolset = ExaSearch[None]().get_toolset()
+
+        async def search_twice() -> None:
+            await toolset.web_search('a')
+            await toolset.web_search('b')
+
+        # Its own thread: the asyncio test runner has marked this one as running asyncio.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(anyio.run, search_twice, backend='trio').result()
+        assert [client.loops for client in built] == [[None, None]]
 
 
 class TestAgentSpec:

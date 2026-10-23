@@ -15,6 +15,7 @@ from pydantic_ai_harness.browser_use._toolset import (
     BrowserAgentFactory,
     BrowserUseToolset,
     _normalize_allowed_domains,  # pyright: ignore[reportPrivateUsage]
+    _session_prohibited_domains,  # pyright: ignore[reportPrivateUsage]
     default_browser_agent,
 )
 
@@ -259,8 +260,20 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     """The cached toolset, so `'agent'`-scoped session state has one owner."""
 
     def __post_init__(self) -> None:
-        """Require an effective navigation allowlist when flat secrets are configured."""
+        """Require an effective navigation allowlist when flat secrets are configured.
+
+        Also reports a prohibited list browser-use would match by exact hostname at
+        construction rather than on the first `browse_web` call.
+        """
         self._validate_sensitive_data()
+        if self.browser_profile is not None:
+            _session_prohibited_domains(
+                self.browser_profile.prohibited_domains,
+                block_ip_addresses=self.block_ip_addresses,
+                allowed_domains=self.allowed_domains
+                if self.allowed_domains is not None
+                else self.browser_profile.allowed_domains,
+            )
 
     def _validate_sensitive_data(self) -> None:
         """Validate the mutable secret configuration before creating its toolset."""

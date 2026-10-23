@@ -6,16 +6,17 @@ import os
 import sys
 import threading
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
+from typing import get_type_hints
 from unittest.mock import Mock
 
 import anyio.to_thread
 import pytest
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, DeferredToolRequests, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai.messages import ModelRequest, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
@@ -31,11 +32,11 @@ from pydantic_ai_harness.capability_creation import (
     CapabilityCreationToolset,
     CapabilityStore,
     CapabilityValidationError,
-    _validate,
     load_capability_instance,
     validate_capability_file,
 )
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
+from pydantic_ai_harness.guardrails import GuardrailResult, ToolGuardrail
 
 VALID_CODE = """
 from dataclasses import dataclass
@@ -178,8 +179,32 @@ class Loaded(AbstractCapability):
 """
 
 
-class _ContentionLock:
-    """A lock that sets `contended` when a second caller has to wait for it."""
+def _write(directory: Path, name: str, code: str) -> Path:
+    path = directory / f'{name}.py'
+    path.write_text(code, encoding='utf-8')
+    return path
+
+
+_READY_TIMEOUT = 30
+"""Seconds a test waits for a step it ordered with an `Event`; a guard against hangs, never the expected path."""
+
+
+def _gate_module(monkeypatch: pytest.MonkeyPatch, *names: str) -> ModuleType:
+    """A module of `threading.Event`s that authored code imports to pause where a test needs it."""
+    module = ModuleType('_capability_creation_test_gate')
+    module.__dict__.update({name: threading.Event() for name in names})
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    return module
+
+
+def _gate(module: ModuleType, name: str) -> threading.Event:
+    event = module.__dict__[name]
+    assert isinstance(event, threading.Event)
+    return event
+
+
+class _ContendedLock:
+    """A lock that sets `contended` when a caller has to wait for it."""
 
     def __init__(self, contended: threading.Event) -> None:
         self._lock = threading.Lock()
@@ -190,14 +215,17 @@ class _ContentionLock:
             self._contended.set()
             self._lock.acquire()
 
-    def __exit__(self, *args: object) -> None:
+    def __exit__(self, *exc_info: object) -> None:
         self._lock.release()
 
 
-def _write(directory: Path, name: str, code: str) -> Path:
-    path = directory / f'{name}.py'
-    path.write_text(code, encoding='utf-8')
-    return path
+def _contended_locks(monkeypatch: pytest.MonkeyPatch, module: str, contended: threading.Event) -> None:
+    """Make `module` build `_ContendedLock`s, so a test sees when one of its callers waits for another."""
+
+    def lock() -> _ContendedLock:
+        return _ContendedLock(contended)
+
+    monkeypatch.setattr(f'{module}.threading', SimpleNamespace(Lock=lock, RLock=lock))
 
 
 class TestValidate:
@@ -305,9 +333,9 @@ class WithNativeTools(AbstractCapability):
         'getter',
         [
             'def get_toolset(self):\n        return lambda ctx: None\n',
-            "def get_instructions(self):\n        return [lambda ctx: 'dynamic', InstructionPart(content='part')]\n",
+            "def get_instructions(self):\n        return [lambda ctx: 'dynamic', InstructionPart(content='part'), InstructionPart(content='named', name='user')]\n",
         ],
-        ids=['toolset-function', 'callable-and-part-instructions'],
+        ids=['toolset-function', 'callable-and-named-part-instructions'],
     )
     def test_accepted_getter_shapes(self, tmp_path: Path, getter: str) -> None:
         code = (
@@ -319,7 +347,8 @@ class WithNativeTools(AbstractCapability):
         assert validate_capability_file(_write(tmp_path, 'm', code)) == 'Accepted'
 
     def test_future_annotations_dataclass_field(self, tmp_path: Path) -> None:
-        # `dataclasses` resolves string annotations through `sys.modules`, so the authored module must be findable there.
+        # `dataclasses` resolves string annotations through `sys.modules`, so the authored module must be
+        # findable there.
         code = 'from __future__ import annotations\n' + _marker_code('WithField', 'X') + '    value: int = 0\n'
         assert validate_capability_file(_write(tmp_path, 'm', code)) == 'WithField'
 
@@ -343,53 +372,164 @@ class UsesModels(AbstractCapability):
 """
         assert validate_capability_file(_write(tmp_path, 'm', code)) == 'UsesModels'
 
+    def test_validating_a_loaded_file_keeps_its_module(self, tmp_path: Path) -> None:
+        # A loaded instance's Pydantic models resolve their forward references through its module in
+        # `sys.modules` when first used, so validating the same file must leave that entry alone.
+        code = """from __future__ import annotations
+
+from pydantic import BaseModel
+
+from pydantic_ai.capabilities import AbstractCapability
+
+class A(BaseModel):
+    b: B | None = None
+
+class B(BaseModel):
+    x: int = 0
+
+class UsesModels(AbstractCapability):
+    def get_instructions(self):
+        # Called per run, so `A` is first used once the agent runs.
+        return lambda: str(A(b=B(x=1)).b)
+"""
+        path = _write(tmp_path, 'm', code)
+        instance = load_capability_instance(path)
+        assert validate_capability_file(path) == 'UsesModels'
+        result = Agent(TestModel(), capabilities=[instance]).run_sync('hi')
+        request = result.all_messages()[0]
+        assert isinstance(request, ModelRequest)
+        assert request.instructions == 'x=1'
+
     def test_reload_replaces_module_registration(self, tmp_path: Path) -> None:
         path = _write(tmp_path, 'm', VALID_CODE)
         before = set(sys.modules)
-        validate_capability_file(path)
-        validate_capability_file(path)
+        load_capability_instance(path)
+        load_capability_instance(path)
         added = [name for name in set(sys.modules) - before if name.startswith('_authored_capability_m_')]
         assert len(added) == 1
 
-    @pytest.mark.parametrize(
-        'broken_code',
-        [
-            'raise RuntimeError("boom")\n',
+    def test_reloading_changed_source_keeps_the_earlier_module(self, tmp_path: Path) -> None:
+        # A class loaded before its file was re-authored resolves its annotations against its own source.
+        code = (
+            'from __future__ import annotations\n'
+            'from pydantic_ai.capabilities import AbstractCapability\n'
+            'class {item}: ...\n'
+            'class Cap(AbstractCapability):\n'
+            '    item: {item} | None = None\n'
+        )
+        path = _write(tmp_path, 'm', code.format(item='ItemV1'))
+        old = type(load_capability_instance(path))
+        path.write_text(code.format(item='ItemV2'), encoding='utf-8')
+        new = type(load_capability_instance(path))
+        assert 'ItemV1' in str(get_type_hints(old)['item'])
+        assert 'ItemV2' in str(get_type_hints(new)['item'])
+
+    def test_failed_load_keeps_no_module_registered(self, tmp_path: Path) -> None:
+        before = set(sys.modules)
+        with pytest.raises(CapabilityValidationError, match='RuntimeError: boom'):
+            load_capability_instance(_write(tmp_path, 'm', 'raise RuntimeError("boom")\n'))
+        with pytest.raises(CapabilityValidationError, match='no `AbstractCapability` subclass'):
+            load_capability_instance(_write(tmp_path, 'n', NO_SUBCLASS_CODE))
+        constructor_raises = (
             'from pydantic_ai.capabilities import AbstractCapability\n\n'
             'class Broken(AbstractCapability):\n'
             '    def __init__(self):\n'
-            '        raise RuntimeError("boom")\n',
-        ],
-        ids=['module-body', 'constructor'],
-    )
-    def test_failed_load_restores_module_registration(self, tmp_path: Path, broken_code: str) -> None:
-        path = _write(tmp_path, 'm', VALID_CODE)
-        validate_capability_file(path)
-        [name] = [
-            name for name, module in sys.modules.items() if getattr(module, '__file__', None) == str(path.resolve())
-        ]
-        loaded = sys.modules[name]
-        path.write_text(broken_code, encoding='utf-8')
-        with pytest.raises(CapabilityValidationError, match='boom'):
-            validate_capability_file(path)
-        assert sys.modules[name] is loaded
+            '        raise RuntimeError("boom")\n'
+        )
+        with pytest.raises(CapabilityValidationError, match='RuntimeError: boom'):
+            load_capability_instance(_write(tmp_path, 'o', constructor_raises))
+        assert set(sys.modules) - before == set()
 
-        broken = _write(tmp_path, 'never_loaded', broken_code)
-        with pytest.raises(CapabilityValidationError, match='boom'):
-            validate_capability_file(broken)
-        assert str(broken.resolve()) not in {getattr(module, '__file__', None) for module in sys.modules.values()}
+    def test_failed_reload_keeps_the_earlier_module(self, tmp_path: Path) -> None:
+        # The same source can fail on a later load; the module an earlier instance resolves through stays.
+        code = (
+            'from pathlib import Path\nif Path(__file__).with_name("fail").exists():\n    raise RuntimeError("boom")\n'
+        ) + VALID_CODE
+        path = _write(tmp_path, 'm', code)
+        module = type(load_capability_instance(path)).__module__
+        registered = sys.modules[module]
+        (tmp_path / 'fail').touch()
+        with pytest.raises(CapabilityValidationError, match='RuntimeError: boom'):
+            load_capability_instance(path)
+        assert sys.modules[module] is registered
+
+    def test_loads_of_the_same_source_take_turns(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Two failing loads of one source that ran at once would each swap the other's module in and out,
+        # leaving a failed one registered.
+        contended = threading.Event()
+        _contended_locks(monkeypatch, 'pydantic_ai_harness.capability_creation._validate', contended)
+        gate = _gate_module(monkeypatch, 'entered', 'release')
+        code = f'import {gate.__name__} as g\ng.entered.set()\ng.release.wait({_READY_TIMEOUT})\nraise RuntimeError("boom")\n'
+        path = _write(tmp_path, 'm', code)
+        errors: list[str] = []
+
+        def load() -> None:
+            with pytest.raises(CapabilityValidationError, match='RuntimeError: boom') as exc_info:
+                load_capability_instance(path)
+            errors.append(str(exc_info.value))
+
+        before = set(sys.modules)
+        loaders = [threading.Thread(target=load), threading.Thread(target=load)]
+        loaders[0].start()
+        try:
+            assert _gate(gate, 'entered').wait(timeout=_READY_TIMEOUT)
+            loaders[1].start()
+            assert contended.wait(timeout=_READY_TIMEOUT)  # the second load waits for the first to finish
+        finally:
+            _gate(gate, 'release').set()
+            for loader in loaders:
+                loader.join(timeout=_READY_TIMEOUT)
+        assert errors == ['RuntimeError: boom', 'RuntimeError: boom']
+        assert set(sys.modules) - before == set()
+
+    def test_code_that_loads_its_own_source_does_not_wait_on_itself(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gate = _gate_module(monkeypatch, 'nested')
+        code = (
+            f'from pathlib import Path\nimport {gate.__name__} as g\n'
+            'from pydantic_ai_harness.capability_creation import load_capability_instance\n'
+            'if not g.nested.is_set():\n    g.nested.set()\n    load_capability_instance(Path(__file__))\n'
+        ) + VALID_CODE
+        path = _write(tmp_path, 'm', code)
+        loaded: list[AbstractCapability[object]] = []
+        loader = threading.Thread(target=lambda: loaded.append(load_capability_instance(path)), daemon=True)
+        loader.start()
+        loader.join(timeout=_READY_TIMEOUT)
+        assert [type(capability).__name__ for capability in loaded] == ['MarkerCapability']
+
+    def test_failed_load_leaves_an_entry_it_did_not_register(self, tmp_path: Path) -> None:
+        # Whatever replaced the module's entry while it ran is not the failed module, so it is left alone.
+        code = 'import sys\nsys.modules[__name__] = sys\nraise RuntimeError("boom")\n'
+        path = _write(tmp_path, 'm', code)
+        before = set(sys.modules)
+        with pytest.raises(CapabilityValidationError, match='RuntimeError: boom'):
+            load_capability_instance(path)
+        (added,) = set(sys.modules) - before
+        try:
+            assert sys.modules[added] is sys
+        finally:
+            del sys.modules[added]
+
+    def test_validation_keeps_no_module_registered(self, tmp_path: Path) -> None:
+        before = set(sys.modules)
+        validate_capability_file(_write(tmp_path, 'm', VALID_CODE))
+        with pytest.raises(CapabilityValidationError):
+            validate_capability_file(_write(tmp_path, 'n', NO_SUBCLASS_CODE))
+        assert set(sys.modules) - before == set()
 
     def test_failed_load_restores_an_entry_holding_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        path = _write(tmp_path, 'm', VALID_CODE)
-        validate_capability_file(path)
-        [name] = [
-            name for name, module in sys.modules.items() if getattr(module, '__file__', None) == str(path.resolve())
-        ]
+        # The same source fails on its second load, so both loads use one `sys.modules` key.
+        code = (
+            'from pathlib import Path\nif Path(__file__).with_name("fail").exists():\n    raise RuntimeError("boom")\n'
+        ) + VALID_CODE
+        path = _write(tmp_path, 'm', code)
+        name = type(load_capability_instance(path)).__module__
         modules: dict[str, object] = vars(sys)['modules']
         monkeypatch.setitem(modules, name, None)
-        path.write_text('raise RuntimeError("boom")\n', encoding='utf-8')
+        (tmp_path / 'fail').touch()
         with pytest.raises(CapabilityValidationError, match='boom'):
-            validate_capability_file(path)
+            load_capability_instance(path)
         assert name in sys.modules
         assert modules[name] is None
 
@@ -410,12 +550,12 @@ class UsesModels(AbstractCapability):
                 progress.set()
 
         monkeypatch.setitem(sys.modules, '_capability_load_sync', SimpleNamespace(in_body=in_body))
-        monkeypatch.setattr(_validate, '_LOAD_LOCK', _ContentionLock(progress))
+        _contended_locks(monkeypatch, 'pydantic_ai_harness.capability_creation._validate', progress)
         path = _write(tmp_path, 'm', CONCURRENT_LOAD_CODE)
         results: list[str] = []
 
         def load() -> None:
-            results.append(validate_capability_file(path))
+            results.append(type(load_capability_instance(path)).__name__)
 
         first, second = threading.Thread(target=load), threading.Thread(target=load)
         first.start()
@@ -488,9 +628,8 @@ class TestCapabilityStore:
         assert CapabilityStore(tmp_path).write('a' * 64, VALID_CODE).last_error is None
 
     def test_write_system_exit_records_error(self, tmp_path: Path) -> None:
-        # Re-authoring with code that exits records the failure instead of leaving the old entry marked healthy.
+        # Authored code that exits fails validation instead of ending the process or leaving a healthy-looking entry.
         store = CapabilityStore(tmp_path)
-        store.write('cap', VALID_CODE)
         record = store.write('cap', 'raise SystemExit(0)\n')
         assert record.last_error == 'SystemExit: 0'
         assert store.list_all() == [record]
@@ -503,19 +642,98 @@ class TestCapabilityStore:
         assert record.class_name == ''
         assert (tmp_path / 'bad.py').exists()
 
-    def test_write_upsert_replaces(self, tmp_path: Path) -> None:
+    def test_failed_reauthor_keeps_previous_version(self, tmp_path: Path) -> None:
+        store = CapabilityStore(tmp_path)
+        good = store.write('marker', _marker_code('Foo', 'V1'))
+        rejected = store.write('marker', 'raise SystemExit(0)\n')
+        assert rejected.last_error == 'SystemExit: 0'
+        assert rejected.module_file == 'marker.rejected.py'
+        assert (tmp_path / 'marker.rejected.py').read_text(encoding='utf-8') == 'raise SystemExit(0)\n'
+        assert store.list_all() == [good]
+        active = store.load_active()
+        assert [capability.get_instructions() for capability in active] == ['V1']
+
+    def test_failed_reauthor_with_a_deleted_source_records_it(self, tmp_path: Path) -> None:
+        # With the kept version's file gone there is nothing to keep, so the attempt is what gets recorded.
+        store = CapabilityStore(tmp_path)
+        store.write('marker', VALID_CODE)
+        (tmp_path / 'marker.py').unlink()
+        record = store.write('marker', NO_SUBCLASS_CODE)
+        assert record.module_file == 'marker.py'
+        assert record.last_error is not None
+        assert store.list_all() == [record]
+        assert not (tmp_path / 'marker.rejected.py').exists()
+
+    def test_successful_reauthor_removes_rejected_source(self, tmp_path: Path) -> None:
         store = CapabilityStore(tmp_path)
         store.write('marker', VALID_CODE)
         store.write('marker', NO_SUBCLASS_CODE)
-        records = store.list_all()
-        assert len(records) == 1
-        assert records[0].last_error is not None
+        assert store.write('marker', _marker_code('Bar', 'V2')).class_name == 'Bar'
+        assert sorted(path.name for path in tmp_path.iterdir() if path.suffix == '.py') == ['marker.py']
 
-    def test_reauthor_replaces_stale_source(self, tmp_path: Path) -> None:
-        # Re-authoring the same name must serve the new source, not cached bytecode.
+    def test_a_rejected_source_that_cannot_be_removed_does_not_fail_the_write(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         store = CapabilityStore(tmp_path)
-        store.write('marker', _marker_code('Foo', 'V1'))
+        store.write('marker', VALID_CODE)
+        store.write('marker', NO_SUBCLASS_CODE)
+
+        def failing_unlink(path: Path, missing_ok: bool = False) -> None:
+            raise PermissionError(f'cannot remove {path.name}')
+
+        monkeypatch.setattr(Path, 'unlink', failing_unlink)
         record = store.write('marker', _marker_code('Bar', 'V2'))
+        assert record.class_name == 'Bar'
+        assert store.list_all() == [record]
+        assert (tmp_path / 'marker.rejected.py').exists()
+
+    def test_replacing_the_source_removes_an_older_rejected_source(self, tmp_path: Path) -> None:
+        store = CapabilityStore(tmp_path)
+        store.write('marker', VALID_CODE)
+        store.write('marker', NO_SUBCLASS_CODE)
+        (tmp_path / 'marker.py').write_text(SYNTAX_ERROR_CODE, encoding='utf-8')
+        store.load_active()  # the kept version now fails, so the next attempt replaces it
+        assert store.write('marker', NO_SUBCLASS_CODE).module_file == 'marker.py'
+        assert not (tmp_path / 'marker.rejected.py').exists()
+
+    def test_write_reports_the_same_error_as_load_active(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Validation runs on a staged copy; its error must name the saved file, so a reload has nothing to update.
+        store = CapabilityStore(tmp_path)
+        record = store.write('bad', SYNTAX_ERROR_CODE)
+        assert record.last_error is not None
+        assert 'bad.py' in record.last_error
+        save_spy = Mock()
+        monkeypatch.setattr(CapabilityStore, '_save_manifest', save_spy)
+        assert store.load_active() == []
+        save_spy.assert_not_called()
+        assert sorted(path.name for path in tmp_path.iterdir()) == ['bad.py', 'manifest.json']
+
+    def test_authored_code_sees_its_saved_location(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Code that reads a file next to itself must behave the same when authored as when loaded.
+        (tmp_path / 'data.txt').write_text('FROM_DATA', encoding='utf-8')
+        code = 'from pathlib import Path\nDATA = Path(__file__).with_name("data.txt").read_text()\n' + VALID_CODE
+        store = CapabilityStore(tmp_path)
+        assert store.write('reader', code).last_error is None
+        save_spy = Mock()
+        monkeypatch.setattr(CapabilityStore, '_save_manifest', save_spy)
+        assert len(store.load_active()) == 1
+        save_spy.assert_not_called()
+
+    def test_failed_reauthor_of_broken_entry_replaces_it(self, tmp_path: Path) -> None:
+        # With no version that passed validation to keep, the new attempt is what gets recorded.
+        store = CapabilityStore(tmp_path)
+        store.write('bad', NO_SUBCLASS_CODE)
+        record = store.write('bad', SYNTAX_ERROR_CODE)
+        assert record.module_file == 'bad.py'
+        assert store.list_all() == [record]
+        assert (tmp_path / 'bad.py').read_text(encoding='utf-8') == SYNTAX_ERROR_CODE
+
+    @pytest.mark.parametrize('name', ['marker', 'previous'])
+    def test_reauthor_replaces_stale_source(self, tmp_path: Path, name: str) -> None:
+        # Re-authoring the same name must serve the new source, not cached bytecode, whatever the name.
+        store = CapabilityStore(tmp_path)
+        store.write(name, _marker_code('Foo', 'V1'))
+        record = store.write(name, _marker_code('Bar', 'V2'))
         assert record.class_name == 'Bar'
         active = store.load_active()
         assert len(active) == 1
@@ -537,12 +755,119 @@ class TestCapabilityStore:
     def test_write_upsert_later_entry(self, tmp_path: Path) -> None:
         store = CapabilityStore(tmp_path)
         store.write('a', VALID_CODE)
-        store.write('b', VALID_CODE)
-        # Re-authoring the second entry skips past the first before matching.
         store.write('b', NO_SUBCLASS_CODE)
+        # Re-authoring the second entry skips past the first before matching.
+        store.write('b', VALID_CODE)
         records = store.list_all()
         assert [r.name for r in records] == ['a', 'b']
-        assert records[1].last_error is not None
+        assert records[1].last_error is None
+
+    def test_stores_over_one_directory_share_a_lock(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Two agents over one directory each build their own store; their manifest updates must not interleave.
+        saving = threading.Event()
+        release = threading.Event()
+        contended = threading.Event()
+        real_replace = os.replace
+
+        def held_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+            if Path(dst).name == 'manifest.json' and not saving.is_set():
+                saving.set()
+                release.wait(timeout=_READY_TIMEOUT)  # hang guard; the test sets it
+            real_replace(src, dst)
+
+        _contended_locks(monkeypatch, 'pydantic_ai_harness.capability_creation._store', contended)
+        monkeypatch.setattr(os, 'replace', held_replace)
+        writers = [
+            threading.Thread(target=CapabilityStore(tmp_path).write, args=('first', VALID_CODE)),
+            threading.Thread(target=CapabilityStore(tmp_path / '.').write, args=('second', VALID_CODE)),
+        ]
+        writers[0].start()
+        try:
+            assert saving.wait(timeout=_READY_TIMEOUT)
+            writers[1].start()
+            assert contended.wait(timeout=_READY_TIMEOUT)  # the second store waits for the update the first is making
+        finally:
+            release.set()
+            for writer in writers:
+                writer.join(timeout=_READY_TIMEOUT)
+        assert [record.name for record in CapabilityStore(tmp_path).list_all()] == ['first', 'second']
+
+    def test_blocking_authored_code_does_not_hold_up_other_writes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gate = _gate_module(monkeypatch, 'entered', 'release')
+        code = f'import {gate.__name__} as g\ng.entered.set()\ng.release.wait({2 * _READY_TIMEOUT})\n' + VALID_CODE
+        writer = threading.Thread(target=CapabilityStore(tmp_path).write, args=('slow', code))
+        done = threading.Event()
+
+        def quick() -> None:
+            CapabilityStore(tmp_path).write('quick', VALID_CODE)
+            CapabilityStore(tmp_path).disable('quick')
+            CapabilityStore(tmp_path).load_active()
+            done.set()
+
+        writer.start()
+        try:
+            assert _gate(gate, 'entered').wait(timeout=_READY_TIMEOUT)
+            threading.Thread(target=quick).start()
+            assert done.wait(timeout=_READY_TIMEOUT)  # well inside the slow write's hang guard
+        finally:
+            _gate(gate, 'release').set()
+            writer.join(timeout=_READY_TIMEOUT)
+        assert [record.name for record in CapabilityStore(tmp_path).list_all()] == ['quick', 'slow']
+
+    def test_load_active_keeps_an_entry_rewritten_while_loading(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An error found by a load that started before a re-author must not land on the re-authored entry,
+        # even when the new entry's fields equal the old one's.
+        store = CapabilityStore(tmp_path)
+        store.write('x', VALID_CODE)
+        gate = _gate_module(monkeypatch, 'entered', 'release')
+        broken = (
+            f'import {gate.__name__} as g\ng.entered.set()\ng.release.wait({_READY_TIMEOUT})\n'
+            'raise ValueError("broken")\n'
+        )
+        (tmp_path / 'x.py').write_text(broken, encoding='utf-8')
+        loader = threading.Thread(target=store.load_active)
+        loader.start()
+        try:
+            assert _gate(gate, 'entered').wait(timeout=_READY_TIMEOUT)
+            record = store.write('x', VALID_CODE)  # the same entry fields as before, with fixed source
+        finally:
+            _gate(gate, 'release').set()
+            loader.join(timeout=_READY_TIMEOUT)
+        assert store.list_all() == [record]
+
+    @pytest.mark.parametrize('update', ['disable', 'author'])
+    def test_load_active_keeps_manifest_updates_made_while_loading(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, update: str
+    ) -> None:
+        # Recording a load error must not write back a manifest read before a concurrent disable or write.
+        store = CapabilityStore(tmp_path)
+        store.write('x', VALID_CODE)
+        gate = _gate_module(monkeypatch, 'entered', 'release')
+        broken = (
+            f'import {gate.__name__} as g\ng.entered.set()\ng.release.wait({_READY_TIMEOUT})\n'
+            'raise ValueError("broken")\n'
+        )
+        (tmp_path / 'x.py').write_text(broken, encoding='utf-8')
+        loader = threading.Thread(target=store.load_active)
+        loader.start()
+        try:
+            assert _gate(gate, 'entered').wait(timeout=_READY_TIMEOUT)
+            if update == 'disable':
+                store.disable('x')
+            else:
+                store.write('y', VALID_CODE)
+        finally:
+            _gate(gate, 'release').set()
+            loader.join(timeout=_READY_TIMEOUT)
+        records = [(record.name, record.status, record.last_error) for record in store.list_all()]
+        if update == 'disable':
+            assert records == [('x', 'disabled', None)]
+        else:
+            assert records == [('x', 'active', 'ValueError: broken'), ('y', 'active', None)]
 
     def test_load_manifest_missing_returns_empty(self, tmp_path: Path) -> None:
         assert CapabilityStore(tmp_path / 'absent').list_all() == []
@@ -591,18 +916,45 @@ class TestCapabilityStore:
         assert store.load_active() == []
 
     def test_save_manifest_cleans_temp_on_failure(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        # If the atomic replace fails, the temp file must not be left behind.
+        # If the atomic replace of the manifest fails, its temp file must not be left behind.
         store = CapabilityStore(tmp_path)
         store.write('marker', VALID_CODE)
+        real_replace = os.replace
 
-        def _boom(*args: object, **kwargs: object) -> None:
-            raise OSError('replace failed')
+        def _boom(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+            if Path(dst).name == 'manifest.json':
+                raise OSError('replace failed')
+            real_replace(src, dst)
 
         monkeypatch.setattr(os, 'replace', _boom)
         with pytest.raises(OSError, match='replace failed'):
             store.write('second', VALID_CODE)
         leftovers = [p.name for p in tmp_path.iterdir() if p.name.startswith('manifest.') and p.name.endswith('.tmp')]
         assert leftovers == []
+        assert not (tmp_path / 'second.py').exists()  # a new source goes with the entry that was not saved
+
+    @pytest.mark.parametrize('name', ['marker', 'previous'])
+    def test_failed_manifest_save_keeps_the_previous_source(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+    ) -> None:
+        # The source and its manifest entry change together, so a failed save leaves both as they were.
+        store = CapabilityStore(tmp_path)
+        good = store.write(name, _marker_code('Foo', 'V1'))
+        store.write(name, NO_SUBCLASS_CODE)
+        files = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+        real_replace = os.replace
+
+        def _boom(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+            if Path(dst).name == 'manifest.json':
+                raise OSError('replace failed')
+            real_replace(src, dst)
+
+        monkeypatch.setattr(os, 'replace', _boom)
+        with pytest.raises(OSError, match='replace failed'):
+            store.write(name, _marker_code('Bar', 'V2'))
+        assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == files
+        assert store.list_all() == [good]
+        assert [capability.get_instructions() for capability in store.load_active()] == ['V1']
 
     def test_load_active_skips_entry_that_failed_validation(self, tmp_path: Path) -> None:
         # A getter with a wrong return type fails at authoring and must not be loaded into the next run.
@@ -625,15 +977,26 @@ class TestCapabilityStore:
         assert last_error is not None
         assert 'is not a `.py` file in the directory' in last_error
 
+    def test_load_active_records_a_missing_module_file(self, tmp_path: Path) -> None:
+        store = CapabilityStore(tmp_path)
+        store.write('marker', VALID_CODE)
+        (tmp_path / 'marker.py').unlink()
+        assert store.load_active() == []
+        last_error = store.list_all()[0].last_error
+        assert last_error is not None
+        assert last_error.startswith('FileNotFoundError: ')
+
     def test_load_active_persists_new_error(self, tmp_path: Path) -> None:
         # A capability that validated once but later fails to load gets its error
         # persisted to the manifest, so list_all reflects the real state.
         store = CapabilityStore(tmp_path)
+        healthy = store.write('healthy', VALID_CODE)
         store.write('marker', VALID_CODE)
-        assert store.list_all()[0].last_error is None
+        assert store.list_all()[1].last_error is None
         (tmp_path / 'marker.py').write_text(NO_SUBCLASS_CODE, encoding='utf-8')
-        assert store.load_active() == []
-        record = store.list_all()[0]
+        assert len(store.load_active()) == 1
+        assert store.list_all()[0] == healthy
+        record = store.list_all()[1]
         assert record.last_error is not None
         assert 'no `AbstractCapability` subclass' in record.last_error
 
@@ -699,37 +1062,45 @@ class TestCapabilityCreationToolset:
         assert 'depends on how this agent is set up' in result
         assert 'load_active' not in result  # host wiring is for the docs, not the model
 
-    async def test_parallel_store_mutations_run_one_at_a_time(self, tmp_path: Path) -> None:
-        # Parallel tool calls share one manifest: overlapping read-modify-write cycles would lose updates.
-        release = threading.Event()
+    async def test_author_capability_is_cancellable(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Authored code that blocks must not hold the run past cancellation; the write still completes afterwards.
+        gate = _gate_module(monkeypatch, 'entered', 'release')
+        code = f'import {gate.__name__} as g\ng.entered.set()\ng.release.wait({_READY_TIMEOUT})\n' + VALID_CODE
+        written = threading.Event()
 
-        class HeldStore(CapabilityStore):
+        class SignallingStore(CapabilityStore):
             def write(self, name: str, code: str) -> AuthoredCapability:
-                if name == 'first':
-                    release.wait(timeout=30)  # hang guard; the test sets it
-                return super().write(name, code)
+                try:
+                    return super().write(name, code)
+                finally:
+                    written.set()
 
-        store = HeldStore(tmp_path)
-        toolset = CapabilityCreationToolset(store)
+        toolset = CapabilityCreationToolset(SignallingStore(tmp_path))
         try:
-            async with anyio.create_task_group() as tg:
-                tg.start_soon(toolset.author_capability, 'first', VALID_CODE)
-                await anyio.wait_all_tasks_blocked()
-                tg.start_soon(toolset.author_capability, 'second', VALID_CODE)
-                tg.start_soon(toolset.disable_authored_capability, 'first')
-                await anyio.wait_all_tasks_blocked()
-                release.set()
+            with anyio.CancelScope() as scope:
+                async with anyio.create_task_group() as tg:
+                    tg.start_soon(toolset.author_capability, 'slow', code)
+                    assert await anyio.to_thread.run_sync(_gate(gate, 'entered').wait, _READY_TIMEOUT)
+                    scope.cancel()
+            assert scope.cancelled_caught
+            assert not written.is_set()  # the run stopped waiting before the write finished
         finally:
-            release.set()
-        assert [(record.name, record.status) for record in store.list_all()] == [
-            ('first', 'disabled'),
-            ('second', 'active'),
-        ]
+            _gate(gate, 'release').set()
+        assert await anyio.to_thread.run_sync(written.wait, _READY_TIMEOUT)
+        assert [record.name for record in CapabilityStore(tmp_path).list_all()] == ['slow']
 
     async def test_author_validation_failure_message(self, tmp_path: Path) -> None:
         toolset = CapabilityCreationToolset(CapabilityStore(tmp_path))
         result = await toolset.author_capability('bad', NO_SUBCLASS_CODE)
         assert 'failed validation' in result
+        assert 'was written but' not in result
+        assert 'previous version' not in result
+
+    async def test_author_failure_message_names_kept_version(self, tmp_path: Path) -> None:
+        toolset = CapabilityCreationToolset(CapabilityStore(tmp_path))
+        await toolset.author_capability('marker', VALID_CODE)
+        result = await toolset.author_capability('marker', NO_SUBCLASS_CODE)
+        assert "The previous version of 'marker' is unchanged." in result
 
     async def test_author_invalid_name_model_retry(self, tmp_path: Path) -> None:
         toolset = CapabilityCreationToolset(CapabilityStore(tmp_path))
@@ -837,6 +1208,21 @@ class TestEndToEnd:
         agent = Agent(TestModel(), capabilities=[CapabilityCreation(directory=tmp_path)])
         result = await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert result.output is not None
+
+    async def test_tool_guardrail_can_require_approval_before_authoring(self, tmp_path: Path) -> None:
+        # The documented way to have a person approve authored code before it runs.
+        agent = Agent(
+            TestModel(call_tools=['author_capability']),
+            capabilities=[
+                CapabilityCreation(directory=tmp_path),
+                ToolGuardrail(guard=lambda call: GuardrailResult.approve(), tools=['author_capability']),
+            ],
+            output_type=[str, DeferredToolRequests],
+        )
+        result = await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result.output, DeferredToolRequests)
+        assert [call.tool_name for call in result.output.approvals] == ['author_capability']
+        assert list(tmp_path.iterdir()) == []
 
     @pytest.mark.parametrize('workspace', ['none', 'read-only', 'sandbox'])
     async def test_refuses_a_workspace_that_is_not_this_machine_and_writable(
