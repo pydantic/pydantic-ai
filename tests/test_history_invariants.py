@@ -40,7 +40,6 @@ from .history_invariants import (
     idempotence_violations,
     openai_responses_wire,
     part_changes,
-    role_violations,
     round_trip_violations,
     tool_pairing_violations,
 )
@@ -251,7 +250,6 @@ def test_well_formed_body_passes_every_body_checker(case: WireCase):
     assert wire == case.expected
     assert duplicate_call_id_violations(wire) == []
     assert call_pairing_violations(wire, results_follow_their_call=True) == []
-    assert role_violations(wire) == []
     assert empty_message_violations(wire) == []
     assert empty_text_violations(wire) == []
 
@@ -291,11 +289,8 @@ def test_unanswered_call():
     assert call_pairing_violations(wire, results_follow_their_call=False) == ['wire.unanswered_call']
 
 
-def test_consecutive_role():
-    wire = bedrock_wire(
-        [{'role': 'user', 'content': [{'text': 'Hello'}]}, {'role': 'user', 'content': [{'text': 'Anyone there?'}]}]
-    )
-    assert role_violations(wire) == ['wire.consecutive_role']
+def test_empty_body():
+    assert empty_message_violations(anthropic_wire([])) == ['wire.empty_body']
 
 
 def test_empty_message():

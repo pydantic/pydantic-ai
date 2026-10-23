@@ -301,7 +301,8 @@ When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module 
 `tests/history_strategies.py` draws message histories with Hypothesis. `tests/history_invariants.py` holds the checkers: plain functions that return a stable code for each violation. `tests/test_history_properties.py` runs the properties, and `tests/test_history_invariants.py` holds the falsifiers.
 
 - Commit a falsifier with every checker code: a hand-built input that triggers exactly that code. A property that no committed input fails checks nothing.
-- When a property fails on main for an input in the drawn domain, keep the property and mark the test `xfail(strict=True)`, naming the input in the reason. Narrow the strategy only for an input that providers and users never produce, and say why in the strategy's docstring.
+- When a property fails on main for an input in the drawn domain, record it as a known finding: add a `KNOWN_FINDINGS` entry in `tests/test_history_properties.py` that leaves the `Damage` drawing it out of that property's domain, and pin it with one `xfail(strict=True)` test on a hand-built reproducer. Never mark the property test itself as an expected failure: an expected failure checks nothing.
+- Narrow the strategy only for an input that providers and users never produce, and say why in the strategy's docstring.
 - `tests/conftest.py` loads a derandomized profile of 50 examples, so a run is reproducible and fits the per-test budget. Hunt for new failures with `HYPOTHESIS_PROFILE=explore uv run pytest tests/test_history_properties.py`, which draws 1000 randomized examples per test.
 
 ## Directory Structure

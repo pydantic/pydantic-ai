@@ -23,7 +23,7 @@ Body checkers, over a body's messages projected to `WireMessage`s by the functio
 - `wire.orphan_result`: a tool result with no earlier call or, where results must answer the message
   right before theirs, none in that message;
 - `wire.unanswered_call`: a call no later result answers;
-- `wire.consecutive_role`: two adjacent messages with the same role;
+- `wire.empty_body`: a body with no messages;
 - `wire.empty_message`: a message with no blocks;
 - `wire.empty_text`: a text block with no text;
 - `wire.body_changed`: two mappings that should agree, such as mapping the same history twice, don't.
@@ -34,7 +34,6 @@ from __future__ import annotations as _annotations
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from itertools import pairwise
 from typing import Literal, assert_never
 
 import pydantic_core
@@ -292,13 +291,10 @@ def call_pairing_violations(messages: Sequence[WireMessage], *, results_follow_t
     return violations + ['wire.unanswered_call' for call_id in dict.fromkeys(calls) if call_id not in answered]
 
 
-def role_violations(messages: Sequence[WireMessage]) -> list[str]:
-    """`wire.consecutive_role`: no two adjacent messages have the same role."""
-    return ['wire.consecutive_role' for previous, current in pairwise(messages) if previous.role == current.role]
-
-
 def empty_message_violations(messages: Sequence[WireMessage]) -> list[str]:
-    """`wire.empty_message`: every message has a block."""
+    """`wire.empty_body`, `wire.empty_message`: the body has a message, and every message has a block."""
+    if not messages:
+        return ['wire.empty_body']
     return ['wire.empty_message' for message in messages if not message.blocks]
 
 

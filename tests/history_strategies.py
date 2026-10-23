@@ -1,9 +1,9 @@
 """Hypothesis strategies for text-only message histories.
 
 `histories()` draws conversations in which every tool call is answered exactly once, in the request right
-after its response. With `well_formed=False` the same conversations are then damaged the ways stored,
-hand-built and UI-returned histories get damaged: orphan returns, dangling calls, a call id repeated within
-one response, thinking-only responses, consecutive requests and empty-text parts.
+after its response, from a run's first request on its own to several tool rounds. With `well_formed=False`
+the same conversations are then damaged the ways stored, hand-built and UI-returned histories get damaged,
+each kind of damage named by a `Damage` so a test can leave it out with `without`.
 
 The domain is deliberately narrower than what the message types accept:
 
@@ -30,7 +30,6 @@ from pydantic import JsonValue
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
-    ModelRequestPart,
     ModelResponse,
     RetryFeedbackCause,
     RetryFeedbackPart,
@@ -147,7 +146,8 @@ def _follow_up_requests(draw: st.DrawFn, calls: list[ToolCallPart], instructions
 
 @st.composite
 def _well_formed_histories(draw: st.DrawFn) -> list[ModelMessage]:
-    calls_per_response = draw(st.lists(st.integers(0, 3), min_size=1, max_size=4))
+    # No response at all is the history a run's first request is mapped from.
+    calls_per_response = draw(st.lists(st.integers(0, 3), max_size=4))
     call_ids = iter(
         draw(st.lists(TOOL_CALL_IDS, min_size=sum(calls_per_response), max_size=sum(calls_per_response), unique=True))
     )
@@ -174,7 +174,14 @@ def _well_formed_histories(draw: st.DrawFn) -> list[ModelMessage]:
 
 
 Damage = Literal[
-    'orphan_return', 'dangling_call', 'repeated_call_id', 'thinking_only_response', 'consecutive_request', 'empty_text'
+    'orphan_return',
+    'dangling_call',
+    'repeated_call_id',
+    'thinking_only_response',
+    'consecutive_request',
+    'empty_prompt',
+    'empty_system_prompt',
+    'empty_response_text',
 ]
 _DAMAGE: list[Damage] = [
     'orphan_return',
@@ -182,16 +189,19 @@ _DAMAGE: list[Damage] = [
     'repeated_call_id',
     'thinking_only_response',
     'consecutive_request',
-    'empty_text',
+    'empty_prompt',
+    'empty_system_prompt',
+    'empty_response_text',
 ]
+_NEEDS_A_RESPONSE: frozenset[Damage] = frozenset({'dangling_call', 'repeated_call_id', 'empty_response_text'})
 
 
 @st.composite
-def _damaged_histories(draw: st.DrawFn) -> list[ModelMessage]:
+def _damaged_histories(draw: st.DrawFn, without: frozenset[Damage]) -> list[ModelMessage]:
     """A well-formed history, damaged. Damage that adds a message puts it after a request, as the run would, so it
     never separates a call's response from the request answering it."""
     history = draw(_well_formed_histories())
-    for damage in draw(st.lists(st.sampled_from(_DAMAGE), min_size=1, max_size=3)):
+    for _ in range(draw(st.integers(1, 3))):
         used_ids = {
             part.tool_call_id
             for message in history
@@ -201,8 +211,12 @@ def _damaged_histories(draw: st.DrawFn) -> list[ModelMessage]:
         fresh_id = draw(TOOL_CALL_IDS.filter(lambda call_id: call_id not in used_ids))
         requests = {index: message for index, message in enumerate(history) if isinstance(message, ModelRequest)}
         responses = {index: message for index, message in enumerate(history) if isinstance(message, ModelResponse)}
-        request_index, response_index = draw(st.sampled_from(list(requests))), draw(st.sampled_from(list(responses)))
-        request, response = requests[request_index], responses[response_index]
+        applicable: list[Damage] = [
+            kind for kind in _DAMAGE if kind not in without and (responses or kind not in _NEEDS_A_RESPONSE)
+        ]
+        damage = draw(st.sampled_from(applicable))
+        request_index = draw(st.sampled_from(list(requests)))
+        request = requests[request_index]
         match damage:
             case 'orphan_return':
                 # A return whose call is gone, as when context eviction drops the response that made it.
@@ -213,11 +227,15 @@ def _damaged_histories(draw: st.DrawFn) -> list[ModelMessage]:
                 )
             case 'dangling_call':
                 # A call the run never answered, as when it was cancelled mid-tool.
+                response_index = draw(st.sampled_from(list(responses)))
+                response = responses[response_index]
                 history[response_index] = replace(
                     response, parts=[*response.parts, ToolCallPart(draw(_TOOL_NAMES), {}, fresh_id)]
                 )
             case 'repeated_call_id':
                 # A model that numbers its calls per response (`call_0`, ...) can repeat an id in one response.
+                response_index = draw(st.sampled_from(list(responses)))
+                response = responses[response_index]
                 existing_ids = [part.tool_call_id for part in response.parts if isinstance(part, ToolCallPart)]
                 call_id = draw(st.sampled_from(existing_ids)) if existing_ids else fresh_id
                 repeats = [ToolCallPart(draw(_TOOL_NAMES), {}, call_id) for _ in range(1 if existing_ids else 2)]
@@ -232,15 +250,27 @@ def _damaged_histories(draw: st.DrawFn) -> list[ModelMessage]:
                 history.insert(request_index + 1, ModelResponse(parts=[draw(st.builds(ThinkingPart, _TEXT))]))
             case 'consecutive_request':
                 history.insert(request_index + 1, ModelRequest(parts=[draw(_USER_PROMPTS)]))
-            case 'empty_text':
-                empty: ModelRequestPart = draw(st.sampled_from([UserPromptPart(''), SystemPromptPart('')]))
-                history[request_index] = replace(request, parts=[*request.parts, empty])
+            case 'empty_prompt':
+                # A prompt with no text, as `agent.run('')` records.
+                kept = [part for part in request.parts if not isinstance(part, UserPromptPart)]
+                history[request_index] = replace(request, parts=[*kept, UserPromptPart('')])
+            case 'empty_system_prompt':
+                # A system prompt that rendered to nothing.
+                history[request_index] = replace(request, parts=[*request.parts, SystemPromptPart('')])
+            case 'empty_response_text':
+                response_index = draw(st.sampled_from(list(responses)))
+                response = responses[response_index]
                 history[response_index] = replace(response, parts=[*response.parts, TextPart('')])
             case _:
                 assert_never(damage)
     return history
 
 
-def histories(*, well_formed: bool = True) -> st.SearchStrategy[list[ModelMessage]]:
-    """Text-only message histories, damaged as described in the module docstring unless `well_formed`."""
-    return _well_formed_histories() if well_formed else _damaged_histories()
+def histories(
+    *, well_formed: bool = True, without: frozenset[Damage] = frozenset()
+) -> st.SearchStrategy[list[ModelMessage]]:
+    """Text-only message histories, damaged as described in the module docstring unless `well_formed`.
+
+    `without` names the kinds of damage to leave out, such as the one that draws a known finding.
+    """
+    return _well_formed_histories() if well_formed else _damaged_histories(without)
