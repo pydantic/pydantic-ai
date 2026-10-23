@@ -86,9 +86,8 @@ context in the engine's own suite.
 override, read or project, each with the engine sites that depend on it. A manifest hit means your
 core change touches one of those definitions. Open each listed site and confirm it still holds:
 serialized field lists, overridden signatures, projection fields. Add a workflow-level test where
-the engine's runtime behavior depends on the change. The walk types names from annotations, so a
-dependency read through an untyped name, such as a `with ... as` target, is not recorded: a missing
-entry does not prove an engine is unaffected.
+the engine's runtime behavior depends on the change. A missing entry does not prove an engine is
+unaffected: the generator's docstring lists the dependency forms the walk does not record.
 
 An entry whose only kind is `annotation_only` is a definition the engines name only in annotations,
 such as a type in a mirrored signature. It stays in the manifest and does not gate review.
@@ -99,10 +98,8 @@ Read the diff: a new entry is a new dependency an engine took on core.
 
 `tests/durable_exec/test_workflow_side_determinism.py` fails when a module that runs on Temporal's
 workflow loop directly calls a clock, a random source, a sleep, a thread, a task-completion wait or
-I/O that its `_DENYLIST` names. It does not see calls made through another name, a clock read
-through a function a dataclass default factory names (`default_factory=now_utc`), or a branch on
-state that differs on replay; cover those with a workflow-level test. Prefer the replay-safe
-alternative the durability capability supplies. For a delay, await `_agent_graph_sleep`, which
-Temporal and DBOS route through `set_agent_graph_sleep`. When the call is safe, end its line with
-`# workflow-nondeterminism-ok: <reason>` and name why replay cannot diverge. The test docstring lists
-the workflow-side modules and how they were derived.
+I/O that its `_DENYLIST` names. Prefer the replay-safe alternative the durability capability
+supplies. For a delay, await `_agent_graph_sleep`, which Temporal and DBOS route through
+`set_agent_graph_sleep`. When the call is safe, mark it with `# workflow-nondeterminism-ok: <reason>`
+and name why replay cannot diverge. The test docstring is the reference for the workflow-side
+modules, the pragma rules, and what the test does not see, which needs a workflow-level test.

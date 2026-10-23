@@ -51,13 +51,9 @@ assert isinstance(_module, _ContractGenerator)
 generator = _module
 
 
-def test_manifest_is_current():
+def test_manifest_is_current(capsys: pytest.CaptureFixture[str]):
     """Regenerated in-process, the manifest matches the committed one byte for byte."""
-    assert generator.render_manifest(generator.build_manifest(REPO_ROOT)) == (
-        REPO_ROOT / generator.MANIFEST_PATH
-    ).read_text(encoding='utf-8'), (
-        f'{generator.MANIFEST_PATH} is stale; run `{generator.WRITE_COMMAND}` and commit the result'
-    )
+    assert generator.main([]) == 0, capsys.readouterr().err
 
 
 def test_engines_cover_every_durability_capability():

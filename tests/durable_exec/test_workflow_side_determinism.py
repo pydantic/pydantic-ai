@@ -5,10 +5,17 @@ replay (a clock, a random id, a sleep the engine does not journal) makes the rep
 the one that was recorded. Temporal's sandbox does not catch these in Pydantic AI's own code:
 `PydanticAIPlugin` passes `pydantic_ai` through the sandbox, so core modules run against the real
 `time`, `datetime`, `random` and `uuid`. This test checks the direct calls: it matches each call in
-the modules below against `_DENYLIST` by the dotted name its imports resolve to. It does not see a
-call made through another name or object, a clock read through a function a dataclass default
-factory names (`default_factory=now_utc`), or a branch on state that differs between the recorded run
-and the replay; those need a workflow-level test. It reads source only, so it is not a VCR test.
+the workflow-side modules against `_DENYLIST` by the dotted name its imports resolve to. It reads
+source only, so it is not a VCR test.
+
+**What it does not see**, and a workflow-level test has to cover:
+
+- a call made through another name or object;
+- a clock read or random id drawn by a dataclass default factory (`default_factory=now_utc`,
+  `default_factory=lambda: str(uuid7())`), or by a helper in a module outside the set;
+- a branch on state that differs between the recorded run and the replay.
+
+TODO: https://github.com/pydantic/pydantic-ai/issues/11168
 
 **The workflow-side module set.** Under Temporal, everything `TemporalAgent.run` and
 `TemporalDurability.wrap_run` execute outside an activity is workflow code. Running the Temporal
@@ -30,20 +37,22 @@ the workflow does next -- each of which the trace shows running on the workflow 
   listed. Their activity-side calls are accepted in `_ACCEPTED`.
 
 Expand the core modules only with the same evidence. The set was derived under Temporal. DBOS and
-Prefect re-execute the same core modules in their workflow code, so the denials protect them too.
-TODO: check the modules only they or the Harness engines run:
+Prefect run the same core modules in their workflow and flow bodies, but no trace has confirmed the
+set for them, and their engine modules and the Harness engines are not checked. TODO:
 https://github.com/pydantic/pydantic-ai/issues/11176
 
-**What is denied** is in `_DENYLIST`, each with why replay breaks it. Thread offload
-(`anyio.to_thread.run_sync`, `asyncio.to_thread`, `loop.run_in_executor`) is left out on purpose: it
-already raises inside a Temporal workflow, whose event loop implements no executor, and
-`_utils.run_in_executor` runs inline under `_utils.disable_threads` instead.
+**What is denied** is in `_DENYLIST`, each with why replay breaks it. `asyncio.to_thread` and
+`loop.run_in_executor` are left out on purpose: they already raise inside a Temporal workflow, whose
+event loop implements no executor, and `_utils.run_in_executor` runs inline under
+`_utils.disable_threads` instead. `anyio.to_thread` is denied: it starts its own worker thread, which
+runs the function and then cannot hand the result back to that loop, so the run hangs.
 
 **Existing call sites** are in `_ACCEPTED`, keyed by module, enclosing qualname and callee so the
 entries survive unrelated edits, with the number of such calls each key accepts. A new call is
-accepted only with a pragma on its line naming the reason, `# workflow-nondeterminism-ok: <reason>`;
-prefer a replay-safe alternative (an id or clock
-the durability capability supplies; `_agent_graph_sleep` for a delay) when one exists.
+accepted only with a pragma naming the reason, `# workflow-nondeterminism-ok: <reason>`, on any line
+the call spans. A pragma explains one call, so give each call its own line. Prefer a replay-safe
+alternative (an id or clock the durability capability supplies; `_agent_graph_sleep` for a delay)
+when one exists.
 """
 
 from __future__ import annotations
@@ -63,25 +72,9 @@ REPO_ROOT = Path(__file__).parents[2]
 SOURCE_ROOT = REPO_ROOT / 'pydantic_ai_slim'
 CORE = 'pydantic_ai_slim/pydantic_ai'
 
-WORKFLOW_SIDE_MODULES: tuple[str, ...] = (
-    f'{CORE}/_agent_graph.py',
-    f'{CORE}/_output.py',
-    f'{CORE}/_run_context.py',
-    f'{CORE}/_tool_execution.py',
-    f'{CORE}/agent/__init__.py',
-    f'{CORE}/capabilities/combined.py',
-    f'{CORE}/run.py',
-    f'{CORE}/tool_manager.py',
-    *sorted(
-        path.relative_to(REPO_ROOT).as_posix()
-        for pattern in ('durable_exec/*.py', 'durable_exec/temporal/**/*.py')
-        for path in (REPO_ROOT / CORE).glob(pattern)
-    ),
-)
-
 _CLOCK = 'reads a clock that has moved by the time the run replays'
 _RANDOM = 'draws randomness that a replay does not reproduce'
-_SLEEP = 'sleeps on the event loop, which only Temporal journals as a timer, so other engines do not replay the delay; await `_agent_graph_sleep`, which `set_agent_graph_sleep` routes to the engine'
+_SLEEP = 'sleeps on the event loop, which only Temporal journals as a timer, so other engines do not replay the delay; await `_agent_graph_sleep`, which an engine routes through `set_agent_graph_sleep`'
 _THREAD = 'finishes on another thread in an order that a replay does not reproduce'
 _COMPLETION_ORDER = 'hands back finished tasks in an order a replay need not reproduce, so Temporal supplies `workflow.wait` and `workflow.as_completed` instead'
 _IO = 'performs I/O whose result can differ on replay; do it in an activity'
@@ -126,6 +119,7 @@ _DENYLIST: dict[str, str] = {
     'time.sleep': _SLEEP,
     'threading.Thread': _THREAD,
     'threading.Timer': _THREAD,
+    'anyio.to_thread.': _THREAD,
     'concurrent.futures.': _THREAD,
     'asyncio.wait': _COMPLETION_ORDER,
     'asyncio.as_completed': _COMPLETION_ORDER,
@@ -207,7 +201,7 @@ class DeniedCall:
     denial: str
     """Why the callee is denied."""
     pragma: str | None
-    """The reason the line's pragma gives, `''` if it gives none, or `None` without a pragma."""
+    """The reason the call's pragma gives, `''` if it gives none, or `None` without a pragma."""
 
 
 class _CallFinder(ast.NodeVisitor):
@@ -215,6 +209,7 @@ class _CallFinder(ast.NodeVisitor):
         self.lines = source.splitlines()
         self.scopes: list[str] = []
         self.calls: list[DeniedCall] = []
+        self.claimed_pragmas: set[int] = set()
         self.package = module if is_package else module.rpartition('.')[0]
         tree = ast.parse(source)
         self.aliases = [self.scope_aliases(tree.body)]
@@ -274,8 +269,12 @@ class _CallFinder(ast.NodeVisitor):
             denial := _DENYLIST.get(callee)
             or next((reason for key, reason in _DENYLIST.items() if key.endswith('.') and callee.startswith(key)), None)
         ):
-            pragma = _PRAGMA.search(self.lines[node.lineno - 1])
-            reason = pragma['reason'].strip() if pragma else None
+            reason = None
+            for lineno in range(node.lineno, (node.end_lineno or node.lineno) + 1):
+                if lineno not in self.claimed_pragmas and (pragma := _PRAGMA.search(self.lines[lineno - 1])):
+                    self.claimed_pragmas.add(lineno)
+                    reason = pragma['reason'].strip()
+                    break
             self.calls.append(DeniedCall('.'.join(self.scopes) or '<module>', callee, denial, reason))
         self.generic_visit(node)
 
@@ -312,9 +311,23 @@ def call_problems(relative: str, calls: list[DeniedCall]) -> tuple[list[str], Co
 
 
 def test_workflow_side_code_makes_no_new_nondeterministic_calls():
+    engine_globs = ('durable_exec/*.py', 'durable_exec/temporal/**/*.py')
+    engine_modules = {pattern: sorted((REPO_ROOT / CORE).glob(pattern)) for pattern in engine_globs}
+    assert [pattern for pattern, paths in engine_modules.items() if not paths] == []
+    modules: list[str] = [
+        f'{CORE}/_agent_graph.py',
+        f'{CORE}/_output.py',
+        f'{CORE}/_run_context.py',
+        f'{CORE}/_tool_execution.py',
+        f'{CORE}/agent/__init__.py',
+        f'{CORE}/capabilities/combined.py',
+        f'{CORE}/run.py',
+        f'{CORE}/tool_manager.py',
+        *sorted(path.relative_to(REPO_ROOT).as_posix() for paths in engine_modules.values() for path in paths),
+    ]
     found: Counter[tuple[str, str, str]] = Counter()
     problems: list[str] = []
-    for relative in WORKFLOW_SIDE_MODULES:
+    for relative in modules:
         path = REPO_ROOT / relative
         parts = path.relative_to(SOURCE_ROOT).with_suffix('').parts
         is_package = parts[-1] == '__init__'
@@ -331,8 +344,9 @@ def test_workflow_side_code_makes_no_new_nondeterministic_calls():
 
 
 def test_nondeterministic_calls_resolves_imports_and_pragmas():
-    """Every import form resolves to the callee it names, and a pragma needs a reason to explain a call."""
+    """Every import form resolves to the callee it names, and a pragma on any line of a call explains that call only."""
     source = """
+    import asyncio
     import time
     import uuid as uuid_module
     import concurrent.futures
@@ -349,6 +363,10 @@ def test_nondeterministic_calls_resolves_imports_and_pragmas():
             stamp()  # workflow-nondeterminism-ok:
             _utils.now_utc()
             concurrent.futures.ThreadPoolExecutor()
+            time.time() + time.monotonic()  # workflow-nondeterminism-ok: telemetry only
+            asyncio.sleep(
+                1,
+            )  # workflow-nondeterminism-ok: replay-safe delay
 
             async def nested():
                 uuid_module.uuid4()
@@ -374,6 +392,9 @@ def test_nondeterministic_calls_resolves_imports_and_pragmas():
             ('Node.run', 'pydantic_ai._utils.now_utc', ''),
             ('Node.run', 'pydantic_ai._utils.now_utc', None),
             ('Node.run', 'concurrent.futures.ThreadPoolExecutor', None),
+            ('Node.run', 'time.time', 'telemetry only'),
+            ('Node.run', 'time.monotonic', None),
+            ('Node.run', 'asyncio.sleep', 'replay-safe delay'),
             ('Node.run.nested', 'uuid.uuid4', None),
             ('Node.run.nested', 'pydantic_ai._uuid.uuid7', None),
             ('Node.run', 'open', None),
@@ -386,6 +407,7 @@ def test_nondeterministic_calls_resolves_imports_and_pragmas():
             "fixture.py::<module> calls 'time.perf_counter', which reads a clock that has moved by the time the run replays",
             "fixture.py::Node.run calls 'pydantic_ai._utils.now_utc', which reads a clock that has moved by the time the run replays",
             "fixture.py::Node.run calls 'concurrent.futures.ThreadPoolExecutor', which finishes on another thread in an order that a replay does not reproduce",
+            "fixture.py::Node.run calls 'time.monotonic', which reads a clock that has moved by the time the run replays",
             "fixture.py::Node.run.nested calls 'uuid.uuid4', which draws randomness that a replay does not reproduce",
             "fixture.py::Node.run.nested calls 'pydantic_ai._uuid.uuid7', which draws randomness that a replay does not reproduce",
             "fixture.py::Node.run calls 'open', which performs I/O whose result can differ on replay; do it in an activity",
@@ -470,6 +492,7 @@ def test_every_denylist_key_matches_the_call_it_names():
     time.sleep(1)
     threading.Thread()
     threading.Timer(1, print)
+    anyio.to_thread.run_sync(print)
     concurrent.futures.ThreadPoolExecutor()
     open('file')
     httpx.Client()

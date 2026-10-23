@@ -34,8 +34,8 @@ the walk cannot resolve to a member, such as `getattr(obj, name)` or `obj.__dict
 to the class, unless the class has a base outside the walked packages (`BaseModel`, `Exception`),
 which may define the member: those accesses record nothing. Reflection over a whole instance is read
 only through `fields()` and `__dataclass_fields__`; `vars(obj)` and iterating `obj.__dict__` record
-nothing. The classes in `MEMBER_LEVEL_ONLY` never get a class-level entry: nearly every change to
-core touches them, so a class-level entry would match every change.
+nothing. The classes `ClassInfo.member_level_only` names never get a class-level entry: nearly every
+change to core touches them, so a class-level entry would match every change.
 
 The manifest maps `core_file -> qualname -> {kinds, engines, sites}`. A change to a core definition
 matches an entry when the changed definition's qualname is the entry's qualname or nested under it:
@@ -81,15 +81,6 @@ ENGINES: dict[str, str] = {
     'pgtask': 'src/pydantic_ai_harness/pydantic_ai_harness/pgtask/**/*.py',
     'aws_lambda': 'src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/**/*.py',
 }
-
-MEMBER_LEVEL_ONLY: frozenset[tuple[str, str]] = frozenset(
-    {
-        ('pydantic_ai._run_context', 'RunContext'),
-        ('pydantic_ai.models', 'ModelRequestContext'),
-        ('pydantic_ai.models', 'ModelRequestParameters'),
-        ('pydantic_ai.agent', 'Agent'),
-    }
-)
 
 # Annotation constructors whose arguments, not themselves, are the annotated type.
 _TYPE_WRAPPERS = frozenset(
@@ -141,7 +132,12 @@ class ClassInfo:
 
     @property
     def member_level_only(self) -> bool:
-        return (self.module.name, self.qualname) in MEMBER_LEVEL_ONLY
+        return (self.module.name, self.qualname) in {
+            ('pydantic_ai._run_context', 'RunContext'),
+            ('pydantic_ai.models', 'ModelRequestContext'),
+            ('pydantic_ai.models', 'ModelRequestParameters'),
+            ('pydantic_ai.agent', 'Agent'),
+        }
 
 
 @dataclass(frozen=True)
