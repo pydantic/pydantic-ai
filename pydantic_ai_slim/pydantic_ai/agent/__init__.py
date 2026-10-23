@@ -109,6 +109,7 @@ from ..capabilities.hooks import EventT, Hooks, OnEventHookFunc
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..capabilities.wrapper import WrapperCapability
 from ..conversation import Conversation
+from ..models import _SettingsLayer  # pyright: ignore[reportPrivateUsage]
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
@@ -2068,6 +2069,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 has_resolvers=pre_run_root._has_get_workspace or run_capability._has_get_workspace,  # pyright: ignore[reportPrivateUsage]
             )
 
+        # The ids of the models this run has checked for a thinking override, so each warns once per run.
+        thinking_checked_model_ids: set[int] = set()
+
         # Build model settings resolver using per-run capability. Shared with `realtime_session` via
         # `_layer_model_settings` (agent -> capability -> run order; the model's own settings are the
         # base for a graph run). Resolved per model-request step here; once at connect in a session.
@@ -2078,6 +2082,31 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # (Hoisted to a local first so pyright narrows cleanly after `RunContext.model` widened to
             # `AbstractModel`; member access on the narrowed attribute directly trips a false positive.)
             step_model = run_context.model
+            # Warn when a provider-specific thinking setting from a broader static layer replaces a narrower
+            # `thinking`, for each model a step uses. Callable layers are not checked, as for `tool_choice` above.
+            # Passing the model's own settings as the base keeps `Model.prepare_request` from repeating it.
+            step_model_id = id(step_model)
+            if isinstance(step_model, models.Model) and step_model_id not in thinking_checked_model_ids:
+                thinking_checked_model_ids.add(step_model_id)
+                step_model._warn_if_thinking_overridden(  # pyright: ignore[reportPrivateUsage]
+                    [
+                        _SettingsLayer("the model's `settings`", step_model.settings),
+                        _SettingsLayer(
+                            '`override(model_settings=...)`'
+                            if model_settings_override is not None
+                            else "the agent's `model_settings`",
+                            None if callable(agent_model_settings) else agent_model_settings,
+                        ),
+                        # A capability like `Thinking` sets only `thinking`, so the warning doesn't suggest setting
+                        # the provider-specific one there.
+                        _SettingsLayer(
+                            'a capability', None if callable(cap_model_settings) else cap_model_settings, settable=False
+                        ),
+                        _SettingsLayer(
+                            "the run's `model_settings`", None if callable(run_model_settings) else run_model_settings
+                        ),
+                    ]
+                )
             return _layer_model_settings(
                 run_context,
                 (agent_model_settings, cap_model_settings, run_model_settings),
@@ -3923,6 +3952,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         and is not itself a run.
         """
         from ..realtime import RealtimeModel, infer_realtime_model
+        from ..realtime._utils import session_instructions
 
         if not isinstance(model, RealtimeModel):
             model = infer_realtime_model(model)
@@ -4203,9 +4233,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Nothing appends here, so an empty append-mode block has no withdrawal to record.
             instruction_parts = _messages.InstructionPart.sorted([part for part in instruction_parts if part.content])
             resolved_instructions = _messages.InstructionPart.join(instruction_parts)
-            request_messages = [
-                *(message_history or ()),
-                _messages.ModelRequest(parts=[], instructions=resolved_instructions or None),
+            # As in a standard run (`UserPromptNode`), the agent's system prompts open a fresh conversation,
+            # while seeded history is taken to carry its own, with its dynamic system prompts re-evaluated.
+            # The model sends this standing prompt as instructions, and the session records it.
+            seeded_history = list(message_history or ())
+            system_prompt_parts: list[_messages.SystemPromptPart] = []
+            if seeded_history:
+                await _system_prompt.reevaluate_dynamic_system_prompts(
+                    seeded_history, self._system_prompt_dynamic_functions, run_context
+                )
+            else:
+                system_prompt_parts = await _system_prompt.resolve_system_prompts(
+                    self._system_prompts, self._system_prompt_functions, run_context
+                )
+            request_messages: list[_messages.ModelMessage] = [
+                *seeded_history,
+                _messages.ModelRequest(parts=[*system_prompt_parts], instructions=resolved_instructions or None),
             ]
             model_request_parameters = models.ModelRequestParameters(
                 function_tools=tool_defs,
@@ -4282,7 +4325,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 model_request_parameters=model_request_parameters,
                 model_settings=effective_model_settings,
                 instructions=resolved_instructions or None,
+                session_instructions=session_instructions(request_messages, model_request_parameters) or None,
                 request_messages=request_messages,
+                message_history=seeded_history,
+                system_prompt=system_prompt_parts,
                 model_profile=model_profile,
                 instrumentation_settings=session_instrumentation_settings,
                 conversation_id=conversation_id,
@@ -4477,7 +4523,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     retain_images_every_n=retain_images_every_n,
                     retain_images_max=retain_images_max,
                     retain_audio_max_seconds=retain_audio_max_seconds,
-                    message_history=message_history,
+                    message_history=resolved.message_history,
+                    _opening_request=(
+                        _messages.ModelRequest(parts=[*resolved.system_prompt]) if resolved.system_prompt else None
+                    ),
                     conversation_id=resolved.conversation_id,
                     run_id=resolved.run_id,
                     instructions=resolved.instructions,
