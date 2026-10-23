@@ -107,6 +107,12 @@
       "fingerprint": "f5277165732c4c6ae79c0ff3e286f1fbccca262094e6dee75b26bfca7455c244",
       "reason": "False positive: only adds `repr=False` so the credential-bearing URL stays out of `repr`; the attribute's type, default, and constructor parameter are unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "714f89e677ce258adda7ed9d8c9e80cf31ae1b2d52102ee76531d3e8e3c6041b",
+      "reason": "False positive: `TemporalDurability.engine_spec` is the same `DurabilityEngineSpec` value, now defined once as the module constant `TEMPORAL_ENGINE_SPEC` so the run context can word its errors; Griffe compares the expression text.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11088"
     }
   ]
 }
