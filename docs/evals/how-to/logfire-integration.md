@@ -134,6 +134,32 @@ report2 = dataset.evaluate_sync(improved_task)
 # Compare in Logfire by filtering by timestamp or attributes
 ```
 
+### CI Provenance and Case Identity
+
+To let a run be compared with an earlier run of the same experiment, such as the latest run on a pull request's base branch, [`Dataset.evaluate`][pydantic_evals.dataset.Dataset.evaluate] records where the run came from and a content hash of each case.
+
+When running in GitHub Actions, the experiment span (`evaluate {name}`) gets these attributes, each only when its value is known:
+
+| Attribute | Value |
+|---|---|
+| `logfire.experiment.git.commit_sha` | The commit under test. On pull request events this is the pull request's head commit, not the merge commit that `GITHUB_SHA` points to. Not set for `pull_request_target` events, which check out the base branch by default; if your workflow checks out the pull request's head, set `PYDANTIC_EVALS_GIT_COMMIT_SHA` and `PYDANTIC_EVALS_GIT_BRANCH` |
+| `logfire.experiment.git.branch` | The branch under test: the pull request's head branch, or the branch the workflow ran on (not set when the workflow ran on a tag, or for `pull_request_target` events) |
+| `logfire.experiment.git.base_branch` | The pull request's base branch; only set for pull requests |
+| `logfire.experiment.ci.pull_request` | The pull request number; only set for pull requests |
+| `logfire.experiment.ci.run_url` | The URL of the GitHub Actions workflow run |
+
+The pull request details come from the event payload file at `GITHUB_EVENT_PATH`. If it can't be read, the commit SHA is left out rather than reported as the merge commit. No `git` commands are run, and a failure to detect provenance never fails the evaluation.
+
+These environment variables control the provenance attributes:
+
+| Environment variable | Effect |
+|---|---|
+| `PYDANTIC_EVALS_CI_METADATA=false` | Disables the provenance attributes, including the two overrides below |
+| `PYDANTIC_EVALS_GIT_COMMIT_SHA` | Sets `logfire.experiment.git.commit_sha`, overriding what GitHub Actions reports. Use this and `PYDANTIC_EVALS_GIT_BRANCH` on other CI systems |
+| `PYDANTIC_EVALS_GIT_BRANCH` | Sets `logfire.experiment.git.branch`, overriding what GitHub Actions reports |
+
+Each case span (`case: {case_name}`) gets `logfire.experiment.case.inputs_hash`, `logfire.experiment.case.expected_output_hash`, and `logfire.experiment.case.metadata_hash`: SHA-256 hex digests of the JSON serialization of the case's `inputs`, `expected_output`, and `metadata`, with object keys sorted. When a case has the same name and the same hashes in two runs, its inputs, expected output, and metadata serialize identically, so its results can be compared. A missing `expected_output` or `metadata` is hashed as JSON `null`. A value that can't be serialized to JSON, such as an arbitrary object, gets no hash attribute, so its case should be treated as possibly changed.
+
 ### Debugging Failed Cases
 
 Find failed cases quickly:
