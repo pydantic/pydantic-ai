@@ -115,6 +115,13 @@ class TestProperties:
             == 'http://127.0.0.2:4599'
         )
 
+    def test_endpoint_url_brackets_an_ipv6_binding(self, tmp_path: Path) -> None:
+        docker, _ = _docker_stub(tmp_path)
+        assert (
+            LocalStackContainer(docker_path=docker, host_address='::1', host_port=4599).endpoint_url
+            == 'http://[::1]:4599'
+        )
+
     def test_readiness_url_uses_host_binding(self, tmp_path: Path) -> None:
         docker, _ = _docker_stub(tmp_path)
         assert (
@@ -128,6 +135,17 @@ class TestProperties:
             LocalStackContainer(docker_path=docker, host_address='0.0.0.0', host_port=4599)._readiness_url  # pyright: ignore[reportPrivateUsage]
             == 'http://127.0.0.1:4599/_localstack/health'
         )
+
+    def test_ipv6_all_interface_binding_is_reached_at_loopback(self, tmp_path: Path) -> None:
+        docker, _ = _docker_stub(tmp_path)
+        container = LocalStackContainer(docker_path=docker, host_address='::', host_port=4599)
+        assert container.endpoint_url == 'http://[::1]:4599'
+        assert container._readiness_url == 'http://[::1]:4599/_localstack/health'  # pyright: ignore[reportPrivateUsage]
+
+    def test_scoped_ipv6_binding_is_rejected(self, tmp_path: Path) -> None:
+        docker, _ = _docker_stub(tmp_path)
+        with pytest.raises(ValueError, match=r"`host_address` 'fe80::1%eth0' is a scoped IPv6 address"):
+            LocalStackContainer(docker_path=docker, host_address='fe80::1%eth0')
 
     def test_container_id_is_none_before_start(self, tmp_path: Path) -> None:
         docker, _ = _docker_stub(tmp_path)
