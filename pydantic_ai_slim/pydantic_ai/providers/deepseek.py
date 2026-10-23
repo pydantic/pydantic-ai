@@ -80,6 +80,9 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
                 # DeepSeek's Responses endpoint honors `text.format` of type `json_schema`, while its
                 # Chat Completions endpoint rejects it with `This response_format type is unavailable now`.
                 openai_responses_supports_json_schema_output=True,
+                # DeepSeek V4's native efforts are `low`, `high` and `max`, and it maps `xhigh` to `high`, so
+                # `max` is the only way to reach its deepest reasoning. See https://api-docs.deepseek.com/guides/thinking_mode.
+                openai_chat_supports_max_reasoning_effort=is_v4,
                 # `openai_supports_phase` is deliberately left at its `False` default even though
                 # DeepSeek labels its Responses API output with `phase`: the field is absent from
                 # DeepSeek's documented input items, and its API silently ignores what it doesn't
