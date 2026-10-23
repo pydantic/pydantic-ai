@@ -7,8 +7,8 @@ description: Give a Pydantic AI agent access to an emulated AWS environment thro
 
 `LocalStack` gives an agent access to an emulated AWS environment, so it can
 provision and exercise AWS services without touching a real account. It wires
-the AWS CLI to a running [LocalStack](https://www.localstack.cloud/) instance --
-injecting the endpoint, region, and credentials -- and can optionally start and
+the AWS CLI to a running [LocalStack](https://www.localstack.cloud/) instance,
+injecting the endpoint, region, and credentials, and can optionally start and
 stop a LocalStack Docker container for each run, or one that the runs inside
 `async with agent:` share.
 
@@ -19,11 +19,10 @@ stop a LocalStack Docker container for each run, or one that the runs inside
 ## The problem
 
 Agents that build or test cloud infrastructure need somewhere to create buckets,
-tables, queues, and functions. Pointing them at real AWS is slow, costs money,
-risks leaking credentials, and is hard to reset between runs. LocalStack
-emulates the AWS APIs locally, but wiring an agent to it means repeating the same
-boilerplate: injecting the endpoint URL, supplying dummy credentials, shelling
-out to the AWS CLI, and checking which services are up.
+tables, queues, and functions. Real AWS costs money, puts real credentials
+within the agent's reach, and is hard to reset between runs. LocalStack
+emulates AWS locally; this capability handles the wiring: the endpoint, dummy
+credentials, the AWS CLI, and a health check.
 
 ## Usage
 
@@ -44,7 +43,7 @@ result = agent.run_sync('Create an S3 bucket called reports and list all buckets
 print(result.output)
 ```
 
-By default the agent connects to a LocalStack instance you started separately --
+By default the agent connects to a LocalStack instance you started separately,
 for example with the
 [`localstack` CLI](https://docs.localstack.cloud/aws/tooling/localstack-cli/)
 (`localstack start`). The defaults match LocalStack's conventions: the edge
@@ -57,7 +56,7 @@ container inside `async with agent:`.
 
 | Tool | Purpose |
 |---|---|
-| `aws_cli` | Run an AWS CLI command against LocalStack. Pass the command **without** the leading `aws` and **without** `--endpoint-url` -- both are injected. Returns labelled stdout/stderr plus an exit code on failure. |
+| `aws_cli` | Run an AWS CLI command against LocalStack. Pass the command **without** the leading `aws` and **without** `--endpoint-url`; both are injected. Returns labelled stdout/stderr plus an exit code on failure. |
 | `localstack_health` | Query LocalStack's health endpoint and return the JSON of which services (s3, dynamodb, sqs, etc.) are available. |
 
 Commands run as an argument vector (no shell), so shell operators and
@@ -85,10 +84,13 @@ AWS-emulator access and AWS CLI access to the process's filesystem.
 | `allowed_services` | If non-empty, only these AWS services may be used (allowlist), e.g. `['s3', 'dynamodb']`. |
 | `denied_services` | These AWS services are always rejected (denylist). |
 
-`allowed_services` and `denied_services` are mutually exclusive -- set one, not
+`allowed_services` and `denied_services` are mutually exclusive: set one, not
 both. The service is the first token that is neither a global option nor its
 value (`s3` in `--output text s3 ls`). Global options are recognized by any
-prefix the AWS CLI accepts, so `--out text s3 ls` names `s3` too.
+prefix the AWS CLI accepts, so `--out text s3 ls` names `s3` too. Commands that
+pass `--endpoint-url`, `--profile`, `--region`, or `--no-sign-request`, or any
+prefix of them, are rejected, since the capability injects the target and
+credentials.
 
 !!! warning "Best-effort, not a security boundary"
     These checks gate which commands the agent issues, not what it can reach.
@@ -128,15 +130,12 @@ the tool endpoint and of the endpoint the instructions name, except that the
 IPv6 bind-all `::` is reached at `::1`. Scoped IPv6 addresses such as
 `fe80::1%eth0` are rejected.
 
-Since LocalStack 2026.03.0 the default `localstack/localstack` image is a single
-image that requires an auth token to start (a free Hobby/OSS token covers
-community usage). When `LOCALSTACK_AUTH_TOKEN` is set in the current process it
-is forwarded to the container automatically; a legacy `LOCALSTACK_API_KEY` value
-is forwarded when no auth token is set. Auth values are forwarded through the
-Docker CLI environment rather than embedded in the `docker run` arguments. The
-default `localstack/localstack` image requires a token to start, so a managed run
-needs one configured. To run tokenless, set `image` to a tag from before the
-account requirement, such as a `localstack/localstack:4.x` release.
+Since LocalStack 2026.03.0, `localstack/localstack` needs an auth token to start
+(a free Hobby token covers community usage). `LOCALSTACK_AUTH_TOKEN`, or the
+legacy `LOCALSTACK_API_KEY` when no token is set, is forwarded from the current
+process through the Docker CLI environment, never the `docker run` arguments,
+unless `container_env` already sets one of them. To run without a token, pin
+`image` to a `localstack/localstack:4.x` tag.
 
 Docker-backed services such as Lambda need the Docker socket mounted, and some
 services expose ports outside the gateway (LocalStack reserves `4510-4559`).
@@ -192,6 +191,14 @@ fail. For durable runs, use an external instance, or keep commands idempotent.
 
 The records are named after the capability's `id`, which defaults to
 `localstack`, so durable execution needs no configuration.
+
+## Telemetry
+
+`LocalStack` emits no spans of its own. Core's
+[instrumentation](../capabilities/instrumentation.md) already records each
+`aws_cli` and `localstack_health` call as a tool span. Starting and stopping a
+managed container makes no decision worth a span. When Docker is missing or
+fails, or LocalStack never becomes ready, the start raises `LocalStackError`.
 
 ## Configuration
 
