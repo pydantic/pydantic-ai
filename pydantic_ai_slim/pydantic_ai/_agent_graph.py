@@ -2093,6 +2093,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
             _record_effort_change(
                 ctx,
+                model,
                 merge_model_settings(model.settings, model_settings),
                 messages,
                 _history_recording_targets(ctx, messages),
@@ -3176,6 +3177,7 @@ def _record_tool_population_changes(
 
 def _record_effort_change(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+    model: models.Model,
     model_settings: ModelSettings | None,
     messages: list[_messages.ModelMessage],
     requests: Sequence[_messages.ModelRequest],
@@ -3195,7 +3197,9 @@ def _record_effort_change(
     since no response has answered it yet.
     """
     thinking = (model_settings or {}).get('thinking')
-    wanted = thinking if isinstance(thinking, str) else None
+    # A provider-specific effort setting replaces the one `thinking` maps to, so the request names no unified level.
+    overridden = model._overrides_unified_effort(model_settings or {})  # pyright: ignore[reportPrivateUsage]
+    wanted = thinking if isinstance(thinking, str) and not overridden else None
     targets = list(requests)
     # A compaction replaces what came before it, including the changes recorded there, so the effort in
     # effect is read from the window after it, and the next request that names a level opens a new one.

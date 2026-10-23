@@ -1527,6 +1527,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> bool:
         return _request_thinking_type(self.profile, model_settings, model_request_parameters) is not None
 
+    def _overrides_unified_effort(self, model_settings: Mapping[str, object]) -> bool:
+        return model_settings.get('anthropic_effort') is not None
+
     def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
         overriding: list[str] = []
         # `_translate_thinking` sends an explicit thinking config instead of the unified one.

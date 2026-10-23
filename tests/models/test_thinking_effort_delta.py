@@ -340,3 +340,42 @@ def test_anthropic_profile_gate(model_name: str, client: Any, supported: bool):
     provider = AnthropicProvider(anthropic_client=client()) if client else AnthropicProvider(api_key='test-key')
     model = AnthropicModel(model_name, provider=provider)
     assert model.profile.get('supports_mid_conversation_effort') is supported
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_explicit_effort_records_no_unified_level(allow_model_requests: None):
+    """A request whose effort `openai_reasoning_effort` sets doesn't open a window at the unified level it overrides.
+
+    Otherwise a later run would pin the request-level effort to that unified level, which the first request never
+    sent, and move the cached prefix this exists to keep.
+    """
+    from pydantic_ai.models.fallback import FallbackModel
+    from pydantic_ai.models.instrumented import InstrumentedModel
+
+    mock_client = MockOpenAIResponses.create_mock([_responses_text('Shelf 12, bin 1.'), _responses_text('Shelf 40.')])
+    model = OpenAIResponsesModel('gpt-6.1-sol', provider=OpenAIProvider(openai_client=mock_client))
+    # Both wrappers ask the model they wrap.
+    agent = Agent(FallbackModel(InstrumentedModel(model)))
+
+    first = await agent.run(
+        'Where is item 12?',
+        model_settings=OpenAIResponsesModelSettings(thinking='low', openai_reasoning_effort='high'),
+    )
+    second = await agent.run(
+        'And item 40?', message_history=first.all_messages(), model_settings=ModelSettings(thinking='xhigh')
+    )
+
+    assert [
+        part for message in second.all_messages() for part in message.parts if isinstance(part, ThinkingEffortDeltaPart)
+    ] == [ThinkingEffortDeltaPart(effort='xhigh', top_level=True)]
+    first_request, second_request = get_mock_responses_kwargs(mock_client)
+    assert first_request['reasoning']['effort'] == 'high'
+    assert second_request['reasoning']['effort'] == 'xhigh'
+    assert not any(item.get('type') == 'configuration_update' for item in second_request['input'])
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+def test_anthropic_explicit_effort_overrides_the_unified_level():
+    model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key='test-key'))
+    assert model._overrides_unified_effort({'anthropic_effort': 'high'}) is True  # pyright: ignore[reportPrivateUsage]
+    assert model._overrides_unified_effort({'thinking': 'high'}) is False  # pyright: ignore[reportPrivateUsage]

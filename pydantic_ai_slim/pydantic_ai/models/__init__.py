@@ -1113,6 +1113,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         return ()
 
+    def _overrides_unified_effort(self, model_settings: Mapping[str, object]) -> bool:
+        """Whether a provider-specific setting in `model_settings` replaces the effort a unified `thinking` level maps to.
+
+        The framework then records the request as naming no effort level, so a
+        [`ThinkingEffortDeltaPart`][pydantic_ai.messages.ThinkingEffortDeltaPart] never claims a request-level effort
+        the request didn't send. Adapters that render effort changes override it.
+        """
+        return False
+
     def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
         """Warn when a provider-specific setting from a broader layer takes precedence over a narrower `thinking`.
 
@@ -1326,6 +1335,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         since either can quote the model's own output, and only `'no_output'`, whose text is the
         framework's own, becomes a mid-conversation `SystemPromptPart`. A legacy `RetryPromptPart` becomes a `ToolReturnPart` with `outcome='retried'`
         when it names a tool, and the `RetryFeedbackPart` it always meant when it doesn't.
+
+        Keeps the [`ThinkingEffortDeltaPart`][pydantic_ai.messages.ThinkingEffortDeltaPart]s from the last one that
+        opened a window on, collapsing those with no response between them, where this adapter renders a
+        mid-conversation effort change and the profile sets `supports_mid_conversation_effort`; everywhere else it
+        drops them, so the current effort goes out as the request-level setting.
 
         Renders [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s as
         `SystemPromptPart`s for this model's delivery path, dropping deltas from before the latest

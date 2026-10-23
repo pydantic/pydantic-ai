@@ -3991,6 +3991,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # `_translate_thinking` sends an explicit effort instead of the one unified `thinking` maps to.
         return ('openai_reasoning_effort',) if model_settings.get('openai_reasoning_effort') is not None else ()
 
+    def _overrides_unified_effort(self, model_settings: Mapping[str, object]) -> bool:
+        return model_settings.get('openai_reasoning_effort') is not None
+
     def _get_responses_tool_choice(
         self,
         model_settings: OpenAIResponsesModelSettings,
