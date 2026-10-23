@@ -40,12 +40,10 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TaskTranscript,
     Transcript,
     Watch,
-    WorkspaceOpened,
-    WorkspacesInfo,
     dump,
 )
 from pydantic_clai2.builtin_plugins.web.service import PluginAction, TaskAction, WebService
-from pydantic_clai2.builtin_plugins.web.workspaces import listing, open_workspace
+from pydantic_clai2.builtin_plugins.web.workspaces import open_workspace
 from pydantic_clai2.runtime.image_codec import decode_images
 
 STATIC = Path(__file__).with_name('static')
@@ -527,15 +525,11 @@ def _panels(app: FastAPI, service: WebService) -> None:
 
 
 def _workspaces(app: FastAPI, service: WebService) -> None:
-    """The sidebar's Workspaces section: list them, and open one's own page."""
-
-    @app.get('/api/workspaces')
-    async def workspaces() -> WorkspacesInfo:
-        return await listing(service.host.plugins)
+    """A workspace's session, which an orchestrator tool card opens in this page."""
 
     @app.post('/api/workspaces/{workspace_id}/open')
-    async def open_one(workspace_id: str) -> WorkspaceOpened:
-        return await _wait(open_workspace(service.host.plugins, workspace_id))
+    async def open_one(workspace_id: str) -> Opened:
+        return Opened(id=await _wait(open_workspace(service, workspace_id)))
 
 
 def _orchestrator(app: FastAPI, orchestrator: Orchestrator) -> None:
