@@ -1312,8 +1312,8 @@ class OpenAILiveConnection(RealtimeConnection):
             # keeps frames arriving, so a wait that returns is no evidence that anyone spoke.
             if expired := self._expire_quiet_turn():
                 yield self._frame(expired)
-            if lost := await self._check_continuations():
-                yield self._frame(lost)
+            if given_up := await self._check_continuations():
+                yield self._frame(given_up)
 
     def _raise_if_idle_audio_failed(self) -> None:
         """Re-raise what stopped the idle-audio pump, rather than let the session go quietly deaf to text.
