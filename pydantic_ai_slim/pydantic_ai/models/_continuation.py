@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import weakref
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import (
     AbstractContextManager,
@@ -290,6 +291,14 @@ def usage_beyond(usage: RequestUsage, baseline: RequestUsage) -> RequestUsage:
     return beyond
 
 
+_cancelled_responses: weakref.WeakValueDictionary[int, ModelResponse] = weakref.WeakValueDictionary()
+"""The suspended responses `cancel_suspended_job` has cancelled the jobs of, by identity, while they're still in use.
+
+A model that cancels the job of a suspended response it gives up on, as `FallbackModel` does for a failed pinned
+continuation, can still raise to the continuation loop that sent it, which cancels the same response on its way out.
+"""
+
+
 async def cancel_suspended_job(model: Model, response: ModelResponse) -> None:
     """Best-effort teardown of a server-side suspended/background job that survives cancellation.
 
@@ -301,8 +310,11 @@ async def cancel_suspended_job(model: Model, response: ModelResponse) -> None:
     shielded wait, so the cancel is waited for again, until a second native cancellation gives up on it.
 
     Any error from the cancel itself is swallowed: a failing teardown must not replace the error (or
-    cancellation) that aborted the run.
+    cancellation) that aborted the run. A response is cancelled once, however many layers give up on it.
     """
+    if _cancelled_responses.get(id(response)) is response:
+        return
+    _cancelled_responses[id(response)] = response
     job = asyncio.ensure_future(model.cancel_suspended_response(response))
     cancelled: asyncio.CancelledError | None = None
     with anyio.CancelScope(shield=True):

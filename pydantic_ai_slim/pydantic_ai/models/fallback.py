@@ -44,6 +44,7 @@ from . import (
     StreamedResponse,
     infer_model,
 )
+from ._continuation import cancel_suspended_job
 from ._request_timeout import (
     RequestDeadline,
     carried_deadline,
@@ -225,8 +226,7 @@ class FallbackModel(Model):
             # cancel path never sees it; without this an OpenAI background job would keep running
             # and billing while the chain issues a duplicate request.
             if abandoned_response is not None:
-                with suppress(Exception):
-                    await pinned.cancel_suspended_response(abandoned_response)
+                await cancel_suspended_job(pinned, abandoned_response)
             messages = _rewind_messages(messages)
             rewound = True
             self._record_failed_attempt(chain, pinned, failure, start)
@@ -318,8 +318,7 @@ class FallbackModel(Model):
                     # Best-effort cancel the suspended server-side job we're abandoning before
                     # rewinding to the chain (see the non-streaming path above); `FallbackModel`
                     # swallows the error, so the graph's own cancel path never sees it.
-                    with suppress(Exception):
-                        await pinned.cancel_suspended_response(suspended_response)
+                    await cancel_suspended_job(pinned, suspended_response)
                     messages = _rewind_messages(messages)
                     rewound = True
                     self._record_failed_attempt(chain, pinned, exc, start)

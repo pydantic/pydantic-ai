@@ -39,7 +39,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
+from pydantic_ai.capabilities import AbstractCapability, ModelFallback, WrapModelRequestHandler
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import (
     AgentInstructionSource,
@@ -4837,3 +4837,53 @@ async def test_fallback_on_mixed_tuple() -> None:
 
         result = await agent.run('hello')
         assert result.output == 'success'
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('via', ['FallbackModel', 'ModelFallback'])
+async def test_a_failed_pinned_continuation_job_is_cancelled_once_when_the_chain_fails(stream: bool, via: str) -> None:
+    """When the pinned continuation and then every fallback fail, the abandoned job is cancelled exactly once.
+
+    `FallbackModel` cancels it before moving on to its chain, and the error the chain then raises reaches the
+    continuation loop, which would otherwise cancel the same job again on its way out.
+    """
+    cancelled: list[tuple[str, str | None]] = []
+
+    class CancelRecordingModel(FunctionModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            cancelled.append((self.model_name, response.provider_response_id))
+
+    def failing(name: str) -> CancelRecordingModel:
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelAPIError(name, 'down')
+
+        async def respond_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            raise ModelAPIError(name, 'down')
+            yield ''  # pragma: no cover
+
+        return CancelRecordingModel(respond, stream_function=respond_stream, model_name=name)
+
+    primary, backup = failing('primary'), failing('backup')
+    pin_key = 'fallback_model_id' if via == 'FallbackModel' else 'fallback_candidate'
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='test')]),
+        ModelResponse(
+            parts=[TextPart('paused')],
+            state='suspended',
+            provider_response_id='job-1',
+            model_name='primary',
+            metadata={'__pydantic_ai__': {pin_key: primary.model_id}},
+        ),
+    ]
+    agent = (
+        Agent(FallbackModel(primary, backup))
+        if via == 'FallbackModel'
+        else Agent(primary, capabilities=[ModelFallback(backup)])
+    )
+    with pytest.raises(FallbackExceptionGroup):
+        if stream:
+            async with agent.run_stream(message_history=history) as result:
+                await result.get_output()
+        else:
+            await agent.run(message_history=history)
+    assert cancelled == [('primary', 'job-1')]
