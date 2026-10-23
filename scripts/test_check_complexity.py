@@ -196,6 +196,32 @@ def test_a_simpler_definition_of_the_same_name_does_not_hide_a_complex_one(
     assert 'Box::value 2 -> 4' in out
 
 
+def test_a_complex_getter_does_not_hide_its_setter(repo: Path, capsys: pytest.CaptureFixture[str]):
+    getter = _ifs('value', 5, indent='    ').replace('    def value', '    @property\n    def value')
+    setter = '\n' + _ifs('value', 2, indent='    ').replace('    def value', '    @value.setter\n    def value')
+    _write(repo, 'pkg/prop.py', 'class Box:\n' + getter + setter)
+    _commit(repo)
+    grown = '\n' + _ifs('value', 4, indent='    ').replace('    def value', '    @value.setter\n    def value')
+    _write(repo, 'pkg/prop.py', 'class Box:\n' + getter + grown)
+    _stage(repo)
+
+    code, out = _check(capsys, '--staged')
+
+    assert code == 1
+    assert 'Box::value 2 -> 4: this change took it over the limit' in out
+    assert 'Box::value 5' not in out
+
+
+def test_a_redefinition_keeps_its_most_complex_definition(repo: Path, capsys: pytest.CaptureFixture[str]):
+    _write(repo, 'pkg/added.py', _ifs('added', 5) + '\n\n' + _ifs('added', 1))
+    _stage(repo)
+
+    code, out = _check(capsys, '--staged')
+
+    assert code == 1
+    assert 'pkg/added.py:1: added 5: new function over the limit' in out
+
+
 def test_deleting_a_file_or_a_function_passes(repo: Path, capsys: pytest.CaptureFixture[str]):
     _write(repo, 'pkg/debt.py', _ifs('small', 2))
     (repo / 'pkg/__init__.py').unlink()

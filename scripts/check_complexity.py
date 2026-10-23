@@ -25,8 +25,10 @@ import subprocess
 import sys
 import tokenize
 import tomllib
+from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
+from itertools import takewhile
 from pathlib import Path
 from typing import Literal
 
@@ -95,6 +97,8 @@ _PART = re.compile(
 _EVENT = re.compile(r'(Event|Chunk|Delta|Frame)$')
 _TOOL = re.compile(r'(Tool|ToolChoice)$')
 _NESTED_FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+_DEF = re.compile(r'\s*(?:async\s+)?def\s')
+_ROLE_DECORATOR = re.compile(r'\s*@(?:\w+\.)*(overload|setter|deleter)\s*(?:#.*)?$')
 _MESSAGES = re.compile(r'message|parts|history')
 _MESSAGE_TYPES = re.compile(r'ModelMessage|ModelRequest|ModelResponse')
 _CONCURRENCY_CALLS = frozenset(
@@ -271,16 +275,29 @@ def _load(changes: list[_Change], base: str, head: str | None) -> None:
 
 
 def _functions(source: str | None, *, no_ignore: bool = False) -> dict[str, FunctionComplexity]:
-    """The most complex function per name, so `@overload` stubs do not hide their implementation."""
-    by_name: dict[str, FunctionComplexity] = {}
+    """Each function by name, with a property's setter and deleter keyed apart and `@overload` stubs left out."""
     try:
         found = code_complexity(source, no_ignore=no_ignore).functions if source is not None else []
     except ValueError:
         found = []
+    repeated = {name for name, count in Counter(function.name for function in found).items() if count > 1}
+    lines = (source or '').splitlines() if repeated else []
+    by_name: dict[str, FunctionComplexity] = {}
     for function in found:
-        if function.name not in by_name or function.complexity > by_name[function.name].complexity:
-            by_name[function.name] = function
+        role = _decorator_role(lines, function) if function.name in repeated else ''
+        if role == 'overload':
+            continue
+        key = f'{function.name}.{role}' if role else function.name
+        # Any other repeated name keeps its most complex definition.
+        if key not in by_name or function.complexity > by_name[key].complexity:
+            by_name[key] = function
     return by_name
+
+
+def _decorator_role(lines: list[str], function: FunctionComplexity) -> str:
+    """`overload`, `setter` or `deleter` when one of the function's decorators makes it one, else `''`."""
+    decorators = takewhile(lambda line: not _DEF.match(line), lines[function.line_start - 1 :])
+    return next((role[1] for line in decorators if (role := _ROLE_DECORATOR.match(line))), '')
 
 
 def _classify(before: int | None, after: int, limit: int) -> _Failure | None:
@@ -294,7 +311,7 @@ def _offenders_in(change: _Change, limit: int) -> tuple[list[_Offender], list[_R
     # function nor makes one look new. Only the change's own result honors them.
     old, new = _functions(change.old_source, no_ignore=True), _functions(change.new_source)
     kept = _functions(change.new_source, no_ignore=True)
-    removed = [_Removed(change.old_path or '', name, f.complexity) for name, f in old.items() if name not in kept]
+    removed = [_Removed(change.old_path or '', f.name, f.complexity) for name, f in old.items() if name not in kept]
     offenders: list[_Offender] = []
     for name, function in new.items():
         before = old[name].complexity if name in old else None
@@ -519,7 +536,7 @@ def _ignores(change: _Change) -> list[_Ignore]:
     reasons, definitions = _marker_reasons(source), _definitions(source)
     found: list[_Ignore] = []
     for name, function in ignored.items():
-        node = definitions[(name, function.line_start)]
+        node = definitions[(function.name, function.line_start)]
         # From the line above the first decorator to the end of the signature.
         header = range(function.line_start - 1, max(node.lineno, node.body[0].lineno - 1) + 1)
         line = next((n for n in header if n in reasons), function.line_start)
