@@ -109,6 +109,12 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 openai_responses_supports_prompt_cache_diagnostics=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # GPT-5.6 and later, the models with explicit cache breakpoints, accept `reasoning.effort='max'`
+                # (verified live). Set here rather than in `openai_model_profile` because `max` is unverified on
+                # the OpenAI-compatible endpoints that share it.
+                openai_responses_supports_max_reasoning_effort=bool(
+                    profile.get('openai_supports_prompt_cache_breakpoints')
+                ),
             ),
         )
 

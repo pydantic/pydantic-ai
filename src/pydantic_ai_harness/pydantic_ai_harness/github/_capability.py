@@ -10,8 +10,9 @@ from urllib.parse import urlsplit
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, one_connection, read_only_toolset
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._mcp import credential, per_run_connection, read_only_toolset
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 try:
@@ -43,12 +44,17 @@ class GitHub(AbstractCapability[AgentDepsT]):
     """
     read_only: bool = False
     """Offer only the tools the server marks as read-only. The hosted connection also asks for GitHub's read-only mode."""
+    lockdown: bool = False
+    """Ask GitHub to withhold public-repository content written by users without push access.
+
+    GitHub describes this as a best-effort content filter, not a security boundary: other tools can still return it.
+    """
     include_instructions: bool = True
     """Forward the server's instructions to the agent."""
     client: MCPToolsetClient | None = field(default=None, repr=False)
     """Your own MCP client or transport, for full control of the connection.
 
-    It cannot be combined with `auth`, `url`, or `toolsets`.
+    It cannot be combined with `auth`, `url`, `toolsets`, or `lockdown`.
     """
     url: str = GITHUB_MCP_URL
     """The `https://` MCP server URL, for example a GitHub Enterprise Cloud endpoint. `http://` is deprecated."""
@@ -57,9 +63,11 @@ class GitHub(AbstractCapability[AgentDepsT]):
 
     def __post_init__(self) -> None:
         if self.client is not None and (
-            self.auth is not None or self.url != GITHUB_MCP_URL or self.toolsets is not None
+            self.auth is not None or self.url != GITHUB_MCP_URL or self.toolsets is not None or self.lockdown
         ):
-            raise UserError('`client` owns the connection, so it cannot be combined with `auth`, `url`, or `toolsets`.')
+            raise UserError(
+                '`client` owns the connection, so it cannot be combined with `auth`, `url`, `toolsets`, or `lockdown`.'
+            )
         parts = urlsplit(self.url)
         if parts.scheme not in ('https', 'http') or not parts.hostname:
             raise UserError(f'`url` must be an `https://` URL; got {self.url!r}. Pass `client` to connect another way.')
@@ -82,23 +90,17 @@ class GitHub(AbstractCapability[AgentDepsT]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one connection stated twice; two that disagree raise rather than merge."""
-        return one_connection(capabilities)
+        return one_per_id(capabilities)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the GitHub tools."""
         toolset: AbstractToolset[AgentDepsT]
         if self.client is not None:
             toolset = MCPToolset(self.client, id=self.id or _ID, include_instructions=self.include_instructions)
-        elif callable(auth := self.auth):
-
-            def connect_for_run(ctx: RunContext[AgentDepsT]) -> MCPToolset[AgentDepsT] | None:
-                token = auth(ctx)
-                return self._connect(token) if token else None
-
-            # Registered once under a fixed `id`, as durable execution requires; filled per run.
-            toolset = DynamicToolset(connect_for_run, per_run_step=False, id=self.id or _ID)
+        elif callable(self.auth):
+            toolset = per_run_connection(self.auth, self._connect, id=self.id or _ID, expects='a GitHub token')
         else:
-            toolset = self._connect(auth)
+            toolset = self._connect(self.auth)
         # The hosted connection also sends `X-MCP-Readonly`; filtering here keeps write tools out when the header is
         # dropped or ignored on the way.
         # The hosted connection kept its `id` before this filter was added, so the filtered one keeps it too.
@@ -112,6 +114,8 @@ class GitHub(AbstractCapability[AgentDepsT]):
                 "GitHub needs a token, not 'oauth': GitHub does not support automatic OAuth client registration."
             )
         headers = {'X-MCP-Readonly': 'true'} if self.read_only else {}
+        if self.lockdown:
+            headers['X-MCP-Lockdown'] = 'true'
         if self.toolsets is not None:
             headers['X-MCP-Toolsets'] = ','.join(self.toolsets)
         return MCPToolset(
