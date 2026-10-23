@@ -137,7 +137,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                 metadata: dict[str, Any] = (
                     command_metadata.copy() if name in ('run_command', 'start_command', PERSISTENT_TOOL_NAME) else {}
                 )
-                if name in ('run_command', PERSISTENT_TOOL_NAME):
+                if name in ('run_command', 'check_command', PERSISTENT_TOOL_NAME):
                     metadata['temporal'] = {'start_to_close_timeout': timedelta(seconds=MAX_FOREGROUND_WAIT + 30)}
                 self.add_function(registrations[name], name=name, metadata=metadata or None)
 
@@ -493,21 +493,29 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         return stdout.decode('utf-8', errors='replace'), stderr.decode('utf-8', errors='replace')
 
     @recoverable
-    async def check_command(self, ctx: RunContext[AgentDepsT], command_id: str) -> str:
+    async def check_command(self, ctx: RunContext[AgentDepsT], command_id: str, wait_seconds: float = 0) -> str:
         """Check the status and recent output of a background command.
 
         Args:
             ctx: The current agent run context.
             command_id: The ID returned by start_command.
+            wait_seconds: Wait up to this many seconds for the command to finish, from 0 to 270.
+                Zero checks immediately. Timing out or cancelling the wait leaves the command running.
 
         Returns:
             Status and recent output of the background command.
         """
+        if not 0 <= wait_seconds <= MAX_FOREGROUND_WAIT:
+            raise ModelRetry(f'wait_seconds must be between 0 and {MAX_FOREGROUND_WAIT:g} seconds.')
+
         job = await self._job(ctx, command_id)
         if job is None:
             return f'[Error: unknown command ID {command_id!r}]'
 
-        running, exit_code = await job.status()
+        if (status := await job.wait(wait_seconds)) is None:
+            # Stopped, or its files removed, during the wait: the same answer as for an ID never started.
+            return f'[Error: unknown command ID {command_id!r}]'
+        running, exit_code = status
         stdout, stderr = await self._read_bg_output(job)
 
         parts = [
