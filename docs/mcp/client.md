@@ -540,16 +540,11 @@ weather = MCPToolset(Client('http://localhost:8000/mcp', extensions=[ui]), id='w
 
 ## HTTP authentication
 
-For HTTP transports, `MCPToolset` accepts an `auth` argument: a bearer token string, any [`httpx2.Auth`](https://httpx2.pydantic.dev/advanced/authentication/) (or legacy [`httpx.Auth`](https://www.python-httpx.org/advanced/authentication/) on FastMCP 3), or the literal string `'oauth'` to enable [FastMCP's OAuth flow](https://gofastmcp.com/clients/auth/oauth). Static headers like API keys can be passed via the `headers` argument instead.
+For HTTP transports, `MCPToolset` accepts an `auth` argument: a bearer token string, any [`httpx2.Auth`](https://httpx2.pydantic.dev/advanced/authentication/) (or legacy [`httpx.Auth`](https://www.python-httpx.org/advanced/authentication/) on FastMCP 3), the literal string `'oauth'` to enable [FastMCP's OAuth flow](https://gofastmcp.com/clients/auth/oauth), or a function that returns the credentials for each agent run (see [per-user authentication](#per-user-authentication)). Static headers like API keys can be passed via the `headers` argument instead.
 
 ### Per-user authentication
 
-In a multi-user or multi-tenant application, each user typically has their own credentials for the MCP server, such as a tenant-scoped bearer token.
-
-!!! warning "A shared `MCPToolset` instance is a single identity"
-    An `MCPToolset` instance maintains one MCP session that's shared by all concurrent agent runs using it: the connection is established (and authentication resolved) by whichever run needs it first, and only torn down once the last one finishes. Deriving credentials per-request from task-local state like a [`ContextVar`][contextvars.ContextVar] inside an `auth` object does not work on a shared instance: overlapping runs will silently send their requests with the credentials of whichever run opened the session.
-
-To make requests with the credentials of the user in question, each concurrent run needs its own `MCPToolset` instance so that it establishes its own authenticated session. The recommended way to do this is to build the toolset [dynamically](../toolsets.md#dynamically-building-a-toolset) using the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator: the decorated function is passed the [run context][pydantic_ai.tools.RunContext] and can read the user's credentials from the run's [dependencies](../dependencies.md):
+In a multi-user or multi-tenant application, each user typically has their own credentials for the MCP server, such as a tenant-scoped bearer token, so they can't be fixed when the toolset is created. Pass a function as `auth` instead: it's called with the [run context][pydantic_ai.tools.RunContext] at the start of each agent run, so it can read the user's credentials from the run's [dependencies](../dependencies.md):
 
 ```python {title="mcp_per_user_auth.py"}
 from dataclasses import dataclass
@@ -563,12 +558,12 @@ class UserDeps:
     mcp_token: str
 
 
-agent = Agent('{{ openai:medium }}', deps_type=UserDeps)
+def mcp_token(ctx: RunContext[UserDeps]) -> str:
+    return ctx.deps.mcp_token
 
 
-@agent.toolset(per_run_step=False)  # (1)!
-def user_mcp_server(ctx: RunContext[UserDeps]) -> MCPToolset:
-    return MCPToolset('http://localhost:8000/mcp', auth=ctx.deps.mcp_token)
+toolset = MCPToolset('http://localhost:8000/mcp', auth=mcp_token)
+agent = Agent('{{ openai:medium }}', deps_type=UserDeps, toolsets=[toolset])
 
 
 async def main():
@@ -577,13 +572,23 @@ async def main():
     #> The answer is 12.
 ```
 
-1. `per_run_step=False` builds the toolset once per run instead of ahead of each run step, so the whole run shares a single MCP session.
-
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
-Because the per-run toolset's session is established inside the run itself, credentials held in a `ContextVar` also resolve correctly with this pattern — but passing them through deps is more explicit and doesn't depend on task-local state.
+Each run then connects to the server in an MCP session of its own, opened with the credentials the function returned, so concurrent runs on behalf of different users never share a session. The function can be sync or async, and can return anything a fixed `auth` accepts except `'oauth'`. `headers` accepts a function in the same way, for credentials the server expects in a different header.
 
-As an alternative to a dynamic toolset, you can construct a new `MCPToolset` yourself for each request and pass it to the [`toolsets` argument](../toolsets.md) of the agent run methods.
+Because the toolset only knows which credentials to use once a run has started, it only connects to the server as part of an agent run: entering it with `async with toolset:` or `async with agent:` doesn't open a connection, and calling one of its methods like `list_tools()` directly raises a [`UserError`][pydantic_ai.exceptions.UserError]. Outside of an agent run, use the copy a run would use instead, which you get with [`await toolset.for_run(ctx)`][pydantic_ai.toolsets.AbstractToolset.for_run].
+
+!!! note "Why each user needs a session of their own"
+    An MCP session belongs to a single user: the [MCP security best practices](https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#session-hijacking) tell servers to bind session IDs to the user they were created for. A server may therefore reject another user's requests on that session, and anything it keeps per session would be shared between users.
+
+    That's why an `MCPToolset` with a fixed `auth` shouldn't be shared by concurrent runs for different users, even when its `auth` object reads the credentials for each request from task-local state like a [`ContextVar`][contextvars.ContextVar]. Such a toolset keeps one session open for all concurrent agent runs using it, opened by whichever run needs it first:
+
+    - With FastMCP 4, which is built on MCP SDK v2, the `auth` object is called in the context of the run making each request, so each request carries that run's credentials, but is sent on a session opened for another user.
+    - With FastMCP 3, which is built on MCP SDK v1, the `auth` object is called in the context of the run that opened the session, so overlapping runs silently send their requests with that run's credentials.
+
+With the [`MCP` capability](../capabilities/mcp.md), pass the function as its `authorization_token` or `headers` instead; see [per-user credentials](../capabilities/mcp.md#per-user-credentials).
+
+If each user needs more than their own credentials, such as a server URL of their own, build the whole toolset for each run with a [dynamic toolset](../toolsets.md#dynamically-building-a-toolset) instead: an [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] function with `per_run_step=False` that returns an `MCPToolset` for the run's user.
 
 ## Custom TLS / SSL configuration {#custom-tls-ssl-configuration}
 
