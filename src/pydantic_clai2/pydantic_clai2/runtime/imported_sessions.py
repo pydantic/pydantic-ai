@@ -40,8 +40,7 @@ class _Source:
     find: Callable[[Path, str], Path | None]
     titles: Callable[[Path], dict[str, str]]
     header: Callable[[Path], Header | None]
-    messages: Callable[[Path, str], list[ModelMessage]]
-    """The history to continue, given the transcript and the CLAI conversation ID it is imported as."""
+    messages: Callable[[Path], list[ModelMessage]]
     tasks: Callable[[Path, str], list[DelegationTask]]
     """The session's sub-agents, as finished tasks of the CLAI conversation."""
 
@@ -64,7 +63,7 @@ _SOURCES: dict[ImportSource, _Source] = {
         find=codex_sessions.find,
         titles=codex_sessions.titles,
         header=codex_sessions.header,
-        messages=lambda path, _conversation_id: codex_sessions.messages(path),
+        messages=codex_sessions.messages,
         tasks=lambda _path, _conversation_id: [],
     ),
 }
@@ -86,7 +85,7 @@ class ImportedSession:
 
     def messages(self) -> list[ModelMessage]:
         """Read the whole transcript. Blocking file IO, so call it off the event loop."""
-        return _SOURCES[self.source].messages(self.path, self.summary.id)
+        return _SOURCES[self.source].messages(self.path)
 
     def tasks(self) -> list[DelegationTask]:
         """Read the session's sub-agent transcripts. Blocking file IO, so call it off the event loop."""

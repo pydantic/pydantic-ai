@@ -124,12 +124,10 @@ def header(path: Path) -> Header | None:
     return None
 
 
-def messages(path: Path, conversation_id: str) -> list[ModelMessage]:
-    """The conversation the session ended on, as Pydantic AI messages, framed by notes on the change of harness.
-
-    `conversation_id` is the CLAI conversation the session is imported as, which owns its sub-agents' tasks.
-    """
-    agents = _agents(path, conversation_id)
+def messages(path: Path) -> list[ModelMessage]:
+    """The conversation the session ended on, as Pydantic AI messages, framed by notes on the change of harness."""
+    # Task IDs derive from the session alone, and a report names no conversation, so none is needed here.
+    agents = _agents(path, conversation_id='')
     lines = [
         f'- Claude Code agent {agent_id} is task {task.id} ({_agent_type(task)}: {task.prompt})'
         for agent_id, task in agents.items()

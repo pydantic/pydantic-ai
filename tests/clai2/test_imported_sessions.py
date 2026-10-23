@@ -233,7 +233,7 @@ def context(part: ModelRequestPart | ModelResponsePart) -> tuple[str, str]:
 
 def test_claude_code_transcript_continues_the_last_branch(tmp_path: Path) -> None:
     path = claude_session(tmp_path)
-    messages = claude_code_sessions.messages(path, 'conversation')
+    messages = claude_code_sessions.messages(path)
     assert parts(messages) == [
         ('ModelRequest', ['UserPromptPart', 'UserPromptPart', 'UserPromptPart']),
         ('ModelResponse', ['ThinkingPart', 'TextPart', 'ToolCallPart', 'ThinkingPart', 'ToolCallPart']),
@@ -398,7 +398,7 @@ def claude_agent_session(cwd: Path) -> Path:
 
 async def test_claude_code_import_keeps_what_the_model_saw(tmp_path: Path) -> None:
     path = claude_agent_session(tmp_path)
-    messages = claude_code_sessions.messages(path, 'conversation')
+    messages = claude_code_sessions.messages(path)
     assert parts(messages) == [
         ('ModelRequest', ['UserPromptPart', 'UserPromptPart', 'UserPromptPart']),
         ('ModelResponse', ['ToolCallPart', 'ToolCallPart']),
@@ -669,7 +669,7 @@ async def test_catalog_lists_both_agents_newest_first(tmp_path: Path) -> None:
     imported = catalog.get(second.id)
     assert imported is not None and imported.path == claude
     assert catalog.get('missing') is None
-    assert imported.messages() == claude_code_sessions.messages(claude, second.id)
+    assert imported.messages() == claude_code_sessions.messages(claude)
     assert find_import('codex', CODEX_ID).summary == first
     assert find_import('codex', CODEX_ID).path == codex
     for source, native_id in (('claude', 'missing'), ('claude', '../escape'), ('codex', '*'), ('codex', 'gone')):
@@ -749,9 +749,7 @@ async def test_resume_command_imports_by_id_and_continues(tmp_path: Path) -> Non
     claude_session(tmp_path)
     notice = await service.command(['claude', CLAUDE_ID])
     assert notice.startswith('Resumed Fix the parser')
-    assert service.session.messages == claude_code_sessions.messages(
-        claude_session(tmp_path), service.session.summary.id
-    )
+    assert service.session.messages == claude_code_sessions.messages(claude_session(tmp_path))
     await service.session.prompt('What next?')
     saved = await store.get(conversation_id=service.session.summary.id)
     assert saved.summary.revision > 1
