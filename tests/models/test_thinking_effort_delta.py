@@ -168,9 +168,25 @@ def test_openai_falls_back_to_the_request_level_effort(
     """Where OpenAI documents the item doesn't apply, the parts go and the current effort is sent at request level."""
     model = OpenAIResponsesModel('gpt-6.1-sol', provider=OpenAIProvider(api_key='test-key'))
     parameters = ModelRequestParameters(thinking='xhigh')
-    messages, effort_parameters = model._effort_delta_request(history, settings, parameters)  # pyright: ignore[reportPrivateUsage]
+    sends_changes, effort_parameters = model._effort_delta_request(history, settings, parameters)  # pyright: ignore[reportPrivateUsage]
+    assert sends_changes is False
     assert effort_parameters is parameters
-    assert not any(isinstance(part, ThinkingEffortDeltaPart) for message in messages for part in message.parts)
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_effort_parts_dont_break_server_side_continuation(allow_model_requests: None):
+    """`openai_previous_response_id='auto'` matches the stored history, effort parts included, before they're removed."""
+    mock_client = MockOpenAIResponses.create_mock([_responses_text('Shelf 12, bin 1.'), _responses_text('Shelf 40.')])
+    model = OpenAIResponsesModel('gpt-6.1-sol', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model)
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto', thinking='low')
+
+    first = await agent.run('Where is item 12?', model_settings=settings)
+    await agent.run('And item 40?', message_history=first.all_messages(), model_settings=settings)
+
+    request = get_mock_responses_kwargs(mock_client)[1]
+    assert request['previous_response_id'] == '123'
+    assert request['input'] == [{'role': 'user', 'content': 'And item 40?'}]
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')

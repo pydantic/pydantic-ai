@@ -2793,11 +2793,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         instructions_override: str | None = None,
     ) -> responses.CompactedResponse | ModelResponse:
         """Call the OpenAI Responses compaction endpoint."""
-        # The endpoint doesn't take `configuration_update` items: the compacted window carries no effort change.
-        messages = _without_effort_deltas(messages)
         previous_response_id, messages = self._resolve_previous_response_id(
             model_settings.get('openai_previous_response_id'), messages, allow_no_new_messages=True
         )
+        # The endpoint doesn't take `configuration_update` items: the compacted window carries no effort change.
+        # Removed after resolving the response to continue, which matches the history as stored.
+        messages = _without_effort_deltas(messages)
 
         # Same ordering rule as `_build_responses_request_params`: the introduced-tools derivation
         # and the mapping must both see the trimmed history, and re-compacting only compacts the
@@ -3295,15 +3296,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         messages: list[ModelRequest | ModelResponse],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[list[ModelRequest | ModelResponse], ModelRequestParameters]:
+    ) -> tuple[bool, ModelRequestParameters]:
         """Decide whether this request sends effort changes as `configuration_update` items.
 
         It does when the history holds a mid-conversation change (a `ThinkingEffortDeltaPart` that
         `prepare_messages` kept for this model) and nothing rules the item out: an explicit
         `openai_reasoning_effort`, which is sent as is, and server-side truncation or compaction, which OpenAI
         documents the item doesn't work with. The request then keeps the window's opening effort as its
-        `reasoning.effort`, so its prefix matches the earlier requests'. Otherwise the parts are removed and the
-        current effort goes out as `reasoning.effort`, as it would without them.
+        `reasoning.effort`, so its prefix matches the earlier requests'. Otherwise the caller removes the parts and
+        the current effort goes out as `reasoning.effort`, as it would without them.
+
+        Returns whether the parts stay, and the parameters whose `thinking` the request-level effort comes from.
+        The caller removes the parts only from what it sends, after `_resolve_server_side_state`, which matches
+        the history as stored against the response it continues.
         """
         baseline, has_changes = _effort_window_baseline(messages)
         if has_changes and not (
@@ -3319,8 +3324,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         ):
             if baseline is not None and isinstance(model_request_parameters.thinking, str):
                 model_request_parameters = replace(model_request_parameters, thinking=baseline)
-            return messages, model_request_parameters
-        return _without_effort_deltas(messages), model_request_parameters
+            return True, model_request_parameters
+        return False, model_request_parameters
 
     async def _build_responses_request_params(
         self,
@@ -3330,7 +3335,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         profile: OpenAIModelProfile,
     ) -> _ResponsesRequestParams:
         """Build typed request parameters shared by Responses API calls."""
-        messages, effort_request_parameters = self._effort_delta_request(
+        sends_effort_changes, effort_request_parameters = self._effort_delta_request(
             messages, model_settings, model_request_parameters
         )
         # Deliberately a separate variable: `messages` itself stays untrimmed for
@@ -3375,6 +3380,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tool_choice = None
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
+        if not sends_effort_changes:
+            messages = _without_effort_deltas(messages)
 
         instructions, openai_messages = await self._map_messages(
             messages,
