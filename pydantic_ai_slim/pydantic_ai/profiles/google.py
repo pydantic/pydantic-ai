@@ -226,7 +226,10 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
 
     # Thinking support: Gemini 3+ defaults to thinking enabled with thinking_level.
     # Older models: Gemini 2.5 uses thinking_budget; Gemini 2.0, 1.x, and Gemma do not support thinking.
-    if is_gemma or is_pre_gemini_2_5:
+    # `gemini-2.5-flash-image` doesn't think either: verified live 2026-10-23, the Gemini API 400s any thinking
+    # config with `Thinking is not enabled for this model`, and Vertex rejects `include_thoughts` and any nonzero
+    # budget with `thinking is not supported by this model`.
+    if is_gemma or is_pre_gemini_2_5 or 'gemini-2.5-flash-image' in model_name:
         supports_thinking = False
         google_supports_thinking_level = False
     elif is_gemini_2_5:

@@ -173,6 +173,8 @@ Calling the `load_capability` tool reveals capability behavior between requests.
 | Native tools | **Always breaks the prefix on load** — native tool definitions are part of the request prefix on every provider. |
 | Function tools that appear without a load (a capability's dynamic toolset or MCP server adding a tool mid-run) | **Stable on first-party OpenAI Responses and on Anthropic models with tool search**, with one exception: some of those Anthropic models add a one-time preamble when a run's first deferred tool is a newcomer, which moves the prefix on that request. Elsewhere the tool is added to `tools[]`. The change is recorded as an availability delta; see [Tools that appear mid-run](../tools-advanced.md#mid-run-tool-additions). |
 
+On OpenAI Responses models before GPT-5.6, a request whose `tool_choice` names a revealed tool declares it in `tools` and misses the cache; see [Prompt caching implications](../tools-advanced.md#tool-choice-caching). With `openai_previous_response_id` or `openai_conversation_id` set, the tool stays out of `tools` and the API rejects the request; see [Tool Choice](../tools-advanced.md#tool-choice).
+
 When preserving the cache prefix matters, prefer instruction-only or function-tool-only on-demand capabilities on a model that can express an availability change natively. The provider-specific mechanics that keep the prefix stable live in [Tool search and prompt caching](../tools-advanced.md#tool-search-caching).
 
 ## The `Capability` convenience class

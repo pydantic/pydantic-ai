@@ -806,6 +806,76 @@ async def test_openai_responses_newcomer_before_a_compaction_is_declared_in_tool
     assert not [node for node in _walk(request['input']) if node.get('type') == 'additional_tools']
 
 
+class _ForceLaterUntilCalled(AbstractCapability[Any]):
+    """Force the newcomer `later` by name from the request that first offers it until it has been called."""
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        offered = any(tool.name == 'later' for tool in request_context.model_request_parameters.function_tools)
+        called = any(
+            isinstance(part, ToolReturnPart) and part.tool_name == 'later'
+            for message in request_context.messages
+            for part in message.parts
+        )
+        if offered and not called:
+            request_context.model_settings = merge_model_settings(
+                request_context.model_settings, ModelSettings(tool_choice=['later'])
+            )
+        return request_context
+
+
+@pytest.mark.parametrize('model_name', ['gpt-5.4-mini', 'gpt-5.6'])
+async def test_openai_responses_tool_choice_naming_a_newcomer(allow_model_requests: None, model_name: str):
+    """A `tool_choice` naming a newcomer that only an `additional_tools` item declares.
+
+    Models before GPT-5.6 reject such a choice with a 400, so on those the forcing request declares the
+    newcomer in `tools` and leaves it out of the item, and the next request goes back to the item. GPT-5.6
+    accepts the item-only name, so `tools` never changes.
+    """
+    client = MockOpenAIResponses.create_mock(
+        [_responses_call('unlock', 'c1'), _responses_call('later', 'c2'), _responses_text()]
+    )
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=client))
+    result = await _add_function_agent(model, _ForceLaterUntilCalled()).run('go')
+
+    assert result.output == 'done'
+    assert _deltas(result.all_messages()) == [['later']]
+    assert [
+        {
+            'tool_choice': kwargs.get('tool_choice'),
+            'tools': [tool['name'] for tool in kwargs['tools']],
+            'additional_tools': [
+                [tool['name'] for tool in item['tools']]
+                for item in _walk(kwargs['input'])
+                if item.get('type') == 'additional_tools'
+            ],
+        }
+        for kwargs in get_mock_responses_kwargs(client)
+    ] == snapshot(
+        {
+            'gpt-5.4-mini': [
+                {'tool_choice': 'auto', 'tools': ['unlock'], 'additional_tools': []},
+                {
+                    'tool_choice': {'type': 'function', 'name': 'later'},
+                    'tools': ['unlock', 'later'],
+                    'additional_tools': [],
+                },
+                {'tool_choice': 'auto', 'tools': ['unlock'], 'additional_tools': [['later']]},
+            ],
+            'gpt-5.6': [
+                {'tool_choice': 'auto', 'tools': ['unlock'], 'additional_tools': []},
+                {
+                    'tool_choice': {'type': 'function', 'name': 'later'},
+                    'tools': ['unlock'],
+                    'additional_tools': [['later']],
+                },
+                {'tool_choice': 'auto', 'tools': ['unlock'], 'additional_tools': [['later']]},
+            ],
+        }
+    )[model_name]
+
+
 @pytest.mark.parametrize('make_agent', CAUSES)
 @pytest.mark.parametrize(
     ('model_name', 'reveal'),
