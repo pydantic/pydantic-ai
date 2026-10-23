@@ -1327,6 +1327,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> bool:
         return _request_thinking_type(self.profile, model_settings, model_request_parameters) is not None
 
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        overriding: list[str] = []
+        # `_translate_thinking` sends an explicit thinking config instead of the unified one.
+        if model_settings.get('anthropic_thinking'):
+            overriding.append('anthropic_thinking')
+        # `_build_output_config` sends an explicit effort instead of the one an effort-level `thinking` maps to.
+        if (
+            model_settings.get('anthropic_effort') is not None
+            and isinstance(model_settings.get('thinking'), str)
+            and self.profile.get('anthropic_supports_effort', False)
+        ):
+            overriding.append('anthropic_effort')
+        return tuple(overriding)
+
     def _default_structured_output_mode(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> StructuredOutputMode:

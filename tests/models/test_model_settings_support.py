@@ -296,6 +296,12 @@ class Observed:
     """The settings the model declares it ignores."""
     warned: frozenset[str]
     """The settings an `UnsupportedSettingWarning` named while the request was made."""
+    warning_messages: tuple[str, ...]
+    """Every warning message recorded while the request was made.
+
+    Warnings other than `UnsupportedSettingWarning` are recorded only when the caller's filters let them through: the
+    suite's `error` filter makes one abort the request instead.
+    """
 
 
 @dataclass(frozen=True)
@@ -309,10 +315,10 @@ _WARNED_SETTING = re.compile(r'^The `(\w+)` setting is not supported')
 
 
 async def _observe(model: Model, request: Awaitable[object]) -> Observed:
-    """Await `request`, swallowing its inevitable failure, and record the `UnsupportedSettingWarning`s it emits.
+    """Await `request`, swallowing its inevitable failure, and record the warnings it emits.
 
-    Recording them instead of letting the suite's `filterwarnings = error` raise them lets the request still
-    reach the wire, so a probe sees both what the model sends and what it warns about.
+    Recording `UnsupportedSettingWarning`s instead of letting the suite's `filterwarnings = error` raise them lets the
+    request still reach the wire, so a probe sees both what the model sends and what it warns about.
     """
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always', UnsupportedSettingWarning)
@@ -326,7 +332,11 @@ async def _observe(model: Model, request: Awaitable[object]) -> Observed:
         if issubclass(warning.category, UnsupportedSettingWarning)
         and (match := _WARNED_SETTING.match(str(warning.message)))
     }
-    return Observed(unsupported=model._unsupported_settings(), warned=frozenset(warned))  # pyright: ignore[reportPrivateUsage]
+    return Observed(
+        unsupported=model._unsupported_settings(),  # pyright: ignore[reportPrivateUsage]
+        warned=frozenset(warned),
+        warning_messages=tuple(str(warning.message) for warning in caught),
+    )
 
 
 async def run_probe_request(model: Model, settings: ModelSettings) -> Observed:
@@ -445,28 +455,39 @@ def legacy_http_probe(build: Callable[[httpx.AsyncClient], Model]) -> Probe:
     return probe
 
 
-async def bedrock_probe(settings: ModelSettings) -> ProbeResult:
+def botocore_probe(build: Callable[[], BedrockConverseModel]) -> Probe:
     """Probe Bedrock through botocore's `before-send` event — there is no httpx client to inject."""
-    recorder = Recorder()
-    model = BedrockConverseModel(
+
+    async def probe(settings: ModelSettings) -> ProbeResult:
+        recorder = Recorder()
+        model = build()
+
+        def handle(request: Any, **_: Any) -> None:
+            body = request.body
+            recorder.record(
+                {
+                    'body': body.decode('utf8', 'replace') if isinstance(body, bytes) else str(body),
+                    'headers': sorted(
+                        f'{k}:{v}' for k, v in request.headers.items() if k.lower() not in BEDROCK_VOLATILE
+                    ),
+                }
+            )
+            raise ProbeAborted
+
+        for operation in ('Converse', 'ConverseStream'):
+            model.client.meta.events.register_last(f'before-send.bedrock-runtime.{operation}', handle)
+        observed = await run_probe_request(model, settings)
+        return ProbeResult(recorder.first, observed)
+
+    return probe
+
+
+bedrock_probe = botocore_probe(
+    lambda: BedrockConverseModel(
         'anthropic.claude-sonnet-4-5-20250929-v1:0',
         provider=BedrockProvider(aws_access_key_id=PROBE_KEY, aws_secret_access_key=PROBE_KEY, region_name='us-east-1'),
     )
-
-    def handle(request: Any, **_: Any) -> None:
-        body = request.body
-        recorder.record(
-            {
-                'body': body.decode('utf8', 'replace') if isinstance(body, bytes) else str(body),
-                'headers': sorted(f'{k}:{v}' for k, v in request.headers.items() if k.lower() not in BEDROCK_VOLATILE),
-            }
-        )
-        raise ProbeAborted
-
-    for operation in ('Converse', 'ConverseStream'):
-        model.client.meta.events.register_last(f'before-send.bedrock-runtime.{operation}', handle)
-    observed = await run_probe_request(model, settings)
-    return ProbeResult(recorder.first, observed)
+)
 
 
 async def huggingface_probe(settings: ModelSettings) -> ProbeResult:
@@ -482,12 +503,18 @@ async def huggingface_probe(settings: ModelSettings) -> ProbeResult:
     )
 
 
-async def xai_probe(settings: ModelSettings) -> ProbeResult:
+def xai_sdk_probe(build: Callable[[AsyncXaiClient], Model]) -> Probe:
     """Probe xAI at the SDK call — its transport is gRPC, so there is no HTTP request to read."""
-    recorder = MockXai(responses=[ProbeAborted()])
-    model = XaiModel('grok-4', provider=XaiProvider(xai_client=cast(AsyncXaiClient, recorder)))
-    observed = await run_probe_request(model, settings)
-    return ProbeResult(canonical(recorder.chat_create_kwargs[0]) if recorder.chat_create_kwargs else None, observed)
+
+    async def probe(settings: ModelSettings) -> ProbeResult:
+        recorder = MockXai(responses=[ProbeAborted()])
+        observed = await run_probe_request(build(cast(AsyncXaiClient, recorder)), settings)
+        return ProbeResult(canonical(recorder.chat_create_kwargs[0]) if recorder.chat_create_kwargs else None, observed)
+
+    return probe
+
+
+xai_probe = xai_sdk_probe(lambda client: XaiModel('grok-4', provider=XaiProvider(xai_client=client)))
 
 
 async def mcp_sampling_probe(settings: ModelSettings) -> ProbeResult:

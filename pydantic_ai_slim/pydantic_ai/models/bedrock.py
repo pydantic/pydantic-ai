@@ -865,6 +865,30 @@ class BedrockConverseModel(Model[BaseClient]):
         profile = cast(BedrockModelProfile, self.profile)
         return _effective_thinking_type(model_settings, model_request_parameters, profile) is not None
 
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_build_additional_model_request_fields` leaves alone the fields the user set: the variant's thinking
+        # field, and on adaptive Claude models the `output_config` an effort-level `thinking` maps its effort to.
+        fields = model_settings.get('bedrock_additional_model_requests_fields')
+        if not isinstance(fields, Mapping):
+            return ()
+        profile = self.profile
+        variant = profile.get('bedrock_thinking_variant', None)
+        effort_replaced = (
+            'output_config' in fields
+            and isinstance(model_settings.get('thinking'), str)
+            and profile.get('bedrock_supports_adaptive_thinking', False)
+            and profile.get('bedrock_supports_effort', False)
+        )
+        if (
+            (variant == 'anthropic' and ('thinking' in fields or effort_replaced))
+            or (variant == 'openai' and 'reasoning_effort' in fields)
+            or (variant == 'openai_responses' and 'reasoning' in fields)
+            or (variant == 'qwen' and 'reasoning_config' in fields)
+            or (variant == 'xai' and 'reasoning' in fields)
+        ):
+            return ('bedrock_additional_model_requests_fields',)
+        return ()
+
     def _default_structured_output_mode(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> StructuredOutputMode:
