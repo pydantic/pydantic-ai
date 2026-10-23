@@ -23,12 +23,12 @@ from ...messages import (
     CustomEvent,
     EnqueuedMessagesEvent,
     FunctionToolResultEvent,
+    ModelSettingsDeltaEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolResultEvent,
     TextPart,
     TextPartDelta,
-    ThinkingEffortDeltaEvent,
     ThinkingPart,
     ThinkingPartDelta,
     ToolAvailabilityDeltaEvent,
@@ -39,7 +39,7 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
-from .._adapter import compaction_payload, enqueued_messages_for_client, thinking_effort_delta_payload
+from .._adapter import compaction_payload, enqueued_messages_for_client, model_settings_delta_payload
 from .._utils import MCP_APPS_UI_TYPE, mcp_app_ui_payload
 from ._interrupt import (
     HAS_INTERRUPTS,
@@ -54,8 +54,8 @@ from ._utils import (
     DEFAULT_AG_UI_VERSION,
     ENQUEUED_MESSAGES_ACTIVITY_TYPE,
     INTERRUPTS_VERSION,
+    MODEL_SETTINGS_DELTA_ACTIVITY_TYPE,
     REASONING_VERSION,
-    THINKING_EFFORT_DELTA_ACTIVITY_TYPE,
     TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
     dump_tool_return_content,
     parse_ag_ui_version,
@@ -434,7 +434,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         async for e in self._handle_tool_result(event.part):
             yield e
 
-    async def handle_thinking_effort_delta(self, event: ThinkingEffortDeltaEvent) -> AsyncIterator[BaseEvent]:
+    async def handle_model_settings_delta(self, event: ModelSettingsDeltaEvent) -> AsyncIterator[BaseEvent]:
         if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
             return
 
@@ -442,8 +442,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
         yield ActivitySnapshotEvent(
             message_id=str(uuid4()),
-            activity_type=THINKING_EFFORT_DELTA_ACTIVITY_TYPE,
-            content=thinking_effort_delta_payload(event.part),
+            activity_type=MODEL_SETTINGS_DELTA_ACTIVITY_TYPE,
+            content=model_settings_delta_payload(event.part),
         )
 
     async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[BaseEvent]:

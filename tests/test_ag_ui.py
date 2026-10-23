@@ -37,6 +37,8 @@ from pydantic_ai import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    ModelSettingsDeltaEvent,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -52,8 +54,6 @@ from pydantic_ai import (
     TextContent,
     TextPart,
     TextPartDelta,
-    ThinkingEffortDeltaEvent,
-    ThinkingEffortDeltaPart,
     ThinkingPart,
     ThinkingPartDelta,
     ToolAvailabilityDeltaEvent,
@@ -10383,20 +10383,22 @@ def test_load_messages_never_builds_text_content_with_client_metadata():
     assert contents == [text]
 
 
-def test_thinking_effort_delta_ui_round_trip():
+def test_model_settings_delta_ui_round_trip():
     """Effort changes ride through the client as activity messages, in the position they were recorded at."""
     messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('Hi'), ThinkingEffortDeltaPart(effort='low', top_level=True)]),
+        ModelRequest(
+            parts=[UserPromptPart('Hi'), ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)]
+        ),
         ModelResponse(parts=[TextPart('Hello')]),
-        ModelRequest(parts=[UserPromptPart('Think harder'), ThinkingEffortDeltaPart(effort='high')]),
+        ModelRequest(parts=[UserPromptPart('Think harder'), ModelSettingsDeltaPart(settings={'thinking': 'high'})]),
         ModelResponse(parts=[TextPart('Done')]),
     ]
     dumped = AGUIAdapter.dump_messages(messages)
     activities = [message for message in dumped if isinstance(message, ActivityMessage)]
     assert [(activity.activity_type, activity.content) for activity in activities] == snapshot(
         [
-            ('pydantic_ai_thinking_effort_delta', {'effort': 'low', 'top_level': True}),
-            ('pydantic_ai_thinking_effort_delta', {'effort': 'high', 'top_level': False}),
+            ('pydantic_ai_model_settings_delta', {'settings': {'thinking': 'low'}, 'top_level': True}),
+            ('pydantic_ai_model_settings_delta', {'settings': {'thinking': 'high'}, 'top_level': False}),
         ]
     )
     loaded = AGUIAdapter.load_messages(dumped)
@@ -10405,31 +10407,35 @@ def test_thinking_effort_delta_ui_round_trip():
 
 
 @requires_ag_ui('0.1.19')
-def test_malformed_thinking_effort_delta_is_dropped():
+def test_malformed_model_settings_delta_is_dropped():
     loaded = AGUIAdapter.load_messages(
         [
             UserMessage(id='user-1', content='Hi'),
-            ActivityMessage(id='a-1', activity_type='pydantic_ai_thinking_effort_delta', content={'effort': 'extreme'}),
+            ActivityMessage(
+                id='a-1',
+                activity_type='pydantic_ai_model_settings_delta',
+                content={'settings': {'thinking': 'extreme'}},
+            ),
         ]
     )
     assert [part.part_kind for message in loaded for part in message.parts] == ['user-prompt']
 
 
-async def test_thinking_effort_delta_event_skipped_for_legacy_ag_ui() -> None:
+async def test_model_settings_delta_event_skipped_for_legacy_ag_ui() -> None:
     event_stream = AGUIEventStream(
         run_input=create_input(UserMessage(id='user-1', content='Hi')), ag_ui_version='0.1.10'
     )
     events = [
         event
-        async for event in event_stream.handle_thinking_effort_delta(
-            ThinkingEffortDeltaEvent(part=ThinkingEffortDeltaPart(effort='low', top_level=True))
+        async for event in event_stream.handle_model_settings_delta(
+            ModelSettingsDeltaEvent(part=ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True))
         )
     ]
     assert events == []
 
 
 @requires_ag_ui('0.1.19')
-async def test_thinking_effort_delta_round_trips_through_client_rebuilt_stream() -> None:
+async def test_model_settings_delta_round_trips_through_client_rebuilt_stream() -> None:
     """A per-step change survives the next turn when the client rebuilds history from the event stream."""
 
     async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
@@ -10458,14 +10464,17 @@ async def test_thinking_effort_delta_round_trips_through_client_rebuilt_stream()
     ]
     loaded = AGUIAdapter.load_messages([user, *_reduce_events(events)])
 
-    def effort_parts(messages: list[ModelMessage]) -> list[list[ThinkingEffortDeltaPart]]:
+    def effort_parts(messages: list[ModelMessage]) -> list[list[ModelSettingsDeltaPart]]:
         return [
-            [part for part in message.parts if isinstance(part, ThinkingEffortDeltaPart)]
+            [part for part in message.parts if isinstance(part, ModelSettingsDeltaPart)]
             for message in messages
             if isinstance(message, ModelRequest)
         ]
 
     assert effort_parts(loaded) == snapshot(
-        [[ThinkingEffortDeltaPart(effort='low', top_level=True)], [ThinkingEffortDeltaPart(effort='high')]]
+        [
+            [ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)],
+            [ModelSettingsDeltaPart(settings={'thinking': 'high'})],
+        ]
     )
     assert effort_parts(loaded) == effort_parts(server_history)

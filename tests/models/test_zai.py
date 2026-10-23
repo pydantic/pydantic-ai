@@ -9,8 +9,8 @@ from pydantic_ai import (
     BinaryImage,
     ModelRequest,
     ModelResponse,
+    ModelSettingsDeltaPart,
     TextPart,
-    ThinkingEffortDeltaPart,
     ThinkingPart,
     UserPromptPart,
 )
@@ -114,7 +114,7 @@ async def test_zai_thinking_across_turns(allow_model_requests: None, zai_api_key
             ModelRequest(
                 parts=[
                     UserPromptPart(content='Now multiply that result by 2.', timestamp=IsDatetime()),
-                    ThinkingEffortDeltaPart(effort='high', top_level=True),
+                    ModelSettingsDeltaPart(settings={'thinking': 'high'}, top_level=True),
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -141,7 +141,7 @@ async def test_zai_thinking_across_turns(allow_model_requests: None, zai_api_key
             ModelRequest(
                 parts=[
                     UserPromptPart(content='And what was my first question?', timestamp=IsDatetime()),
-                    ThinkingEffortDeltaPart(effort=None, top_level=True),
+                    ModelSettingsDeltaPart(settings={'thinking': None}, top_level=True),
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),

@@ -66,6 +66,7 @@ from ..messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     RealtimeInputSpeechEndEvent,
@@ -78,7 +79,6 @@ from ..messages import (
     SystemPromptPart,
     TextContent,
     TextPart,
-    ThinkingEffortDeltaPart,
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -628,7 +628,7 @@ async def _seed_request_items(
                 InstructionDeltaPart,
                 InstructionBaselinePart,
                 ToolAvailabilityDeltaPart,
-                ThinkingEffortDeltaPart,
+                ModelSettingsDeltaPart,
             ),
         ):
             # System prompts are seeded through session instructions, and tool-availability news

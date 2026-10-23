@@ -26,11 +26,11 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSettingsDeltaPart,
     PrefixedToolset,
     RetryInfo,
     RunContext,
     TextPart,
-    ThinkingEffortDeltaPart,
     Tool,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -5145,7 +5145,7 @@ def test_include_return_schema_via_capability():
     tool_parts = [
         p
         for p in request.parts
-        if not isinstance(p, (ToolAvailabilityDeltaPart, InstructionBaselinePart, ThinkingEffortDeltaPart))
+        if not isinstance(p, (ToolAvailabilityDeltaPart, InstructionBaselinePart, ModelSettingsDeltaPart))
     ]
     assert any('Return schema' in str(p.content) for p in tool_parts) or True  # TestModel may not inject
 

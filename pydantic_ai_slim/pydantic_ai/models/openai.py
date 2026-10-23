@@ -76,6 +76,7 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseState,
     ModelResponseStreamEvent,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     NativeToolSearchCallPart,
@@ -85,7 +86,6 @@ from ..messages import (
     SystemPromptPart,
     TextContent,
     TextPart,
-    ThinkingEffortDeltaPart,
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -142,7 +142,7 @@ from . import (
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
-    _without_effort_deltas,  # pyright: ignore[reportPrivateUsage]
+    _without_model_settings_deltas,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -2989,7 +2989,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         # The endpoint doesn't take `configuration_update` items: the compacted window carries no effort change.
         # Removed after resolving the response to continue, which matches the history as stored.
-        messages = _without_effort_deltas(messages)
+        messages = _without_model_settings_deltas(messages)
 
         # Same ordering rule as `_build_responses_request_params`: the introduced-tools derivation
         # and the mapping must both see the trimmed history, and re-compacting only compacts the
@@ -3492,7 +3492,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> tuple[bool, ModelRequestParameters]:
         """Decide whether this request sends effort changes as `configuration_update` items.
 
-        It does when the history holds a mid-conversation change (a `ThinkingEffortDeltaPart` that
+        It does when the history holds a mid-conversation change (a `ModelSettingsDeltaPart` that
         `prepare_messages` kept for this model) and nothing rules the item out: an explicit
         `openai_reasoning_effort`, which is sent as is, and server-side truncation or compaction, which OpenAI
         documents the item doesn't work with. The request then keeps the window's opening effort as its
@@ -3574,7 +3574,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
         if not sends_effort_changes:
-            messages = _without_effort_deltas(messages)
+            messages = _without_model_settings_deltas(messages)
 
         instructions, openai_messages = await self._map_messages(
             messages,
@@ -4382,17 +4382,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         openai_messages.append(await self._map_user_prompt(part))
                     elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                         raise _unprojected_instruction_delta_error()
-                    elif isinstance(part, ThinkingEffortDeltaPart):
+                    elif isinstance(part, ModelSettingsDeltaPart):
                         # Only the mid-conversation changes render: a window's opening effort went out as the
                         # request-level `reasoning.effort`. `_effort_delta_request` has already removed every
                         # part when this request sends the current effort at request level instead.
-                        if not part.top_level and part.effort is not None:
+                        if not part.top_level and (effort := part.settings.get('thinking')) is not None:
                             openai_messages.append(
                                 responses.ResponseConfigurationUpdateItemParamParam(
                                     type='configuration_update',
                                     reasoning={
                                         'effort': _resolve_openai_thinking_effort(
-                                            part.effort,
+                                            effort,
                                             profile,
                                             supports_max=profile.get(
                                                 'openai_responses_supports_max_reasoning_effort', False

@@ -151,7 +151,7 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                         )
                     )
                 elif isinstance(
-                    part, (messages.SpeechPart, messages.ToolAvailabilityDeltaPart, messages.ThinkingEffortDeltaPart)
+                    part, (messages.SpeechPart, messages.ToolAvailabilityDeltaPart, messages.ModelSettingsDeltaPart)
                 ):
                     # These parts are not currently sent to MCP sampling.
                     continue

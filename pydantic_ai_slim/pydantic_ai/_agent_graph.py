@@ -2091,7 +2091,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 ),
             )
             _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
-            _record_effort_change(
+            _record_model_settings_changes(
                 ctx,
                 model,
                 merge_model_settings(model.settings, model_settings),
@@ -3175,18 +3175,18 @@ def _record_tool_population_changes(
     return replace(parameters, introduced_tool_names=set(introduced))
 
 
-def _record_effort_change(
+def _record_model_settings_changes(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
     model: models.Model,
     model_settings: ModelSettings | None,
     messages: list[_messages.ModelMessage],
     requests: Sequence[_messages.ModelRequest],
 ) -> None:
-    """Record a change to the thinking effort in effect as a `ThinkingEffortDeltaPart` at the end of this step's request.
+    """Record a change to the recorded model settings as a `ModelSettingsDeltaPart` at the end of this step's request.
 
-    The effort wanted is the unified `thinking` setting this request resolves to, after `before_model_request`
+    The only key recorded today is `thinking`, as an effort level (see `RecordedModelSettings`). The effort wanted is the unified `thinking` setting this request resolves to, after `before_model_request`
     hooks and `model_settings` callables have had their say; the effort in effect is the last
-    `ThinkingEffortDeltaPart` in the outgoing history. A request that names an effort level with none in effect
+    `ModelSettingsDeltaPart` with a `thinking` key in the outgoing history. A request that names an effort level with none in effect
     opens a window (`top_level=True`), as does any change to or from a `thinking` that names no level, which no
     mid-conversation channel can express. A change from one level to another is recorded with `top_level=False`,
     which a model with a mid-conversation channel sends in place. Nothing is recorded while `thinking` never
@@ -3208,19 +3208,20 @@ def _record_effort_change(
         for message in _messages.post_compaction_window(messages)
         if isinstance(message, _messages.ModelRequest)
         for part in message.parts
-        if isinstance(part, _messages.ThinkingEffortDeltaPart)
+        if isinstance(part, _messages.ModelSettingsDeltaPart) and 'thinking' in part.settings
     ]
     # A part on this step's own request hasn't been answered yet, so this step changed its mind (a hook, or a
     # retry with different settings): it's replaced, and the request records only what it ends up sending.
-    unanswered: _messages.ThinkingEffortDeltaPart | None = None
+    unanswered: _messages.ModelSettingsDeltaPart | None = None
     if recorded and any(recorded[-1][0] is target for target in targets):
         unanswered = recorded.pop()[1]
     current = recorded[-1][1] if recorded else None
-    if (current.effort if current is not None else None) == wanted:
+    current_effort = current.settings.get('thinking') if current is not None else None
+    if current_effort == wanted:
         delta = None
     else:
-        top_level = current is None or current.effort is None or wanted is None
-        delta = _messages.ThinkingEffortDeltaPart(effort=wanted, top_level=top_level)
+        top_level = current is None or current_effort is None or wanted is None
+        delta = _messages.ModelSettingsDeltaPart(settings={'thinking': wanted}, top_level=top_level)
     if unanswered is not None:
         if delta == unanswered:
             return
@@ -3231,7 +3232,7 @@ def _record_effort_change(
         for request in targets:
             request.parts = [*request.parts, delta]
     if delta is not None:
-        ctx.state.event_stream_buffer.append(_messages.ThinkingEffortDeltaEvent(part=delta))
+        ctx.state.event_stream_buffer.append(_messages.ModelSettingsDeltaEvent(part=delta))
 
 
 def _with_outgoing_reveal_state(

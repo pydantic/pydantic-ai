@@ -1,9 +1,9 @@
-"""The framework records changes to the thinking effort in effect as `ThinkingEffortDeltaPart`s.
+"""The framework records changes to the thinking effort in effect as `ModelSettingsDeltaPart`s.
 
 A model with a mid-conversation effort channel renders them in place and keeps the request-level effort the
 conversation opened with, so the prompt cache survives the change; every other model drops them and sends the
 current effort as the request-level setting. These tests pin the recording and the projection; the adapters'
-rendering is pinned in `tests/models/test_thinking_effort_delta.py`.
+rendering is pinned in `tests/models/test_model_settings_delta.py`.
 """
 
 from __future__ import annotations
@@ -18,10 +18,10 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSettingsDeltaEvent,
+    ModelSettingsDeltaPart,
     RunContext,
     TextPart,
-    ThinkingEffortDeltaEvent,
-    ThinkingEffortDeltaPart,
     UserPromptPart,
 )
 from pydantic_ai.models import Model
@@ -38,9 +38,13 @@ with try_import() as imports_successful:
 
 
 def _effort_parts(messages: list[ModelMessage]) -> list[list[tuple[ThinkingLevel | None, bool]]]:
-    """Each request's `ThinkingEffortDeltaPart`s, as `(effort, top_level)`."""
+    """Each request's `ModelSettingsDeltaPart`s, as `(effort, top_level)`."""
     return [
-        [(part.effort, part.top_level) for part in message.parts if isinstance(part, ThinkingEffortDeltaPart)]
+        [
+            (part.settings.get('thinking'), part.top_level)
+            for part in message.parts
+            if isinstance(part, ModelSettingsDeltaPart)
+        ]
         for message in messages
         if isinstance(message, ModelRequest)
     ]
@@ -59,7 +63,7 @@ async def test_a_conversation_records_each_change_once():
     # The part goes at the end of the request, after the input it applies to.
     first = history[0]
     assert isinstance(first, ModelRequest)
-    assert isinstance(first.parts[-1], ThinkingEffortDeltaPart)
+    assert isinstance(first.parts[-1], ModelSettingsDeltaPart)
 
 
 async def test_nothing_is_recorded_without_an_effort_level():
@@ -91,21 +95,31 @@ async def test_the_change_is_streamed_as_an_event():
     agent = Agent(TestModel())
     async with agent.run_stream_events('Hi', model_settings=ModelSettings(thinking='low')) as stream:
         events = [event async for event in stream]
-    assert [event.part for event in events if isinstance(event, ThinkingEffortDeltaEvent)] == [
-        ThinkingEffortDeltaPart(effort='low', top_level=True)
+    assert [event.part for event in events if isinstance(event, ModelSettingsDeltaEvent)] == [
+        ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)
     ]
 
 
 @pytest.mark.parametrize(
     ('history_parts', 'thinking', 'expected'),
     [
-        pytest.param([ThinkingEffortDeltaPart(effort='low', top_level=True)], 'high', [('high', True)], id='replaced'),
-        pytest.param([ThinkingEffortDeltaPart(effort='low', top_level=True)], 'low', [('low', True)], id='unchanged'),
-        pytest.param([ThinkingEffortDeltaPart(effort='low', top_level=True)], True, [], id='withdrawn'),
+        pytest.param(
+            [ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)],
+            'high',
+            [('high', True)],
+            id='replaced',
+        ),
+        pytest.param(
+            [ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)],
+            'low',
+            [('low', True)],
+            id='unchanged',
+        ),
+        pytest.param([ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)], True, [], id='withdrawn'),
     ],
 )
 async def test_an_unanswered_change_is_replaced(
-    history_parts: list[ThinkingEffortDeltaPart], thinking: ThinkingLevel, expected: list[tuple[str | None, bool]]
+    history_parts: list[ModelSettingsDeltaPart], thinking: ThinkingLevel, expected: list[tuple[str | None, bool]]
 ):
     """A request that no response answered yet records only what it ends up sending.
 
@@ -119,9 +133,11 @@ async def test_an_unanswered_change_is_replaced(
 
 async def test_an_unanswered_change_back_to_the_effort_in_effect_is_removed():
     history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('Hi'), ThinkingEffortDeltaPart(effort='low', top_level=True)]),
+        ModelRequest(
+            parts=[UserPromptPart('Hi'), ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)]
+        ),
         ModelResponse(parts=[TextPart('Hello')]),
-        ModelRequest(parts=[UserPromptPart('Again'), ThinkingEffortDeltaPart(effort='high')]),
+        ModelRequest(parts=[UserPromptPart('Again'), ModelSettingsDeltaPart(settings={'thinking': 'high'})]),
     ]
     result = await Agent(TestModel()).run(message_history=history, model_settings=ModelSettings(thinking='low'))
     assert _effort_parts(result.all_messages()) == [[('low', True)], []]
@@ -130,7 +146,9 @@ async def test_an_unanswered_change_back_to_the_effort_in_effect_is_removed():
 async def test_a_compaction_opens_a_new_window():
     """The changes before a compaction are gone with it, so the next request that names a level opens a window."""
     history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('Hi'), ThinkingEffortDeltaPart(effort='low', top_level=True)]),
+        ModelRequest(
+            parts=[UserPromptPart('Hi'), ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)]
+        ),
         ModelResponse(parts=[CompactionPart(content='Summary.')]),
     ]
     result = await Agent(TestModel()).run(
@@ -143,11 +161,11 @@ def test_otel_message_parts():
     from pydantic_ai.models.instrumented import InstrumentationSettings
 
     settings = InstrumentationSettings(include_content=False)
-    assert ThinkingEffortDeltaPart(effort='high').otel_message_parts(settings) == [
-        {'type': 'text', 'content': 'Thinking effort: high'}
+    assert ModelSettingsDeltaPart(settings={'thinking': 'high'}).otel_message_parts(settings) == [
+        {'type': 'text', 'content': "Model settings changed: thinking='high'"}
     ]
-    assert ThinkingEffortDeltaPart(effort=None, top_level=True).otel_message_parts(settings) == [
-        {'type': 'text', 'content': 'Thinking effort: default'}
+    assert ModelSettingsDeltaPart(settings={'thinking': None}, top_level=True).otel_message_parts(settings) == [
+        {'type': 'text', 'content': 'Model settings changed: thinking=None'}
     ]
 
 
@@ -181,22 +199,24 @@ def _history(*requests: list[Any]) -> list[ModelMessage]:
     [
         pytest.param(
             _history(
-                [ThinkingEffortDeltaPart(effort='low', top_level=True)],
-                [ThinkingEffortDeltaPart(effort='high')],
-                [ThinkingEffortDeltaPart(effort=None, top_level=True)],
-                [ThinkingEffortDeltaPart(effort='medium', top_level=True)],
-                [ThinkingEffortDeltaPart(effort='low')],
+                [ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)],
+                [ModelSettingsDeltaPart(settings={'thinking': 'high'})],
+                [ModelSettingsDeltaPart(settings={'thinking': None}, top_level=True)],
+                [ModelSettingsDeltaPart(settings={'thinking': 'medium'}, top_level=True)],
+                [ModelSettingsDeltaPart(settings={'thinking': 'low'})],
             ),
             [[], [], [], [('medium', True)], [('low', False)]],
             id='a-new-window-supersedes-the-earlier-ones',
         ),
         pytest.param(
             [
-                ModelRequest(parts=[UserPromptPart('Hi'), ThinkingEffortDeltaPart(effort='low', top_level=True)]),
-                ModelRequest(parts=[UserPromptPart('Again'), ThinkingEffortDeltaPart(effort='high')]),
+                ModelRequest(
+                    parts=[UserPromptPart('Hi'), ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)]
+                ),
+                ModelRequest(parts=[UserPromptPart('Again'), ModelSettingsDeltaPart(settings={'thinking': 'high'})]),
                 ModelResponse(parts=[TextPart('ok')]),
-                ModelRequest(parts=[UserPromptPart('More'), ThinkingEffortDeltaPart(effort='low')]),
-                ModelRequest(parts=[UserPromptPart('Still'), ThinkingEffortDeltaPart(effort='medium')]),
+                ModelRequest(parts=[UserPromptPart('More'), ModelSettingsDeltaPart(settings={'thinking': 'low'})]),
+                ModelRequest(parts=[UserPromptPart('Still'), ModelSettingsDeltaPart(settings={'thinking': 'medium'})]),
             ],
             [[], [('high', True)], [], [('medium', False)]],
             id='changes-no-response-separates-collapse-into-the-last',
@@ -222,7 +242,8 @@ def test_a_model_with_a_channel_keeps_the_current_window(
 )
 def test_a_model_without_a_channel_drops_every_part(model: Any):
     history = _history(
-        [ThinkingEffortDeltaPart(effort='low', top_level=True)], [ThinkingEffortDeltaPart(effort='high')]
+        [ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)],
+        [ModelSettingsDeltaPart(settings={'thinking': 'high'})],
     )
     built: Model = model()
     assert _effort_parts(built.prepare_messages(history)) == [[], []]

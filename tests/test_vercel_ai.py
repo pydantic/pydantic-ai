@@ -46,6 +46,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     NativeToolSearchCallPart,
@@ -63,7 +64,6 @@ from pydantic_ai.messages import (
     TextContent,
     TextPart,
     TextPartDelta,
-    ThinkingEffortDeltaPart,
     ThinkingPart,
     ThinkingPartDelta,
     ToolAvailabilityDeltaPart,
@@ -12804,21 +12804,23 @@ def test_load_messages_never_builds_text_content_with_client_metadata():
 
 def _effort_history() -> list[ModelMessage]:
     return [
-        ModelRequest(parts=[UserPromptPart('Hi'), ThinkingEffortDeltaPart(effort='low', top_level=True)]),
+        ModelRequest(
+            parts=[UserPromptPart('Hi'), ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)]
+        ),
         ModelResponse(parts=[TextPart('Hello')]),
-        ModelRequest(parts=[UserPromptPart('Think harder'), ThinkingEffortDeltaPart(effort='high')]),
+        ModelRequest(parts=[UserPromptPart('Think harder'), ModelSettingsDeltaPart(settings={'thinking': 'high'})]),
         ModelResponse(parts=[TextPart('Done')]),
     ]
 
 
-def test_thinking_effort_delta_ui_round_trip():
+def test_model_settings_delta_ui_round_trip():
     """Effort changes ride through the client, so the next request sends the changes the earlier ones were sent with."""
     messages = _effort_history()
     dumped = VercelAIAdapter.dump_messages(messages)
     assert [part.model_dump(exclude_none=True) for part in dumped[2].parts] == snapshot(
         [
             {'type': 'text', 'text': 'Think harder', 'state': 'done'},
-            {'type': 'data-thinking-effort-delta', 'data': {'effort': 'high', 'top_level': False}},
+            {'type': 'data-model-settings-delta', 'data': {'settings': {'thinking': 'high'}, 'top_level': False}},
         ]
     )
     reloaded = VercelAIAdapter.load_messages(dumped)
@@ -12828,23 +12830,28 @@ def test_thinking_effort_delta_ui_round_trip():
 
 @pytest.mark.parametrize(
     'data',
-    [{'effort': 'extreme'}, {'effort': None}, {'effort': 'high', 'top_level': 'sometimes'}],
-    ids=['unknown-level', 'withdrawal-mid-window', 'malformed-flag'],
+    [
+        {'settings': {'thinking': 'extreme'}},
+        {'settings': {'thinking': None}},
+        {'settings': {'thinking': 'high'}, 'top_level': 'sometimes'},
+        {'settings': {'timeout': 5}},
+    ],
+    ids=['unknown-level', 'withdrawal-mid-window', 'malformed-flag', 'unrecorded-key'],
 )
-def test_malformed_thinking_effort_delta_is_dropped(data: dict[str, Any]):
+def test_malformed_model_settings_delta_is_dropped(data: dict[str, Any]):
     messages = VercelAIAdapter.load_messages(
         [
             UIMessage(
                 id='user-1',
                 role='user',
-                parts=[TextUIPart(text='Hi'), DataUIPart(type='data-thinking-effort-delta', data=data)],
+                parts=[TextUIPart(text='Hi'), DataUIPart(type='data-model-settings-delta', data=data)],
             )
         ]
     )
     assert [part.part_kind for message in messages for part in message.parts] == ['user-prompt']
 
 
-async def test_thinking_effort_delta_round_trips_through_client_rebuilt_stream() -> None:
+async def test_model_settings_delta_round_trips_through_client_rebuilt_stream() -> None:
     """A per-step change survives the next turn when the client rebuilds history from the event stream.
 
     The opening effort is streamed before the first step and the change after the tool result, so the AI SDK keeps
@@ -12878,9 +12885,9 @@ async def test_thinking_effort_delta_round_trips_through_client_rebuilt_stream()
         )
         if '[DONE]' not in encoded
     ]
-    effort_chunks = [event for event in events if event['type'] == 'data-thinking-effort-delta']
+    effort_chunks = [event for event in events if event['type'] == 'data-model-settings-delta']
     assert [chunk['data'] for chunk in effort_chunks] == snapshot(
-        [{'effort': 'low', 'top_level': True}, {'effort': 'high', 'top_level': False}]
+        [{'settings': {'thinking': 'low'}, 'top_level': True}, {'settings': {'thinking': 'high'}, 'top_level': False}]
     )
     tool_output = next(event for event in events if event['type'] == 'tool-output-available')
     text = ''.join(event['delta'] for event in events if event['type'] == 'text-delta')
@@ -12904,6 +12911,6 @@ async def test_thinking_effort_delta_round_trips_through_client_rebuilt_stream()
     assert [[part.part_kind for part in message.parts] for message in loaded] == [
         [part.part_kind for part in message.parts] for message in server_history
     ]
-    assert [part for message in loaded for part in message.parts if isinstance(part, ThinkingEffortDeltaPart)] == [
-        part for message in server_history for part in message.parts if isinstance(part, ThinkingEffortDeltaPart)
+    assert [part for message in loaded for part in message.parts if isinstance(part, ModelSettingsDeltaPart)] == [
+        part for message in server_history for part in message.parts if isinstance(part, ModelSettingsDeltaPart)
     ]

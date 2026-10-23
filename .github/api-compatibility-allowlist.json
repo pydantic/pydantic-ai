@@ -140,14 +140,14 @@
     },
     {
       "against": "v2.60.0",
-      "fingerprint": "7b7bb0edeaf04acbcebcda52de0cd901a4673cf5e38fba4a38dbc26ad616f2a2",
-      "reason": "Adds `ThinkingEffortDeltaPart` to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
+      "fingerprint": "5bc7f71bf09d601cd93fbc74208b311ea5bbfcd8a84ebc6ede3faca190b04be6",
+      "reason": "Adds `ModelSettingsDeltaPart` to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11111"
     },
     {
       "against": "v2.60.0",
-      "fingerprint": "d2ab7cdec5b31249c317a9e385fa50cdb0cbd005f82b572a4a343c98b4431e83",
-      "reason": "Adds `ThinkingEffortDeltaEvent` to `HandleResponseEvent`; every existing member is unchanged.",
+      "fingerprint": "2b86fd98d5caacbace46a62288b4939e6ff7fa1db6d5b074e0ab93a82d12487f",
+      "reason": "Adds `ModelSettingsDeltaEvent` to `HandleResponseEvent`; every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11111"
     }
   ]

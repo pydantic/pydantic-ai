@@ -35,10 +35,10 @@ from pydantic_ai.messages import (
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
+    ModelSettingsDeltaPart,
     RetryFeedbackPart,
     RetryInfo,
     SystemPromptPart,
-    ThinkingEffortDeltaPart,
     ToolAvailabilityDeltaPart,
     ToolRetryCause,
     _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
@@ -87,7 +87,7 @@ DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 _TOOL_NAME_PATTERN = re.compile(r'[a-zA-Z0-9_-]{1,64}')
 """The tool-name shape accepted by the strictest supported model providers."""
 _TOOL_AVAILABILITY_DELTA_PART_ADAPTER = TypeAdapter(ToolAvailabilityDeltaPart)
-_THINKING_EFFORT_DELTA_PART_ADAPTER = TypeAdapter(ThinkingEffortDeltaPart)
+_MODEL_SETTINGS_DELTA_PART_ADAPTER = TypeAdapter(ModelSettingsDeltaPart)
 _RETRY_FEEDBACK_PART_ADAPTER = TypeAdapter(RetryFeedbackPart)
 
 
@@ -278,31 +278,33 @@ def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvai
     return part
 
 
-def thinking_effort_delta_payload(part: ThinkingEffortDeltaPart) -> dict[str, Any]:
-    """Serialize a [`ThinkingEffortDeltaPart`][pydantic_ai.messages.ThinkingEffortDeltaPart] for a UI data channel.
+def model_settings_delta_payload(part: ModelSettingsDeltaPart) -> dict[str, Any]:
+    """Serialize a [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] for a UI data channel.
 
     The part rides through the client like a `ToolAvailabilityDeltaPart`, because the request after a round trip
-    has to send the effort changes, and the request-level effort, that the earlier requests were sent with:
+    has to send the settings changes, and the request-level settings, that the earlier requests were sent with:
     leaving it out would change the prompt cache prefix.
     """
-    return {'effort': part.effort, 'top_level': part.top_level}
+    return {'settings': dict(part.settings), 'top_level': part.top_level}
 
 
-def thinking_effort_delta_from_payload(payload: Mapping[str, Any]) -> ThinkingEffortDeltaPart | None:
-    """Build a [`ThinkingEffortDeltaPart`][pydantic_ai.messages.ThinkingEffortDeltaPart] from a UI payload, or `None` if it's malformed.
+def model_settings_delta_from_payload(payload: Mapping[str, Any]) -> ModelSettingsDeltaPart | None:
+    """Build a [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] from a UI payload, or `None` if it's malformed.
 
-    Client-driven like `tool_availability_delta_from_payload`, and bounded: the effort is validated against
-    the effort levels, and a forged change is superseded by the one the next request records for the effort
-    the server actually resolves.
+    Client-driven like `tool_availability_delta_from_payload`, and bounded: each setting is validated against
+    `RecordedModelSettings` (an effort against the effort levels; unknown keys are dropped), and a forged change
+    is superseded by the one the next request records for the settings the server actually resolves.
     """
     try:
-        part = _THINKING_EFFORT_DELTA_PART_ADAPTER.validate_python(
-            {'effort': payload.get('effort'), 'top_level': payload.get('top_level', False)}
+        part = _MODEL_SETTINGS_DELTA_PART_ADAPTER.validate_python(
+            {'settings': payload.get('settings'), 'top_level': payload.get('top_level', False)}
         )
     except ValidationError:
         return None
-    # Only a window's opening part goes back to no effort level: the framework never records any other.
-    return part if part.effort is not None or part.top_level else None
+    # A change records at least one setting, and only a window's opening part goes back to no effort level.
+    if not part.settings or ('thinking' in part.settings and part.settings['thinking'] is None and not part.top_level):
+        return None
+    return part
 
 
 def retry_feedback_payload(part: RetryFeedbackPart) -> dict[str, Any]:

@@ -52,6 +52,7 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     NativeToolSearchCallPart,
@@ -60,7 +61,6 @@ from ..messages import (
     SystemPromptPart,
     TextContent,
     TextPart,
-    ThinkingEffortDeltaPart,
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -125,7 +125,7 @@ from . import (
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
-    _without_effort_deltas,  # pyright: ignore[reportPrivateUsage]
+    _without_model_settings_deltas,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -1938,7 +1938,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # Co-extensive with the renderer in `_map_message`: the messages here are the ones
         # `_effort_delta_request` left, which hold a mid-conversation change only when it renders.
         if any(
-            isinstance(part, ThinkingEffortDeltaPart) and not part.top_level and part.effort is not None
+            isinstance(part, ModelSettingsDeltaPart)
+            and not part.top_level
+            and part.settings.get('thinking') is not None
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
@@ -2801,13 +2803,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 await self._map_user_prompt_part(request_part, request_context, map_context)
             elif isinstance(request_part, (InstructionBaselinePart, InstructionDeltaPart)):
                 raise _unprojected_instruction_delta_error()
-            elif isinstance(request_part, ThinkingEffortDeltaPart):
+            elif isinstance(request_part, ModelSettingsDeltaPart):
                 # Only the mid-conversation changes render: a window's opening effort went out as the request-level
                 # `output_config.effort`. `_effort_delta_request` has already removed every part when this request
                 # sends the current effort at request level instead.
-                if not request_part.top_level and request_part.effort is not None:
+                if not request_part.top_level and (effort := request_part.settings.get('thinking')) is not None:
                     request_context.effort_change = resolve_anthropic_effort(
-                        request_part.effort,
+                        effort,
                         supports_xhigh=self.profile.get('anthropic_supports_xhigh_effort', False),
                         supports_max=self.profile.get('anthropic_supports_max_effort', True),
                     )
@@ -3703,7 +3705,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> tuple[list[ModelMessage], ModelRequestParameters]:
         """Decide whether this request sends effort changes as per-message `output_config` entries.
 
-        It does when the history holds a mid-conversation change (a `ThinkingEffortDeltaPart` that
+        It does when the history holds a mid-conversation change (a `ModelSettingsDeltaPart` that
         `prepare_messages` kept for this model) and nothing rules the entry out: an explicit `anthropic_effort`,
         which is sent as is, and thinking other than adaptive, under which the API rejects a per-message effort
         that differs from the level in effect (`between_tools` on Claude Sonnet 5.5, `disabled` on Claude Haiku
@@ -3724,7 +3726,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             if baseline is not None and isinstance(model_request_parameters.thinking, str):
                 model_request_parameters = replace(model_request_parameters, thinking=baseline)
             return messages, model_request_parameters
-        return _without_effort_deltas(messages), model_request_parameters
+        return _without_model_settings_deltas(messages), model_request_parameters
 
     def _build_output_config(
         self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
@@ -4427,7 +4429,7 @@ class _MapModelRequestContext:
     request_scoped_prompts: list[str] = field(default_factory=list[str])
     tool_availability_blocks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     effort_change: AnthropicEffort | None = None
-    """The effort a mid-conversation `ThinkingEffortDeltaPart` changes to, sent as an effort-only `system` entry."""
+    """The effort a mid-conversation `ModelSettingsDeltaPart` changes to, sent as an effort-only `system` entry."""
     # `CachePoint`s authored after a mid-conversation instruction or a tool availability
     # change, as the number of user blocks that preceded each one. They can't be placed
     # while mapping: both render after this request's user blocks in the `system` entry

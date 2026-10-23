@@ -95,6 +95,7 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseState,
     ModelResponseStreamEvent,
+    ModelSettingsDeltaPart,
     NativeToolSearchReturnPart as NativeToolSearchReturnPart,
     PartEndEvent,
     PartStartEvent,
@@ -103,7 +104,6 @@ from ..messages import (
     SpeechPart,
     SystemPromptPart,
     TextPart,
-    ThinkingEffortDeltaPart,
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -677,7 +677,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     Intersected with the profile's `supported_document_media_types`, like `_unsupported_file_inputs`.
     """
     _renders_effort_deltas: ClassVar[bool] = False
-    """Whether this adapter renders a `ThinkingEffortDeltaPart` on a model whose profile sets `supports_mid_conversation_effort`.
+    """Whether this adapter renders a `ModelSettingsDeltaPart` on a model whose profile sets `supports_mid_conversation_effort`.
 
     Elsewhere `prepare_messages` drops the parts, so the adapter sends the current effort as the request-level
     setting.
@@ -1117,7 +1117,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Whether a provider-specific setting in `model_settings` replaces the effort a unified `thinking` level maps to.
 
         The framework then records the request as naming no effort level, so a
-        [`ThinkingEffortDeltaPart`][pydantic_ai.messages.ThinkingEffortDeltaPart] never claims a request-level effort
+        [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] never claims a request-level effort
         the request didn't send. Adapters that render effort changes override it.
         """
         return False
@@ -1336,7 +1336,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         framework's own, becomes a mid-conversation `SystemPromptPart`. A legacy `RetryPromptPart` becomes a `ToolReturnPart` with `outcome='retried'`
         when it names a tool, and the `RetryFeedbackPart` it always meant when it doesn't.
 
-        Keeps the [`ThinkingEffortDeltaPart`][pydantic_ai.messages.ThinkingEffortDeltaPart]s from the last one that
+        Keeps the [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart]s from the last one that
         opened a window on, collapsing those with no response between them, where this adapter renders a
         mid-conversation effort change and the profile sets `supports_mid_conversation_effort`; everywhere else it
         drops them, so the current effort goes out as the request-level setting.
@@ -1382,7 +1382,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 prefix=model_request_parameters.instruction_parts if model_request_parameters is not None else None,
             )
 
-        messages = _project_effort_deltas(
+        messages = _project_model_settings_deltas(
             messages,
             keep=self._renders_effort_deltas and self.profile.get('supports_mid_conversation_effort', False),
         )
@@ -3211,7 +3211,7 @@ def _reaches_the_model_as_a_user_message(part: ModelRequestPart) -> bool:
         | InstructionDeltaPart
         | InstructionBaselinePart
         | ToolAvailabilityDeltaPart
-        | ThinkingEffortDeltaPart,
+        | ModelSettingsDeltaPart,
     ):
         return False
     return not (isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part))
@@ -3467,8 +3467,11 @@ def _project_instruction_state(
     return projected
 
 
-def _project_effort_deltas(messages: list[ModelMessage], *, keep: bool) -> list[ModelMessage]:
-    """Leave the `ThinkingEffortDeltaPart`s a model with a mid-conversation effort channel renders, or drop them all.
+def _project_model_settings_deltas(messages: list[ModelMessage], *, keep: bool) -> list[ModelMessage]:
+    """Leave the `ModelSettingsDeltaPart`s a model with a mid-conversation effort channel renders, or drop them all.
+
+    A model renders only their `thinking` key mid-conversation today, so with `keep` a part without one is dropped
+    too: the request's own settings already carry its keys as request-level settings.
 
     With `keep`, only the parts from the last one that opened a window (`top_level=True`) on are kept: the
     window's opening request sent its effort as the request-level setting because no mid-conversation
@@ -3479,16 +3482,16 @@ def _project_effort_deltas(messages: list[ModelMessage], *, keep: bool) -> list[
     Returns `messages` itself when there is nothing to change.
     """
     if not any(
-        isinstance(part, ThinkingEffortDeltaPart)
+        isinstance(part, ModelSettingsDeltaPart)
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
     ):
         return messages
-    kept: dict[int, ThinkingEffortDeltaPart] = {}
+    kept: dict[int, ModelSettingsDeltaPart] = {}
     """The parts to keep, by `id()`, each mapped to what it renders as after collapsing."""
     if keep:
-        run: list[ThinkingEffortDeltaPart] = []
+        run: list[ModelSettingsDeltaPart] = []
 
         def close_run() -> None:
             if run:
@@ -3502,7 +3505,9 @@ def _project_effort_deltas(messages: list[ModelMessage], *, keep: bool) -> list[
                 close_run()
                 continue
             for part in message.parts:
-                if isinstance(part, ThinkingEffortDeltaPart):
+                # Effort is the only key a model renders mid-conversation today; any other key goes out as the
+                # request-level setting, which the request's own settings already carry.
+                if isinstance(part, ModelSettingsDeltaPart) and 'thinking' in part.settings:
                     if part.top_level:
                         close_run()
                         kept.clear()
@@ -3511,12 +3516,12 @@ def _project_effort_deltas(messages: list[ModelMessage], *, keep: bool) -> list[
     projected: list[ModelMessage] = []
     for message in messages:
         if isinstance(message, ModelRequest) and any(
-            isinstance(part, ThinkingEffortDeltaPart) for part in message.parts
+            isinstance(part, ModelSettingsDeltaPart) for part in message.parts
         ):
             parts = [
-                kept[id(part)] if isinstance(part, ThinkingEffortDeltaPart) else part
+                kept[id(part)] if isinstance(part, ModelSettingsDeltaPart) else part
                 for part in message.parts
-                if not isinstance(part, ThinkingEffortDeltaPart) or id(part) in kept
+                if not isinstance(part, ModelSettingsDeltaPart) or id(part) in kept
             ]
             message = replace(message, parts=parts)
         projected.append(message)
@@ -3536,17 +3541,17 @@ def _effort_window_baseline(messages: Sequence[ModelMessage]) -> tuple[ThinkingE
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, ThinkingEffortDeltaPart)
+        if isinstance(part, ModelSettingsDeltaPart) and 'thinking' in part.settings
     ]
     if not parts:
         return None, False
-    baseline = parts[0].effort if parts[0].top_level else None
+    baseline = parts[0].settings.get('thinking') if parts[0].top_level else None
     return baseline, any(not part.top_level for part in parts)
 
 
-def _without_effort_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:  # pyright: ignore[reportUnusedFunction]
-    """`messages` without their `ThinkingEffortDeltaPart`s, for a request that sends the current effort as its request-level setting."""
-    return _project_effort_deltas(messages, keep=False)
+def _without_model_settings_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:  # pyright: ignore[reportUnusedFunction]
+    """`messages` without their `ModelSettingsDeltaPart`s, for a request that sends the current effort as its request-level setting."""
+    return _project_model_settings_deltas(messages, keep=False)
 
 
 def _has_instruction_state(messages: Iterable[ModelMessage]) -> bool:
@@ -3691,7 +3696,7 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
 
 # TODO(v3): remove `RetryPromptPart`
 _UnpreparedPart: TypeAlias = (
-    ToolAvailabilityDeltaPart | ThinkingEffortDeltaPart | RetryFeedbackPart | RetryPromptPart  # pyright: ignore[reportDeprecated]
+    ToolAvailabilityDeltaPart | ModelSettingsDeltaPart | RetryFeedbackPart | RetryPromptPart  # pyright: ignore[reportDeprecated]
 )
 """The request parts `prepare_messages` translates away before any adapter sees them.
 

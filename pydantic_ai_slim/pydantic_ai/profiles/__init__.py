@@ -194,7 +194,7 @@ class ModelProfile(TypedDict, total=False):
 
     When `True`, on a model whose adapter renders the change (`OpenAIResponsesModel`'s `configuration_update`
     item, `AnthropicModel`'s per-message `output_config`), a
-    [`ThinkingEffortDeltaPart`][pydantic_ai.messages.ThinkingEffortDeltaPart] is sent in place and the request
+    [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] is sent in place and the request
     keeps the conversation's earlier request-level effort, so the prompt cache survives the change. When
     `False`, `Model.prepare_messages` drops those parts and the current effort goes out as the request-level
     setting.

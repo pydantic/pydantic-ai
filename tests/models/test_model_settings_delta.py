@@ -19,8 +19,8 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSettingsDeltaPart,
     TextPart,
-    ThinkingEffortDeltaPart,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
@@ -64,10 +64,13 @@ def _history() -> list[ModelMessage]:
     """A conversation that opened at `low` effort, before a change to `xhigh`."""
     return [
         ModelRequest(
-            parts=[UserPromptPart('Where is item 12?'), ThinkingEffortDeltaPart(effort='low', top_level=True)]
+            parts=[
+                UserPromptPart('Where is item 12?'),
+                ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True),
+            ]
         ),
         ModelResponse(parts=[TextPart('Shelf 12, bin 1.')]),
-        ModelRequest(parts=[UserPromptPart('And item 40?'), ThinkingEffortDeltaPart(effort='xhigh')]),
+        ModelRequest(parts=[UserPromptPart('And item 40?'), ModelSettingsDeltaPart(settings={'thinking': 'xhigh'})]),
     ]
 
 
@@ -99,10 +102,10 @@ async def test_openai_effort_change_keeps_the_cache(allow_model_requests: None, 
         'And item 40?', message_history=first.all_messages(), model_settings={**settings, 'thinking': 'xhigh'}
     )
     assert [
-        part for message in second.all_messages() for part in message.parts if isinstance(part, ThinkingEffortDeltaPart)
+        part for message in second.all_messages() for part in message.parts if isinstance(part, ModelSettingsDeltaPart)
     ] == [
-        ThinkingEffortDeltaPart(effort='low', top_level=True),
-        ThinkingEffortDeltaPart(effort='xhigh'),
+        ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True),
+        ModelSettingsDeltaPart(settings={'thinking': 'xhigh'}),
     ]
     assert second.response.usage.cache_read_tokens >= first.response.usage.input_tokens - 100
 
@@ -132,7 +135,9 @@ async def test_openai_without_the_opening_effort_sends_the_current_one(allow_mod
     mock_client = MockOpenAIResponses.create_mock(_responses_text('Shelf 40, bin 7.'))
     model = OpenAIResponsesModel('gpt-6.1-sol', provider=OpenAIProvider(openai_client=mock_client))
     history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('Where is item 12?'), ThinkingEffortDeltaPart(effort='medium')]),
+        ModelRequest(
+            parts=[UserPromptPart('Where is item 12?'), ModelSettingsDeltaPart(settings={'thinking': 'medium'})]
+        ),
         ModelResponse(parts=[TextPart('Shelf 12, bin 1.')]),
         ModelRequest(parts=[UserPromptPart('And item 40?')]),
     ]
@@ -252,7 +257,9 @@ async def test_anthropic_without_the_opening_effort_sends_the_current_one(allow_
     mock_client = MockAnthropic.create_mock(_anthropic_text('Shelf 40, bin 7.'))
     model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(anthropic_client=mock_client))
     history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('Where is item 12?'), ThinkingEffortDeltaPart(effort='medium')]),
+        ModelRequest(
+            parts=[UserPromptPart('Where is item 12?'), ModelSettingsDeltaPart(settings={'thinking': 'medium'})]
+        ),
         ModelResponse(parts=[TextPart('Shelf 12, bin 1.')]),
         ModelRequest(parts=[UserPromptPart('And item 40?')]),
     ]
@@ -293,7 +300,7 @@ def test_anthropic_falls_back_to_the_request_level_effort(settings: AnthropicMod
     parameters = ModelRequestParameters(thinking='xhigh')
     messages, effort_parameters = model._effort_delta_request(_history(), settings, parameters)  # pyright: ignore[reportPrivateUsage]
     assert effort_parameters is parameters
-    assert not any(isinstance(part, ThinkingEffortDeltaPart) for message in messages for part in message.parts)
+    assert not any(isinstance(part, ModelSettingsDeltaPart) for message in messages for part in message.parts)
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
@@ -366,8 +373,8 @@ async def test_openai_explicit_effort_records_no_unified_level(allow_model_reque
     )
 
     assert [
-        part for message in second.all_messages() for part in message.parts if isinstance(part, ThinkingEffortDeltaPart)
-    ] == [ThinkingEffortDeltaPart(effort='xhigh', top_level=True)]
+        part for message in second.all_messages() for part in message.parts if isinstance(part, ModelSettingsDeltaPart)
+    ] == [ModelSettingsDeltaPart(settings={'thinking': 'xhigh'}, top_level=True)]
     first_request, second_request = get_mock_responses_kwargs(mock_client)
     assert first_request['reasoning']['effort'] == 'high'
     assert second_request['reasoning']['effort'] == 'xhigh'
