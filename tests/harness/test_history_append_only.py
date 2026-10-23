@@ -21,7 +21,7 @@ from mcp.server.fastmcp import FastMCP
 
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ToolSearch, Toolset
-from pydantic_ai.messages import ModelMessage, ToolCallPart
+from pydantic_ai.messages import ModelMessage, TextContent, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
@@ -47,11 +47,13 @@ from pydantic_ai_harness import (
     OutputGuardrail,
     PostHog,
     Pylon,
+    RelevanceCompaction,
     RepoContext,
     Researcher,
     Shell,
     Skills,
     SlidingWindowCompaction,
+    SmartSearch,
     StackOne,
     SummarizingCompaction,
     SystemReminders,
@@ -68,7 +70,14 @@ from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.notion import Notion
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from pydantic_ai_harness.subagents import DelegationReports, DelegationTaskEvent, DelegationTasks, SubAgent, SubAgents
+from pydantic_ai_harness.subagents import (
+    DelegationReports,
+    DelegationTaskEvent,
+    DelegationTasks,
+    SubAgent,
+    SubAgents,
+    is_task_report,
+)
 
 from ..append_only import (
     CLOCK,
@@ -197,10 +206,12 @@ FIXTURES: dict[str, Fixture] = {
     'ModalSandbox': lambda _: _modal_sandbox(),
     'OutputGuardrail': lambda _: OutputGuardrail(guard=lambda output: True),
     'RepoContext': _repo_context,
+    'RelevanceCompaction': lambda _: RelevanceCompaction(TestModel(), max_tokens=20, keep_tokens=1),
     'Researcher': _workspace(Researcher),
     'Shell': _workspace(Shell),
     'Skills': _skills,
     'SlidingWindowCompaction': lambda _: SlidingWindowCompaction(max_messages=6, keep_messages=2),
+    'SmartSearch': _workspace(lambda: SmartSearch(model=TestModel())),
     'StackOne': lambda _: StackOne('account', client=_hosted_server()),
     'SummarizingCompaction': lambda _: SummarizingCompaction(TestModel(), max_messages=6, keep_messages=2),
     'SystemReminders': lambda _: SystemReminders(dynamic_reminders=[_time_reminder]),
@@ -283,18 +294,6 @@ _MEMORY_OPENAI_MOVES: dict[Provider, dict[str, int]] = {
 """How many messages of each kind `Memory`'s snapshot rewrites or pushes back on the OpenAI APIs."""
 
 KNOWN: dict[str, tuple[Known, ...]] = {
-    'CodeMode(dynamic_catalog=True)': (
-        Known('ids', f'{_ISSUES}8965', 'instructions', 'instruction:anonymous@1'),
-        # Discovering a deferred tool rewrites the catalog block in the system prompt and folds the tool into
-        # `run_code` by dropping its declaration. On Responses the native client-executed `tool_search` is also
-        # swapped for the local `search_tools` function, which moves `run_code` up.
-        Known('prefix', f'{_ISSUES}8965', 'system', 'instruction:anonymous@1'),
-        Known('prefix', f'{_ISSUES}8965', 'deferred-tools', 'tool:forecast', providers=('anthropic',)),
-        *(
-            Known('prefix', f'{_ISSUES}8965', 'tools', f'tool:{name}', providers=('openai-responses',))
-            for name in ('forecast', 'tool_search', 'run_code')
-        ),
-    ),
     # Anthropic attaches the snapshot to the turn's user prompt, so the write, the next turn and the second write
     # each rewrite one. The OpenAI APIs send it as a message after the user prompt, so each change also pushes
     # every later message back a position.
@@ -326,6 +325,9 @@ ALLOWED: dict[str, Allowed] = {
         'Clears superseded file reads in place, as documented, when the model reads a file again',
         (('messages', 'tool-return'),),
     ),
+    # With a 20-token trigger every request is over it, so each request with an older step outside the
+    # one-token tail judges and rewrites it: two in this conversation.
+    'RelevanceCompaction': Allowed(_COMPACTION, _HISTORY, max_moves=2),
     'SlidingWindowCompaction': Allowed(_COMPACTION, _HISTORY),
     'SummarizingCompaction': Allowed(_COMPACTION, _HISTORY),
     # With a 10-token target every request is over it, so the tier clears each tool result as it ages out of
@@ -421,6 +423,12 @@ def _delegation_reports(
     def delivered_once(result: ConversationResult) -> None:
         parts = [part for message in result.history for part in getattr(message, 'parts', ()) if _REPORT in str(part)]
         assert len(parts) == 1, f'expected the report in history once, found {len(parts)}'
+        # Delivered as framed `<task_output>` data on the user channel, recognized by its metadata.
+        (part,) = parts
+        assert is_task_report(part), f'expected a task report, found {part!r}'
+        assert not isinstance(part.content, str)
+        (text,) = part.content
+        assert isinstance(text, TextContent) and text.content.startswith('<task_output task_id=')
 
     scenario = Scenario(
         turns=(

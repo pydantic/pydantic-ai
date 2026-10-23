@@ -13,7 +13,7 @@ import reprlib
 import time
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from copy import copy
 from dataclasses import dataclass, field, fields, is_dataclass, replace
@@ -28,6 +28,7 @@ from typing import (
     ClassVar,
     Generic,
     Literal,
+    NamedTuple,
     Self,
     TypeAlias,
     TypeVar,
@@ -132,6 +133,7 @@ from ..profiles import (
     _translate_legacy_profile_keys,  # pyright: ignore[reportPrivateUsage]
     merge_profile,
 )
+from ..profiles.decision import decision_model_profile
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import CacheSetting, ModelSettingName, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
@@ -265,6 +267,21 @@ class ModelRequestParameters:
     for and stays set after a reveal, so this answers the separate question of what the model can
     see *now*. History can name tools that no longer exist in the current run's definitions; those
     are dropped where this is derived, so it is a subset of `function_tools`' names by construction.
+    """
+
+    introduced_tool_names: set[str] = field(default_factory=set[str], repr=False)
+    """Immediately-available function tools that joined the run's tool population after its first request.
+
+    `tools` is the first cache section, so a tool that appears mid-run (added to a `FunctionToolset`
+    from inside a tool, returned by a dynamic toolset, listed by an MCP server after
+    `tools/list_changed`, let through by `prepare_tools`) is not added to it. It travels like a
+    revealed deferred tool instead: the run records a
+    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] naming it, and visibility
+    resolution puts it on the provider's tool-addition channel once that delta is in the outgoing
+    history. Without the delta it stays an ordinary visible `tools` entry, because it is callable either way.
+
+    This changes only how the definition reaches the model. `ToolDefinition.defer_loading` stays as
+    authored, and whether the tool can be called is decided exactly as before.
     """
 
     deferred_capability_ids: set[str] = field(default_factory=set[str], repr=False)
@@ -596,6 +613,15 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
 
     `None` when a model is selected outside a run.
     """
+
+
+class _SettingsLayer(NamedTuple):
+    """A scope of model settings, named as `Model._warn_if_thinking_overridden` describes it in its warning."""
+
+    name: str
+    settings: ModelSettings | None
+    settable: bool = True
+    """Whether the user can set a provider-specific setting here, so the warning can suggest it."""
 
 
 class Model(AbstractModel, Generic[InterfaceClient]):
@@ -1055,6 +1081,55 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             return 'native'
         return mode
 
+    def _thinking_applies(self, thinking: ThinkingLevel) -> bool:
+        """Whether `prepare_request` passes this unified `thinking` value on to the adapter, judged from the profile.
+
+        `thinking=False` passes on even to a model that can't turn thinking off, whose adapter then sends the least
+        thinking the model accepts. GPT-Live resolves it the same way for its delegated backend
+        (`realtime.openai_live._backend_reasoning_effort`): keep the two in step.
+        """
+        return self.profile.get('supports_thinking', False) or self.profile.get('thinking_always_enabled', False)
+
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        """The provider-specific settings in `model_settings` that take precedence over its unified `thinking`.
+
+        Adapters override this to mirror their own translation, naming a setting only where it replaces what
+        `thinking` would have sent.
+        """
+        return ()
+
+    def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
+        """Warn when a provider-specific setting from a broader layer takes precedence over a narrower `thinking`.
+
+        `layers` run from broadest to narrowest. A provider-specific setting in the same layer as `thinking`, or a
+        narrower one, keeps its documented precedence without a warning.
+        """
+        merged: ModelSettings | None = None
+        for layer in layers:
+            merged = merge_model_settings(merged, layer.settings)
+        if not merged or (thinking := merged.get('thinking')) is None:
+            return
+        # Ask the adapter first: a model without a profile of its own (`FallbackModel`) names no setting.
+        overriding = self._settings_overriding_thinking(merged)
+        if not overriding or not self._thinking_applies(thinking):
+            return
+        thinking_layer = max(i for i, layer in enumerate(layers) if layer.settings and 'thinking' in layer.settings)
+        target = layers[thinking_layer]
+        for key in overriding:
+            key_layer = max(i for i, layer in enumerate(layers) if layer.settings and key in layer.settings)
+            if key_layer < thinking_layer:
+                source = layers[key_layer].name
+                fix = (
+                    f'Set `{key}` in {target.name} instead of `thinking`, or remove it from {source}.'
+                    if target.settable
+                    else f'Remove `{key}` from {source} to apply `thinking`.'
+                )
+                warnings.warn(
+                    f'`{key}` from {source} takes precedence over `thinking={thinking!r}` from {target.name}. {fix}',
+                    UserWarning,
+                    stacklevel=2,
+                )
+
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
@@ -1068,6 +1143,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         they need to customize the preparation flow further, but most implementations should simply call
         `self.prepare_request(...)` at the start of their `request` (and related) methods.
         """
+        # An agent run passes settings that already include this model's own, so this warns only where they arrive
+        # separately: a direct request, or a `FallbackModel` child with settings of its own.
+        if 'thinking' not in SUPPRESSED_WARNINGS.get():
+            self._warn_if_thinking_overridden(
+                [
+                    _SettingsLayer("the model's `settings`", self.settings),
+                    _SettingsLayer("the request's `model_settings`", model_settings),
+                ]
+            )
         model_settings = merge_model_settings(self.settings, model_settings)
         self._warn_unsupported_settings(model_settings, model_request_parameters)
 
@@ -1101,15 +1185,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             params, supports_tool_return_schema=self.profile.get('supports_tool_return_schema', False)
         )
 
-        # Resolve unified thinking setting and strip from model_settings. GPT-Live resolves it the same way for
-        # its delegated backend (`realtime.openai_live._backend_reasoning_effort`): keep the two in step.
+        # Resolve unified thinking setting and strip from model_settings.
         if model_settings and 'thinking' in model_settings:
             thinking_value = model_settings['thinking']
-            supports_thinking = self.profile.get('supports_thinking', False)
-            thinking_always_enabled = self.profile.get('thinking_always_enabled', False)
-            if supports_thinking or thinking_always_enabled:
-                if not (thinking_value is False and thinking_always_enabled):
-                    params = replace(params, thinking=thinking_value)
+            if self._thinking_applies(thinking_value):
+                params = replace(params, thinking=thinking_value)
             stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
             model_settings = cast(ModelSettings, stripped) if stripped else None
 
@@ -1171,9 +1251,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # tool has to get here on its own account: one gated by an on-demand capability belongs to no
         # native tool's corpus, so a run whose deferred tools are all capability-gated reaches this
         # point with neither a native tool nor a `with_native` between them.
-        if params.native_tools or any(
-            t.unless_native or t.with_native or t.defer_loading for t in params.function_tools
-        ):
+        if _needs_tool_resolution(params):
             params = self._resolve_request_tools(params)
         else:
             # Nothing native and nothing deferred: every function tool is plainly visible. Stamped
@@ -1310,10 +1388,22 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # only names matching a currently-served *authored-deferred* function tool render —
             # a forged-but-well-shaped name must not reach system voice, and an always-visible
             # tool named by a delta has no "now available" news and no exchange to fabricate:
-            # the delta is a no-op for it on this channel just as on the native ones.
-            deferred_tool_names = (
-                {tool.name for tool in model_request_parameters.function_tools if tool.defer_loading}
+            # the delta is a no-op for it on this channel just as on the native ones. A mid-run
+            # newcomer is the exception: it wasn't in `tools` before, so its arrival is news. The tools are
+            # the ones resolved for this model, which may drop one, like a local fallback for a native tool
+            # it supports, that the model must not be told about.
+            served_params = (
+                self._tools_resolved_for_messages(model_request_parameters)
                 if model_request_parameters is not None
+                else None
+            )
+            deferred_tool_names = (
+                {
+                    tool.name
+                    for tool in served_params.function_tools
+                    if tool.defer_loading or tool.name in served_params.introduced_tool_names
+                }
+                if served_params is not None
                 else None
             )
             # Two different jobs hide behind "render the delta", and which applies turns on whether this
@@ -1392,17 +1482,20 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Whether this request puts a tool on the wire with its schema withheld."""
         if params is None:
             return self.tool_deferral_mode == 'standalone'
-        # Mirrors `prepare_request`'s guard so this can't raise where that wouldn't: with nothing
-        # native and nothing deferred there is no schema to withhold anyway.
-        if not (
-            params.native_tools
-            or any(t.unless_native or t.with_native or t.defer_loading for t in params.function_tools)
-        ):
-            return False
+        resolved = self._tools_resolved_for_messages(params)
+        return any(visibility == 'deferred' for visibility in (resolved.tool_visibility or {}).values())
+
+    def _tools_resolved_for_messages(self, params: ModelRequestParameters) -> ModelRequestParameters:
+        """`params` with its tools resolved for this model, for message projection that runs before `prepare_request`.
+
+        Mirrors `prepare_request`'s guard so this can't raise where that wouldn't: with nothing native and
+        nothing deferred, every function tool is sent as it stands.
+        """
         # TODO(#7196): reorder the stages so message projection always receives resolved
         # parameters, at which point this on-demand resolution can be removed.
-        resolved = params if params.tool_visibility is not None else self._resolve_request_tools(params)
-        return any(visibility == 'deferred' for visibility in (resolved.tool_visibility or {}).values())
+        if params.tool_visibility is not None or not _needs_tool_resolution(params):
+            return params
+        return self._resolve_request_tools(params)
 
     def _resolve_request_tools(self, params: ModelRequestParameters) -> ModelRequestParameters:
         """Resolve native tools, their local fallbacks, and deferred-tool visibility for this model."""
@@ -1462,7 +1555,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Resolution order (later layers override earlier ones):
           1. `DEFAULT_PROFILE` — base values for every key in `ModelProfile`.
           2. The provider's `model_profile(model_name)` result — provider-specific defaults
-             for this model.
+             for this model — or what `_provider_model_profile()` returns in its place.
           3. A best-effort `context_window` value from
              [genai-prices](https://github.com/pydantic/genai-prices), unless the provider or a
              partial user profile explicitly set the field (including to `None`).
@@ -1478,9 +1571,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         same way, to the kinds of file the model class's message mapping can send.
         """
         # Step 1+2: provider default merged with base default
-        provider_profile: ModelProfile = {}
-        if (provider := self.provider) is not None:
-            provider_profile = provider.model_profile(self.model_name) or {}
+        provider_profile = self._provider_model_profile()
         resolved = merge_profile(DEFAULT_PROFILE, provider_profile)
 
         # Step 3: fill `context_window` from genai-prices when no provider or partial user layer set it.
@@ -1537,6 +1628,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
 
         return resolved
+
+    def _provider_model_profile(self) -> ModelProfile:
+        """The provider's profile for this model's name, the second layer of [`profile`][pydantic_ai.models.Model.profile].
+
+        Override this for a model class whose endpoint the provider's profile doesn't describe, because the provider
+        also serves the model name on another API.
+        """
+        if (provider := self.provider) is None:
+            return {}
+        return provider.model_profile(self.model_name) or {}
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Adjust the provider's profile defaults for this model instance, before the user's `profile=` is applied.
@@ -2218,7 +2319,13 @@ def infer_model_profile(model: str) -> ModelProfile:
         return DEFAULT_PROFILE
 
     try:
-        provider_profile = provider_class.model_profile(model_name)
+        # `OpenAIProvider` profiles a name such as `gpt-6-luna` for the Responses API, so the Decisions API's model
+        # class brings its own profile, as `OpenAIDecisionsModel._provider_model_profile` does.
+        provider_profile = (
+            decision_model_profile(model_name)
+            if provider == 'openai-decisions'
+            else provider_class.model_profile(model_name)
+        )
     except (ValueError, UserError):
         return DEFAULT_PROFILE
     profile = provider_profile or DEFAULT_PROFILE
@@ -2358,11 +2465,11 @@ def infer_model(  # noqa: C901
             raise UserError('System One models require a `SystemOneProvider`.')
         return SystemOneModel(model_name, provider=provider)
     elif model_kind == 'openai-decisions':
-        from ..providers.openai_decisions import OpenAIDecisionsProvider
+        from ..providers.openai import OpenAIProvider
         from .openai_decisions import OpenAIDecisionsModel
 
-        if not isinstance(provider, OpenAIDecisionsProvider):
-            raise UserError('OpenAI Decisions models require an `OpenAIDecisionsProvider`.')
+        if not isinstance(provider, OpenAIProvider):
+            raise UserError('OpenAI Decisions models require an `OpenAIProvider`.')
         return OpenAIDecisionsModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
@@ -2550,6 +2657,15 @@ def _customize_output_object(
     )
 
 
+def _needs_tool_resolution(params: ModelRequestParameters) -> bool:
+    """Whether any tool's wire representation depends on the model; when not, every function tool is plainly visible."""
+    return bool(
+        params.native_tools
+        or params.introduced_tool_names
+        or any(t.unless_native or t.with_native or t.defer_loading for t in params.function_tools)
+    )
+
+
 def _supported_native_tools(
     params: ModelRequestParameters,
     supported_types: frozenset[type[AbstractNativeTool]],
@@ -2686,7 +2802,11 @@ def resolve_request_tools(
         # Rule 2: a corpus member whose native tool is unsupported can't be paired with it here.
         if t.with_native and t.with_native not in supported_ids:
             t = replace(t, with_native=None)
-        if not t.defer_loading:
+        # A mid-run newcomer resolves like a revealed deferred tool, but only once its delta is on the
+        # outgoing history: it is callable from the moment it exists, so without the delta it stays in
+        # `tools`.
+        revealed_newcomer = t.name in params.introduced_tool_names and t.name in params.revealed_tool_names
+        if not (t.defer_loading or revealed_newcomer):
             visibility = 'visible'
         else:
             revealed = t.name in params.revealed_tool_names
@@ -2718,12 +2838,53 @@ def resolve_request_tools(
         function_tools.append(t)
         visibility_by_name[t.name] = visibility
 
-    return replace(
-        params,
-        native_tools=supported_natives,
-        function_tools=function_tools,
-        tool_visibility=visibility_by_name,
+    # The agent graph makes the same call when recording a newcomer, but only resolution knows which native
+    # tools survive for this model: an unsupported `optional` one the graph counted is left out here.
+    return _declare_lone_newcomers(
+        replace(
+            params,
+            native_tools=supported_natives,
+            function_tools=function_tools,
+            tool_visibility=visibility_by_name,
+        )
     )
+
+
+def _declare_lone_newcomers(
+    params: ModelRequestParameters,
+    declared_names: Collection[str] | None = None,
+    *,
+    wire_native_tools: Sequence[AbstractNativeTool] | None = None,
+) -> ModelRequestParameters:
+    """Declare mid-run newcomers plainly when the request has no other plainly declared tool.
+
+    A newcomer goes on the tool-addition channel to keep the request's `tools` section stable. With nothing
+    else plainly declared there is no section to keep, so it is declared like any other tool, which also
+    keeps an Anthropic request from carrying only deferred tools.
+
+    `declared_names` narrows the declarations to the ones a provider still sends after its own filtering,
+    such as Anthropic's `tool_choice` restriction; by default every resolved tool counts. `wire_native_tools`
+    narrows the native tools to the ones that become entries in the request's tools, leaving out one a
+    provider sends elsewhere, such as Anthropic's `mcp_servers`; by default every native tool counts.
+    """
+    tool_visibility = params.tool_visibility
+    if tool_visibility is None or (params.native_tools if wire_native_tools is None else wire_native_tools):
+        return params
+
+    def declared(name: str) -> bool:
+        return declared_names is None or name in declared_names
+
+    if any(declared(tool.name) for tool in params.output_tools) or any(
+        visibility == 'visible' and declared(name) for name, visibility in tool_visibility.items()
+    ):
+        return params
+    newcomers = [name for name in params.introduced_tool_names if name in tool_visibility and declared(name)]
+    if not newcomers:
+        return params
+    resolved = dict(tool_visibility)
+    for name in newcomers:
+        resolved[name] = 'visible'
+    return replace(params, tool_visibility=resolved)
 
 
 def prepare_return_schemas(

@@ -2,4 +2,12 @@
 
 import os
 
-collect_ignore = ['test_web_browser.py'] if os.environ.get('CLAI2_BROWSER_TESTS') != '1' else []
+import pytest
+
+collect_ignore: list[str] = ['test_web_browser.py'] if os.environ.get('CLAI2_BROWSER_TESTS') != '1' else []
+
+
+@pytest.fixture(scope='module')
+def anyio_backend() -> str:
+    """Keep the browser's shared asynchronous fixtures on one asyncio runner."""
+    return 'asyncio'

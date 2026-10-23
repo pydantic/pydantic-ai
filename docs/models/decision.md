@@ -253,6 +253,8 @@ Every input to the agent ends up in one of two places: the state, which is judge
 
 A question can point at a part of the state by its name, such as "Is the request in `text` already answered in `history`?", which TypeSafe [recommend](https://docs.typesafe.ai/model-jaggedness/jev-1.13#indirection) over leaving the model to work out which part is meant.
 
+OpenAI Decisions is sent the same conversation as messages instead, with no `history`, `text` and `done` to point at, so say in the question what to judge, such as "the user's latest request". See [OpenAI](openai.md#decisions-api).
+
 **Asked**, as the questions:
 
 | Agent input | Where it ends up |
@@ -1187,6 +1189,8 @@ A decision model does not revise an answer the way a language model does. Its pr
 ## Implementing a decision model
 
 Any backend that answers the three kinds of question can be a decision model. [`TypeSafeModel`](typesafe.md) and [`SystemOneModel`](system-one.md) are both built this way, and are worth reading as examples of one that calls an SDK and one that calls an HTTP API directly. Subclass [`DecisionModel`][pydantic_ai.models.decision.DecisionModel] and implement [`decide`][pydantic_ai.models.decision.DecisionModel.decide], which sends one [`DecisionRequest`][pydantic_ai.models.decision.DecisionRequest] and returns a [`DecisionResponse`][pydantic_ai.models.decision.DecisionResponse]; the base class does everything else on this page. A `DecisionModel` is a [`Model`][pydantic_ai.models.Model], so it also needs `model_name`, `system` and `base_url`, like any [custom model](overview.md#custom-models).
+
+The request carries the conversation twice: as `state`, the one JSON value described above, and as `messages`, the [messages](../message-history.md) it was built from. Send `state` to a backend that judges a single input. A backend whose API takes a conversation natively can map `messages` to it instead, as [`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel] does; `messages` is empty when `decide` is called directly with only a `state`, and its images are the ones in `request.images`, resolved and in order.
 
 This one has no opinion at all: every option is equally likely. Replace the body of `decide` with a call to your backend:
 

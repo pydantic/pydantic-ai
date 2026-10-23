@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
@@ -101,11 +102,18 @@ class CerebrasModel(OpenAIChatModel):
         """Pass through an explicit `openai_reasoning_effort` (including the `'none'` injected to disable reasoning)."""
         from openai import omit
 
-        # Disabling is injected as `openai_reasoning_effort='none'` in `_cerebras_settings_to_openai_settings`;
+        # `thinking=False` is injected as `openai_reasoning_effort` in `_cerebras_settings_to_openai_settings`;
         # other unified thinking levels are omitted because Cerebras reasons by default.
         if effort := model_settings.get('openai_reasoning_effort'):
             return effort
         return omit
+
+    @override
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `thinking=False` is sent as `openai_reasoning_effort='none'`, replacing an explicit effort.
+        if model_settings.get('thinking') is False:
+            return ()
+        return super()._settings_overriding_thinking(model_settings)
 
     @override
     def prepare_request(
@@ -121,6 +129,7 @@ class CerebrasModel(OpenAIChatModel):
             cast(CerebrasModelSettings, merged_settings or {}),
             customized_parameters,
             replays_thinking_as_tags=replays_thinking_as_tags,
+            thinking_always_enabled=self.profile.get('thinking_always_enabled', False),
         )
         return new_settings, customized_parameters
 
@@ -130,6 +139,7 @@ def _cerebras_settings_to_openai_settings(
     model_request_parameters: ModelRequestParameters,
     *,
     replays_thinking_as_tags: bool = False,
+    thinking_always_enabled: bool = False,
 ) -> OpenAIChatModelSettings:
     """Transforms a 'CerebrasModelSettings' object into an 'OpenAIChatModelSettings' object.
 
@@ -138,6 +148,8 @@ def _cerebras_settings_to_openai_settings(
         model_request_parameters: The 'ModelRequestParameters' object to use for the transformation.
         replays_thinking_as_tags: Whether prior reasoning is replayed as `<think>` content (zai/GLM).
             When set, `clear_thinking` defaults to `False` so Cerebras doesn't strip the replayed reasoning.
+        thinking_always_enabled: Whether the model can't turn reasoning off (gpt-oss), so `thinking=False` sends
+            its lowest effort instead of `'none'`.
 
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
@@ -155,7 +167,7 @@ def _cerebras_settings_to_openai_settings(
             stacklevel=2,
         )
     else:
-        disable_reasoning = model_request_parameters.thinking is False
+        disable_reasoning = model_request_parameters.thinking is False and not thinking_always_enabled
 
     if (clear_thinking := settings.pop('cerebras_clear_thinking', None)) is not None:
         extra_body['clear_thinking'] = clear_thinking
@@ -172,4 +184,8 @@ def _cerebras_settings_to_openai_settings(
         # Cerebras deprecated `extra_body['disable_reasoning']` on 2026-03-24 in favor of the standard
         # `reasoning_effort='none'`. https://inference-docs.cerebras.ai/resources/glm-47-migration
         openai_settings['openai_reasoning_effort'] = 'none'
+    elif model_request_parameters.thinking is False and 'openai_reasoning_effort' not in openai_settings:
+        # gpt-oss can't turn reasoning off and documents `low`/`medium`/`high`, so it reasons as little as it can.
+        # https://inference-docs.cerebras.ai/capabilities/reasoning
+        openai_settings['openai_reasoning_effort'] = 'low'
     return openai_settings

@@ -209,19 +209,39 @@ Lower the threshold for snappier turn-taking, raise it when replies contain long
 Delegated work suspends the clock. The model goes quiet while the backend thinks, and ending the turn
 there would finalize a reply that is still coming.
 
-### Text is context, not a user turn
+### Typed text runs the backend
 
-Live has no client event that puts text into the conversation as the user's own words. Text is
-delivered as context to the Live model instead, and it relays or answers it:
+Live has no client event that puts text into the conversation as the user's own words, so a string sent
+with [`send()`][pydantic_ai.realtime.RealtimeSession.send] goes to the [backend](#how-delegation-works) as
+the user's message, and the backend is run on it: it calls the agent's tools as it would for a spoken
+request, and Live speaks its answer. Live is also told what was typed, as silent context, so it knows
+what it is answering. The text is recorded in history as a
+[`UserPromptPart`][pydantic_ai.messages.UserPromptPart], as on the other providers, and
+[`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] returns once Live has spoken
+the answer:
 
 ```python
 from pydantic_ai.realtime import RealtimeSession
 
 
-async def send_context(session: RealtimeSession) -> None:
-    # Speakable: the model says this, or something close to it.
-    await session.send('Tell the caller their table is ready.')
+async def ask(session: RealtimeSession) -> None:
+    await session.send('Has order A0042 shipped yet?')
+    await session.wait_for_reply()
+```
 
+Every typed turn costs a backend request, even one that needs no tool, and Live usually says something
+while the backend works. For small talk that comes out as a filler line ahead of the answer: in our
+testing, "Thanks, that's all I needed" got "Oh, okay, let me just check on that. You're welcome! Have a
+great day!"
+
+To give Live something to know without running the backend or asking for a reply, send it with
+`respond=False`:
+
+```python
+from pydantic_ai.realtime import RealtimeSession
+
+
+async def add_context(session: RealtimeSession) -> None:
     # Not a request to speak: the model takes it into account, and decides for itself whether to mention it.
     await session.send('The caller is a returning guest named Ada.', respond=False)
 ```
@@ -231,20 +251,26 @@ and in our testing the model usually acknowledged it out loud anyway ("Welcome b
 background ("Internal note: ...") and say in `openai_live_instructions` what the model should keep to
 itself.
 
-Both forms are capped at 500 tokens by the provider. Longer text raises
-[`UserError`][pydantic_ai.exceptions.UserError] before anything is sent, so it is neither recorded in
-history nor waited for by [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply];
-split it, or give long material to the backend as a tool result instead.
-[`enqueue()`](tools.md#enqueuing-prompts) delivers text the same way once the model is idle. The
+Live caps the context it takes at 500 tokens. A typed turn of any length still goes to the backend,
+but one too long for that context (about 496 tokens, with the words that say the user typed it) goes
+without telling Live what was typed, so Live may leave a terse answer to it unsaid. Context sent with
+`respond=False` over the cap raises [`UserError`][pydantic_ai.exceptions.UserError] before anything is
+sent, so it is not recorded in history; split it, send it as a typed turn, which the backend takes at any
+length, or give long material to the backend as a tool result instead.
+[`enqueue()`](tools.md#enqueuing-prompts) delivers text the same way once the model is idle, except that
+[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s on their own aren't the user's words: Live
+hears them as context as they are, and the backend gets them as a developer message, so the model doesn't
+later tell the caller they said it. Enqueued together with user text, they go out with it as the user's turn,
+so enqueue a system prompt on its own when the caller mustn't be credited with it. The
 [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] it produces marks when the text
 was sent, not when the model took it in. Live speaks to text in the reply it is giving, if it is giving one, rather
 than in a reply of its own: text sent while the model is speaking is answered by that reply once it says anything more,
-and [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] ends with it. Since Live can also take
-text as context without answering it, bound `wait_for_reply()` with a timeout rather than relying on a reply always
-following.
+and [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] ends with it.
 
-Live's timeline only advances while it receives audio, so a session with no microphone, like the
+Live only speaks while its timeline advances, which takes audio, so a session with no microphone, like the
 [text-to-audio example](../examples/realtime-text-to-audio.md), needs `openai_live_idle_audio=True`.
+Without audio, a typed turn still runs the backend and its tools straight away, but Live says nothing,
+and `wait_for_reply()` doesn't return, until audio flows (and in our testing, not always then).
 
 Seeding is text-only in the same spirit: [`message_history=`](history.md#seeding-a-session) replays
 text, transcripts, and thinking text, with tool rounds rendered as readable text because the protocol
@@ -347,7 +373,7 @@ model = OpenAILiveModel('gpt-live-1', settings=settings)
 | `openai_live_delegation` | The backend the session delegates to. [`OpenAILiveResponsesDelegation`][pydantic_ai.realtime.openai_live.OpenAILiveResponsesDelegation] carries `model`, extra `instructions`, `reasoning_effort`, `reasoning_summary`, `verbosity`, `max_output_tokens`, `parallel_tool_calls`, and `service_tier`. `reasoning_effort` and `parallel_tool_calls` default to the shared `thinking` and `parallel_tool_calls` settings |
 | `openai_live_turn_silence_ms` | How long the model must stay quiet before the [turn boundary](#the-turn-boundary-is-inferred) is reported. Defaults to 2000 |
 | `openai_live_store` | Whether OpenAI retains the session, which lets it be forked or downloaded later and a dropped connection [reconnect](#gpt-live-feature-support-and-limitations) with the conversation intact. Defaults to `False` |
-| `openai_live_idle_audio` | Stream silence while `send_audio()` is quiet, so text lands without a microphone. Live bills silence like speech. Defaults to `False` |
+| `openai_live_idle_audio` | Stream silence while `send_audio()` is quiet, so Live speaks without a microphone (its timeline only advances with audio). Live bills silence like speech. Defaults to `False` |
 | `openai_live_data_channel` | Which events a [WebRTC](#browser-webrtc) browser may send and receive over its data channel. Defaults to none, since the sideband runs the session |
 
 Voice, audio format, and the starting instructions are fixed for the life of the session, which is
@@ -436,9 +462,9 @@ takes precedence when set.
 
 On gpt-realtime, the shared [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting
 (see [Thinking](../capabilities/thinking.md)) applies to models whose profile reports
-`supports_thinking`, including the `gpt-realtime-2` family. `True` uses the provider default and an
-effort string selects a level. `False` sends `reasoning.effort: 'none'`, which turns reasoning off. The
-GA `gpt-realtime` ignores the setting.
+`supports_thinking`, including the `gpt-realtime-2` family. `True` sends `reasoning.effort: 'medium'`
+and an effort string selects a level. `False` sends `reasoning.effort: 'none'`, which turns reasoning
+off. The GA `gpt-realtime` ignores the setting.
 
 Neither family streams readable reasoning as [`ThinkingPart`][pydantic_ai.messages.ThinkingPart]s.
 GPT-Live does record the backend's encrypted reasoning ahead of each web search, so the history can
@@ -486,11 +512,11 @@ the provider-agnostic workflows.
 | Feature | Support | Notes |
 | --- | --- | --- |
 | Audio format | Limited parameter support | Mono PCM16 at 24 kHz by default, input and output; 16 kHz by setting both `audio_input_sample_rate` and `audio_output_sample_rate` to `16000` through [`profile=`](overview.md#provider-support). The API also offers 8 kHz G.711, which Pydantic AI does not expose |
-| Text input | Limited parameter support | [Context, not a user turn](#text-is-context-not-a-user-turn): capped at 500 tokens, delivered only while audio flows (see `openai_live_idle_audio`), and possibly spoken even with `respond=False` |
+| Text input | Limited parameter support | [Runs the backend](#typed-text-runs-the-backend) as the user's message; any length (Live is told what was typed up to its 500-token context cap), spoken only while audio flows (see `openai_live_idle_audio`), and `respond=False` context possibly spoken anyway |
 | Text output | Unsupported | Live always speaks; read the answer from the transcript on the [`SpeechPart`][pydantic_ai.messages.SpeechPart] |
 | Image input | Limited parameter support | [For the backend, with `respond=True`](#images-go-to-the-backend) |
 | Manual turns and interruption | Unsupported | Live owns turn-taking and handles barge-in itself, but reports nothing when it does, so a reply the user cut off is recorded as complete, not interrupted. The [turn boundary is inferred](#the-turn-boundary-is-inferred) from silence |
-| Input transcription | Full feature support | Always on in both directions; no [model to choose](audio.md#input-transcription) and no way to disable it |
+| Input transcription | Full feature support | Always on in both directions; no [model to choose](audio.md#input-transcription) beyond the `'auto'` default, and no way to disable it |
 | Input speech events | Unsupported | No speech start/end frames, so a "listening" indicator should read the profile rather than wait for events |
 | Native tools | Limited parameter support | Web search only, run by the [backend](#how-delegation-works); sources and citations aren't recorded |
 | Usage | Limited parameter support | [Seconds, not tokens](#usage-is-measured-in-seconds); no duration-based `UsageLimits` field |
@@ -501,18 +527,21 @@ the provider-agnostic workflows.
 Live refuses a stated requirement it cannot meet rather than accepting and ignoring it. These raise
 [`UserError`][pydantic_ai.exceptions.UserError]:
 
-- Before the session connects: `turn_detection`, `max_tokens`, `input_transcription_model`,
+- Before the session connects: `turn_detection`, `max_tokens`, a pinned `input_transcription_model`,
   `output_modality='text'` (the profile reports `supports_text_output=False`; see
-  [Shared settings](overview.md#shared-settings)), and a `tool_choice` of `'required'` or a list of
-  tool names.
+  [Shared settings](overview.md#shared-settings)), a `tool_choice` of `'required'` or a list of
+  tool names, and a [`profile=`](overview.md#provider-support) whose `audio_input_sample_rate` and
+  `audio_output_sample_rate` keys differ or aren't 16000 or 24000.
 - [`commit_audio()`][pydantic_ai.realtime.RealtimeSession.commit_audio],
   [`clear_audio()`][pydantic_ai.realtime.RealtimeSession.clear_audio],
   [`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response], and
   [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt].
-- An image sent without `respond=True`, text over the 500-token cap, and seeded history that contains
+- An image sent without `respond=True`, `respond=False` text over the 500-token cap, and seeded history that contains
   audio or images.
 - A WebRTC sideband whose `message_history` differs from what the offer seeded, including none at all
-  when the offer seeded some.
+  when the offer seeded some, or that sets `openai_live_idle_audio`.
+- [`create_client_secret()`][pydantic_ai.agent.AgentRealtime.create_client_secret], since Live has no
+  client secrets.
 
 ### gpt-realtime {#gpt-realtime-feature-support-and-limitations}
 
@@ -537,12 +566,18 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] yields audio only when the
   model talks, as on every other provider. Silences of up to half a second *inside* a reply are
   forwarded, so a mid-sentence pause doesn't become a gap in playback; a longer one arrives as a gap.
+- Live's transcript runs ahead of or behind its audio, so a delegated tool call can arrive between a piece
+  of audio and its words, and that audio streams as a [`SpeechPart`][pydantic_ai.messages.SpeechPart] with
+  no transcript. Its words are in the reply's other speech, so unless the part holds
+  [retained audio](history.md#retaining-audio), history leaves it out.
 - Live's transcript fragments carry their own spacing, except the first fragment of a new segment,
   which Pydantic AI separates from a sentence that ended the previous one.
 - When Live ends the session itself, the reply in progress is recorded as interrupted and the session
   raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError] with a code naming the reason:
   `live_session_expired` (the duration limit), `live_session_content` (the safety filter), or
-  `live_session_connection_lost`.
+  `live_session_connection_lost`. With a [`reconnect`](lifecycle.md#reconnecting) policy, an expired
+  or lost WebSocket session is re-opened instead while the policy's reconnects last; one the safety
+  filter ended stays ended.
 - A delegated backend that fails, stops short, or reports an error is surfaced as a recoverable
   [`RealtimeSessionErrorEvent`][pydantic_ai.messages.RealtimeSessionErrorEvent] instead: the call
   goes on. When Live reports such a failure only as a session-level error that names no delegation
@@ -552,12 +587,15 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   result is recorded in history, but goes nowhere: the turn doesn't wait for it.
 - The backend continues a delegated round only once it has every call's output, and Live has no
   command to cancel a delegation: left unfinished, the round keeps Live from delegating anything
-  more for the rest of the session. So when a tool raises, the model *does* get a result, unlike on
-  the [other providers](tools.md#function-tools): the call's output is the error history records,
+  more for the rest of the session. So when a tool raises, the model *does* get a result, as on
+  [Gemini Live](gemini.md#provider-specific-quirks) and unlike on the
+  [other providers](tools.md#function-tools): the call's output is the error history records,
   `{"error":"The tool raised an unhandled error."}`. The backend carries on (it may try the tool
   again), and Live speaks what it makes of it. The exception is still raised from the session as
-  usual, and a [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] that was
-  waiting still returns. When the exception is a
+  usual, but the exchange goes on as it would after a result that succeeded: a
+  [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] that was waiting returns,
+  and [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] arrives, once
+  Live has spoken that answer. When the exception is a
   [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], nothing goes out, so the round
   doesn't make another request: Pydantic AI gives it up, and turn boundaries are inferred again. To
   give the model something better than the generic failure, turn the exception into a result with

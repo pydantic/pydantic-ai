@@ -527,7 +527,7 @@ AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`]
 
 Some of what Pydantic AI keeps in message history isn't a chat message, so the adapter sends it to the frontend as an [activity message](https://docs.ag-ui.com/concepts/messages) with a reserved `activityType`, streamed as an `ACTIVITY_SNAPSHOT` (`ag-ui-protocol` 0.1.19 or later) or included in [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] output:
 
-- `pydantic_ai_tool_availability_delta`, streamed and dumped: a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart], which records deferred tools that became available, for example through [`ToolReturn(tools=[...])`](../tools-advanced.md#advanced-tool-returns).
+- `pydantic_ai_tool_availability_delta`, streamed and dumped: a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart], which records tools that became available, for example deferred tools revealed through [`ToolReturn(tools=[...])`](../tools-advanced.md#advanced-tool-returns) or tools that [appeared mid-run](../tools-advanced.md#mid-run-tool-additions).
 - `pydantic_ai_compaction`, streamed and dumped: a [`CompactionPart`][pydantic_ai.messages.CompactionPart]; see [Compaction](#compaction).
 - `pydantic_ai_enqueued_messages`, streamed: messages [injected mid-run](#enqueued-messages). `dump_messages` gives them as ordinary messages.
 - `pydantic_ai_file` and `pydantic_ai_uploaded_file`, dumped under [`preserve_file_data`](#preserving-files-across-round-trips): files.
@@ -536,7 +536,7 @@ Some of what Pydantic AI keeps in message history isn't a chat message, so the a
 
 So when the frontend holds the message history through `@ag-ui/client`, these records are missing from the history the next run loads:
 
-- Tools a `ToolAvailabilityDeltaPart` made available are hidden from the model again.
+- Deferred tools a `ToolAvailabilityDeltaPart` made available are hidden from the model again, and tools that appeared mid-run are sent in `tools[]` instead.
 - The model's request includes everything before a compaction again, without the compaction item.
 - Enqueued messages, such as a background task's result, are no longer in the history.
 - Files kept with `preserve_file_data` are dropped.

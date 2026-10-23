@@ -12,16 +12,22 @@ from __future__ import annotations
 import re
 import warnings
 from contextlib import AbstractAsyncContextManager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import (
+    AgentInstructionSource,
     BinaryContent,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
+    InstructionId,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -44,9 +50,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
-from pydantic_ai_harness.compaction._summarizing_compaction import (
-    _SUMMARY_PREFIX,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_ai_harness.compaction._summarizing_compaction import SUMMARY_PREFIX
 from pydantic_ai_harness.conversation_search import (
     ConversationSearch,
     ConversationSearchToolset,
@@ -137,6 +141,35 @@ class _StubSource:
         return self._histories[run_id]
 
 
+@dataclass
+class _Todo:
+    status: str = 'pending'
+
+
+_todos = Capability[_Todo](id='todos')
+"""Appends a change to its instruction when `finish_todo` runs, as core's `on_change='append'` docs show."""
+
+
+@_todos.instructions(name='state', on_change='append')
+def _todo_state(ctx: RunContext[_Todo]) -> str:
+    return f'Todo status: {ctx.deps.status}.'
+
+
+@_todos.tool(name='finish_todo')
+def _finish_todo(ctx: RunContext[_Todo]) -> str:
+    ctx.deps.status = 'done'
+    return 'Saved.'
+
+
+_status_mode = Capability[_Todo](id='status_mode')
+"""Rewrites its instruction as the todo status changes, so `finish_todo` opens a new instruction window."""
+
+
+@_status_mode.instructions(name='mode')
+def _status_mode_text(ctx: RunContext[_Todo]) -> str:
+    return f'Mode: {ctx.deps.status}.'
+
+
 class TestSnapshotHistorySource:
     async def test_union_recovers_precompaction_originals(self) -> None:
         store = InMemoryStepStore()
@@ -169,7 +202,7 @@ class TestSnapshotHistorySource:
         # local literal to avoid runtime coupling.
 
         store = InMemoryStepStore()
-        artifact = ModelRequest(parts=[SystemPromptPart(content=f'{_SUMMARY_PREFIX}older summarized context')])
+        artifact = ModelRequest(parts=[SystemPromptPart(content=f'{SUMMARY_PREFIX}older summarized context')])
         original = _user('KEEPME original detail')
         await _seed_run(store, 'r1', [artifact, original])
 
@@ -234,11 +267,20 @@ class TestSnapshotHistorySource:
         # `conversation_id` (and fills request `instructions`) after the boundary
         # snapshot that first carries a message is serialized. The overlap key
         # must hash the same logical message equally before and after stamping,
-        # so those fields are cleared before hashing; distinct parts still hash
+        # so those fields are cleared before hashing, as are the instruction changes
+        # core appends to an already-saved request; distinct parts still hash
         # differently.
         request = ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='result', tool_call_id='call-1')])
         stamped_request = replace(request, timestamp=datetime.now(UTC), run_id='r1', conversation_id='c1')
         assert message_hash(request) == message_hash(stamped_request)
+        delta = InstructionDeltaPart(
+            id=InstructionId(AgentInstructionSource(), name='state'), content='Todo status: done.'
+        )
+        assert message_hash(request) == message_hash(replace(request, parts=[*request.parts, delta]))
+        baseline = InstructionBaselinePart(instructions=[])
+        assert message_hash(request) == message_hash(replace(request, parts=[*request.parts, baseline]))
+        other_return = ToolReturnPart(tool_name='lookup', content='other', tool_call_id='call-1')
+        assert message_hash(request) != message_hash(ModelRequest(parts=[other_return, delta]))
 
         reply = _reply('done')
         stamped_reply = replace(reply, timestamp=datetime.now(UTC), run_id='r1', conversation_id='c1')
@@ -306,9 +348,9 @@ class TestSnapshotHistorySource:
         assert isinstance(PostgresStepStore(_UnusedPool()), SnapshotStore)
 
     def test_rejects_store_without_snapshot_seam(self) -> None:
-        # A store that lists runs but has not implemented `list_snapshots` (for
-        # example `MongoStepStore`, pydantic-ai-harness#446) fails at construction
-        # with a clear error, not mid-search with an obscure `AttributeError`.
+        # A third-party store that lists runs but has not implemented `list_snapshots`
+        # fails at construction with a clear error, not mid-search with an obscure
+        # `AttributeError`.
         class _RunsOnlyStore:
             async def list_runs(
                 self,
@@ -357,6 +399,48 @@ class TestSnapshotHistorySource:
         assert history == [reply, follow_up, latest]
         assert 'ONYX' in await _search(SnapshotHistorySource(store), 'ONYX')
         assert 'No matches' in await _search(SnapshotHistorySource(store), 'ZEBRA')
+
+    async def test_an_appended_instruction_change_does_not_duplicate_the_run(self) -> None:
+        """Core adds an instruction change to a request an earlier snapshot already holds.
+
+        The overlap must still match, and the record must keep the later copy so the change
+        itself stays searchable.
+        """
+        store = InMemoryStepStore()
+        agent = Agent(TestModel(), deps_type=_Todo, capabilities=[_todos, StepPersistence(store=store)])
+        result = await agent.run('Finish the PELICAN todo.', deps=_Todo(), conversation_id='c1')
+        run_id = (await store.list_runs())[0].run_id
+        assert len(await store.list_snapshots(run_id=run_id)) == 2
+
+        history = await SnapshotHistorySource(store).run_history(run_id=run_id)
+
+        assert [message_hash(message) for message in history] == [
+            message_hash(message) for message in result.all_messages()
+        ]
+        assert any(isinstance(part, InstructionDeltaPart) for message in history for part in message.parts)
+        source = SnapshotHistorySource(store)
+        assert (await _search(source, 'PELICAN', scope='conversation', conversation_id='c1')).count('[score:') == 1
+        assert 'Todo status: done.' in await _search(source, 'done', scope='conversation', conversation_id='c1')
+
+    async def test_a_new_instruction_window_does_not_duplicate_the_run(self) -> None:
+        """Core records a new baseline on a request an earlier snapshot already holds."""
+        store = InMemoryStepStore()
+        agent = Agent(TestModel(), deps_type=_Todo, capabilities=[_todos, _status_mode, StepPersistence(store=store)])
+        result = await agent.run('Finish the IBIS todo.', deps=_Todo(), conversation_id='c1')
+        run_id = (await store.list_runs())[0].run_id
+        first, second = await store.list_snapshots(run_id=run_id)
+        # The same tool-return request, which core gives a new baseline after the first save.
+        assert message_hash(first.messages[2]) == message_hash(second.messages[2])
+        assert not any(isinstance(part, InstructionBaselinePart) for part in first.messages[2].parts)
+        assert any(isinstance(part, InstructionBaselinePart) for part in second.messages[2].parts)
+
+        history = await SnapshotHistorySource(store).run_history(run_id=run_id)
+
+        assert [message_hash(message) for message in history] == [
+            message_hash(message) for message in result.all_messages()
+        ]
+        rendered = await _search(SnapshotHistorySource(store), 'IBIS', scope='conversation', conversation_id='c1')
+        assert rendered.count('[score:') == 1
 
 
 class TestConversationSearch:
@@ -838,9 +922,8 @@ class TestSearchScope:
 
         rendered = await _search(source, 'mango')
 
-        # `model_response()`, not `str(part.content)`: the latter would index a Python repr of the
-        # error list rather than the rendering the model was shown.
-        assert 'Retry: ' in rendered
+        # Core's compact JSON, not `str(part.content)`, which would index a Python repr of the error list.
+        assert 'Retry: [{"type":"missing","loc":["mango"]' in rendered
         assert "{'type': 'missing'" not in rendered
 
     async def test_retry_feedback_truncates_but_stays_searchable(self) -> None:
@@ -872,9 +955,9 @@ class TestSearchScope:
         rendered = await _search(source, 'rambutan')
 
         # `rambutan` sits past the display cutoff: matching on it proves the index kept the full
-        # text, and the ellipsis proves the excerpt did not.
-        assert 'Retry [readfile]: please retry mango' in rendered
-        assert '...' in rendered
+        # text, and the excerpt is the clipped window around it.
+        assert 'Retry [readfile]: ...' in rendered
+        assert rendered.endswith(' rambutan')
 
     async def test_tool_availability_delta_is_not_indexed(self) -> None:
         """Tool-list bookkeeping is not conversation content, so it contributes no line.
@@ -903,7 +986,8 @@ class TestSearchScope:
         # branch, which read `part.tool_name` and raised `AttributeError`.
         assert 'Retry [' not in rendered
 
-    async def test_user_and_text_parts_truncate_but_stay_searchable(self) -> None:
+    async def test_long_parts_clip_around_a_term_past_the_cutoff(self) -> None:
+        """A term past the 500-char cutoff matches and is shown: the excerpt shows the text around it."""
         long_user = 'pomegranate ' * 60 + 'USERTAIL'
         long_text = 'cranberry ' * 80 + 'TEXTTAIL'
         source = _StubSource(
@@ -914,18 +998,37 @@ class TestSearchScope:
                 ]
             }
         )
-        # Terms past the 500-char display cutoff still match (the index is
-        # untruncated), while the displayed excerpt stays truncated.
-        rendered = await _search(source, 'USERTAIL')
-        excerpts = rendered.split(':\n\n', 1)[1]
+        rendered = await _search(source, 'USERTAIL', context_lines=0)
+        excerpt = rendered.split(':\n\n', 1)[1]
         assert 'Found 1 match(es)' in rendered
-        assert 'USERTAIL' not in excerpts
-        assert '...' in excerpts
-        rendered = await _search(source, 'TEXTTAIL')
-        excerpts = rendered.split(':\n\n', 1)[1]
-        assert 'Found 1 match(es)' in rendered
-        assert 'TEXTTAIL' not in excerpts
-        assert '...' in excerpts
+        assert '[0] User: ...' in excerpt
+        assert excerpt.endswith('USERTAIL')
+        assert len(excerpt) < len(long_user)
+        rendered = await _search(source, 'TEXTTAIL', context_lines=0)
+        excerpt = rendered.split(':\n\n', 1)[1]
+        assert '[1] Assistant: ...' in excerpt
+        assert excerpt.endswith('TEXTTAIL')
+
+    async def test_clip_keeps_the_head_when_the_term_is_inside_it(self) -> None:
+        long_user = 'HEADTERM ' + 'filler ' * 100
+        rendered = await _search(_StubSource({'r1': [_user(long_user)]}), 'HEADTERM')
+        excerpt = rendered.split(':\n\n', 1)[1]
+        assert '[0] User: HEADTERM filler' in excerpt
+        assert excerpt.endswith('...')
+
+    async def test_clip_centres_a_term_in_the_middle_with_ellipses_on_both_sides(self) -> None:
+        long_user = 'before ' * 100 + 'MIDTERM' + ' after' * 100
+        rendered = await _search(_StubSource({'r1': [_user(long_user)]}), 'MIDTERM')
+        excerpt = rendered.split(':\n\n', 1)[1]
+        assert '[0] User: ...' in excerpt
+        assert 'MIDTERM' in excerpt
+        assert excerpt.endswith('...')
+
+    async def test_context_lines_without_the_term_keep_their_head(self) -> None:
+        source = _StubSource({'r1': [_user('lead ' * 200), _user('the TARGET line')]})
+        rendered = await _search(source, 'TARGET', context_lines=1)
+        assert '[0] User: lead lead' in rendered
+        assert '[1] User: the TARGET line' in rendered
 
     async def test_instruction_updates_stay_searchable_past_display_cutoff(self) -> None:
         history = ModelMessagesTypeAdapter.validate_python(
@@ -939,9 +1042,13 @@ class TestSearchScope:
             ]
         )
         rendered = await _search(_StubSource({'r1': history}), 'DELTATAIL')
-        assert 'Found 1 match(es)' in rendered
-        assert 'System: <context id="agent:state">' in rendered
-        assert 'DELTATAIL' not in rendered.split(':\n\n', 1)[1]
+        assert rendered == snapshot("""\
+Found 1 match(es) for 'DELTATAIL' in 1 persisted messages:
+
+[score: 0.3 | run: r1]
+[0] System: ...cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar DELTATAIL
+</context>\
+""")
 
     async def test_max_matches_and_context_lines_honored(self) -> None:
         store = InMemoryStepStore()
@@ -1104,9 +1211,9 @@ class TestSpeechIsSearchable:
         history: list[ModelMessage] = [ModelRequest(parts=[SpeechPart(speaker='user')])]
         assert 'No matches' in await _search(_StubSource({'r1': history}), 'anything')
 
-    async def test_a_long_assistant_transcript_truncates_but_stays_searchable(self) -> None:
-        # A spoken turn is capped in the display excerpt like `TextPart`, while the full transcript
-        # stays in the index so a term past the 500-char cutoff still matches.
+    async def test_a_long_assistant_transcript_clips_around_the_term(self) -> None:
+        # A spoken turn is clipped in the display excerpt like `TextPart`, while the full transcript
+        # stays in the index so a term past the 500-char cutoff still matches and is shown.
         long_transcript = 'nightingale ' * 60 + 'SPEECHTAIL'
         source = _StubSource(
             {'r1': [_user('go'), ModelResponse(parts=[SpeechPart(speaker='assistant', transcript=long_transcript)])]}
@@ -1114,14 +1221,214 @@ class TestSpeechIsSearchable:
         rendered = await _search(source, 'SPEECHTAIL')
         excerpts = rendered.split(':\n\n', 1)[1]
         assert 'Found 1 match(es)' in rendered
-        assert 'SPEECHTAIL' not in excerpts
-        assert '...' in excerpts
+        assert 'Speech [assistant]: ...' in excerpts
+        assert excerpts.endswith('SPEECHTAIL')
 
-    async def test_a_long_user_transcript_truncates_but_stays_searchable(self) -> None:
+    async def test_a_long_user_transcript_clips_around_the_term(self) -> None:
         long_transcript = 'petrichor ' * 60 + 'USERSPEECHTAIL'
         source = _StubSource({'r1': [ModelRequest(parts=[SpeechPart(speaker='user', transcript=long_transcript)])]})
         rendered = await _search(source, 'USERSPEECHTAIL')
         excerpts = rendered.split(':\n\n', 1)[1]
         assert 'Found 1 match(es)' in rendered
-        assert 'USERSPEECHTAIL' not in excerpts
-        assert '...' in excerpts
+        assert 'Speech [user]: ...' in excerpts
+        assert excerpts.endswith('USERSPEECHTAIL')
+
+
+class TestCorpusAcrossRuns:
+    """A run started with `message_history` persists that history again; the corpus holds it once."""
+
+    async def test_threaded_runs_index_inherited_history_once(self) -> None:
+        store = InMemoryStepStore()
+        agent = Agent(TestModel(custom_output_text='ok'), capabilities=[StepPersistence(store=store)])
+        result = await agent.run('the ZEBRA passphrase is 42', conversation_id='c1')
+        for turn in range(3):
+            result = await agent.run(f'filler turn {turn}', message_history=result.all_messages(), conversation_id='c1')
+
+        rendered = await _search(SnapshotHistorySource(store), 'ZEBRA', scope='conversation', conversation_id='c1')
+        assert rendered.count('[score:') == 1
+        assert rendered.count('the ZEBRA passphrase is 42') == 1
+        assert rendered.startswith(f"Found 1 match(es) for 'ZEBRA' in {len(result.all_messages())} persisted messages:")
+
+        # `run_id` still resolves one run's full record, inherited history included.
+        last_run = (await store.list_runs(conversation_id='c1'))[-1]
+        scoped = await _search(
+            SnapshotHistorySource(store), 'ZEBRA', run_id=last_run.run_id, scope='conversation', conversation_id='c1'
+        )
+        assert 'the ZEBRA passphrase is 42' in scoped
+        assert f'run: {last_run.run_id}' in scoped
+
+    async def test_only_the_inherited_head_is_left_out(self) -> None:
+        """A message that repeats after the run's own first message stays in the corpus.
+
+        Numbering follows the run's full record, so `r2`'s hit matches a `run_id` search of `r2`.
+        """
+        repeated = _user('the ORCHID note')
+        reply = _reply('noted')
+        source = _StubSource({'r1': [repeated, reply], 'r2': [repeated, reply, _user('new turn'), repeated]})
+
+        rendered = await _search(source, 'ORCHID', context_lines=0)
+
+        assert rendered == snapshot("""\
+Found 2 match(es) for 'ORCHID' in 4 persisted messages:
+
+[score: 0.6 | run: r1]
+[0] User: the ORCHID note
+
+---
+
+[score: 0.6 | run: r2]
+[3] User: the ORCHID note\
+""")
+
+    async def test_a_run_holding_only_inherited_history_adds_no_section(self) -> None:
+        message = _user('the LOTUS detail')
+        source = _StubSource({'r1': [message], 'r2': [message]})
+        rendered = await _search(source, 'LOTUS')
+        assert 'run: r1' in rendered
+        assert 'run: r2' not in rendered
+
+    async def test_fresh_runs_asking_the_same_question_stay_distinct(self) -> None:
+        """Without `message_history`, a repeated prompt is new history, not an inherited copy.
+
+        The prompt part's own timestamp keeps the two hashes apart; only the message-level
+        timestamp is excluded from `message_hash`.
+        """
+        store = InMemoryStepStore()
+        agent = Agent(TestModel(custom_output_text='ok'), capabilities=[StepPersistence(store=store)])
+        await agent.run('what is the QUOKKA status', conversation_id='c1')
+        await agent.run('what is the QUOKKA status', conversation_id='c1')
+
+        rendered = await _search(SnapshotHistorySource(store), 'QUOKKA', scope='conversation', conversation_id='c1')
+
+        runs = await store.list_runs(conversation_id='c1')
+        assert len(runs) == 2
+        assert rendered.count('[score:') == 2
+        assert all(f'run: {run.run_id}' in rendered for run in runs)
+
+    async def test_an_instruction_change_on_inherited_history_stays_indexed(self) -> None:
+        """A resumed run can append an instruction change to the request it inherited.
+
+        The hash ignores the change, so the request must still count as new in that run, or the
+        change would never be indexed.
+        """
+        user = _user('finish the HERON task')
+        call = ModelResponse(parts=[ToolCallPart(tool_name='finish', args={}, tool_call_id='c1')])
+        tool_return = ModelRequest(parts=[ToolReturnPart(tool_name='finish', content='ok', tool_call_id='c1')])
+        changed = replace(
+            tool_return,
+            parts=[
+                *tool_return.parts,
+                InstructionDeltaPart(
+                    id=InstructionId(AgentInstructionSource(), name='state'), content='status FINISHED'
+                ),
+            ],
+        )
+        reply = _reply('all set')
+        # `r3` continues `r2`, so it inherits the changed request and must not index the change again.
+        source = _StubSource(
+            {
+                'r1': [user, call, tool_return],
+                'r2': [user, call, changed, reply],
+                'r3': [user, call, changed, reply, _user('next step')],
+            }
+        )
+
+        rendered = await _search(source, 'FINISHED', context_lines=0)
+
+        assert rendered == snapshot("""\
+Found 1 match(es) for 'FINISHED' in 6 persisted messages:
+
+[score: 1.0 | run: r2]
+[2] Tool [finish]: ok
+System: <context id="agent:state">
+status FINISHED
+</context>\
+""")
+        assert (await _search(source, 'HERON')).count('[score:') == 1
+        # The request that carries the change is indexed whole, so its tool return repeats once.
+        assert (await _search(source, 'ok')).count('[score:') == 2
+
+
+class TestExcerptRendering:
+    async def test_tool_return_files_are_named_not_spelled_out(self) -> None:
+        file = BinaryContent(data=b'\x89PNG\r\n' + b'\x00' * 4096, media_type='image/png', identifier='chart.png')
+        source = _StubSource(
+            {
+                'r1': [
+                    ModelRequest(
+                        parts=[ToolReturnPart(tool_name='render', content=['chart READY', file], tool_call_id='c1')]
+                    )
+                ]
+            }
+        )
+        assert await _search(source, 'READY') == snapshot("""\
+Found 1 match(es) for 'READY' in 1 persisted messages:
+
+[score: 0.3 | run: r1]
+[0] Tool [render]: chart READY See file chart.png.\
+""")
+        assert await _search(source, 'x00') == snapshot("No matches for 'x00' in 1 persisted messages.")
+
+    async def test_retry_prompt_excerpt_is_clipped(self) -> None:
+        source = _StubSource(
+            {'r1': [ModelRequest(parts=[legacy_retry_prompt_part('needle ' + 'A' * 5000, tool_name='t')])]}
+        )
+        rendered = await _search(source, 'needle')
+        excerpt = rendered.split(':\n\n', 1)[1]
+        assert excerpt == f'[score: 0.3 | run: r1]\n[0] Retry [t]: needle {"A" * 493}...'
+
+    async def test_retry_prompt_validation_errors_render_as_json_without_core_instructions(self) -> None:
+        errors: list[ErrorDetails] = [
+            {
+                'type': 'missing',
+                'loc': ('city',),
+                'msg': 'Field required',
+                'input': {'town': 'Paris'},
+                'ctx': {'min_length': 3},
+            }
+        ]
+        part = legacy_retry_prompt_part(errors, tool_name='weather')
+        rendered = await _search(_StubSource({'r1': [ModelRequest(parts=[part])]}), 'required')
+        assert rendered == snapshot("""\
+Found 1 match(es) for 'required' in 1 persisted messages:
+
+[score: 0.3 | run: r1]
+[0] Retry [weather]: [{"type":"missing","loc":["city"],"msg":"Field required","input":{"town":"Paris"}}]\
+""")
+
+    async def test_retried_tool_return_validation_errors_render_as_json(self) -> None:
+        """The part a run records for a tool-call retry indexes the same JSON as the legacy part."""
+        errors: list[ErrorDetails] = [
+            {'type': 'missing', 'loc': ('city',), 'msg': 'Field required', 'input': {'town': 'Paris'}}
+        ]
+        part = ToolReturnPart(tool_name='weather', content=errors, tool_call_id='c1', outcome='retried')
+        rendered = await _search(_StubSource({'r1': [ModelRequest(parts=[part])]}), 'required')
+        assert rendered == snapshot("""\
+Found 1 match(es) for 'required' in 1 persisted messages:
+
+[score: 0.3 | run: r1]
+[0] Retry [weather]: [{"type":"missing","loc":["city"],"msg":"Field required","input":{"town":"Paris"}}]\
+""")
+
+    async def test_a_long_term_past_the_cutoff_is_shown_whole(self) -> None:
+        token = 'k' * 300
+        text = 'lead ' * 120 + token + ' trail' * 100
+        rendered = await _search(_StubSource({'r1': [_user(text)]}), token)
+        excerpt = rendered.split('[0] User: ', 1)[1]
+        # The term spans 600-900, so the window ends where it does.
+        assert excerpt == '...' + text[400:900] + '...'
+
+    async def test_a_term_near_the_end_keeps_a_full_window(self) -> None:
+        text = 'x' * 1000 + ' ENDTERM'
+        rendered = await _search(_StubSource({'r1': [_user(text)]}), 'ENDTERM')
+        excerpt = rendered.split('[0] User: ', 1)[1]
+        assert excerpt == '...' + text[-500:]
+
+
+def test_unset_toolset_scope_warning_points_at_the_constructing_code() -> None:
+    """A subscripted-generic construction adds a `typing` frame the warning must skip."""
+    source = SnapshotHistorySource(InMemoryStepStore())
+    for build in (ConversationSearchToolset[None], ConversationSearchToolset):
+        with pytest.warns(HarnessDeprecationWarning) as record:
+            build(source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75)
+        assert record[0].filename == __file__

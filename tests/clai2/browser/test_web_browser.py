@@ -79,11 +79,6 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
 
 
 @pytest.fixture(scope='module')
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
-@pytest.fixture(scope='module')
 async def chromium() -> AsyncIterator[Browser]:
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch()

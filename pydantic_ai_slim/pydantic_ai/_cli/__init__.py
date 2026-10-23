@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import argparse
 import functools
 import json
+import shutil
 import sys
 from collections.abc import Sequence
 from contextlib import AsyncExitStack, ExitStack
@@ -176,6 +177,7 @@ def _print_intro(
             tools=details.tools,
             capabilities=details.capabilities,
             observability=not details.instrumented,
+            logfire_cli_available=shutil.which('uvx') is not None,
             # The console already knows how wide the terminal is, `COLUMNS` and all, and re-asks it
             # every time. Without one it answers 80 whether it read that off `COLUMNS` or had nothing
             # to go on, so the width comes from the stream instead, which tells those two apart.

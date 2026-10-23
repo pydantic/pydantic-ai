@@ -41,7 +41,7 @@ from ..messages import (
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingEffort
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -66,6 +66,7 @@ try:
         SystemChatMessageV2,
         TextAssistantMessageV2ContentOneItem,
         TextContent as CohereTextContent,
+        Thinking as CohereThinking,
         ThinkingAssistantMessageV2ContentOneItem,
         ToolCallV2,
         ToolCallV2Function,
@@ -104,6 +105,20 @@ CohereModelName = str | LatestCohereModelNames
 Since Cohere supports a variety of date-stamped models, we explicitly list the latest models but
 allow any name in the type hints.
 See [Cohere's docs](https://docs.cohere.com/v2/docs/models) for a list of all available models.
+"""
+
+_THINKING_TOKEN_BUDGETS: dict[ThinkingEffort, int] = {
+    'minimal': 512,
+    'low': 2048,
+    'medium': 8192,
+    'high': 16384,
+    # Cohere suggests a 31K budget for maximum reasoning, leaving at least 1K tokens for the response.
+    'xhigh': 31000,
+    'max': 31000,
+}
+"""Maps unified thinking effort levels to Cohere's `thinking.token_budget`.
+
+See [the Cohere docs](https://docs.cohere.com/docs/reasoning).
 """
 
 _FINISH_REASON_MAP: dict[ChatFinishReason, FinishReason] = {
@@ -219,6 +234,7 @@ class CohereModel(Model[AsyncClientV2]):
                 messages=cohere_messages,
                 tools=tools or OMIT,
                 tool_choice=tool_choice,
+                thinking=self._translate_thinking(model_request_parameters) or OMIT,
                 max_tokens=model_settings.get('max_tokens', OMIT),
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),
@@ -250,6 +266,21 @@ class CohereModel(Model[AsyncClientV2]):
             timeout = isinstance(e, httpx.TimeoutException)
             message = transport_error_message(e)
             raise _model_errors.connection_error(self.model_name, message, e, timeout=timeout) from e
+
+    def _translate_thinking(self, model_request_parameters: ModelRequestParameters) -> CohereThinking | None:
+        """Map the unified `thinking` setting to Cohere's `thinking` parameter.
+
+        Reasoning models think by default; `thinking=False` turns that off, and an effort level caps the
+        thinking at a `token_budget`.
+        """
+        thinking = model_request_parameters.thinking
+        if thinking is None:
+            return None
+        if thinking is False:
+            return CohereThinking(type='disabled')
+        if thinking is True:
+            return CohereThinking(type='enabled')
+        return CohereThinking(type='enabled', token_budget=_THINKING_TOKEN_BUDGETS[thinking])
 
     def _get_tool_choice(
         self,
@@ -420,6 +451,8 @@ class CohereModel(Model[AsyncClientV2]):
                             raise RuntimeError('Cohere does not yet support multi-modal inputs.')
                     yield UserChatMessageV2(role='user', content=cohere_content)
             elif isinstance(part, ToolReturnPart):
+                if part.files:
+                    raise NotImplementedError('Files are not supported in Cohere tool returns')
                 yield ToolChatMessageV2(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part),

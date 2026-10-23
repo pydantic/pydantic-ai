@@ -22,6 +22,11 @@ The session exposes copy-on-read snapshots:
 | [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] | Seeded history plus messages recorded during this session. |
 | [`new_messages()`][pydantic_ai.realtime.RealtimeSession.new_messages] | Only messages recorded during this session. |
 
+As in a standard run, a session started without `message_history` records the agent's
+[system prompts](../agent.md#system-prompts) first, as a `ModelRequest` of
+[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s, so they carry over when the history is
+handed off or used to seed another session. The model receives them as part of the session instructions.
+
 ## Seeding a session
 
 Pass `message_history=` to seed a new session. Replayable text, speech transcripts, thinking text,
@@ -59,10 +64,11 @@ raises [`UserError`][pydantic_ai.exceptions.UserError] instead of being silently
 documents, uploaded-file references, and model-generated files cannot be seeded.
 
 !!! warning "Seeded history is trusted"
-    As in a standard run, `message_history` is treated as trusted server-side state: its system
-    prompts become session instructions, and its image URLs are downloaded by your server
-    according to the [download settings](../input.md#user-side-download-vs-direct-file-url) each URL
-    carries. Request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions] on
+    As in a standard run, `message_history` is treated as trusted server-side state: the system
+    prompt it opens with goes into the session instructions ahead of the agent's own (later system
+    prompts are replayed in place as `<system>`-tagged text), and its image URLs are downloaded by
+    your server according to the [download settings](../input.md#user-side-download-vs-direct-file-url)
+    each URL carries. Request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions] on
     seeded history are ignored in favor of the agent's own.
     If the history came from a browser or another untrusted client, pass it through
     [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] before seeding the session; see
@@ -172,11 +178,11 @@ Retained audio is kept in the history
 from it: the conversation a tool sees as [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], and the input
 and output recorded on each response's [span](observability.md).
 
-Input retention follows provider-reported boundaries rather than locally trimming speech. OpenAI,
-Azure OpenAI, and xAI normally retain microphone input between reported speech-end boundaries.
-Gemini does not report those boundaries, so it retains input between response completions. Either
-form can include silence or other microphone input and should not be treated as a precisely trimmed
-utterance.
+Input retention follows provider-reported boundaries rather than locally trimming speech. OpenAI
+gpt-realtime, Azure OpenAI, xAI, and Eleven Realtime normally retain microphone input between reported
+speech-end boundaries. Gemini Live, GPT-Live, and ElevenLabs Agents don't report those boundaries,
+so they retain input between response completions. Either form can include silence or other
+microphone input and should not be treated as a precisely trimmed utterance.
 
 ## Retaining images
 
@@ -240,8 +246,8 @@ History follows the order of the provider's own conversation:
   its tool still runs is recorded as complete, as its tool round goes on.
 - A message already returned is never changed in place, but a later snapshot can hold an updated copy of it
   at the same position. A reply the user [barged in on](turns.md#barge-in) after it was recorded becomes an
-  interrupted copy (on models that support output truncation, and on ElevenLabs Agents, which reports what was
-  heard), and a speech part whose
+  interrupted copy (when the session tracks playback, with `interrupt(played_bytes=...)` or
+  `handle_barge_in=True`, and on ElevenLabs Agents, which reports what was heard), and a speech part whose
   [retained audio](#retaining-audio) is evicted loses its audio. If you persist history as it grows, store
   the latest snapshot rather than appending only the messages past the ones you stored.
 
@@ -250,7 +256,9 @@ History follows the order of the provider's own conversation:
   records [text phases](../models/openai.md#text-phases).
 
 If a reported speech segment never receives a transcript, the session still records its retained audio or
-a content-less `SpeechPart`, at the latest when the session closes.
+a content-less `SpeechPart`, at the latest when the session closes. The exception is GPT-Live, which always
+transcribes its speech: there, untranscribed audio is a piece a tool call [split off from its words](openai.md#gpt-live-provider-specific-quirks),
+and a reply with transcribed speech records no content-less part for it.
 
 With transcription disabled:
 

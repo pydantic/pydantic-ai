@@ -1,3 +1,4 @@
+# description: Collects duration telemetry for a completed CI run and stores the record as an artifact.
 name: After CI
 
 on:

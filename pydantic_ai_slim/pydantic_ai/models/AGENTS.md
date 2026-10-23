@@ -73,7 +73,17 @@ on that model. Reading `declared_tool_defs` and `visibility_of()` opts the adapt
 
 <!-- /braindump -->
 - When a model forwards a generic `ModelSettings` field, add it to that field's `Supported by:` list in `pydantic_ai/settings.py` and leave it out of the class's `unsupported_settings`, and give a new `Model` class a case in `tests/models/test_model_settings_support.py` — that test probes each class's outgoing request and fails when a list, the declaration and the wire disagree.
-- Narrow a capability by client class, never by the client's `base_url`. Where the gateway serves a model it must behave exactly as the provider's canonical API does, and the Pydantic AI Gateway — like an ordinary corporate proxy — reaches that API through the provider's normal SDK client carrying a proxy base URL. A host test therefore splits those callers off from the transport they actually reach and silently degrades them, which is why no capability here is decided that way. Genuinely separate transports (`AsyncAnthropicBedrock`, `AsyncAnthropicVertex`, `AsyncAnthropicFoundry`, …) are distinct client classes and earn their own gates — that is the line `isinstance` already draws. Probe the gateway leg (`Model('<id>', provider='gateway')`) rather than reasoning about it; a model the gateway genuinely does not serve belongs in `UNSUPPORTED_GATEWAY_MODEL_NAMES`, not in a carve-out that leaves the id advertised and degraded.
+- Narrow a capability by client class, never by the client's `base_url`. Where the gateway serves a model it must behave exactly as the provider's canonical API does, and the Pydantic AI Gateway — like an ordinary corporate proxy — reaches that API through the provider's normal SDK client carrying a proxy base URL. A host test therefore splits those callers off from the transport they actually reach and silently degrades them, which is why no capability here is decided that way. Genuinely separate transports (`AsyncAnthropicBedrock`, `AsyncAnthropicVertex`, `AsyncAnthropicFoundry`, …) are distinct client classes and earn their own gates. Gate on the transport (the client class, or the client's own mode such as `genai.Client.vertexai`) only in the model's `_instance_profile_defaults()` or `profile`: turn the result into a profile flag there. Where the capability is used, read only a profile flag or the adapter's own declaration. A branch that sends one feature in each transport's own wire form is mapping, not a gate. Probe the gateway leg (`Model('<id>', provider='gateway')`) rather than reasoning about it; a model the gateway genuinely does not serve belongs in `UNSUPPORTED_GATEWAY_MODEL_NAMES`, not in a carve-out that leaves the id advertised and degraded.
+
+## Adapter structure
+
+Each rule's precedent, and the rules for tool-call IDs, replay data, thinking, empty content, tool-return media and cache markers, are in [Provider Adapters](../../../agent_docs/provider-adapters.md). Read it before you add a part type, a native tool kind or a capability gate to an adapter.
+
+- Map each part type in its own method, called from one exhaustive dispatch per message kind. An arm of one statement stays inline. A new part type adds one arm, never a branch nested in the mapping loop.
+- Keep request-wide mapping state in a private dataclass that holds data only, unless a subclass overrides its methods.
+- Map each response wire item in one function, called from both `_process_response` and the stream.
+- Lower a part type most APIs can't render in `Model.prepare_messages`. An adapter that doesn't render it raises `_unprepared_part_error(part)` in one arm.
+- Map native tool parts through one table per adapter, from `kind` to wire name.
 
 ## `TestModel`
 

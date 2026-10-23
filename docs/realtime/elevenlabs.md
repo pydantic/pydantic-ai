@@ -66,7 +66,7 @@ default) or `'off'`, the key only reads; `'sync'` also needs write access to age
 1. Create the agent in the [ElevenLabs dashboard](https://elevenlabs.io/app/agents) or through the ElevenLabs API,
    and copy its id.
 2. Under *Security* > *Overrides* in the agent's settings, turn on *System prompt* if the Pydantic AI agent has
-   instructions, plus the toggle of each override setting you use (see [Settings](#settings)).
+   instructions or a system prompt, plus the toggle of each override setting you use (see [Settings](#settings)).
 3. Under *Advanced* > *Client events*, add `context_usage`, which reports context usage and marks where a spoken
    response ends (see [Usage and cost](#usage-and-cost)).
 4. Pick a [tool synchronization](#tool-synchronization) mode: with the default, `'error'`, a difference between the
@@ -121,7 +121,7 @@ To choose the backup LLMs, set it to `{"preference": "override", "order": [...]}
 Pydantic AI is the source of truth wherever ElevenLabs allows a per-conversation override, and
 fails loudly where it does not:
 
-- **Instructions**: when the Pydantic AI agent defines instructions, the ElevenLabs agent must
+- **Instructions**: when the Pydantic AI agent defines instructions or a system prompt, the ElevenLabs agent must
   permit the *System prompt* override; otherwise the preflight raises a
   [`UserError`][pydantic_ai.exceptions.UserError] naming the exact toggle. Without local
   instructions, the ElevenLabs-side prompt is inherited silently.
@@ -228,7 +228,8 @@ at connect time:
 - `'error'` (default): raise a [`UserError`][pydantic_ai.exceptions.UserError] describing every
   difference (missing, extra, or differing tools), so the two can never silently disagree.
 - `'sync'`: make the workspace match Pydantic AI over REST before dialing: create missing client
-  tools, update differing ones, and re-point the agent's `tool_ids`. A differing tool that another
+  tools, update differing ones, and re-point the agent's `tool_ids`, which detaches client tools the run
+  doesn't define (server-side webhook, MCP, and system tools stay attached). A differing tool that another
   agent also uses isn't changed under it: this agent gets a copy of its own. This mutates workspace
   state shared by every conversation with the agent, which is why it is opt-in. Treat it as a
   deploy-time step — a warm-up connect after a tool change — rather than something a customer's

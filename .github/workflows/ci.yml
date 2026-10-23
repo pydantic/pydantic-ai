@@ -1,3 +1,4 @@
+# description: Runs quality checks and the test matrix on pull requests, pushes to main and tags, and the merge queue, and publishes tagged releases to PyPI.
 name: CI
 
 on:
