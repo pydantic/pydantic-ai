@@ -6,7 +6,6 @@ import time
 from datetime import UTC, datetime
 from email.utils import formatdate
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import httpx
@@ -43,28 +42,14 @@ ignore_deprecation = pytest.mark.filterwarnings('ignore::pydantic_ai._warnings.P
 class TestHTTPX2TenacityTransport:
     """`httpx2` retry transports use the same Tenacity configuration as their `httpx` predecessors."""
 
-    def test_default_wrapped_transports_use_pydantic_ai_pool_limits(self, monkeypatch: pytest.MonkeyPatch):
-        """Without `wrapped`, each transport sends through one with the pool limits of Pydantic AI's own clients.
-
-        HTTPX keeps the limits on its transport without a public accessor, so this records what the
-        wrapped transport is constructed with.
-        """
-        recorded: list[httpx2.Limits] = []
-        for transport_class in (httpx2.HTTPTransport, httpx2.AsyncHTTPTransport):
-            original_init = transport_class.__init__
-
-            def recording_init(self: Any, *args: Any, _original_init: Any = original_init, **kwargs: Any) -> None:
-                recorded.append(kwargs['limits'])
-                _original_init(self, *args, **kwargs)
-
-            monkeypatch.setattr(transport_class, '__init__', recording_init)
-
+    def test_default_wrapped_transports_use_pydantic_ai_pool_limits(self, transport_limits: list[httpx2.Limits]):
+        """Without `wrapped`, each transport sends through one with the pool limits of Pydantic AI's own clients."""
         sync_transport = HTTPX2TenacityTransport(config=RetryConfig())
         async_transport = AsyncHTTPX2TenacityTransport(config=RetryConfig())
 
         assert isinstance(sync_transport.wrapped, httpx2.HTTPTransport)
         assert isinstance(async_transport.wrapped, httpx2.AsyncHTTPTransport)
-        assert recorded == [httpx2.Limits(max_connections=1000, max_keepalive_connections=100)] * 2
+        assert transport_limits == [httpx2.Limits(max_connections=1000, max_keepalive_connections=100)] * 2
 
     def test_sync_transport_passes_response_without_validator_and_closes_wrapped_transport(self):
         request = httpx2.Request('GET', 'https://example.com')

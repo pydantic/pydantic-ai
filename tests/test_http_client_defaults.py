@@ -7,30 +7,10 @@ transport without a public accessor, so the tests record what the client hands i
 
 from __future__ import annotations
 
-from typing import Any
-
 import httpx
 import httpx2
-import pytest
 
 from pydantic_ai.models import create_async_http_client, create_async_httpx2_client, get_user_agent
-
-
-@pytest.fixture
-def transport_limits(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Limits | httpx2.Limits]:
-    """Record the `limits` every HTTPX transport (either family) is constructed with."""
-    recorded: list[httpx.Limits | httpx2.Limits] = []
-
-    for transport_class in (httpx2.AsyncHTTPTransport, httpx.AsyncHTTPTransport):
-        original_init = transport_class.__init__
-
-        def recording_init(self: Any, *args: Any, _original_init: Any = original_init, **kwargs: Any) -> None:
-            recorded.append(kwargs['limits'])
-            _original_init(self, *args, **kwargs)
-
-        monkeypatch.setattr(transport_class, '__init__', recording_init)
-
-    return recorded
 
 
 async def test_httpx2_client_defaults(transport_limits: list[httpx.Limits | httpx2.Limits]):

@@ -100,7 +100,7 @@ model = OpenAIChatModel('{{ openai:medium.name }}', provider=OpenAIProvider(http
 agent = Agent(model, model_settings={'max_retries': 0})
 ```
 
-The transport you pass replaces the one the client would build, so it owns the connection pool. A retrying transport sends each attempt through a new `httpx2.AsyncHTTPTransport` with the same pool limits as Pydantic AI's own clients, 1000 connections with up to 100 kept alive, unless you give it your own as `wrapped`. HTTPX also stops reading proxies from the `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` environment variables once a client has a transport, so pass `wrapped=httpx2.AsyncHTTPTransport(proxy=...)` if you need one.
+The transport you pass replaces the one the client would build, so it owns the connection pool. Without `wrapped`, a retrying transport sends its attempts through an `httpx2.AsyncHTTPTransport` it creates with the same pool limits as Pydantic AI's own clients (1000 connections, up to 100 kept alive). HTTPX also stops reading proxies from the `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` environment variables once a client has a transport, so pass `wrapped=httpx2.AsyncHTTPTransport(proxy=...)` if you need one.
 
 ### Wait strategies
 
