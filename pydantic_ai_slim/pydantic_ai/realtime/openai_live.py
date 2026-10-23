@@ -2345,6 +2345,8 @@ class OpenAILiveModel(RealtimeModel):
                 # include `session.started` while the call is a few seconds old. An empty `session.update`
                 # changes nothing, and its `session.updated` reports the session however late the sideband
                 # attaches. Whichever comes first is the session; the events after it are the sideband's to run.
+                # On a late attach, the events Live sends again ahead of `session.updated` are skipped, like the
+                # ones that are older still: a delegation or tool call among them would not reach the sideband.
                 await ws.send(to_json({'type': _SESSION_UPDATE_EVENT, 'session': {}}).decode())
                 frame = await expect_event(
                     ws, _SESSION_STARTED_EVENT, _SESSION_UPDATED_EVENT, timeout=handshake_timeout
