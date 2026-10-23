@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
@@ -36,8 +36,13 @@ OPENAI_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     'medium': 'medium',
     'high': 'high',
     'xhigh': 'xhigh',
+    'max': 'xhigh',
 }
-"""Maps unified thinking values to OpenAI reasoning_effort strings."""
+"""Maps unified thinking values to OpenAI reasoning_effort strings.
+
+`'max'` maps to `'xhigh'` here; `OpenAIChatModel` and `OpenAIResponsesModel` send `'max'` instead on models whose
+profile sets `openai_chat_supports_max_reasoning_effort` or `openai_responses_supports_max_reasoning_effort`.
+"""
 
 SAMPLING_PARAMS = (
     'temperature',
@@ -214,6 +219,15 @@ class OpenAIModelProfile(ModelProfile, total=False):
 
     Defaults to `'auto'` to ensure thinking is sent back in the format expected by the model/provider."""
 
+    openai_chat_thinking_requires_field_on_tool_calls: bool
+    """Whether the API rejects a thinking request whose tool-calling assistant turn lacks `openai_chat_thinking_field`. Default: `False`.
+
+    Only applies when `openai_chat_send_back_thinking_parts` is `'field'`. In that mode, a tool-calling assistant
+    turn that lacks the field gets it empty once the history holds a `ThinkingPart`. Set this for an API that also
+    rejects such a turn before any response has thought, such as a step served without thinking: the field is then
+    sent empty on every such turn whenever thinking is on for the request, through a setting or
+    `thinking_enabled_by_default`."""
+
     openai_supports_strict_tool_definition: bool
     """This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions. Default: `True`."""
 
@@ -296,6 +310,21 @@ class OpenAIModelProfile(ModelProfile, total=False):
     unified `thinking='minimal'` falls back to `reasoning_effort='low'`.
     See https://developers.openai.com/api/docs/guides/latest-model.
     Explicit `openai_reasoning_effort='minimal'` settings are still passed through unchanged."""
+
+    openai_chat_supports_max_reasoning_effort: bool
+    """Whether the Chat Completions API accepts `reasoning_effort='max'` for this model. Default: `False`.
+
+    When enabled, unified `thinking='max'` is sent as `reasoning_effort='max'`; otherwise it falls back to `'xhigh'`.
+    OpenAI's own Chat Completions API rejects `'max'` on every model, so only providers that accept it set this
+    (DeepSeek V4, and Kimi K3, K2.6 and K2.7). Explicit `openai_reasoning_effort='max'` settings are still passed through unchanged."""
+
+    openai_responses_supports_max_reasoning_effort: bool
+    """Whether the Responses API accepts `reasoning.effort='max'` for this model. Default: `False`.
+
+    `OpenAIProvider` enables it for the GPT-5.6 and GPT-6 families. `openai_model_profile` leaves it off, because
+    `max` is unverified on the OpenAI-compatible endpoints that share that profile, and so do the Codex and ChatGPT
+    plan usage profiles. When enabled, unified `thinking='max'` is sent as `reasoning.effort='max'`; otherwise it
+    falls back to `'xhigh'`. Explicit `openai_reasoning_effort='max'` settings are still passed through unchanged."""
 
     openai_responses_supports_reasoning_mode: bool
     """Whether the Responses API supports `reasoning.mode` (`'standard' | 'pro'`) for this model. Default: `False`.
@@ -639,6 +668,8 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
     * all fields in properties must be marked as required
     """
 
+    _strict_supports_length_constraints: ClassVar[bool] = False
+
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict)
         self.root_ref = schema.get('$ref')
@@ -708,6 +739,8 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         # Track strict-incompatible keys
         incompatible_values: dict[str, Any] = {}
         for key in _STRICT_INCOMPATIBLE_KEYS:
+            if self._strict_supports_length_constraints and key in ('minLength', 'maxLength'):
+                continue
             value = schema.get(key, _sentinel)
             if value is not _sentinel:
                 incompatible_values[key] = value
@@ -765,13 +798,13 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                             self.is_strict_compatible = False
 
         if schema_type == 'array':
-            # OpenAI strict mode requires an array to describe its elements' type, via either `items`
-            # (list types) or `prefixItems` (tuple types). A bare `list` produces an empty `items: {}`,
-            # `list[Any]` a boolean `items: true`, and a schema may omit `items` entirely; none of these
-            # give the element a type, so they're rejected by the API in strict mode and there's no way
-            # to repair them without inventing an element type. `items` only types its elements when it's
-            # a schema object carrying a type-bearing keyword (a boolean node, `{}`, or a metadata-only
-            # node like `{'description': ...}` does not).
+            # OpenAI strict mode requires an array to describe its elements' type via `items`. A bare
+            # `list` produces an empty `items: {}`, `list[Any]` a boolean `items: true`, and a schema
+            # may omit `items` entirely; none of these give the element a type, so they're rejected by
+            # the API in strict mode and there's no way to repair them without inventing an element
+            # type. `items` only types its elements when it's a schema object carrying a type-bearing
+            # keyword (a boolean node, `{}`, or a metadata-only node like `{'description': ...}` does
+            # not).
             # See https://github.com/pydantic/pydantic-ai/issues/4425
             items = schema.get('items')
             has_typed_items = isinstance(items, dict) and any(key in items for key in _TYPE_BEARING_KEYS)
@@ -784,3 +817,74 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                 elif self.strict is None:  # pragma: no branch
                     self.is_strict_compatible = False
         return schema
+
+
+class _OpenAIGuardedJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        schema = super().transform(schema)
+        if schema.get('type') == 'array' and schema.get('prefixItems'):
+            # `prefixItems` alone does not satisfy OpenAI's typed-items requirement; keep unnormalized tuple schemas
+            # conservative.
+            if self.strict is True:
+                raise UserError(
+                    'Pydantic AI cannot use this tuple schema with `prefixItems` in OpenAI strict mode. '
+                    'Use a bounded list such as `Annotated[list[int], Field(min_length=4, max_length=4)]`, '
+                    'or set `strict=False`.'
+                )
+            elif self.strict is None:
+                self.is_strict_compatible = False
+        return schema
+
+
+# Selected by `OpenAIProvider.model_profile`, rather than the shared `openai_model_profile`.
+class _OpenAIJsonSchemaTransformer(_OpenAIGuardedJsonSchemaTransformer):  # pyright: ignore[reportUnusedClass]
+    _strict_supports_length_constraints = True
+
+    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
+        super().__init__(schema, strict=strict)
+        self._has_non_definition_ref = False
+        self._normalized_single_item_tuple = False
+
+    def walk(self) -> JsonSchema:
+        self._has_non_definition_ref = False
+        self._normalized_single_item_tuple = False
+        result = super().walk()
+        if self._normalized_single_item_tuple and self._has_non_definition_ref:
+            # This walk has no path context, so a non-definition ref might target a changed `items` or removed
+            # `prefixItems` node. Wait until the full walk to catch refs before or after the array, then rerun the
+            # guarded transformer on the original schema to preserve its reference behavior. The base walk never
+            # visits `not`, `if`/`then`/`else`, `propertyNames` or `contains`, so a ref inside those subtrees misses
+            # this check and can dangle after normalization.
+            transformer = _OpenAIGuardedJsonSchemaTransformer(self.schema, strict=self.strict)
+            result = transformer.walk()
+            self.is_strict_compatible = transformer.is_strict_compatible
+        return result
+
+    def _handle_array(self, schema: JsonSchema) -> JsonSchema:
+        prefix_items: list[JsonSchema | bool] | None = schema.get('prefixItems')
+        if (
+            self.strict is not False
+            and schema.get('type') == 'array'
+            and isinstance(prefix_items, list)
+            and len(prefix_items) == 1
+            and type(max_items := schema.get('maxItems')) is int
+            and max_items == 1
+        ):
+            schema['items'] = prefix_items[0]
+            del schema['prefixItems']
+            self._normalized_single_item_tuple = True
+        return super()._handle_array(schema)
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        if '$dynamicRef' in schema:
+            self._has_non_definition_ref = True
+
+        schema_ref = schema.get('$ref')
+        if (
+            isinstance(schema_ref, str)
+            and schema_ref not in ('#', self.root_ref)
+            and not _TOP_LEVEL_DEFINITION_REF.fullmatch(schema_ref)
+        ):
+            self._has_non_definition_ref = True
+
+        return super().transform(schema)

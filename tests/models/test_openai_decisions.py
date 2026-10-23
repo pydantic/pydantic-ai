@@ -8,6 +8,7 @@ recording.
 from __future__ import annotations as _annotations
 
 import json
+import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
@@ -42,17 +43,23 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     AudioUrl,
+    CachePoint,
+    CompactionPart,
     FilePart,
     ImageUrl,
     ModelMessagesTypeAdapter,
     NativeToolCallPart,
     NativeToolReturnPart,
+    SystemPromptPart,
+    TextContent,
+    ThinkingPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters, get_user_agent, infer_model
+from pydantic_ai.models import ModelRequestParameters, get_user_agent, infer_model, infer_model_profile
 from pydantic_ai.models.decision import (
     ChoiceQuestion,
     DecisionQuestion,
@@ -67,21 +74,32 @@ from pydantic_ai.models.decision import (
 )
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.profiles.decision import DecisionModelProfile
+from pydantic_ai.profiles.decision import DecisionModelProfile, decision_model_profile
 from pydantic_ai.tools import ObjectJsonSchema, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsList, IsStr, RequestCapture, TestEnv, try_import
+from ..conftest import (
+    IsDatetime,
+    IsList,
+    IsSameStr,
+    IsStr,
+    RequestCapture,
+    TestEnv,
+    legacy_retry_prompt_part,
+    try_import,
+)
 from .test_system_one import Captured, Frustration, Handler, Ticket
 
 with try_import() as imports_successful:
     from openai import APIConnectionError, APIError, APIStatusError, AsyncOpenAI
     from openai.types.decision_create_params import DecisionCreateParams
 
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel, OpenAIDecisionsModelSettings
+    from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.openai import OpenAIProvider
-    from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider
+    from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider  # pyright: ignore[reportDeprecated]
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
@@ -90,14 +108,14 @@ READINESS_WAIT_TIMEOUT = 10
 
 @pytest.fixture
 def capture_model(openai_api_key: str, request_capture: RequestCapture) -> OpenAIDecisionsModel:
-    provider = OpenAIDecisionsProvider(api_key=openai_api_key, http_client=request_capture.client)
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
     return OpenAIDecisionsModel('gpt-6-luna', provider=provider)
 
 
 def mock_model(handler: Handler) -> OpenAIDecisionsModel:
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     client = AsyncOpenAI(api_key='test', max_retries=0, http_client=http_client)
-    return OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIDecisionsProvider(openai_client=client))
+    return OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIProvider(openai_client=client))
 
 
 def decisions(*answers: Mapping[str, object]) -> httpx2.Response:
@@ -161,24 +179,121 @@ def test_init(env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     model = OpenAIDecisionsModel('gpt-6-luna')
     assert model.model_name == 'gpt-6-luna'
+    assert isinstance(model.provider, OpenAIProvider)
     assert model.system == 'openai-decisions'
     assert model.base_url == 'https://api.openai.com/v1/'
     assert isinstance(model.client, AsyncOpenAI)
     # The ID round-trips, where `openai:gpt-6-luna` would be a Responses API model.
     assert model.model_id == 'openai-decisions:gpt-6-luna'
-    assert isinstance(infer_model(model.model_id), OpenAIDecisionsModel)
+    inferred = infer_model(model.model_id)
+    assert isinstance(inferred, OpenAIDecisionsModel)
+    assert type(inferred.provider) is OpenAIProvider
 
 
-def test_missing_api_key_names_this_provider(env: TestEnv):
+DECISION_PROFILE = {
+    'supports_json_schema_output': False,
+    'supports_json_object_output': False,
+    'supports_thinking': False,
+    'supports_cache': False,
+    'supports_image_output': False,
+    'json_schema_transformer': None,
+    'tool_deferral_mode': None,
+    'default_structured_output_mode': 'tool',
+}
+
+
+def test_profile_is_the_decision_endpoints_not_the_providers():
+    """`OpenAIProvider` profiles `gpt-6-luna` as a Responses API model; the Decisions API has none of its features."""
+    model = OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIProvider(api_key='test'))
+    assert {key: model.profile.get(key) for key in DECISION_PROFILE} == DECISION_PROFILE
+    assert (OpenAIProvider.model_profile('gpt-6-luna') or {}).get('supports_json_schema_output') is True
+
+    # Without a model to ask, as for a durable run's unregistered model string, the ID resolves the same profile.
+    profile = dict(infer_model_profile('openai-decisions:gpt-6-luna'))
+    profile.pop('context_window', None)
+    assert profile == decision_model_profile('gpt-6-luna')
+
+    # The user's `profile=` still wins over it.
+    custom = OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIProvider(api_key='test'), profile={'context_window': 1})
+    assert custom.profile.get('context_window') == 1
+
+
+def test_missing_api_key_names_the_openai_provider(env: TestEnv):
     env.remove('OPENAI_API_KEY')
     env.remove('OPENAI_BASE_URL')
-    with pytest.raises(UserError, match=r'`OpenAIDecisionsProvider\(api_key=\.\.\.\)`'):
-        OpenAIDecisionsProvider()
+    with pytest.raises(UserError, match=r'`OpenAIProvider\(api_key=\.\.\.\)`'):
+        OpenAIDecisionsModel('gpt-6-luna')
 
 
 def test_infer_model_refuses_another_provider():
-    with pytest.raises(UserError, match='require an `OpenAIDecisionsProvider`'):
-        infer_model('openai-decisions:gpt-6-luna', provider_factory=lambda _: OpenAIProvider(api_key='test'))
+    with pytest.raises(UserError, match='require an `OpenAIProvider`'):
+        infer_model('openai-decisions:gpt-6-luna', provider_factory=lambda _: DeepSeekProvider(api_key='test'))
+
+
+def test_openai_decisions_provider_deprecated():
+    """`OpenAIDecisionsModel` takes `OpenAIProvider` itself, so its dedicated provider is deprecated."""
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`OpenAIDecisionsProvider` is deprecated.*Use `OpenAIProvider` with `OpenAIDecisionsModel`',
+    ):
+        provider = OpenAIDecisionsProvider(api_key='test')  # pyright: ignore[reportDeprecated]
+
+    # It keeps working, as before.
+    model = OpenAIDecisionsModel('gpt-6-luna', provider=provider)
+    assert model.system == 'openai-decisions'
+    assert {key: model.profile.get(key) for key in DECISION_PROFILE} == DECISION_PROFILE
+
+
+async def test_decision_response_does_not_end_a_responses_chain(allow_model_requests: None):
+    """A decision response in the history is not the Responses API's, so it doesn't stand in for the latest one.
+
+    Both models share `OpenAIProvider`, so it is `OpenAIDecisionsModel.system` that keeps the decision response
+    apart. Named `'openai'`, it would be the latest response `openai_previous_response_id='auto'` continues from,
+    and having no Responses ID, would send the whole history again and lose the prompt cache comparison.
+    """
+    bodies: list[dict[str, JsonValue]] = []
+
+    def responses(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(400, json={'error': {'message': 'probe', 'type': 'probe'}})
+
+    decision_response = await Agent(mock_model(boolean_answers), output_type=bool, instructions='Harmful?').run(
+        'Is that harmful?',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart('Find the latest release.')]),
+            ModelResponse(parts=[TextPart('v2.59.0')], provider_name='openai', provider_response_id='resp_1'),
+        ],
+    )
+    client = AsyncOpenAI(
+        api_key='test', max_retries=0, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(responses))
+    )
+    responses_model = OpenAIResponsesModel('gpt-6-luna', provider=OpenAIProvider(openai_client=client))
+    with pytest.raises(ModelHTTPError):
+        await Agent(responses_model).run(
+            'Now summarise it.',
+            message_history=decision_response.all_messages(),
+            model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+        )
+
+    assert bodies[0]['previous_response_id'] == 'resp_1'
+    assert bodies[0]['prompt_cache_options'] == {'comparison_response_id': 'resp_1'}
+    assert bodies[0]['input'] == snapshot(
+        [
+            {'role': 'user', 'content': 'Is that harmful?'},
+            {
+                'name': 'final_result',
+                'arguments': '{"response":true}',
+                'call_id': IsStr(),
+                'type': 'function_call',
+            },
+            {
+                'type': 'function_call_output',
+                'call_id': IsStr(),
+                'output': 'Final result processed.',
+            },
+            {'role': 'user', 'content': 'Now summarise it.'},
+        ]
+    )
 
 
 @pytest.mark.vcr
@@ -343,15 +458,15 @@ async def test_conversation_and_route(
 
     result = await agent.run('Still no refund!', message_history=history)
 
-    assert result.output == snapshot(Ticket(urgent=False, area='billing'))
+    assert result.output == snapshot(Ticket(urgent=True, area='billing'))
     assert result.response.provider_details == snapshot(
         {
-            'confidence': {'urgent': 0.1, 'area': 1.0},
+            'confidence': {'urgent': 0.42, 'area': 1.0},
             'probabilities': {'area': {'billing': 1.0, 'bug': 0.0}},
             'scores': {},
             'route': {
                 'choice': 'Ticket',
-                'probabilities': {'Ticket': 0.89, 'escalate': 0.11},
+                'probabilities': {'Ticket': 0.8, 'escalate': 0.2},
                 'offered': ['Ticket', 'escalate'],
             },
         }
@@ -359,7 +474,11 @@ async def test_conversation_and_route(
     assert request_capture.body('/decisions') == snapshot(
         {
             'model': 'gpt-6-luna',
-            'input': '{"history": [{"user": "I was charged twice."}, {"assistant": "Sorry to hear that, we are looking into it."}], "text": "Still no refund!"}',
+            'input': [
+                {'role': 'user', 'content': 'I was charged twice.'},
+                {'role': 'assistant', 'content': 'Sorry to hear that, we are looking into it.'},
+                {'role': 'user', 'content': 'Still no refund!'},
+            ],
             'questions': [
                 {
                     'type': 'predicate',
@@ -557,7 +676,7 @@ async def test_api_limits(
 async def test_http_error(allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture):
     """A model the API does not serve is an error response, raised for a `FallbackModel` to take over."""
     model = OpenAIDecisionsModel(
-        'gpt-5', provider=OpenAIDecisionsProvider(api_key=openai_api_key, http_client=request_capture.client)
+        'gpt-5', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
     )
 
     with pytest.raises(ModelHTTPError) as exc_info:
@@ -1099,9 +1218,11 @@ async def test_image_only_prompt_streams(
                 {
                     'role': 'user',
                     'content': [
-                        {'type': 'input_text', 'text': '<image 1>'},
-                        {'type': 'input_text', 'text': '<image 1>:'},
-                        {'type': 'input_image', 'image_url': IsStr(regex=r'^data:image/jpeg;base64,.+$')},
+                        {
+                            'type': 'input_image',
+                            'image_url': IsStr(regex=r'^data:image/jpeg;base64,.+$'),
+                            'detail': 'auto',
+                        }
                     ],
                 }
             ],
@@ -1147,21 +1268,17 @@ async def test_image_in_history_and_text_in_current_prompt(
                     'role': 'user',
                     'content': [
                         {
-                            'type': 'input_text',
-                            'text': IsJson(
-                                {
-                                    'history': [
-                                        {'user': '<image 1>'},
-                                        {'assistant': 'This image was attached earlier.'},
-                                    ],
-                                    'text': 'Does the pictured fruit have green flesh and black seeds?',
-                                }
-                            ),
-                        },
-                        {'type': 'input_text', 'text': '<image 1>:'},
-                        {'type': 'input_image', 'image_url': IsStr(regex=r'^data:image/jpeg;base64,.+$')},
+                            'type': 'input_image',
+                            'image_url': IsStr(regex=r'^data:image/jpeg;base64,.+$'),
+                            'detail': 'auto',
+                        }
                     ],
-                }
+                },
+                {'role': 'assistant', 'content': 'This image was attached earlier.'},
+                {
+                    'role': 'user',
+                    'content': 'Does the pictured fruit have green flesh and black seeds?',
+                },
             ],
             'questions': [
                 {
@@ -1235,40 +1352,60 @@ async def test_images_from_assistant_and_tool_returns_keep_their_labels_and_orde
     answer_call = response.parts[0]
     assert isinstance(answer_call, ToolCallPart)
     assert answer_call.args == {'value': True}
-    expected_state: dict[str, JsonValue] = {
-        'history': [
-            {'user': 'Earlier image question.'},
-            {'assistant': 'assistant before'},
-            {'assistant': '<image 1>'},
-            {'assistant': 'assistant after'},
-        ],
-        'text': 'Look up the image.',
-        'done': [
-            {'tool_call': {'name': 'lookup', 'args': {}}},
-            {'tool_return': {'name': 'lookup', 'content': '["tool before","<image 2>","tool after"]'}},
-            {'tool_return': {'name': 'native_lookup', 'content': '["native before","<image 3>","native after"]'}},
-        ],
-    }
     request_body: JsonValue = json.loads(captured.requests[0].content)
     assert request_body == snapshot(
         {
             'model': 'gpt-6-luna',
             'input': [
+                {'role': 'user', 'content': 'Earlier image question.'},
+                {'role': 'assistant', 'content': 'assistant before'},
+                {'role': 'assistant', 'content': '<image 1>'},
+                {
+                    'role': 'user',
+                    'content': [
+                        {'type': 'input_text', 'text': '<image 1>:'},
+                        {
+                            'type': 'input_image',
+                            'image_url': 'data:image/png;base64,YXNzaXN0YW50LWltYWdl',
+                            'detail': 'auto',
+                        },
+                    ],
+                },
+                {'role': 'assistant', 'content': 'assistant after'},
+                {'role': 'user', 'content': 'Look up the image.'},
+                {'type': 'function_call', 'call_id': 'tool-1', 'name': 'lookup', 'arguments': '{}'},
+                {
+                    'type': 'function_call_output',
+                    'call_id': 'tool-1',
+                    'output': [
+                        {'type': 'input_text', 'text': 'tool before'},
+                        {
+                            'type': 'input_image',
+                            'image_url': 'data:image/png;base64,dG9vbC1pbWFnZQ==',
+                            'detail': 'auto',
+                        },
+                        {'type': 'input_text', 'text': 'tool after'},
+                    ],
+                },
                 {
                     'role': 'user',
                     'content': [
                         {
                             'type': 'input_text',
-                            'text': IsJson(expected_state),
+                            'text': IsStr(
+                                regex=r'^<tool_result tool_name="native_lookup" tool_call_id="pyd_ai_[0-9a-f]+">$'
+                            ),
                         },
-                        {'type': 'input_text', 'text': '<image 1>:'},
-                        {'type': 'input_image', 'image_url': 'data:image/png;base64,YXNzaXN0YW50LWltYWdl'},
-                        {'type': 'input_text', 'text': '<image 2>:'},
-                        {'type': 'input_image', 'image_url': 'data:image/png;base64,dG9vbC1pbWFnZQ=='},
-                        {'type': 'input_text', 'text': '<image 3>:'},
-                        {'type': 'input_image', 'image_url': 'data:image/png;base64,bmF0aXZlLWltYWdl'},
+                        {'type': 'input_text', 'text': 'native before'},
+                        {
+                            'type': 'input_image',
+                            'image_url': 'data:image/png;base64,bmF0aXZlLWltYWdl',
+                            'detail': 'auto',
+                        },
+                        {'type': 'input_text', 'text': 'native after'},
+                        {'type': 'input_text', 'text': '</tool_result>'},
                     ],
-                }
+                },
             ],
             'questions': [
                 {
@@ -1315,46 +1452,44 @@ async def test_image_urls_in_tool_returns_are_downloaded_and_labeled(allow_model
 
     assert result.output is True
     download.assert_awaited_once_with(image_url, data_format='bytes')
-    expected_state: dict[str, JsonValue]
+    tool_output: list[JsonValue] = [
+        {'type': 'input_text', 'text': 'before'},
+        {'type': 'input_image', 'image_url': 'data:image/png;base64,dG9vbC1pbWFnZQ==', 'detail': 'auto'},
+        {'type': 'input_text', 'text': 'after'},
+    ]
+    expected_history: list[JsonValue]
     if native:
-        expected_state = {
-            'history': [
-                {'user': 'Look up the image.'},
-                {'tool_return': {'name': 'native_lookup', 'content': '["before","<image 1>","after"]'}},
-            ],
-            'text': 'Does the lookup contain an image?',
-        }
+        # The native call isn't in the history, so its result goes on the user channel, framed as the tool's.
+        expected_history = [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'input_text',
+                        'text': IsStr(
+                            regex=r'^<tool_result tool_name="native_lookup" tool_call_id="pyd_ai_[0-9a-f]+">$'
+                        ),
+                    },
+                    *tool_output,
+                    {'type': 'input_text', 'text': '</tool_result>'},
+                ],
+            }
+        ]
     else:
-        expected_state = {
-            'history': [
-                {'user': 'Look up the image.'},
-                {'tool_call': {'name': 'lookup', 'args': {}}},
-                {'tool_return': {'name': 'lookup', 'content': '["before","<image 1>","after"]'}},
-            ],
-            'text': 'Does the lookup contain an image?',
-        }
+        expected_history = [
+            {'type': 'function_call', 'call_id': 'tool-1', 'name': 'lookup', 'arguments': '{}'},
+            {'type': 'function_call_output', 'call_id': 'tool-1', 'output': tool_output},
+        ]
     request_body: JsonValue = json.loads(captured.requests[0].content)
-    assert request_body == snapshot(
-        {
-            'model': 'gpt-6-luna',
-            'input': [
-                {
-                    'role': 'user',
-                    'content': [
-                        {
-                            'type': 'input_text',
-                            'text': IsJson(expected_state),
-                        },
-                        {'type': 'input_text', 'text': '<image 1>:'},
-                        {'type': 'input_image', 'image_url': 'data:image/png;base64,dG9vbC1pbWFnZQ=='},
-                    ],
-                }
-            ],
-            'questions': [
-                {'type': 'predicate', 'name': 'response', 'instructions': 'Does the lookup contain an image?'}
-            ],
-        }
-    )
+    assert request_body == {
+        'model': 'gpt-6-luna',
+        'input': [
+            {'role': 'user', 'content': 'Look up the image.'},
+            *expected_history,
+            {'role': 'user', 'content': 'Does the lookup contain an image?'},
+        ],
+        'questions': [{'type': 'predicate', 'name': 'response', 'instructions': 'Does the lookup contain an image?'}],
+    }
 
 
 @pytest.mark.parametrize(
@@ -1400,57 +1535,29 @@ async def test_failed_tool_return_image_keeps_order_and_one_error_wrapper(allow_
     ).run('Does the failed lookup retain its image?', message_history=history)
 
     assert result.output is True
-    expected_state: dict[str, JsonValue]
-    if native:
-        expected_state = {
-            'history': [
-                {'user': 'Look up this image.'},
-                {'tool_call': {'name': 'native_lookup', 'args': {}}},
-                {
-                    'tool_return': {
-                        'name': 'native_lookup',
-                        'content': '{"error":"[\\"before\\",\\"<image 1>\\",\\"after\\"]"}',
-                    }
-                },
-            ],
-            'text': 'Does the failed lookup retain its image?',
-        }
-    else:
-        expected_state = {
-            'history': [
-                {'user': 'Look up this image.'},
-                {'tool_call': {'name': 'lookup', 'args': {}}},
-                {
-                    'tool_return': {
-                        'name': 'lookup',
-                        'content': '{"error":"[\\"before\\",\\"<image 1>\\",\\"after\\"]"}',
-                    }
-                },
-            ],
-            'text': 'Does the failed lookup retain its image?',
-        }
+    name, call_id = ('native_lookup', 'native-1') if native else ('lookup', 'tool-1')
     request_body: JsonValue = json.loads(captured.requests[0].content)
-    assert request_body == snapshot(
-        {
-            'model': 'gpt-6-luna',
-            'input': [
-                {
-                    'role': 'user',
-                    'content': [
-                        {
-                            'type': 'input_text',
-                            'text': IsJson(expected_state),
-                        },
-                        {'type': 'input_text', 'text': '<image 1>:'},
-                        {'type': 'input_image', 'image_url': 'data:image/png;base64,dG9vbC1pbWFnZQ=='},
-                    ],
-                }
-            ],
-            'questions': [
-                {'type': 'predicate', 'name': 'response', 'instructions': 'Does the failed lookup retain its image?'}
-            ],
-        }
-    )
+    assert request_body == {
+        'model': 'gpt-6-luna',
+        'input': [
+            {'role': 'user', 'content': 'Look up this image.'},
+            {'type': 'function_call', 'call_id': call_id, 'name': name, 'arguments': '{}'},
+            {
+                'type': 'function_call_output',
+                'call_id': call_id,
+                # One error wrapper around the text, the image's place in it kept by its label.
+                'output': [
+                    {'type': 'input_text', 'text': '{"error":"[\\"before\\",\\"<image 1>\\",\\"after\\"]"}'},
+                    {'type': 'input_text', 'text': '<image 1>:'},
+                    {'type': 'input_image', 'image_url': 'data:image/png;base64,dG9vbC1pbWFnZQ==', 'detail': 'auto'},
+                ],
+            },
+            {'role': 'user', 'content': 'Does the failed lookup retain its image?'},
+        ],
+        'questions': [
+            {'type': 'predicate', 'name': 'response', 'instructions': 'Does the failed lookup retain its image?'}
+        ],
+    }
     assert ModelMessagesTypeAdapter.dump_json(history) == original_history
 
 
@@ -1513,11 +1620,8 @@ async def test_image_is_prepared_once_for_route_then_fill(allow_model_requests: 
             'content': [
                 {
                     'type': 'input_text',
-                    'text': IsStr(
-                        regex=r'(?s)^The receipt is attached\. (?:Some detail nobody asked about\. ){3000}\s*<image 1>$'
-                    ),
+                    'text': IsStr(regex=r'^The receipt is attached\. (?:Some detail nobody asked about\. ){3000}$'),
                 },
-                {'type': 'input_text', 'text': '<image 1>:'},
                 {
                     'type': 'input_image',
                     'image_url': BinaryContent(b'picture', media_type='image/png').data_uri,
@@ -1577,30 +1681,25 @@ async def test_image_is_prepared_once_for_route_then_fill(allow_model_requests: 
     ('source', 'unsupported'),
     [
         pytest.param('prompt', BinaryContent(b'audio', media_type='audio/mpeg'), id='audio-prompt'),
+        pytest.param('prompt', AudioUrl('https://example.com/audio.mp3'), id='audio-url-prompt'),
         pytest.param('assistant-file', BinaryContent(b'%PDF', media_type='application/pdf'), id='document-assistant'),
-        pytest.param('tool-return', BinaryContent(b'video', media_type='video/mp4'), id='video-tool-return'),
     ],
 )
 async def test_unsupported_files_fail_before_a_decisions_request(
-    source: Literal['prompt', 'assistant-file', 'tool-return'],
-    unsupported: BinaryContent,
+    source: Literal['prompt', 'assistant-file'],
+    unsupported: BinaryContent | AudioUrl,
     allow_model_requests: None,
 ):
-    """Audio, documents, and video remain unsupported across user, assistant, and tool history."""
+    """Audio, documents, and video the user sent, or the model produced, fail before a request is sent."""
     history: list[ModelMessage] = []
-    prompt: str | list[BinaryContent] = 'Classify this content.'
+    prompt: str | list[BinaryContent | AudioUrl] = 'Classify this content.'
     if source == 'prompt':
         prompt = [unsupported]
-    elif source == 'assistant-file':
+    else:
+        assert isinstance(unsupported, BinaryContent)
         history = [
             ModelRequest.user_text_prompt('Earlier prompt.'),
             ModelResponse(parts=[FilePart(content=unsupported)]),
-        ]
-    else:
-        history = [
-            ModelRequest.user_text_prompt('Look up the attachment.'),
-            ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
-            ModelRequest(parts=[ToolReturnPart('lookup', unsupported, tool_call_id='tool-1')]),
         ]
     captured = Captured(boolean_answers)
 
@@ -1611,28 +1710,37 @@ async def test_unsupported_files_fail_before_a_decisions_request(
     assert captured.requests == []
 
 
-@pytest.mark.parametrize('source', ['prompt', 'tool-return'])
-async def test_unsupported_audio_urls_fail_before_a_decisions_request(
-    source: Literal['prompt', 'tool-return'], allow_model_requests: None
+@pytest.mark.parametrize(
+    ('unsupported', 'note'),
+    [
+        pytest.param(
+            BinaryContent(b'video', media_type='video/mp4', identifier='clip'),
+            'File clip (video/mp4, 5 bytes) was not sent: this model cannot read video.',
+            id='video',
+        ),
+        pytest.param(
+            AudioUrl('https://example.com/audio.mp3', identifier='clip'),
+            'File clip (audio/mpeg) was not sent: this model cannot read audio files.',
+            id='audio-url',
+        ),
+    ],
+)
+async def test_unsupported_tool_return_files_are_named_in_a_note(
+    unsupported: BinaryContent | AudioUrl, note: str, allow_model_requests: None
 ):
-    """Audio URLs are rejected in user prompts and tool returns before a Decisions request is sent."""
-    audio_url = AudioUrl('https://example.com/audio.mp3')
-    history: list[ModelMessage] = []
-    prompt: str | list[AudioUrl] = 'Classify this content.'
-    if source == 'prompt':
-        prompt = [audio_url]
-    else:
-        history = [
-            ModelRequest.user_text_prompt('Look up the attachment.'),
-            ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
-            ModelRequest(parts=[ToolReturnPart('lookup', audio_url, tool_call_id='tool-1')]),
-        ]
+    """Audio or video a tool returned reaches the Decisions request as a note naming it, rather than failing the run."""
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Look up the attachment.'),
+        ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
+        ModelRequest(parts=[ToolReturnPart('lookup', unsupported, tool_call_id='tool-1')]),
+    ]
     captured = Captured(boolean_answers)
     agent = Agent(mock_model(captured), output_type=bool, instructions='Does this contain an image?')
 
-    with pytest.raises(UserError, match='unsupported file: this model accepts text and images only'):
-        await agent.run(prompt, message_history=history)
-    assert captured.requests == []
+    result = await agent.run('Classify this content.', message_history=history)
+
+    assert result.output is True
+    assert note in captured.requests[0].content.decode()
 
 
 async def test_image_download_error_prevents_a_decisions_request(allow_model_requests: None):
@@ -1745,7 +1853,7 @@ class FreeTextOutput(BaseModel):
                 run=lambda captured: Agent(
                     OpenAIDecisionsModel(
                         'gpt-6-luna',
-                        provider=OpenAIDecisionsProvider(
+                        provider=OpenAIProvider(
                             openai_client=AsyncOpenAI(
                                 api_key='test',
                                 max_retries=0,
@@ -1890,25 +1998,24 @@ async def test_overfull_speculation_picks_then_fills_under_question_limit(allow_
 
     download.assert_awaited_once_with(image_url, data_format='bytes')
     assert result.output == Approve(approved=True)
-    expected_input: list[dict[str, object]] = [
-        {
-            'role': 'user',
-            'content': [
-                {'type': 'input_text', 'text': 'Review the ticket.\n\n<image 1>'},
-                {'type': 'input_text', 'text': '<image 1>:'},
-                {
-                    'type': 'input_image',
-                    'image_url': BinaryContent(b'picture', media_type='image/png').data_uri,
-                },
-            ],
-        }
-    ]
     request_bodies: list[DecisionCreateParams] = [json.loads(request.content) for request in captured.requests]
     assert request_bodies == snapshot(
         [
             {
                 'model': 'gpt-6-luna',
-                'input': expected_input,
+                'input': [
+                    {
+                        'role': 'user',
+                        'content': [
+                            {'type': 'input_text', 'text': 'Review the ticket.'},
+                            {
+                                'type': 'input_image',
+                                'image_url': 'data:image/png;base64,cGljdHVyZQ==',
+                                'detail': 'auto',
+                            },
+                        ],
+                    }
+                ],
                 'questions': [
                     {
                         'type': 'choice',
@@ -1923,7 +2030,19 @@ async def test_overfull_speculation_picks_then_fills_under_question_limit(allow_
             },
             {
                 'model': 'gpt-6-luna',
-                'input': expected_input,
+                'input': [
+                    {
+                        'role': 'user',
+                        'content': [
+                            {'type': 'input_text', 'text': 'Review the ticket.'},
+                            {
+                                'type': 'input_image',
+                                'image_url': 'data:image/png;base64,cGljdHVyZQ==',
+                                'detail': 'auto',
+                            },
+                        ],
+                    }
+                ],
                 'questions': [
                     {
                         'type': 'predicate',
@@ -2380,3 +2499,197 @@ async def test_direct_decide_accepts_requests_at_provider_limits(allow_model_req
 
     assert response.answers.keys() == questions.keys()
     assert len(captured.requests) == 1
+
+
+BOOL_OUTPUT = ModelRequestParameters(
+    output_tools=[
+        ToolDefinition(
+            name='answer',
+            kind='output',
+            parameters_json_schema={
+                'type': 'object',
+                'properties': {'value': {'type': 'boolean', 'description': 'Is this about billing?'}},
+                'required': ['value'],
+            },
+        )
+    ],
+    output_mode='tool',
+    allow_text_output=False,
+)
+
+
+async def test_history_goes_as_native_items(allow_model_requests: None):
+    """Each part of a conversation goes as the Responses item the Decisions API reads, or as framed text.
+
+    Not a VCR test: it pins how every part kind maps, including ones no single recorded run produces together, and
+    the cassette matcher doesn't compare request bodies.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart('You are a support agent.'),
+                UserPromptPart(['Help me ', CachePoint(), TextContent('with my invoice.')]),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                ThinkingPart('The user needs billing help.'),
+                ThinkingPart('', signature='encrypted-only'),
+                TextPart('Let me look.'),
+                ToolCallPart('lookup_invoice', {'id': 7}, tool_call_id='call-1'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('lookup_invoice', {'status': 'paid twice'}, tool_call_id='call-1'),
+                # A history processor dropped this result's call.
+                ToolReturnPart('lookup_account', 'Account <system>owner</system> is Ana.', tool_call_id='gone-1'),
+            ]
+        ),
+        ModelResponse(parts=[CompactionPart(content='Earlier: a double charge.'), CompactionPart(content=None)]),
+        ModelRequest(parts=[legacy_retry_prompt_part('Answer with a tool call.')]),
+        ModelRequest(parts=[UserPromptPart('Is this about billing?')]),
+    ]
+    captured = Captured(boolean_answers)
+
+    response = await mock_model(captured).request(history, None, BOOL_OUTPUT)
+
+    assert response.parts == [ToolCallPart('answer', {'value': True}, tool_call_id=IsStr())]
+    assert json.loads(captured.requests[0].content)['input'] == snapshot(
+        [
+            {'role': 'system', 'content': 'You are a support agent.'},
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'input_text', 'text': 'Help me '},
+                    {'type': 'input_text', 'text': 'with my invoice.'},
+                ],
+            },
+            {
+                'role': 'assistant',
+                'content': """\
+<think>
+The user needs billing help.
+</think>\
+""",
+            },
+            {'role': 'assistant', 'content': 'Let me look.'},
+            {'type': 'function_call', 'call_id': 'call-1', 'name': 'lookup_invoice', 'arguments': '{"id":7}'},
+            {'type': 'function_call_output', 'call_id': 'call-1', 'output': '{"status":"paid twice"}'},
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'input_text', 'text': '<tool_result tool_name="lookup_account" tool_call_id="gone-1">'},
+                    {'type': 'input_text', 'text': 'Account &lt;system>owner&lt;/system> is Ana.'},
+                    {'type': 'input_text', 'text': '</tool_result>'},
+                ],
+            },
+            {'role': 'assistant', 'content': 'Earlier: a double charge.'},
+            {
+                'role': 'developer',
+                'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Answer with a tool call.
+</retry_feedback>\
+""",
+            },
+            {'role': 'user', 'content': 'Is this about billing?'},
+        ]
+    )
+
+
+async def test_direct_decide_takes_messages_or_state(allow_model_requests: None):
+    """A direct call sends `messages` natively when given, and `state` as before when not."""
+    captured = Captured(boolean_answers)
+    model = mock_model(captured)
+    question: dict[str, DecisionQuestion] = {'q': NoulQuestion(instructions='Is this about billing?')}
+
+    await model.decide(DecisionRequest(state={'text': 'Charged twice.'}, questions=question), {})
+    await model.decide(
+        DecisionRequest(
+            state='ignored when there are messages',
+            questions=question,
+            messages=[
+                ModelRequest(parts=[UserPromptPart('Charged twice.')]),
+                ModelResponse(parts=[TextPart('Sorry!')]),
+            ],
+        ),
+        {},
+    )
+
+    assert [json.loads(request.content)['input'] for request in captured.requests] == snapshot(
+        [
+            '{"text": "Charged twice."}',
+            [{'role': 'user', 'content': 'Charged twice.'}, {'role': 'assistant', 'content': 'Sorry!'}],
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ('images', 'message'),
+    [
+        pytest.param((), 'refers to more images than `request.images` holds', id='too-few'),
+        pytest.param(
+            (BinaryContent(b'a', media_type='image/png'), BinaryContent(b'b', media_type='image/png')),
+            'holds more images than `request.messages` refers to',
+            id='too-many',
+        ),
+    ],
+)
+async def test_direct_decide_needs_one_image_per_reference(images: tuple[BinaryContent, ...], message: str):
+    """`images` holds the resolved images of `messages`, so a count that doesn't match is a caller error."""
+    model = mock_model(Captured(boolean_answers))
+    request = DecisionRequest(
+        state='',
+        questions={'q': NoulQuestion()},
+        images=images,
+        messages=[ModelRequest(parts=[UserPromptPart(['Look:', BinaryContent(b'a', media_type='image/png')])])],
+    )
+
+    with pytest.raises(UserError, match=re.escape(message)):
+        await model.decide(request, {})
+
+
+@pytest.mark.vcr
+async def test_tool_round_trip_goes_as_native_items(
+    allow_model_requests: None, capture_model: OpenAIDecisionsModel, request_capture: RequestCapture
+):
+    """After a tool runs, the next request carries its call and result as native items, and the answer reads them.
+
+    Only the tool's result says the invoice was charged twice, so a `True` comes from the `function_call_output`.
+    """
+
+    def lookup_invoice() -> str:
+        """Look up how the customer's latest invoice was charged."""
+        return 'The latest invoice was charged twice on 2026-10-01.'
+
+    agent = Agent(
+        capture_model,
+        output_type=bool,
+        tools=[lookup_invoice],
+        instructions='Was the customer charged twice? Look the invoice up before answering.',
+    )
+
+    result = await agent.run('My latest invoice looks wrong, can you check it?')
+
+    assert result.output is True
+    assert [body['input'] for body in request_capture.bodies('/decisions')] == snapshot(
+        [
+            'My latest invoice looks wrong, can you check it?',
+            [
+                {'role': 'user', 'content': 'My latest invoice looks wrong, can you check it?'},
+                {
+                    'type': 'function_call',
+                    'call_id': (call_id := IsSameStr()),
+                    'name': 'lookup_invoice',
+                    'arguments': '{}',
+                },
+                {
+                    'type': 'function_call_output',
+                    'call_id': call_id,
+                    'output': 'The latest invoice was charged twice on 2026-10-01.',
+                },
+            ],
+        ]
+    )

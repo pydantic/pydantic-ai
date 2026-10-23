@@ -12,6 +12,7 @@ import asyncio
 import base64
 import itertools
 import json
+import re
 import warnings
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
@@ -46,7 +47,8 @@ from pydantic_ai.messages import (
     PartEndEvent,
     PartStartEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -64,6 +66,7 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     RealtimeError,
     RealtimeModelProfile,
+    RealtimeModelProfileSpec,
     RealtimeSession,
     RealtimeSessionReconnectEvent,
     RealtimeTurnCompleteEvent,
@@ -89,7 +92,7 @@ from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import IsNow, try_import
+from ..conftest import IsNow, legacy_retry_prompt_part, try_import
 
 with try_import() as imports_successful:
     import httpx2
@@ -275,6 +278,8 @@ def test_delegation_settings_reach_the_backend(model: OpenAILiveModel) -> None:
         # Resolved against the backend's profile, as a direct Responses request to it would be.
         pytest.param('gpt-5.6-sol', 'minimal', 'low', id='no-minimal-effort'),
         pytest.param('gpt-5', 'minimal', 'minimal', id='minimal-effort'),
+        # The delegation's efforts stop at `xhigh`, even for a backend whose Responses API takes `max`.
+        pytest.param('gpt-6.1-sol', 'max', 'xhigh', id='max-effort'),
         # A backend that always reasons can't be turned off, so `False` leaves it at its default.
         pytest.param('gpt-5', False, None, id='always-reasons'),
         # A backend that doesn't reason is sent no effort at all.
@@ -393,6 +398,34 @@ async def test_an_image_needs_respond_true(model: OpenAILiveModel) -> None:
         'response.create',
         'session.close',
     ]
+
+
+async def test_session_start_carries_seeded_system_prompts(model: OpenAILiveModel) -> None:
+    """The standing system prompt opens the backend instructions; a later one is seeded in place as `<system>` text."""
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _FakeWebSocket([started])
+    history = [
+        ModelRequest(parts=[SystemPromptPart(content='Standing prompt.'), UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[SystemPromptPart(content='Mid-conversation note.'), UserPromptPart(content='more')]),
+        ModelResponse(parts=[TextPart(content='sure')]),
+    ]
+
+    with _patched_connect(ws):
+        async with Agent(instructions='Agent instructions.').realtime(model, message_history=history).session():
+            pass
+
+    session = json.loads(ws.sent[0])['session']
+    assert session['delegation']['responses']['instructions'] == 'Standing prompt.\n\nAgent instructions.'
+    assert session['input'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': 'hi'}]},
+            {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'hello'}]},
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': '<system>Mid-conversation note.</system>'}]},
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': 'more'}]},
+            {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'sure'}]},
+        ]
+    )
 
 
 def test_seeding_projects_history_to_text() -> None:
@@ -632,8 +665,9 @@ def test_audio_seconds_are_priced_as_the_live_model() -> None:
     assert reported.usage.cost == snapshot(Decimal('0.03'))
 
 
-async def test_text_is_sent_as_context_not_a_user_turn() -> None:
-    """Live has no user-message event: speakable text is commentary, silent context is thinking."""
+async def test_text_turn_runs_the_backend_and_context_is_thinking() -> None:
+    """Live has no user-message event: a text turn is the backend's user message, which it is run on, and Live hears
+    what was asked as silent context; text sent as context alone is only that."""
     sent: list[dict[str, Any]] = []
 
     class _Recorder(OpenAILiveConnection):
@@ -641,17 +675,25 @@ async def test_text_is_sent_as_context_not_a_user_turn() -> None:
             sent.append(event)
 
     connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
-    await connection.send('Say this out loud.')
+    await connection.send('What is the weather in London?')
     await connection.send(TextContext('Know this quietly.'))
 
     assert sent == snapshot(
         [
             {
-                'type': 'session.commentary.append',
-                'event_id': 'pydantic_ai.commentary.0',
+                'type': 'session.thinking.append',
                 'delegation_id': None,
-                'content': 'Say this out loud.',
+                'content': 'The user typed: What is the weather in London?',
             },
+            {
+                'type': 'response.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [{'type': 'input_text', 'text': 'What is the weather in London?'}],
+                },
+            },
+            {'type': 'response.create', 'event_id': 'pydantic_ai.text.0'},
             {'type': 'session.thinking.append', 'delegation_id': None, 'content': 'Know this quietly.'},
         ]
     )
@@ -910,6 +952,45 @@ async def test_a_late_completion_does_not_end_a_delegation_mid_continuation() ->
     # The continuation itself is what ends the delegation.
     await connection.terminal()
     assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_call_that_raised_gives_up_its_round() -> None:
+    """The backend resumes only from every output of its round, so a call whose tool raised leaves none to continue.
+
+    The round is given up as a failed backend would be: no `response.create`, a sibling's result goes nowhere, and the
+    delegation no longer suspends the turn clock.
+    """
+    connection = _Recorder()
+    _open_delegation(connection, call_ids=('c1', 'c2'))
+    await connection.terminal()
+
+    connection._tool_call_unanswered('c1')  # pyright: ignore[reportPrivateUsage]
+    assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
+    assert connection._silence_timeout() is not None  # pyright: ignore[reportPrivateUsage]
+    # Settled outside any provider message: no usage report follows, so a later one can't be taken for its settling.
+    assert not connection._lifecycle._settles  # pyright: ignore[reportPrivateUsage]
+    await connection.send(ToolResult('c2', output='rainy'))
+    assert connection.sent == []
+
+
+async def test_a_call_that_raised_while_its_response_runs_gives_up_the_round_at_its_terminal() -> None:
+    """The response that asked for the calls may still be running: the round is given up once it ends."""
+    connection = _Recorder()
+    _open_delegation(connection, call_ids=('c1', 'c2'))
+    await connection.send(ToolResult('c2', output='rainy'))
+    connection._tool_call_unanswered('c1')  # pyright: ignore[reportPrivateUsage]
+    assert connection._delegations  # pyright: ignore[reportPrivateUsage]
+
+    await connection.terminal()
+    assert connection.sent == ['response.item.create']
+    assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_call_from_no_delegation_left_unanswered_changes_nothing() -> None:
+    connection = _connection()
+    _open_delegation(connection, call_ids=('c1',))
+    connection._tool_call_unanswered('unknown')  # pyright: ignore[reportPrivateUsage]
+    assert connection._delegations['d1'].pending_tool_calls == {'c1'}  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_tool_result_text_content_reaches_the_backend() -> None:
@@ -1852,13 +1933,20 @@ def test_seeding_keeps_a_failed_tool_round() -> None:
     """A retry carries the outcome of the call before it.
 
     Dropping it seeds the `ToolCallPart` as a call that was never answered, so the backend reads a
-    round that failed as one that succeeded and does not try again.
+    round that failed as one that succeeded and does not try again. A legacy `RetryPromptPart` a
+    caller built by hand seeds exactly like the part it is translated into.
     """
     messages = [
         ModelResponse(parts=[ToolCallPart(tool_name='weather', args={'city': 'Utrecht'}, tool_call_id='1')]),
-        ModelRequest(parts=[RetryPromptPart(content='unknown city', tool_name='weather', tool_call_id='1')]),
-        # A retry with no tool name is output validation rather than a tool round.
-        ModelRequest(parts=[RetryPromptPart(content='not a number')]),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='weather', content='unknown city', tool_call_id='1', outcome='retried')]
+        ),
+        # Feedback that answers no call is output validation rather than a tool round.
+        ModelRequest(parts=[RetryFeedbackPart(content='not a number', retry=RetryInfo(cause='model_retry'))]),
+        ModelRequest(parts=[RetryFeedbackPart(content='not an int', retry=RetryInfo(cause='validation_error'))]),
+        ModelResponse(parts=[ToolCallPart(tool_name='weather', args={'city': 'Delft'}, tool_call_id='2')]),
+        ModelRequest(parts=[legacy_retry_prompt_part('still unknown', tool_name='weather', tool_call_id='2')]),
+        ModelRequest(parts=[legacy_retry_prompt_part('still not a number')]),
     ]
 
     assert seed_input_items(messages, provider_name='openai') == snapshot(
@@ -1869,8 +1957,20 @@ def test_seeding_keeps_a_failed_tool_round() -> None:
             },
             {
                 'role': 'user',
+                'content': [{'type': 'input_text', 'text': 'Result of `weather`: {"error":"unknown city"}'}],
+            },
+            {
+                'role': 'user',
                 'content': [
-                    {'type': 'input_text', 'text': '`weather` failed: unknown city\n\nFix the errors and try again.'}
+                    {
+                        'type': 'input_text',
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+not a number
+</retry_feedback>\
+""",
+                    }
                 ],
             },
             {
@@ -1878,7 +1978,34 @@ def test_seeding_keeps_a_failed_tool_round() -> None:
                 'content': [
                     {
                         'type': 'input_text',
-                        'text': 'The previous attempt failed: Validation feedback:\nnot a number\n\nFix the errors and try again.',
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<validation_errors>
+not an int
+</validation_errors>\
+""",
+                    }
+                ],
+            },
+            {
+                'role': 'assistant',
+                'content': [{'type': 'output_text', 'text': 'Called `weather` with {"city":"Delft"}.'}],
+            },
+            {
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': 'Result of `weather`: {"error":"still unknown"}'}],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'input_text',
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+still not a number
+</retry_feedback>\
+""",
                     }
                 ],
             },
@@ -2183,29 +2310,98 @@ def _text_of(tokens: int) -> str:
     return ' '.join(['hello'] * tokens)
 
 
-@pytest.mark.parametrize('respond', [True, False])
-async def test_context_text_over_the_cap_is_refused_before_sending(respond: bool) -> None:
+async def test_context_text_over_the_cap_is_refused_before_sending() -> None:
     """Live rejects context over 500 tokens with an error that arrives after `send()` has returned.
 
-    By then the text was recorded as sent, and a `respond=True` send left `wait_for_reply()` waiting for
-    a reply that was never coming.
+    By then the text was recorded as sent.
     """
     started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
     ws = _FakeWebSocket([started])
     with _patched_connect(ws):
         async with Agent().realtime(OpenAILiveModel('gpt-live-1', provider='openai')).session() as session:
-            with pytest.raises(UserError, match='at most 500 tokens of text per `send\\(\\)`, and this is 501'):
-                await session.send(_text_of(501), respond=respond)
-            with anyio.fail_after(1):
-                await session.wait_for_reply()
+            with pytest.raises(
+                UserError,
+                match=re.escape('at most 500 tokens of context per `send(..., respond=False)`, and this is 501'),
+            ):
+                await session.send(_text_of(501), respond=False)
             assert session.all_messages() == []
             # 500 is within the cap, and goes out.
-            await session.send(_text_of(500), respond=respond)
+            await session.send(_text_of(500), respond=False)
 
-    assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == [
-        'session.commentary.append' if respond else 'session.thinking.append',
-        'session.close',
-    ]
+    assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == ['session.thinking.append', 'session.close']
+
+
+async def test_enqueued_system_prompt_is_the_operators_not_the_users() -> None:
+    """`enqueue(SystemPromptPart(...))` still runs the backend, but isn't framed as something the user typed.
+
+    Framed that way, Live later told the caller they had said it (checked live). Live hears it as context as it
+    is, `<system>`-tagged, and the backend as a developer message.
+    """
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _FakeWebSocket([started])
+    with _patched_connect(ws):
+        async with Agent().realtime(OpenAILiveModel('gpt-live-1', provider='openai')).session() as session:
+            session.enqueue(SystemPromptPart(content='The caller was verified as Jamie. Greet them by name.'))
+            with anyio.fail_after(5):
+                while not any(json.loads(frame)['type'] == 'response.create' for frame in ws.sent):
+                    await anyio.sleep(0.01)
+            messages = session.all_messages()
+
+    assert [json.loads(frame) for frame in ws.sent[1:-1]] == snapshot(
+        [
+            {
+                'type': 'session.thinking.append',
+                'delegation_id': None,
+                'content': '<system>The caller was verified as Jamie. Greet them by name.</system>',
+            },
+            {
+                'type': 'response.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'developer',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': '<system>The caller was verified as Jamie. Greet them by name.</system>',
+                        }
+                    ],
+                },
+            },
+            {'type': 'response.create', 'event_id': 'pydantic_ai.text.0'},
+        ]
+    )
+    # History records the text the session delivered, as for any enqueued system prompt.
+    assert [
+        type(part.content) for message in messages for part in message.parts if isinstance(part, UserPromptPart)
+    ] == [str]
+
+
+async def test_typed_turn_too_long_to_tell_live_still_runs_the_backend() -> None:
+    """The backend takes typed text of any length; only the note telling Live what was typed is capped.
+
+    A typed turn whose note would be over Live's 500-token context cap goes to the backend without it.
+    """
+    sent: list[dict[str, Any]] = []
+
+    class _Recorder(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
+    # 496 tokens fit alongside the note that introduces them; 497 don't.
+    await connection.send(_text_of(496))
+    await connection.send(_text_of(497))
+
+    assert [event['type'] for event in sent] == snapshot(
+        [
+            'session.thinking.append',
+            'response.item.create',
+            'response.create',
+            'response.item.create',
+            'response.create',
+        ]
+    )
+    assert sent[3]['item']['content'] == [{'type': 'input_text', 'text': _text_of(497)}]
 
 
 def test_a_new_transcript_segment_is_spaced_from_the_last() -> None:
@@ -2624,9 +2820,9 @@ async def test_special_token_text_is_counted_as_live_counts_it() -> None:
             sent.append(event)
 
     connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
-    await connection.send(_text_of(499) + '<|endoftext|>')
+    await connection.send(TextContext(_text_of(499) + '<|endoftext|>'))
     with pytest.raises(UserError, match='and this is 501'):
-        await connection.send(_text_of(500) + '<|endoftext|>')
+        await connection.send(TextContext(_text_of(500) + '<|endoftext|>'))
     assert len(sent) == 1
 
 
@@ -2813,12 +3009,14 @@ async def test_audio_sent_as_the_pump_wakes_holds_its_frame_back() -> None:
 # --- browser WebRTC ---------------------------------------------------------------------------------
 
 
-def _webrtc_model(handler: Any, *, settings: OpenAILiveModelSettings | None = None) -> OpenAILiveModel:
+def _webrtc_model(
+    handler: Any, *, settings: OpenAILiveModelSettings | None = None, profile: RealtimeModelProfileSpec | None = None
+) -> OpenAILiveModel:
     """A Live model whose signaling request is served by `handler` instead of the network."""
     provider = OpenAIProvider(
         api_key='sk-test', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     )
-    return OpenAILiveModel('gpt-live-1', provider=provider, settings=settings)
+    return OpenAILiveModel('gpt-live-1', provider=provider, settings=settings, profile=profile)
 
 
 def _created(session_id: str = 'live_test') -> httpx2.Response:
@@ -2918,12 +3116,46 @@ async def test_a_rejected_offer_is_an_http_error() -> None:
     assert exc_info.value.model_name == 'gpt-live-1'
 
 
+async def test_an_offer_ignores_the_profiles_sample_rates() -> None:
+    """WebRTC negotiates the audio format, so a rate the WebSocket path would reject doesn't stop a call."""
+    sent: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        return _created()
+
+    model = _webrtc_model(handler, profile={'audio_input_sample_rate': 48000, 'audio_output_sample_rate': 48000})
+    await model.answer_webrtc_offer('v=0')
+
+    assert 'audio' not in sent[0]['session']
+
+
 async def test_unsupported_settings_raise_before_answering_an_offer() -> None:
     def handler(request: httpx2.Request) -> httpx2.Response:
         raise AssertionError('no HTTP request expected')  # pragma: no cover
 
     with pytest.raises(UserError, match='`max_tokens` cannot be set'):
         await _webrtc_model(handler).answer_webrtc_offer('v=0', model_settings=OpenAILiveModelSettings(max_tokens=10))
+
+
+async def test_the_auto_transcription_default_can_be_set_explicitly() -> None:
+    """Live always transcribes with its own model, which is what `'auto'` asks for.
+
+    So settings shared across providers can spell out the default and start the same session as leaving
+    it out; a pinned model still raises (`test_unsupported_settings_raise_before_connecting`).
+    """
+    sent: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        return _created()
+
+    model = _webrtc_model(handler)
+    await model.answer_webrtc_offer('v=0')
+    await model.answer_webrtc_offer('v=0', model_settings=OpenAILiveModelSettings(input_transcription_model='auto'))
+
+    default, explicit_auto = sent
+    assert explicit_auto == default
 
 
 async def test_there_are_no_client_secrets(model: OpenAILiveModel) -> None:

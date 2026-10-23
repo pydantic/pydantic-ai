@@ -4,7 +4,7 @@ import json
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 import pydantic_core
 from pydantic_core import core_schema
@@ -18,7 +18,14 @@ from ._warnings import (
 )
 
 if TYPE_CHECKING:
-    from .messages import ModelMessage, ModelRequestAttempt, ModelResponse, RetryPromptPart, ToolReturnPart
+    from .messages import (
+        ModelMessage,
+        ModelRequestAttempt,
+        ModelResponse,
+        RetryFeedbackPart,
+        RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
+        ToolReturnPart,
+    )
     from .usage import RunUsage
 
 __all__ = (
@@ -641,9 +648,9 @@ class ModelQuotaExceededError(ModelAPIError):
 class ModelUnavailableError(ModelAPIError):
     """Raised when the provider or model was temporarily unable to serve the request.
 
-    For example an HTTP 503, Bedrock's `ServiceUnavailableException`, or a gRPC `UNAVAILABLE`, whether it arrived
-    as an HTTP status or inside a stream. When the provider says the cause is load, it's the more specific
-    [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError].
+    For example an HTTP 503, Bedrock's `ServiceUnavailableException`, or a gRPC `UNAVAILABLE` sent by the provider,
+    whether it arrived as an HTTP status or inside a stream. When the provider says the cause is load, it's the more
+    specific [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError].
     """
 
 
@@ -659,8 +666,8 @@ class ModelOverloadedError(ModelUnavailableError):
 class ModelServerError(ModelAPIError):
     """Raised when the provider failed with a server error that isn't otherwise categorized.
 
-    For example an HTTP 500, 502 or 504, or a gRPC `INTERNAL`, whether it arrived as an HTTP status or inside a
-    stream. An unavailable or overloaded provider is a
+    For example an HTTP 500, 502 or 504, or a gRPC `INTERNAL` or `DEADLINE_EXCEEDED` sent by the provider, whether
+    it arrived as an HTTP status or inside a stream. An unavailable or overloaded provider is a
     [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] instead.
     """
 
@@ -999,6 +1006,19 @@ _HTTP_CATEGORY_CLASSES: dict[type[ModelAPIError], type[_CategorizedHTTPError]] =
 }
 
 
+def _parse_retry_after_ms(headers: Mapping[str, str]) -> float | None:
+    """Seconds to wait before retrying, from the `retry-after-ms` header (keys lowercased), as OpenAI and Anthropic send it."""
+    if (raw_ms := headers.get('retry-after-ms')) is None:
+        return None
+    try:
+        milliseconds = float(raw_ms)
+    except ValueError:
+        return None
+    if 0 <= milliseconds < float('inf'):
+        return milliseconds / 1000
+    return None
+
+
 def _parse_retry_after(headers: Mapping[str, str] | None) -> float | None:
     """Seconds to wait before retrying, from the `retry-after-ms` or `Retry-After` header (keys lowercased).
 
@@ -1007,14 +1027,8 @@ def _parse_retry_after(headers: Mapping[str, str] | None) -> float | None:
     """
     if headers is None:
         return None
-    if (raw_ms := headers.get('retry-after-ms')) is not None:
-        try:
-            milliseconds = float(raw_ms)
-        except ValueError:
-            pass
-        else:
-            if 0 <= milliseconds < float('inf'):
-                return milliseconds / 1000
+    if (seconds_from_ms := _parse_retry_after_ms(headers)) is not None:
+        return seconds_from_ms
     raw = headers.get('retry-after')
     if raw is None:
         return None
@@ -1051,15 +1065,43 @@ class FallbackExceptionGroup(ExceptionGroup[Any]):
 
 
 class ToolRetryError(Exception):
-    """Exception used to signal a `ToolRetry` message should be returned to the LLM."""
+    """Exception used to signal a retry message should be returned to the LLM.
 
-    def __init__(self, tool_retry: RetryPromptPart):
-        self.tool_retry = tool_retry
-        message = (
-            tool_retry.content
-            if isinstance(tool_retry.content, str)
-            else self._format_error_details(tool_retry.content, tool_retry.tool_name)
+    `tool_retry` is whichever part the retry travels as: a `ToolReturnPart` with `outcome='retried'`
+    when it answers a tool call, a `RetryFeedbackPart` when it doesn't. A deprecated
+    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] passed in is translated into the one it
+    always meant.
+    """
+
+    tool_retry: RetryFeedbackPart | ToolReturnPart
+
+    def __init__(
+        self,
+        tool_retry: RetryFeedbackPart | ToolReturnPart | RetryPromptPart,  # pyright: ignore[reportDeprecated]
+    ):
+        from .messages import (
+            RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
+            ToolReturnPart,
+            _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
         )
+
+        # TODO(v3): remove `RetryPromptPart`
+        if isinstance(tool_retry, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+            tool_retry = _translate_legacy_retry_part(tool_retry)
+        self.tool_retry = tool_retry
+        tool_name = tool_retry.tool_name if isinstance(tool_retry, ToolReturnPart) else None
+        content = tool_retry.content
+        if isinstance(content, list):
+            # Validation errors read the way pydantic's own `ValidationError` text does, naming the tool
+            # they're for: this is the `__cause__` of an "exceeded max retries" traceback, not the wire.
+            # A list here is always error details: a retried tool return is only ever built with them.
+            message = self._format_error_details(cast('list[pydantic_core.ErrorDetails]', content), tool_name)
+        elif isinstance(tool_retry, ToolReturnPart):
+            # Rendered the way `ToolFailedError` below renders its own part: the content without the
+            # `{"error": ...}` wrapper a provider with no native error channel adds.
+            message = tool_retry.model_response_str(wrap_if_error=False)
+        else:
+            message = content
         super().__init__(message)
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
@@ -1073,6 +1115,7 @@ class ToolRetryError(Exception):
         some error types (value_error, assertion_error, etc.) require an 'error' key in ctx,
         but when ErrorDetails are serialized, exception objects are stripped from ctx.
         The 'msg' field already contains the human-readable message, so we use that directly.
+        A retried tool return carries each distinct `input` once, so a later error may have none.
         """
         error_count = len(errors)
         lines = [
@@ -1081,7 +1124,8 @@ class ToolRetryError(Exception):
         for e in errors:
             loc = '.'.join(str(x) for x in e['loc']) if e['loc'] else '__root__'
             lines.append(loc)
-            lines.append(f'  {e["msg"]} [type={e["type"]}, input_value={e["input"]!r}]')
+            input_value = f', input_value={e["input"]!r}' if 'input' in e else ''
+            lines.append(f'  {e["msg"]} [type={e["type"]}{input_value}]')
         return '\n'.join(lines)
 
 
