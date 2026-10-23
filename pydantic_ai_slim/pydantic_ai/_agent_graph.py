@@ -2932,8 +2932,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         raise error
             except BaseException as e:
                 await attempt_stack.aclose()
-                if opened is not None and (partial := opened.get()).state == 'suspended':
-                    # Priming got past a suspended segment, which the provider billed, before the stream failed.
+                if opened is not None and (partial := opened.get()).usage.has_values():
+                    # Priming got past a segment the provider billed, like a suspended one, before the stream failed.
                     self._record_response_usage(ctx, partial, request_context=request_context)
                 # Cancellation and control flow aren't failures to open for the error hooks to handle.
                 if not isinstance(e, Exception) or isinstance(e, (exceptions.ModelRetry, exceptions.RetryModelRequest)):
