@@ -181,6 +181,9 @@ class WrapperModel(Model):
     def _release_suspended_response(self, response: ModelResponse) -> None:
         self.wrapped._release_suspended_response(response)
 
+    def _withdraws_rejected_suspended_response(self, response: ModelResponse) -> bool:
+        return self.wrapped._withdraws_rejected_suspended_response(response)
+
     async def count_tokens(
         self,
         messages: list[ModelMessage],

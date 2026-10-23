@@ -36,6 +36,7 @@ from pydantic_ai import (
     ModelSettings,
     PartDeltaEvent,
     PartStartEvent,
+    PendingModelResponse,
     RetryInfo,
     RunContext,
     RunUsage,
@@ -4942,6 +4943,41 @@ async def test_dbos_durability_batch_model_resume_from_history(dbos: DBOS) -> No
     steps = await dbos.list_workflow_steps_async(wfid)
     step_names = [step['function_name'] for step in steps]
     assert step_names.count('durability_batch_resume__model.request') == 2
+
+
+async def test_dbos_durability_batch_model_withdraws_a_pending_response_a_hook_rejects(dbos: DBOS) -> None:
+    """A pending batch request a hook rejects is withdrawn through a cancellation step, which cancels its batch."""
+    wrapped = SlowBatchTestModel(pending_checks=10**6)
+
+    @dataclass
+    class RejectPendingOnce(AbstractCapability[object]):
+        rejected: bool = False
+
+        async def after_model_request(
+            self, ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            if response.state == 'suspended' and not self.rejected:
+                self.rejected = True
+                raise ModelRetry('Not this one.')
+            return response
+
+    agent = Agent(
+        wrapped,
+        name='durability_batch_reject',
+        output_type=[str, PendingModelResponse],
+        capabilities=[RejectPendingOnce(), BatchModelRequests(**FAST_BATCH_SETTINGS), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> bool:
+        result = await agent.run('go')
+        return isinstance(result.output, PendingModelResponse)
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_durable_agent()
+
+    assert len(wrapped.created) == 2
+    assert wrapped.canceled == [wrapped.created[0].id]
 
 
 async def test_dbos_durability_batch_model_recovery_does_not_submit_again(dbos: DBOS) -> None:

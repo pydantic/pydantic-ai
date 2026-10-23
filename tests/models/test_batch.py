@@ -442,6 +442,7 @@ def test_a_response_that_is_not_waiting_is_released_and_limited_by_the_wrapped_m
     model = _batched(WrapperModel(TestModel()), **FAST_BATCH_SETTINGS)
     model._release_suspended_response(response)  # pyright: ignore[reportPrivateUsage]
     assert model._limits_polls(response)  # pyright: ignore[reportPrivateUsage]
+    assert not model._withdraws_rejected_suspended_response(response)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_an_ended_batchs_results_are_kept_until_every_request_waiting_on_it_has_read_or_left(

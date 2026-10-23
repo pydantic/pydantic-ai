@@ -1149,8 +1149,30 @@ def _keep_default_output_mode(
 # runs the whole chain inside one durable unit.
 
 
+async def _settle_pending(
+    pending: tuple[ModelRequestContext, _messages.ModelResponse] | None, accepted: _messages.ModelResponse | None
+) -> None:
+    """Leave the pending response a request returned for a later run if the run ends with it, or withdraw it if not.
+
+    The run only ends with a [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] once every model request
+    hook has passed the response on, so that's when its request is left for a later run to collect. One a hook
+    rejected, by raising or by replacing it, is cancelled if the model says nothing else would collect it.
+    """
+    if pending is None:
+        return
+    request_context, response = pending
+    if (
+        accepted is not None
+        and accepted.state == 'suspended'
+        and accepted.provider_response_id == response.provider_response_id
+    ):
+        request_context.model._release_suspended_response(response)  # pyright: ignore[reportPrivateUsage]
+    elif request_context.model._withdraws_rejected_suspended_response(response):  # pyright: ignore[reportPrivateUsage]
+        await _cancel_interrupted_job(request_context, response)
+
+
 async def _cancel_interrupted_job(request_context: ModelRequestContext, response: _messages.ModelResponse) -> None:
-    """Cancel the job of a suspended response a stream was interrupted on, through the model that sent it.
+    """Cancel the job of a suspended response a stream was interrupted on or a hook rejected, through its model.
 
     A capability's wrapper around that model was exited with the stream, so it's entered again for the cancellation,
     as for each call it serves, shielded as graph teardown may be under cancellation. Like the cancellation itself,
@@ -1321,7 +1343,6 @@ async def model_request(  # noqa: C901
                 messages = base_messages
             elif response.state == 'suspended':
                 if return_pending and requested and model.continuation_delay(response) is not None:
-                    model._release_suspended_response(response)  # pyright: ignore[reportPrivateUsage]
                     return response
                 job_id = response.provider_response_id
                 # A batch request waiting for its batch is waiting on a job rather than continuing a generation, even
@@ -1583,6 +1604,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Set when the consumer stops the stream by raising, before the graph task cancels the handler.
         stream_error: BaseException | None = None
         _interrupted_response: _messages.ModelResponse | None = None
+        # The pending response the request returned, which the run ends with unless a hook rejects it.
+        _pending: tuple[ModelRequestContext, _messages.ModelResponse] | None = None
         time_to_first_chunk: float | None = None
         accounted_responses: list[_messages.ModelResponse] = []
         before_model_request_context: list[tuple[ContextVar[Any], Any]] = []
@@ -1591,7 +1614,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
             nonlocal _handler_called, _handler_response, _handler_request_context, _handler_usage_recorded
-            nonlocal _stream_cut_short, time_to_first_chunk, _interrupted_response
+            nonlocal _stream_cut_short, time_to_first_chunk, _interrupted_response, _pending
             if _handler_called:
                 raise exceptions.UserError('`wrap_model_request` may call its handler only once')
             _handler_called = True
@@ -1659,6 +1682,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # Streaming core errors surface in the consumer task, which cancels this wrap task;
             # `on_model_request_error` cannot recover an error after streaming has begun.
             response = sr.get()
+            if response.state == 'suspended':
+                _pending = req_ctx, response
             _handler_response = response
             _handler_usage_recorded = True
             self._record_response_usage(ctx, response, request_context=req_ctx)
@@ -1805,7 +1830,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             if not _stream_cut_short:
                                 raise
                             model_response = e.response
+                        self.last_request_context = wrap_request_context
+                        self._enforce_usage_limits(ctx, accounted_responses)
                     except exceptions.ModelRetry as e:
+                        await _settle_pending(_pending, None)
                         self._enforce_usage_limits(ctx, accounted_responses)
                         # `_handler_response` is unset only if the handler failed between stream
                         # teardown and `sr.get()` (e.g. a custom model's `get()` raising on a
@@ -1814,9 +1842,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         if _handler_response is not None:  # pragma: no branch
                             self._append_response(ctx, _handler_response, record_usage=not _handler_usage_recorded)
                         await self._build_retry_node(ctx, e)
+                    except BaseException:
+                        await _settle_pending(_pending, None)
+                        raise
                     else:
-                        self.last_request_context = wrap_request_context
-                        self._enforce_usage_limits(ctx, accounted_responses)
+                        await _settle_pending(_pending, model_response)
                         await self._finish_handling(ctx, model_response, record_usage=not _handler_usage_recorded)
                         assert self._result is not None
             finally:
@@ -1879,10 +1909,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         _handler_response: _messages.ModelResponse | None = None
         _handler_called = False
         _handler_usage_recorded = False
+        # The pending response the request returned, which the run ends with unless a hook rejects it.
+        _pending: tuple[ModelRequestContext, _messages.ModelResponse] | None = None
         accounted_responses: list[_messages.ModelResponse] = []
 
         async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
-            nonlocal _handler_called, _handler_response, _handler_usage_recorded
+            nonlocal _handler_called, _handler_response, _handler_usage_recorded, _pending
             if _handler_called:
                 raise exceptions.UserError('`wrap_model_request` may call its handler only once')
             _handler_called = True
@@ -1910,6 +1942,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         on_progress=on_progress,
                         return_pending=ctx.deps.output_schema.allows_pending_model_response,
                     )
+                if response.state == 'suspended':
+                    _pending = req_ctx, response
                 _handler_response = response
                 _handler_usage_recorded = True
                 self._record_response_usage(ctx, response, request_context=req_ctx)
@@ -1943,15 +1977,20 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 model_response = e.response
             except exceptions.ModelRetry:
                 raise  # Propagate to outer handler
+            self._enforce_usage_limits(ctx, accounted_responses)
         except exceptions.ModelRetry as e:
+            await _settle_pending(_pending, None)
             self._enforce_usage_limits(ctx, accounted_responses)
             # `ModelRetry` from any model lifecycle hook retries the model request.
             # If the handler was called, preserve the response in history for context.
             if _handler_response is not None:
                 self._append_response(ctx, _handler_response, record_usage=not _handler_usage_recorded)
             return await self._build_retry_node(ctx, e)
+        except BaseException:
+            await _settle_pending(_pending, None)
+            raise
 
-        self._enforce_usage_limits(ctx, accounted_responses)
+        await _settle_pending(_pending, model_response)
         return await self._finish_handling(ctx, model_response, record_usage=not _handler_usage_recorded)
 
     async def _prepare_request(
