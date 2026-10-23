@@ -34,16 +34,7 @@ _MCP_URLS: dict[str, str] = {
     'people': 'https://people.googleapis.com/mcp/v1',
 }
 
-
-class _DefaultDescription(str):
-    """The released default text, a distinct object so a caller passing an equal string keeps it verbatim."""
-
-    def __reduce__(self) -> str:
-        # Copies and pickles resolve to the module constant, so the identity check still recognizes them.
-        return '_DEFAULT_DESCRIPTION'
-
-
-_DEFAULT_DESCRIPTION = _DefaultDescription('Use Gmail, Calendar, Drive, and the other Google Workspace products.')
+_DEFAULT_DESCRIPTION = 'Use Gmail, Calendar, Drive, and the other Google Workspace products.'
 
 
 @dataclass
@@ -97,7 +88,7 @@ class GoogleWorkspace(AbstractCapability[AgentDepsT]):
 
     def get_description(self) -> str | None:
         """Return `description`, or one naming the selected products while it is left at its default."""
-        if self.description is not _DEFAULT_DESCRIPTION:
+        if self.description != _DEFAULT_DESCRIPTION:
             return self.description
         return f'Use these Google Workspace products: {", ".join(service.title() for service in self.services)}.'
 
