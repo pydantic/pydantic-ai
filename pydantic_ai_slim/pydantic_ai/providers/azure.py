@@ -5,9 +5,12 @@ from typing import TYPE_CHECKING, Self, overload
 from urllib.parse import urlparse
 
 from pydantic_ai import ModelProfile
-from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformerWithOutputOverride
+from pydantic_ai._json_schema import (
+    JsonSchema,
+    _JsonSchemaTransformerWithOutputOverride,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
@@ -399,12 +402,19 @@ class AzureProvider(_OpenAICompatibleProvider):
         )
 
 
-class _AzureGrokJsonSchemaTransformer(OpenAIJsonSchemaTransformer, JsonSchemaTransformerWithOutputOverride):
+class _AzureGrokJsonSchemaTransformer(
+    OpenAIJsonSchemaTransformer, InlineDefsJsonSchemaTransformer, _JsonSchemaTransformerWithOutputOverride
+):
     output_object_transformer = OpenAIJsonSchemaTransformer
 
-    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
-        super().__init__(schema, strict=strict)
-        self.prefer_inlined_defs = True
+    def walk(self) -> JsonSchema:
+        result = super().walk()
+        if self.recursive_refs:
+            # Keep OpenAI's recursive conversion instead of merging an unconverted root definition.
+            transformer = OpenAIJsonSchemaTransformer(self.schema, strict=self.strict)
+            result = transformer.walk()
+            self.is_strict_compatible = transformer.is_strict_compatible
+        return result
 
 
 def _openai_compatible_v1_base_url(endpoint: str) -> str | None:

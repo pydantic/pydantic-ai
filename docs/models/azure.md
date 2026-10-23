@@ -138,7 +138,7 @@ model = OpenAIResponsesModel(
 agent = Agent(model)
 ```
 
-Azure Grok rejects tool schemas containing local `$ref` and `$defs`. `AzureProvider` inlines non-recursive tool-schema definitions for the Grok family while retaining OpenAI's schema conversion, including nested `additionalProperties: false`. Native structured-output schemas keep the existing OpenAI conversion. The same profile applies with [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]. Recursive schemas cannot be fully inlined.
+Azure Grok rejects tool schemas containing local `$ref` and `$defs`. `AzureProvider` inlines non-recursive tool-schema definitions for the Grok family while retaining OpenAI's schema conversion, including nested `additionalProperties: false`. Native structured-output schemas keep the existing OpenAI conversion. The same profile applies with [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]. Recursive tool schemas retain their existing OpenAI conversion and references and cannot be fully inlined.
 
 ### Custom profile with `OpenAIProvider`
 

@@ -113,6 +113,8 @@ agent = Agent(model)
 ...
 ```
 
+For Grok deployments on Azure, see [Grok tool schemas](azure.md#grok-tool-schemas) for the `AzureProvider` route and the explicit custom-profile workaround with `OpenAIProvider`.
+
 ## Image generation
 
 Use [`ImageGenerator`][pydantic_ai.images.ImageGenerator] with an `openai:` image model for direct generation and
