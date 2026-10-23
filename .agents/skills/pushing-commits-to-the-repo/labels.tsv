@@ -9,8 +9,6 @@ a2a
 agentic-workflows	about our own gh aw's -> internal/chore — about our engine -> external/feature/bug
 alibaba
 anthropic
-approved:ci-config	Maintainer approval for changes to CI config (workflows, actions, scripts, pre-commit, Makefile)
-approved:dependencies	Maintainer approval for changes to pyproject.toml or uv.lock
 area:ui-adapters
 asyncio
 attention-delivered	A delivered channel escalation is waiting for GitHub state cleanup

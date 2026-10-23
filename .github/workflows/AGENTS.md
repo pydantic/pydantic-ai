@@ -165,25 +165,24 @@ Two consequences of the trigger, both easy to get backwards:
 # `PR Gates` answer merge questions from PR metadata
 
 `pr-gates.yml` runs one job per gate, and each job's check is the gate. The logic lives in
-`.github/scripts/pr_gates.py`. The workflow runs on `pull_request_target` from `main`, so
-`test_pr_gates.py` is the only check of a change to either before it merges.
+`.github/scripts/pr_gates.py`. The workflow runs on `pull_request` with a read-only token, so a
+PR that changes either runs its own copy.
 
 | Check | Fails when |
 |---|---|
-| `Gate: protected paths approved` | the PR changes a protected scope without that scope's `approved:<scope>` label |
 | `Gate: compatibility waiver labeled` | the PR adds a waiver to `.github/api-compatibility-allowlist.json` without `compatibility impact` |
 
-| Label | Scope |
-|---|---|
-| `approved:dependencies` | any `pyproject.toml` or `uv.lock` |
-| `approved:ci-config` | `.github/workflows/**`, `.github/actions/**`, `.github/scripts/**`, `.pre-commit-config.yaml`, `Makefile` |
+# Code owners approve dependency and CI config changes
 
-`approved:<scope>` is the standard for permission labels. Every PR that changes a scope needs
-its label, a maintainer's own included. The gate accepts a label only when its latest `labeled`
-event comes from a `User` whose `.permission` is `write` or `admin`. A push that changes the PR's
-files in a scope removes that scope's label, so an approval covers only the changes the maintainer
-saw. Reopening the PR, changing its base branch, or a push whose changes can't be listed (a rebase,
-a force-push, or 300 or more files), removes every approval label the PR needs.
+`.github/CODEOWNERS` owns every `pyproject.toml` and `uv.lock`, `.github/workflows/`,
+`.github/actions/`, `.github/scripts/`, `.pre-commit-config.yaml`, `Makefile`, and itself. The
+`main` ruleset requires an approving review from a code owner on a PR that changes any of them, and
+dismisses it when a later push changes the diff. GitHub enforces both, so no workflow keeps the
+approval current.
+
+- A PR author cannot approve their own PR, so a code owner's change needs another owner.
+- GitHub reads `CODEOWNERS` from the PR's base branch. A PR that edits it is judged by the
+  current owners.
 
 # Agentic workflows (`gh-aw`)
 
