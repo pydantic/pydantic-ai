@@ -25,14 +25,15 @@ one of five ways:
 - `projected_field`: an engine class declares a field of the same name as a member of the core class
   one of its methods takes as a parameter, as `ModelRequestContextProjection.from_context` does.
 
-A name gets its classes from a parameter or variable annotation, an assignment, a `for` loop over an
-annotated iterable, or `isinstance` narrowing, and a module-level type alias stands for the type it
-names. A name bound any other way, such as a `with ... as` target or a tuple-unpacked loop variable,
-has no class, so a member read through it records nothing. An access on a typed name that the walk
-cannot resolve to a member, such as `getattr(obj, name)`, falls back to the class, unless the class
-has a base outside the walked packages (`BaseModel`, `Exception`), which may define the member:
-those accesses record nothing. The classes in `MEMBER_LEVEL_ONLY` never get a
-class-level entry: nearly every change to core touches them, so a class-level entry would match
+Inside a function, a name gets its classes from a parameter or variable annotation, an assignment,
+a `for` loop or comprehension over an iterable whose annotation or return annotation is known, or
+`isinstance` narrowing, and a module-level type alias stands for the type it names. A name bound any
+other way, such as a `with ... as` target, a tuple-unpacked loop variable or a module-level loop
+variable, has no class, so a member read through it records nothing. An access on a typed name that
+the walk cannot resolve to a member, such as `getattr(obj, name)` or `obj.__dict__[name]`, falls back
+to the class, unless the class has a base outside the walked packages (`BaseModel`, `Exception`),
+which may define the member: those accesses record nothing. The classes in `MEMBER_LEVEL_ONLY` never
+get a class-level entry: nearly every change to core touches them, so a class-level entry would match
 every change.
 
 The manifest maps `core_file -> qualname -> {kinds, engines, sites}`. A change to a core definition
@@ -64,8 +65,6 @@ WRITE_COMMAND = 'uv run python scripts/durable_exec_contract.py --write'
 
 # Source roots, relative to the repository root, that `Index` searches for the modules the walk reads.
 SOURCE_ROOTS = ('pydantic_ai_slim', 'src/pydantic_ai_harness')
-CORE_PACKAGE = 'pydantic_ai'
-DURABLE_PACKAGE = 'pydantic_ai.durable_exec'
 
 # Engine name -> glob of its modules, relative to the repository root. An engine is a package that
 # defines a `BaseDurabilityCapability` subclass; `durable_exec` is the shared base every engine builds
@@ -126,11 +125,6 @@ class Module:
     definitions: dict[str, ast.stmt] = field(default_factory=dict[str, ast.stmt])
     imports: dict[str, tuple[str, str | None]] = field(default_factory=dict[str, tuple[str, str | None]])
 
-    @property
-    def is_core(self) -> bool:
-        in_core = self.name == CORE_PACKAGE or self.name.startswith(f'{CORE_PACKAGE}.')
-        return in_core and not (self.name == DURABLE_PACKAGE or self.name.startswith(f'{DURABLE_PACKAGE}.'))
-
 
 @dataclass(eq=False)
 class ClassInfo:
@@ -180,27 +174,34 @@ class Index:
                     continue
                 tree = ast.parse(file.read_text(encoding='utf-8'), filename=str(file))
                 module = self._modules[name] = Module(name, (Path(source_root) / path).as_posix(), is_package, tree)
-                for statement in _top_level(tree.body):
-                    match statement:
-                        case ast.ClassDef(name=bound) | ast.FunctionDef(name=bound) | ast.AsyncFunctionDef(name=bound):
-                            module.definitions[bound] = statement
-                        case ast.Assign(targets=targets):
-                            for target in targets:
-                                if isinstance(target, ast.Name):
-                                    module.definitions[target.id] = statement
-                        case ast.AnnAssign(target=ast.Name(id=bound)):
-                            module.definitions[bound] = statement
-                        case ast.Import() | ast.ImportFrom():
-                            module.imports.update(self.import_targets(module, statement))
-                        case _:
-                            pass
-                # A function-local import binds module-wide, unless the module binds the name itself.
-                for node in ast.walk(tree):
-                    if isinstance(node, (ast.Import, ast.ImportFrom)):
-                        for bound, target in self.import_targets(module, node):
-                            module.imports.setdefault(bound, target)
+                self.bind_top_level(module)
+                self.bind_local_imports(module)
                 return module
         return None
+
+    def bind_top_level(self, module: Module) -> None:
+        """The names the module's top-level statements define and import."""
+        for statement in _top_level(module.tree.body):
+            match statement:
+                case ast.ClassDef(name=bound) | ast.FunctionDef(name=bound) | ast.AsyncFunctionDef(name=bound):
+                    module.definitions[bound] = statement
+                case ast.Assign(targets=targets):
+                    for target in targets:
+                        if isinstance(target, ast.Name):
+                            module.definitions[target.id] = statement
+                case ast.AnnAssign(target=ast.Name(id=bound)):
+                    module.definitions[bound] = statement
+                case ast.Import() | ast.ImportFrom():
+                    module.imports.update(self.import_targets(module, statement))
+                case _:
+                    pass
+
+    def bind_local_imports(self, module: Module) -> None:
+        """A function-local import binds module-wide, unless the module binds the name itself."""
+        for node in ast.walk(module.tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for bound, target in self.import_targets(module, node):
+                    module.imports.setdefault(bound, target)
 
     def import_targets(
         self, module: Module, statement: ast.Import | ast.ImportFrom
@@ -243,12 +244,10 @@ class Index:
                 return self.class_info(module, statement, name)
             case ast.FunctionDef() | ast.AsyncFunctionDef():
                 return ModuleValue(module, name, statement.returns)
-            case None:
-                pass
             case ast.Assign(value=value) | ast.AnnAssign(value=value):
                 return ModuleValue(module, name, None, value)
             case _:
-                return ModuleValue(module, name, None)
+                pass
         if (target := module.imports.get(name)) is None:
             return self.module(f'{module.name}.{name}')
         target_module, target_name = target
@@ -276,11 +275,7 @@ class Index:
         """The classes an annotation, written in `module`, says a value is an instance of."""
         match annotation:
             case ast.Constant(value=str(source)):
-                try:
-                    parsed = ast.parse(source, mode='eval').body
-                except SyntaxError:
-                    return frozenset()
-                return self.annotation_classes(module, parsed)
+                return self.annotation_classes(module, _parse_annotation(source))
             case ast.BinOp(left=left, op=ast.BitOr(), right=right):
                 return self.annotation_classes(module, left) | self.annotation_classes(module, right)
             case ast.Subscript(value=value, slice=index):
@@ -307,11 +302,7 @@ class Index:
         """The classes the items of an iterable with this annotation, written in `module`, are instances of."""
         match annotation:
             case ast.Constant(value=str(source)):
-                try:
-                    parsed = ast.parse(source, mode='eval').body
-                except SyntaxError:
-                    return frozenset()
-                return self.element_classes(module, parsed)
+                return self.element_classes(module, _parse_annotation(source))
             case ast.BinOp(left=left, op=ast.BitOr(), right=right):
                 return self.element_classes(module, left) | self.element_classes(module, right)
             case ast.Subscript(value=value, slice=index):
@@ -372,6 +363,14 @@ def _top_level(body: list[ast.stmt]) -> Iterator[ast.stmt]:
                 yield from _top_level([*try_body, *handler_bodies, *orelse, *finalbody])
             case _:
                 yield statement
+
+
+def _parse_annotation(source: str) -> ast.expr | None:
+    """The expression a string annotation spells, or `None` if it is not valid Python."""
+    try:
+        return ast.parse(source, mode='eval').body
+    except SyntaxError:
+        return None
 
 
 def _last_name(expr: ast.expr) -> str | None:
@@ -477,7 +476,9 @@ class _EngineWalker(ast.NodeVisitor):
 
     def record(self, definer: ClassInfo | Module, qualname: str, kind: Kind, site: str | None = None) -> None:
         module = definer.module if isinstance(definer, ClassInfo) else definer
-        if module.is_core:
+        # Core is `pydantic_ai` outside `pydantic_ai.durable_exec`.
+        dotted = f'{module.name}.'
+        if dotted.startswith('pydantic_ai.') and not dotted.startswith('pydantic_ai.durable_exec.'):
             entry = self.entries.setdefault(module.path, {}).setdefault(
                 qualname, {'kinds': set[str](), 'engines': set[str](), 'sites': set[str]()}
             )
@@ -568,17 +569,26 @@ class _EngineWalker(ast.NodeVisitor):
         return result
 
     def element_types(self, iterable: ast.expr, annotated: Mapping[str, ast.expr | None]) -> frozenset[ClassInfo]:
-        """The classes the items of `iterable` are instances of, from the annotation of the name or member it reads."""
+        """The classes the items of `iterable` are instances of, from the annotation of what it reads or calls."""
         match iterable:
             case ast.Name(id=name):
                 return self.index.element_classes(self.module, annotated.get(name))
-            case ast.Attribute(value=value, attr=attr):
+            case ast.Attribute(value=value, attr=attr) | ast.Call(func=ast.Attribute(value=value, attr=attr)) if (
+                not isinstance(self.index.symbol(self.module, value), Module)
+            ):
                 result: frozenset[ClassInfo] = frozenset()
                 for info in self.types(value):
                     if (found := self.index.lookup(info, attr)) is not None:
                         definer, member = found
-                        result |= self.index.element_classes(definer.module, member.annotation)
+                        annotation = member.returns if isinstance(iterable, ast.Call) else member.annotation
+                        result |= self.index.element_classes(definer.module, annotation)
                 return result
+            case ast.Call(func=func):
+                match self.index.symbol(self.module, func):
+                    case ModuleValue(module=module, returns=returns):
+                        return self.index.element_classes(module, returns)
+                    case _:
+                        return frozenset()
             case _:
                 return frozenset()
 
@@ -604,6 +614,30 @@ class _EngineWalker(ast.NodeVisitor):
             case _:
                 pass
 
+    def record_overrides(self, info: ClassInfo) -> None:
+        """An `override` of each ancestor member the class body redefines."""
+        ancestors = self.index.mro(info)[0][1:]
+        for name, member in info.members.items():
+            if not member.in_body:
+                continue
+            for ancestor in ancestors:
+                if name in ancestor.members:
+                    self.record(ancestor, f'{ancestor.qualname}.{name}', 'override', f'{info.qualname}.{name}')
+
+    def record_projections(self, info: ClassInfo) -> None:
+        """A `projected_field` for each field named like a member of a class one of the methods takes."""
+        fields = [name for name, member in info.members.items() if member.is_field]
+        for method in info.node.body:
+            if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                parameters = [*method.args.posonlyargs, *method.args.args][0 if _is_static(method) else 1 :]
+                for parameter in [*parameters, *method.args.kwonlyargs]:
+                    for source in self.index.annotation_classes(self.module, parameter.annotation):
+                        for name in fields:
+                            if (found := self.index.lookup(source, name)) is not None:
+                                definer = found[0]
+                                site = f'{info.qualname}.{name}'
+                                self.record(definer, f'{definer.qualname}.{name}', 'projected_field', site)
+
     # --- Scopes ---------------------------------------------------------------------------------------------------
 
     def qualname(self, name: str) -> str:
@@ -616,24 +650,8 @@ class _EngineWalker(ast.NodeVisitor):
             self.visit(decorator)
         for base in node.bases:
             self.visit(base)
-        ancestors = self.index.mro(info)[0][1:]
-        for name, member in info.members.items():
-            if not member.in_body:
-                continue
-            for ancestor in ancestors:
-                if name in ancestor.members:
-                    self.record(ancestor, f'{ancestor.qualname}.{name}', 'override', f'{info.qualname}.{name}')
-        fields = [name for name, member in info.members.items() if member.is_field]
-        for method in node.body:
-            if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                parameters = [*method.args.posonlyargs, *method.args.args][0 if _is_static(method) else 1 :]
-                for parameter in [*parameters, *method.args.kwonlyargs]:
-                    for source in self.index.annotation_classes(self.module, parameter.annotation):
-                        for name in fields:
-                            if (found := self.index.lookup(source, name)) is not None:
-                                definer = found[0]
-                                site = f'{info.qualname}.{name}'
-                                self.record(definer, f'{definer.qualname}.{name}', 'projected_field', site)
+        self.record_overrides(info)
+        self.record_projections(info)
         self.scopes.append(_Scope(info.qualname, owner=info))
         for statement in node.body:
             self.visit(statement)
@@ -654,7 +672,21 @@ class _EngineWalker(ast.NodeVisitor):
                 self.bind(scope, argument.arg, frozenset({owner}))
                 continue
             self.bind(scope, argument.arg, self.index.annotation_classes(self.module, argument.annotation))
-        annotated = {argument.arg: argument.annotation for argument in arguments}
+        self.scopes.append(scope)
+        self.bind_locals(scope, node, {argument.arg: argument.annotation for argument in arguments})
+        for argument in [*arguments, node.args.vararg, node.args.kwarg]:
+            if argument is not None and argument.annotation is not None:
+                self.visit(argument.annotation)
+        if node.returns is not None:
+            self.visit(node.returns)
+        for statement in node.body:
+            self.visit(statement)
+        self.scopes.pop()
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def bind_locals(self, scope: _Scope, node: FunctionNode, annotated: dict[str, ast.expr | None]) -> None:
+        """Flow-insensitively, the classes each local name of the function is bound to anywhere in it."""
         annotated.update(
             {
                 statement.target.id: statement.annotation
@@ -662,7 +694,6 @@ class _EngineWalker(ast.NodeVisitor):
                 if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name)
             }
         )
-        self.scopes.append(scope)
         for statement in ast.walk(node):
             match statement:
                 case ast.AnnAssign(target=ast.Name(id=name), annotation=annotation):
@@ -677,20 +708,11 @@ class _EngineWalker(ast.NodeVisitor):
                 case (
                     ast.For(target=ast.Name(id=name), iter=iterable)
                     | ast.AsyncFor(target=ast.Name(id=name), iter=iterable)
+                    | ast.comprehension(target=ast.Name(id=name), iter=iterable)
                 ):
                     self.bind(scope, name, self.element_types(iterable, annotated))
                 case _:
                     pass
-        for argument in [*arguments, node.args.vararg, node.args.kwarg]:
-            if argument is not None and argument.annotation is not None:
-                self.visit(argument.annotation)
-        if node.returns is not None:
-            self.visit(node.returns)
-        for statement in node.body:
-            self.visit(statement)
-        self.scopes.pop()
-
-    visit_AsyncFunctionDef = visit_FunctionDef
 
     # --- Dependencies ---------------------------------------------------------------------------------------------
 
@@ -723,6 +745,8 @@ class _EngineWalker(ast.NodeVisitor):
         match node:
             case ast.Subscript(value=ast.Attribute(value=owner, attr='__dict__'), slice=ast.Constant(value=str(name))):
                 self.record_member(owner, name)
+            case ast.Subscript(value=ast.Attribute(value=owner, attr='__dict__')):
+                self.record_classes(self.types(owner))
             case _:
                 pass
         self.generic_visit(node)
@@ -738,9 +762,12 @@ class _EngineWalker(ast.NodeVisitor):
                 func=ast.Attribute(
                     value=ast.Attribute(value=owner, attr='__dict__'), attr='get' | 'setdefault' | 'pop'
                 ),
-                args=[ast.Constant(value=str(name)), *_],
+                args=[name, *_],
             ):
-                self.record_member(owner, name)
+                if isinstance(name, ast.Constant) and isinstance(name.value, str):
+                    self.record_member(owner, name.value)
+                else:
+                    self.record_classes(self.types(owner))
             case ast.Call(func=func, args=[owner]) if _last_name(func) == 'fields':
                 self.record_fields(owner)
             case ast.Call(func=func, args=[owner, *_], keywords=keywords) if _last_name(func) == 'replace':

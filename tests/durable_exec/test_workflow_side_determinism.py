@@ -6,17 +6,18 @@ the one that was recorded. Temporal's sandbox does not catch these in Pydantic A
 `PydanticAIPlugin` passes `pydantic_ai` through the sandbox, so core modules run against the real
 `time`, `datetime`, `random` and `uuid`. This test checks the direct calls: it matches each call in
 the modules below against `_DENYLIST` by the dotted name its imports resolve to. It does not see a
-call made through another name or object, a clock read in a dataclass default factory, or a branch
-on state that differs between the recorded run and the replay; those need a workflow-level test.
+call made through another name or object, a clock read through a function a dataclass default
+factory names (`default_factory=now_utc`), or a branch on state that differs between the recorded run
+and the replay; those need a workflow-level test. It reads source only, so it is not a VCR test.
 
 **The workflow-side module set.** Under Temporal, everything `TemporalAgent.run` and
 `TemporalDurability.wrap_run` execute outside an activity is workflow code. Running the Temporal
 durability, agent, toolset and tool-kind suites with a `sys.monitoring` hook that records each
-function first entered on Temporal's workflow event loop shows 92 core modules outside
-`durable_exec/` executing there. Most are data types and helpers (`messages`, `usage`, `_utils`,
-the model profiles), whose calls are only workflow-side when an orchestrating module makes them. The set below is the modules
-that own the run's control flow -- where a nondeterministic call decides what the workflow does
-next -- each of which the trace shows running on the workflow loop:
+function first entered on Temporal's workflow event loop shows which core modules outside
+`durable_exec/` execute there. Most are data types and helpers (`messages`, `usage`, `_utils`, the
+model profiles), whose calls are only workflow-side when an orchestrating module makes them. The set
+below is the modules that own the run's control flow -- where a nondeterministic call decides what
+the workflow does next -- each of which the trace shows running on the workflow loop:
 
 - `_agent_graph.py`: the graph nodes, prompt assembly, request preparation and response handling.
 - `agent/__init__.py`: `Agent.iter`, `_prepare_run` and `_PreparedAgentRun.open`.
@@ -28,8 +29,9 @@ next -- each of which the trace shows running on the workflow loop:
 - `durable_exec/` and `durable_exec/temporal/`: every module, so a new one is checked without being
   listed. Their activity-side calls are accepted in `_ACCEPTED`.
 
-Expand the core modules only with the same evidence. The set is Temporal's: DBOS and Prefect run their
-clock reads as steps and tasks, which they journal.
+Expand the core modules only with the same evidence. The set was derived under Temporal. DBOS and
+Prefect re-execute the same core modules in their workflow code, so the denials protect them too; the
+modules only they or the Harness engines run are not checked yet (pydantic/pydantic-ai#11176).
 
 **What is denied** is in `_DENYLIST`, each with why replay breaks it. Thread offload
 (`anyio.to_thread.run_sync`, `asyncio.to_thread`, `loop.run_in_executor`) is left out on purpose: it
@@ -47,10 +49,12 @@ from __future__ import annotations
 
 import ast
 import re
+import textwrap
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
 from inline_snapshot import snapshot
 
 REPO_ROOT = Path(__file__).parents[2]
@@ -75,9 +79,11 @@ WORKFLOW_SIDE_MODULES: tuple[str, ...] = (
 
 _CLOCK = 'reads a clock that has moved by the time the run replays'
 _RANDOM = 'draws randomness that a replay does not reproduce'
-_SLEEP = 'waits on the event loop rather than through the engine, so whether a replay keeps the delay depends on the engine; await `_agent_graph_sleep`, which `set_agent_graph_sleep` routes to the engine'
+_LOOP_CLOCK = 'reads the event-loop clock, which Temporal replays and other engines do not'
+_SLEEP = 'sleeps on the event loop, which only Temporal journals as a timer, so other engines do not replay the delay; await `_agent_graph_sleep`, which `set_agent_graph_sleep` routes to the engine'
 _THREAD = 'finishes on another thread in an order that a replay does not reproduce'
 _IO = 'performs I/O whose result can differ on replay; do it in an activity'
+_ENV = "reads the worker process's environment, which can differ on the worker that replays"
 
 # Callee -> why replay breaks it. A key ending in `.` denies everything under that module.
 _DENYLIST: dict[str, str] = {
@@ -93,12 +99,15 @@ _DENYLIST: dict[str, str] = {
     'time.localtime': _CLOCK,
     'time.gmtime': _CLOCK,
     'time.ctime': _CLOCK,
+    'time.process_time_ns': _CLOCK,
+    'time.thread_time': _CLOCK,
+    'time.thread_time_ns': _CLOCK,
     'datetime.datetime.now': _CLOCK,
     'datetime.datetime.utcnow': _CLOCK,
     'datetime.datetime.today': _CLOCK,
     'datetime.date.today': _CLOCK,
     'pydantic_ai._utils.now_utc': _CLOCK,
-    'anyio.current_time': _CLOCK,
+    'anyio.current_time': _LOOP_CLOCK,
     'random.': _RANDOM,
     'secrets.': _RANDOM,
     'os.urandom': _RANDOM,
@@ -116,6 +125,7 @@ _DENYLIST: dict[str, str] = {
     'threading.Thread': _THREAD,
     'threading.Timer': _THREAD,
     'concurrent.futures.': _THREAD,
+    'multiprocessing.': _THREAD,
     'open': _IO,
     'httpx.Client': _IO,
     'httpx.AsyncClient': _IO,
@@ -129,6 +139,12 @@ _DENYLIST: dict[str, str] = {
     'subprocess.': _IO,
     'os.system': _IO,
     'os.popen': _IO,
+    'http.client.': _IO,
+    'os.getenv': _ENV,
+    'os.environ.': _ENV,
+    'os.getpid': _ENV,
+    'platform.': _ENV,
+    'getpass.': _ENV,
     'socket.': _IO,
     'urllib.request.': _IO,
 }
@@ -136,7 +152,7 @@ _DENYLIST: dict[str, str] = {
 _PRAGMA = re.compile(r'#\s*workflow-nondeterminism-ok:(?P<reason>.*)$')
 
 _RUN_ID = 'fallback id when the run has none; `TemporalDurability` supplies one from `workflow.uuid4()`'
-_TIMESTAMP = 'stamps the `timestamp` of a message the run appends; the run reads it back only in `_is_same_request`, which compares two copies of that message'
+_TIMESTAMP = 'stamps the `timestamp` of a message the run appends; the run reads it back only to match the message against a copy of itself (`_is_same_request`) or to carry it into a merged request'
 
 # (module, enclosing qualname, callee) -> how many such calls are accepted, and why.
 _ACCEPTED: dict[tuple[str, str, str], tuple[int, str]] = {
@@ -255,16 +271,17 @@ def nondeterministic_calls(source: str, module: str, *, is_package: bool = False
     return _CallFinder(source, module, is_package).calls
 
 
-def unexplained_calls(relative: str, calls: list[DeniedCall]) -> tuple[list[str], Counter[tuple[str, str, str]]]:
+def call_problems(relative: str, calls: list[DeniedCall]) -> tuple[list[str], Counter[tuple[str, str, str]]]:
     """The problems with the calls in the module at `relative`, and how many calls without a pragma each key has.
 
     A call is explained by a pragma with a reason, or by `_ACCEPTED` up to the number of calls that entry accepts.
     """
-    problems: list[str] = []
+    problems = [
+        f'{relative}::{call.qualname} has a `workflow-nondeterminism-ok` pragma with no reason'
+        for call in calls
+        if call.pragma == ''
+    ]
     without_pragma = Counter((relative, call.qualname, call.callee) for call in calls if call.pragma is None)
-    for call in calls:
-        if call.pragma == '':
-            problems.append(f'{relative}::{call.qualname} has a `workflow-nondeterminism-ok` pragma with no reason')
     denials = {(relative, call.qualname, call.callee): call.denial for call in calls}
     for key, count in without_pragma.items():
         accepted = _ACCEPTED.get(key, (0, ''))[0]
@@ -289,7 +306,7 @@ def test_workflow_side_code_makes_no_new_nondeterministic_calls():
         is_package = parts[-1] == '__init__'
         module = '.'.join(parts[:-1] if is_package else parts)
         calls = nondeterministic_calls(path.read_text(encoding='utf-8'), module, is_package=is_package)
-        module_problems, counts = unexplained_calls(relative, calls)
+        module_problems, counts = call_problems(relative, calls)
         problems.extend(module_problems)
         found.update(counts)
     assert problems == [], "nondeterministic calls in workflow-side code; see this module's docstring:\n" + '\n'.join(
@@ -299,44 +316,42 @@ def test_workflow_side_code_makes_no_new_nondeterministic_calls():
     assert stale == [], f'`_ACCEPTED` entries that accept more calls than remain, lower or remove them: {stale}'
 
 
-_FIXTURE = """
-import time
-import uuid as uuid_module
-import concurrent.futures
-from datetime import datetime
-from .. import _uuid as ids, _utils
-from .._utils import now_utc as stamp
-
-time.perf_counter()
-
-
-class Node:
-    def run(self, handlers):
-        datetime.now()  # workflow-nondeterminism-ok: telemetry only
-        stamp()  # workflow-nondeterminism-ok:
-        _utils.now_utc()
-        concurrent.futures.ThreadPoolExecutor()
-
-        async def nested():
-            uuid_module.uuid4()
-            ids.uuid7()
-
-        open('file')
-        self.clock.time()
-        handlers[0]()
-        len(handlers)
-
-
-def local_imports():
-    import datetime
-
-    datetime.date.today()
-"""
-
-
 def test_nondeterministic_calls_resolves_imports_and_pragmas():
     """Every import form resolves to the callee it names, and a pragma needs a reason to explain a call."""
-    calls = nondeterministic_calls(_FIXTURE, 'pydantic_ai.agent', is_package=True)
+    source = """
+    import time
+    import uuid as uuid_module
+    import concurrent.futures
+    from datetime import datetime
+    from .. import _uuid as ids, _utils
+    from .._utils import now_utc as stamp
+
+    time.perf_counter()
+
+
+    class Node:
+        def run(self, handlers):
+            datetime.now()  # workflow-nondeterminism-ok: telemetry only
+            stamp()  # workflow-nondeterminism-ok:
+            _utils.now_utc()
+            concurrent.futures.ThreadPoolExecutor()
+
+            async def nested():
+                uuid_module.uuid4()
+                ids.uuid7()
+
+            open('file')
+            self.clock.time()
+            handlers[0]()
+            len(handlers)
+
+
+    def local_imports():
+        import datetime
+
+        datetime.date.today()
+    """
+    calls = nondeterministic_calls(textwrap.dedent(source), 'pydantic_ai.agent', is_package=True)
 
     assert [(call.qualname, call.callee, call.pragma) for call in calls] == snapshot(
         [
@@ -351,7 +366,7 @@ def test_nondeterministic_calls_resolves_imports_and_pragmas():
             ('local_imports', 'datetime.date.today', None),
         ]
     )
-    assert unexplained_calls('fixture.py', calls)[0] == snapshot(
+    assert call_problems('fixture.py', calls)[0] == snapshot(
         [
             'fixture.py::Node.run has a `workflow-nondeterminism-ok` pragma with no reason',
             'fixture.py::<module> calls `time.perf_counter`, which reads a clock that has moved by the time the run replays',
@@ -365,98 +380,118 @@ def test_nondeterministic_calls_resolves_imports_and_pragmas():
     )
 
 
-def test_unexplained_calls_counts_calls_against_accepted_entries():
+def test_call_problems_counts_calls_against_accepted_entries():
     """An `_ACCEPTED` entry explains as many calls as it counts, and a further call in the same function fails."""
     call = DeniedCall('resolve_run_id', 'pydantic_ai._uuid.uuid7', _RANDOM, None)
     module = f'{CORE}/_agent_graph.py'
 
-    assert unexplained_calls(module, [call])[0] == []
-    assert unexplained_calls(module, [call, call])[0] == snapshot(
+    assert call_problems(module, [call])[0] == []
+    assert call_problems(module, [call, call])[0] == snapshot(
         [
             'pydantic_ai_slim/pydantic_ai/_agent_graph.py::resolve_run_id calls `pydantic_ai._uuid.uuid7` 2 times and `_ACCEPTED` accepts 1; give the new call a pragma with a reason'
         ]
     )
 
 
-_EVERY_DENIED_CALL = """
-import anyio
-import asyncio
-import concurrent.futures
-import datetime
-import httpx
-import httpx2
-import os
-import random
-import secrets
-import socket
-import subprocess
-import threading
-import time
-import urllib.request
-import uuid
-from pydantic_ai import _http, _utils, _uuid
-
-time.time()
-time.time_ns()
-time.monotonic()
-time.monotonic_ns()
-time.perf_counter()
-time.perf_counter_ns()
-time.process_time()
-time.clock_gettime(0)
-time.clock_gettime_ns(0)
-time.localtime()
-time.gmtime()
-time.ctime()
-datetime.datetime.now()
-datetime.datetime.utcnow()
-datetime.datetime.today()
-datetime.date.today()
-_utils.now_utc()
-anyio.current_time()
-random.random()
-secrets.token_hex()
-os.urandom(8)
-uuid.uuid1()
-uuid.uuid4()
-uuid.uuid6()
-uuid.uuid7()
-uuid.uuid8()
-_uuid.uuid7()
-_utils.generate_tool_call_id()
-asyncio.sleep(1)
-anyio.sleep(1)
-anyio.sleep_until(1)
-time.sleep(1)
-threading.Thread()
-threading.Timer(1, print)
-concurrent.futures.ThreadPoolExecutor()
-open('file')
-httpx.Client()
-httpx.AsyncClient()
-httpx.request('GET', 'url')
-httpx.stream('GET', 'url')
-httpx.get('url')
-httpx.post('url')
-httpx2.Client()
-httpx2.AsyncClient()
-_http.create_async_httpx2_client()
-socket.socket()
-urllib.request.urlopen('url')
-subprocess.run([])
-os.system('')
-os.popen('')
-"""
-
-
 def test_every_denylist_key_matches_the_call_it_names():
     """Each `_DENYLIST` key catches the real call it is meant for, so a misspelled key cannot pass unnoticed."""
-    callees = [call.callee for call in nondeterministic_calls(_EVERY_DENIED_CALL, 'pydantic_ai.agent', is_package=True)]
+    source = textwrap.dedent("""
+    import anyio
+    import asyncio
+    import concurrent.futures
+    import datetime
+    import getpass
+    import http.client
+    import httpx
+    import httpx2
+    import multiprocessing
+    import os
+    import platform
+    import random
+    import secrets
+    import socket
+    import subprocess
+    import threading
+    import time
+    import urllib.request
+    import uuid
+    from pydantic_ai import _http, _utils, _uuid
 
-    assert len(callees) == sum('(' in line for line in _EVERY_DENIED_CALL.splitlines())
+    time.time()
+    time.time_ns()
+    time.monotonic()
+    time.monotonic_ns()
+    time.perf_counter()
+    time.perf_counter_ns()
+    time.process_time()
+    time.clock_gettime(0)
+    time.clock_gettime_ns(0)
+    time.localtime()
+    time.gmtime()
+    time.ctime()
+    time.process_time_ns()
+    time.thread_time()
+    time.thread_time_ns()
+    datetime.datetime.now()
+    datetime.datetime.utcnow()
+    datetime.datetime.today()
+    datetime.date.today()
+    _utils.now_utc()
+    anyio.current_time()
+    random.random()
+    secrets.token_hex()
+    os.urandom(8)
+    uuid.uuid1()
+    uuid.uuid4()
+    uuid.uuid6()
+    uuid.uuid7()
+    uuid.uuid8()
+    _uuid.uuid7()
+    _utils.generate_tool_call_id()
+    asyncio.sleep(1)
+    anyio.sleep(1)
+    anyio.sleep_until(1)
+    time.sleep(1)
+    threading.Thread()
+    threading.Timer(1, print)
+    concurrent.futures.ThreadPoolExecutor()
+    open('file')
+    httpx.Client()
+    httpx.AsyncClient()
+    httpx.request('GET', 'url')
+    httpx.stream('GET', 'url')
+    httpx.get('url')
+    httpx.post('url')
+    httpx2.Client()
+    httpx2.AsyncClient()
+    _http.create_async_httpx2_client()
+    socket.socket()
+    urllib.request.urlopen('url')
+    subprocess.run([])
+    os.system('')
+    os.popen('')
+    http.client.HTTPConnection('host')
+    multiprocessing.Process()
+    os.getenv('NAME')
+    os.environ.get('NAME')
+    os.getpid()
+    platform.system()
+    getpass.getuser()
+    """)
+    callees = [call.callee for call in nondeterministic_calls(source, 'pydantic_ai.agent', is_package=True)]
+
+    assert len(callees) == sum('(' in line for line in source.splitlines())
     unmatched = [
         key
         for key in _DENYLIST
         if not any(callee == key or (key.endswith('.') and callee.startswith(key)) for callee in callees)
     ]
     assert unmatched == []
+
+
+def test_workflow_side_code_rejects_stale_accepted_entries(monkeypatch: pytest.MonkeyPatch):
+    """An `_ACCEPTED` entry that accepts more calls than the code still makes fails the check."""
+    monkeypatch.setitem(_ACCEPTED, (f'{CORE}/run.py', 'AgentRun.next', 'time.time'), (1, 'a call that was removed'))
+
+    with pytest.raises(AssertionError, match='accept more calls than remain'):
+        test_workflow_side_code_makes_no_new_nondeterministic_calls()

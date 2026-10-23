@@ -2595,9 +2595,11 @@
         "durable_exec"
       ],
       "kinds": [
+        "attribute_read",
         "override"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::RejectWorkspaceInContainer._safe_at_runtime"
       ]
     },
@@ -2729,9 +2731,11 @@
         "attribute_read"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._bind_capability_operations",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._invoke_capability_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::collect_capability_operations",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::durable_operation.decorate.decorated",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::recover_capability",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::restore_telemetry_mcp_url_ids"
       ]
     },
@@ -5258,12 +5262,10 @@
         "temporal"
       ],
       "kinds": [
-        "annotation_only",
-        "attribute_read"
+        "annotation_only"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::<module>",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::restore_telemetry_mcp_url_ids"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::<module>"
       ]
     },
     "MCPServerTool": {
@@ -5271,12 +5273,10 @@
         "temporal"
       ],
       "kinds": [
-        "attribute_read",
         "import"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::<module>",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::restore_telemetry_mcp_url_ids"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::<module>"
       ]
     },
     "MCPServerTool.id": {
@@ -5657,12 +5657,14 @@
     },
     "ToolDefinition.capability_id": {
       "engines": [
-        "render"
+        "render",
+        "temporal"
       ],
       "kinds": [
         "attribute_read"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::restore_telemetry_mcp_url_ids",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::prepare_function_call_params"
       ]
     },
@@ -5670,7 +5672,8 @@
       "engines": [
         "aws_lambda",
         "durable_exec",
-        "prefect"
+        "prefect",
+        "temporal"
       ],
       "kinds": [
         "attribute_read"
@@ -5679,6 +5682,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._build_mcp_toolset_after_discovery.resolve_tool_config",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::resolve_tool_durable_config",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py::resolve_tool_task_config",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::restore_telemetry_mcp_url_ids",
         "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_operation_backend.py::AWSLambdaOperationConfig.__init__.resolve_tool"
       ]
     },
@@ -5702,6 +5706,17 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_dynamic_tool"
+      ]
+    },
+    "ToolDefinition.toolset_id": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::restore_telemetry_mcp_url_ids"
       ]
     },
     "ToolFuncEither": {
@@ -6003,6 +6018,7 @@
       "engines": [
         "dbos",
         "durable_exec",
+        "prefect",
         "temporal"
       ],
       "kinds": [
@@ -6014,6 +6030,8 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability.get_wrapper_toolset",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableToolsetBase.visit_and_replace",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.__init__",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::TemporalWrapperToolset.visit_and_replace"
       ]
     },
