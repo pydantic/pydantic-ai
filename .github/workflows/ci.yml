@@ -1715,14 +1715,13 @@ jobs:
     needs: [harness-integration-changes]
     # The `test` job runs `tests/harness/code_mode` on local Monty workers; this runs the same suite
     # with every `CodeMode` pointed at the staging server (see `_remote_monty` in its conftest).
-    # Skipped where `MONTY_STAGING_URL` is unreadable (fork and Dependabot pull requests). Not a
-    # `check` dependency, so it reports but never blocks a merge while the staging server settles.
+    # Pushes only (`main` and tags), never a pull request or merge group: the job hands the staging
+    # key to whatever code it checks out, so it runs only code that has already merged. Not a
+    # `check` dependency, so it reports but never blocks while the staging server settles.
     if: >-
       ${{ always()
-          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.monty == 'true')
-          && (github.event_name != 'pull_request'
-              || (github.event.pull_request.head.repo.full_name == github.repository
-                  && github.actor != 'dependabot[bot]')) }}
+          && github.event_name == 'push'
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.monty == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -1746,7 +1745,6 @@ jobs:
           [ -n "$MONTY_EXECUTION_KEY" ] || { echo '::error::the MONTY_EXECUTION_KEY secret is not set'; exit 1; }
           uv run --no-sync pytest -p no:cacheprovider --durations=20 -m "not temporal" tests/harness/code_mode
         env:
-          # The job executes the full PR checkout, so path detection is not a security boundary.
           MONTY_SANDBOX_TEST_URL: ${{ secrets.MONTY_STAGING_URL }} # zizmor: ignore[secrets-outside-env]
           MONTY_EXECUTION_KEY: ${{ secrets.MONTY_EXECUTION_KEY }} # zizmor: ignore[secrets-outside-env]
 
