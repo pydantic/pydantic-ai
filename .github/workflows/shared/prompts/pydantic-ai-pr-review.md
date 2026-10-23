@@ -105,8 +105,9 @@ Beyond free-form review, run these checks proactively; the first applies to ever
 - **Provider adapters.** When the diff changes a model adapter's request
   mapping, its response or stream parsing, a capability check in an adapter,
   or a profile flag an adapter reads, check the code the diff adds against
-  `agent_docs/provider-adapters.md` and the "Adapter structure" section of
-  `pydantic_ai_slim/pydantic_ai/models/AGENTS.md`. Do not flag existing code
+  the "Adapter structure" section of `pydantic_ai_slim/pydantic_ai/models/AGENTS.md`
+  and the sections of `agent_docs/provider-adapters.md` that govern what the
+  diff changes. Do not flag existing code
   that the diff only touches: aligning it is its own PR. A PR that is that
   alignment must meet the guide's scope rules. Rate a violation **HIGH** when
   it has a concrete trigger that changes a request or a replayed history, or

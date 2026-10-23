@@ -723,10 +723,10 @@ mechanism where a rule is marked *(pending #N)*.
 
 Trigger: the diff changes a model adapter's request mapping, its response or
 stream parsing, a capability check in an adapter, or a profile flag an adapter
-reads. The rules, each with its precedent and reason, are in
-`agent_docs/provider-adapters.md`, summarized under "Adapter structure" in
-`pydantic_ai_slim/pydantic_ai/models/AGENTS.md`. They govern the code a diff
-adds. A violation is HIGH when it has a concrete trigger that changes a request
+reads. "Adapter structure" in `pydantic_ai_slim/pydantic_ai/models/AGENTS.md`
+summarizes the rules. Read only the sections of `agent_docs/provider-adapters.md`
+that govern what the diff changes; each rule there carries its precedent and
+reason. The rules govern the code a diff adds. A violation is HIGH when it has a concrete trigger that changes a request
 or a replayed history, or that the user's `profile=` can't override. A violation
 of code shape alone is MEDIUM.
 
