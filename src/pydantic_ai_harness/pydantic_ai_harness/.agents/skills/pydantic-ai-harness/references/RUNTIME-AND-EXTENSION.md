@@ -315,7 +315,7 @@ Gotchas:
 - The agent needs a `name` (or `name=`), and every function, MCP, or dynamic toolset needs a unique
   `id`. Both are part of every step name, so renaming either makes in-flight tasks re-run those steps.
 - Tool return values are stored as JSON. One that can't be serialized raises `UserError` after the tool
-  ran; the failure is checkpointed, so a retry raises it again without re-running the tool.
+  ran; the failure is checkpointed, so each retry raises it again without re-running the tool.
 - `ModelRetry`, `ToolFailed`, `CallDeferred`, and `ApprovalRequired` from a tool call are not
   checkpointed, and `DynamicToolset`s are not wrapped, so that work re-runs.
 - Steps match by name and order, not inputs: in-flight tasks keep stored results across a deploy.
