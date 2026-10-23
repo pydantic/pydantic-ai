@@ -56,11 +56,6 @@ def counter_capability() -> Capability[Counter]:
     def count(ctx: RunContext[Counter]) -> str | None:
         return f'The count is {ctx.deps.value}.' if ctx.deps.value is not None else None
 
-    @capability.tool_plain
-    def noop() -> str:
-        """Do nothing."""
-        return 'ok'
-
     return capability
 
 
