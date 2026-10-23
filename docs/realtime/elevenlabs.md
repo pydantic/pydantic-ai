@@ -66,7 +66,7 @@ default) or `'off'`, the key only reads; `'sync'` also needs write access to age
 1. Create the agent in the [ElevenLabs dashboard](https://elevenlabs.io/app/agents) or through the ElevenLabs API,
    and copy its id.
 2. Under *Security* > *Overrides* in the agent's settings, turn on *System prompt* if the Pydantic AI agent has
-   instructions, plus the toggle of each override setting you use (see [Settings](#settings)).
+   instructions or a system prompt, plus the toggle of each override setting you use (see [Settings](#settings)).
 3. Under *Advanced* > *Client events*, add `context_usage`, which reports context usage and marks where a spoken
    response ends (see [Usage and cost](#usage-and-cost)).
 4. Pick a [tool synchronization](#tool-synchronization) mode: with the default, `'error'`, a difference between the
@@ -121,7 +121,7 @@ To choose the backup LLMs, set it to `{"preference": "override", "order": [...]}
 Pydantic AI is the source of truth wherever ElevenLabs allows a per-conversation override, and
 fails loudly where it does not:
 
-- **Instructions**: when the Pydantic AI agent defines instructions, the ElevenLabs agent must
+- **Instructions**: when the Pydantic AI agent defines instructions or a system prompt, the ElevenLabs agent must
   permit the *System prompt* override; otherwise the preflight raises a
   [`UserError`][pydantic_ai.exceptions.UserError] naming the exact toggle. Without local
   instructions, the ElevenLabs-side prompt is inherited silently.

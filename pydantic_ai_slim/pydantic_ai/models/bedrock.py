@@ -1272,6 +1272,10 @@ class BedrockConverseModel(Model[BaseClient]):
         elif variant == 'openai' and 'reasoning_effort' not in existing:
             if thinking is not False:  # Bedrock doesn't accept reasoning_effort='none'
                 existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
+        elif variant == 'openai_responses' and 'reasoning' not in existing:
+            # GPT-5.6 and GPT-6 reject `effort='minimal'`, so it maps to the closest level they accept.
+            effort = 'low' if thinking == 'minimal' else OPENAI_REASONING_EFFORT_MAP[thinking]
+            existing['reasoning'] = {'effort': effort}
         elif variant == 'qwen' and 'reasoning_config' not in existing:
             if thinking is not False:
                 # Qwen only supports low/high; map others to closest
@@ -1282,14 +1286,15 @@ class BedrockConverseModel(Model[BaseClient]):
                     'medium': 'high',
                     'high': 'high',
                     'xhigh': 'high',
+                    'max': 'high',
                 }
                 existing['reasoning_config'] = level_map[thinking]
         elif variant == 'xai' and 'reasoning' not in existing:
             # Grok always reasons on Converse, so `thinking=False` is silently ignored (like gpt-oss). `True` leaves
             # the effort out where the profile records that the model's own default applies then (Grok 4.7: `high`).
             if thinking is not False and not (thinking is True and profile.get('grok_default_effort_omitted', False)):
-                # Grok accepts `low`/`medium`/`high`/`xhigh` but not `minimal`, so that folds to `low`;
-                # `True` picks `medium` like the other always-on effort-based variants.
+                # Grok accepts `low`/`medium`/`high`/`xhigh` but not `minimal`, so that folds to `low` and `max`
+                # to `xhigh`; `True` picks `medium` like the other always-on effort-based variants.
                 effort_map: dict[ThinkingLevel, str] = {
                     True: 'medium',
                     'minimal': 'low',
@@ -1297,6 +1302,7 @@ class BedrockConverseModel(Model[BaseClient]):
                     'medium': 'medium',
                     'high': 'high',
                     'xhigh': 'xhigh',
+                    'max': 'xhigh',
                 }
                 existing['reasoning'] = {'effort': effort_map[thinking]}
 
@@ -2291,7 +2297,9 @@ def _add_anthropic_thinking_fields(existing: dict[str, Any], thinking: ThinkingL
                 and 'output_config' not in existing
             ):
                 effort = resolve_anthropic_effort(
-                    thinking, supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False)
+                    thinking,
+                    supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False),
+                    supports_max=profile.get('anthropic_supports_max_effort', True),
                 )
                 existing['output_config'] = {'effort': effort}
     elif thinking is False:
@@ -2343,10 +2351,12 @@ def _thinking_rejects_tool_forcing(
 ) -> bool:
     """Whether this request's thinking rejects the forced tool choice Tool Output relies on.
 
-    Extended thinking and thinking on the non-Anthropic variants do, except xAI Grok, which always reasons: Converse
-    accepts a forced `toolChoice` with Grok 4.6 while it reasons, and Grok 4.7 is assumed to match.
+    Extended thinking and thinking on the non-Anthropic variants do, except two. xAI Grok always reasons, and Converse
+    accepts a forced `toolChoice` with Grok 4.6 while it reasons (Grok 4.7 is assumed to match). OpenAI GPT-5.6 and
+    GPT-6 accept output tools while they think, offered without a forced `toolChoice` as their profile doesn't enable
+    forcing.
     """
-    return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') != 'xai'
+    return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') not in ('xai', 'openai_responses')
 
 
 def _support_tool_forcing(

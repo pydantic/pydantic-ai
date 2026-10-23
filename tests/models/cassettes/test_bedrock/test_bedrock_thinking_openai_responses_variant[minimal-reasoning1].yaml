@@ -1,0 +1,62 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.openai.gpt-5.6-luna/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 2c593f3c-0b3a-4bf6-a4c9-572f3deb4d61
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "260"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: >-
+              How many positive integers below 10000 have a digit sum of exactly 20? Reply
+              with only the number.
+        system: []
+        inferenceConfig: {}
+        additionalModelRequestFields:
+          reasoning:
+            effort: low
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "2261"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 1682
+        output:
+          message:
+            content:
+            - reasoningContent:
+                redactedContent: >-
+                  cnNuX3U0ZkVtdENWRHBSQ2JkYmhQVmZMa1FJRmVJNFF2aFdzRGN5dGVhKzlSR2tsVGIySG0zRDNPM3hSc2lxMVpUdHNrUmc5QUY4QUFRQVZZWGR6TFdOeWVYQjBieTF3ZFdKc2FXTXRhMlY1QUVSQkswaDRlRTlrUlU1dlZVUllNRzlOV0dGbFVqaDFTMXAzY1ZwR1VYb3ZTemMyTlV0U2EwRnFObEYyTW14VlJIQmpibGszWWtoak1FMURWR1J6Wm5vemFYYzlQUUFCQUJGaGQzTXRhMjF6TFdocFpYSmhjbU5vZVFBS1ltVnliUzF6ZEc5eVpRQmNPaUlkc3EvTERVRWc1WVV2UHhmWUxHTFBZeTRlRFFZTGpuU2RuNGl2UlVLdmJVTnluZFN1aE9FVDNtQkt0L3QxQUFSblhWNXNsaGlNS245cjhUaG0zNTBhNE1PUURQZ01UOExqNDk5bUgrWUlvaHgrUHFsbysrY3hWNGNDQUFBUUFPc2FDSk1NclVQS3VOUnZJL29VTzFuMFJKQ3Y1cS9JSUQ2TFJLVDZQckU5emd3VU5qWFNYWEx4eThINGpPQ202Ly8vLy84QUFBQUJBQUFBQUFBQUFBQUFBQUFCQUFBQ1BNU1FaQTBIOHdQdlo3YkJ5a29XRHpKM21nRkgyR2VtVjlMWFdOOVYzeFF3dkl6dmpPUnplekpEdUxGdFNJOGdVd0YzSVk4ZjU1M1ZHL3duQzVEODJIdzhrRnAwVnM1RnpoeUtzWmoxMlpIWmRwVElnMU0xdnN1WFlrcGliZXB6UjdTS01yVXdlRDl3MFpWTWVFVk9kcndUV1NMVjVNQzJhU0RmOTJUQXM4VmtJcXRCcXZkcXprZ0p2ZzVvYnV4ZkFxVDZNNUVjUnpmM1BpWENFSXYrNXNJZCt0V2xlMk5pek45cVVReWNQZDREeE9tRUFITWt0UWN6WWVnbDIxSjBtYUpXZzBYRmY4QnV2WHQ2TFpLYzJDNEtkQW50TFhsYnE4clVKeEY3ZUdRc0gxWDVQUXRPMG4yRTVack5nSEUzWkZ0WTFwRHdsVzY5M2ZlYmsrL21MZHgzT2hCM3Y3TCtJNFd5enhJZnB1T25FL1pFOTFDaFo2TXViUnNTU2NMdHR3QVU4VzVnM3ZiZFp3cWVLckJOSWZtQUtHcHZ1YklyZ1NVU2tPSmcrNGR6K1R1bm1BUEQycHdUSUc1NjFzUkEzN3dJN3kxU2hFVFFhR0dxdnU3dTlGYTRIcUZZS1hpQjJiS21vZWdiM0ZpaEl5SlFuUU4rU3IyYS9ya3REYU0zTlc5SVdJU3dBSis5SHVWdFlYUGZaTFU2V0tMNzFqTE0zYVVONzVqTjFnQkZhS25xWnhxTEE0aHkxVkRJODJTa3FrRG03TkEvUlFNWlYydFZ6eXVaMnFMTTY1NFJwbXdVamEvNlFWUHM1UHE3TXUwaG43UlBuYkFsdjBua250VzhUU2VmdkpCMXkzZ0d5MGcyNjYzanhSM3d5SEViaG1iUU5mSnNIdFFYMy9EWFg3RkhIMEduWXFVM2pyZEw5VFloSlZLNC9OT1hmRTdqV0plcFc2RDkwYUw1TzIyaDV2bDRkK1hqV1hoZDlBcWJVYk9QQk5BTXc2czUwY294K0F1L1BrcHRpV0x1Z3FJRk0vUDZXZ0JuTUdVQ01RRElPanVCS1JwVEh1NWk4S1VCRnJidHNXZlZBaXgyS3lwcUZiOFh1SFY1dVdTNmRpZVZmdzVWK3FQdEZwdmN0OGtDTUY0aGRmN2IxYmxKREtPWG0yTUJOMEtsMVZOR1dsMnFLbXYrR1JVUVQxdy9ZTDF3VXVyRVQxRVVqUmtxOFREcGF3PT0=
+            - text: "633"
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 29
+          outputTokens: 179
+          serverToolUsage: {}
+          totalTokens: 208
+  recorded_at: 2026-10-22T08:43:29.378229+00:00

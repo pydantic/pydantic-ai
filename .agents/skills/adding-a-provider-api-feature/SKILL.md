@@ -65,6 +65,8 @@ Detect support with a provider-prefixed **`ModelProfile` flag** set in `Provider
 
 ## Step 4 — Tests
 
+Pyright does not flag a `Literal`-keyed dict that misses a key; the lookup raises `KeyError` only at request time. Add every new mapping keyed by `ThinkingEffort` to `test_every_effort_level_resolves` in `tests/test_thinking.py`, which runs each level through each mapping. When you add a value to another shared `Literal`, write the same kind of test for it.
+
 Live-recorded **wire-contract cassette** asserting the exact outbound body (mode/field is sent for supported models, absent/ignored for unsupported), plus a test exercising the new setting. Prefer case-based parametrized VCR over mocks; a unit test is still right for asserting an internal request shape a cassette matcher wouldn't catch. This is also where a review bot's "this will fail" claim gets refuted with a recorded cassette.
 
 ## Step 5 — Docs & skills
