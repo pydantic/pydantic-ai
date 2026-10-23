@@ -1,6 +1,7 @@
 """Tests for the ExaAgent capability, ExaAgentToolset, and agent_run_result."""
 
 import asyncio
+import inspect
 import json
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import TypeVar
 import anyio
 import httpx
 import pytest
+from exa_py import AsyncExa
 from exa_py.agent.types import (
     AgentEffort,
     AgentError,
@@ -382,6 +384,11 @@ class TestExaAgent:
         monkeypatch.setenv('EXA_API_KEY', 'test-key')
         toolset = ExaAgent[None]().get_toolset()
         assert isinstance(toolset, ExaAgentToolset)
+
+    def test_exa_py_runs_client_is_cancellable(self) -> None:
+        """Reads `cancel` from the installed exa-py, so a rename or a sync `cancel` there fails here."""
+        runs = AsyncExa(api_key='test-key').agent.runs
+        assert inspect.iscoroutinefunction(runs.cancel)
 
     async def test_default_runs_client_is_built_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Each `AsyncExa` owns an httpx connection pool, so one run must not build one per request."""
