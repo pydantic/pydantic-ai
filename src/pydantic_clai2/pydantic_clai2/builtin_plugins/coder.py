@@ -51,6 +51,9 @@ SKILL_FOLDERS_FEATURE = 'coder-skill-folders'
 DISABLED_SKILLS_FEATURE = 'coder-disabled-skills'
 """Builds without it would reject a saved `disabled_skills`, so they drop the setting and offer every skill."""
 
+TASK_CONTROL_FEATURE = 'coder-task-control'
+"""Builds without it would reject a saved `task_control`, so they drop the setting."""
+
 
 def _expand_home(value: str, *, home: Path) -> str:
     return (home / value[2:]).as_posix() if value.startswith('~/') else value
@@ -290,7 +293,11 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
     @classmethod
     def from_host(cls, host: PluginHost[DepsT]) -> Self:
         # Tags the setting, so a build that cannot read it uses the default instead of failing to load `coder`.
-        requires = {'skill_folders': [SKILL_FOLDERS_FEATURE], 'disabled_skills': [DISABLED_SKILLS_FEATURE]}
+        requires = {
+            'task_control': [TASK_CONTROL_FEATURE],
+            'skill_folders': [SKILL_FOLDERS_FEATURE],
+            'disabled_skills': [DISABLED_SKILLS_FEATURE],
+        }
         return cls(host, host.settings(CoderSettings, requires=requires))
 
     def __init__(self, host: PluginHost[DepsT], settings: CoderSettings) -> None:
