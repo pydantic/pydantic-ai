@@ -148,15 +148,15 @@ async def test_openai_without_the_opening_effort_sends_the_current_one(allow_mod
 @pytest.mark.parametrize(
     ('settings', 'history'),
     [
-        pytest.param(OpenAIResponsesModelSettings(openai_reasoning_effort='high'), _history(), id='explicit-effort'),
-        pytest.param(OpenAIResponsesModelSettings(openai_truncation='auto'), _history(), id='truncation'),
+        pytest.param({'openai_reasoning_effort': 'high'}, _history(), id='explicit-effort'),
+        pytest.param({'openai_truncation': 'auto'}, _history(), id='truncation'),
         pytest.param(
-            OpenAIResponsesModelSettings(openai_context_management=[{'type': 'compaction'}]),
+            {'openai_context_management': [{'type': 'compaction'}]},
             _history(),
             id='server-compaction',
         ),
         pytest.param(
-            OpenAIResponsesModelSettings(),
+            {},
             [*_history()[:2], ModelResponse(parts=[CompactionPart(content='Summary.')]), *_history()[2:]],
             id='compacted-history',
         ),
@@ -249,8 +249,8 @@ async def test_anthropic_effort_change_is_counted(allow_model_requests: None):
 @pytest.mark.parametrize(
     'settings',
     [
-        pytest.param(AnthropicModelSettings(anthropic_effort='high'), id='explicit-effort'),
-        pytest.param(AnthropicModelSettings(anthropic_thinking={'type': 'disabled'}), id='thinking-disabled'),
+        pytest.param({'anthropic_effort': 'high'}, id='explicit-effort'),
+        pytest.param({'anthropic_thinking': {'type': 'disabled'}}, id='thinking-disabled'),
     ],
 )
 def test_anthropic_falls_back_to_the_request_level_effort(settings: AnthropicModelSettings):
