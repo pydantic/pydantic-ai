@@ -18,7 +18,7 @@ from pydantic_ai._instrumentation import (
     open_request_policy,
     span_include_content,
 )
-from pydantic_ai._model_request_attempts import AttemptStart
+from pydantic_ai._model_request_attempts import AttemptStart, carry_attempts
 from pydantic_ai._run_context import RunContext
 
 from .._fallback import (
@@ -241,6 +241,7 @@ class FallbackModel(Model):
         except BaseException as error:
             if continued_job_cancelled:
                 mark_suspended_job_cancelled(error)
+            carry_attempts(error, chain.log.attempts)
             raise
 
     async def _request_chain(
@@ -314,6 +315,8 @@ class FallbackModel(Model):
         chain = self._chain()
         # Set once a pinned continuation fails and we rewind to the chain: see the non-streaming `request`.
         rewound = False
+        # Set once a chain model's stream is handed over, after which an error is the stream's own.
+        handed_over = False
 
         if pinned := self._get_continuation_model(messages):
             # `_get_continuation_model` only returns a model when the last message is a suspended response.
@@ -394,6 +397,7 @@ class FallbackModel(Model):
                         _stamp_replace_previous(streamed_response)
                     chain.log.attach_to_stream(streamed_response)
                     self._set_span_attributes(model, prepared_parameters)
+                    handed_over = True
                     yield streamed_response
                     # Stamp after `yield` (see the pinned path above): `state` is only final once the
                     # caller has consumed the stream, so callers must call `get()` after the context exits.
@@ -408,6 +412,9 @@ class FallbackModel(Model):
                 # The job of the response this request continued was cancelled when it was rewound, so the
                 # continuation loop the error reaches mustn't cancel it again.
                 mark_suspended_job_cancelled(error)
+            if not handed_over:
+                # Once the stream is handed over, the attempts it carries are counted with it.
+                carry_attempts(error, chain.log.attempts)
             raise
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:

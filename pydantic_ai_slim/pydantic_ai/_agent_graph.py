@@ -32,7 +32,7 @@ from pydantic_ai._instrumentation import (
     mcp_telemetry_url_toolset_ids,
     open_request_policy,
 )
-from pydantic_ai._model_request_attempts import AttemptStart
+from pydantic_ai._model_request_attempts import AttemptStart, carried_attempts
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, is_str_dict, now_utc
 from pydantic_ai._uuid import uuid7
@@ -1814,6 +1814,20 @@ async def _after_streamed_model_request(
         ) from retry
 
 
+def _record_carried_attempts(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+    request_context: ModelRequestContext,
+    error: BaseException,
+) -> None:
+    """Count the usage of the attempts a model made before `error` ended its request: see `carry_attempts`.
+
+    No response or `FallbackExceptionGroup` lists them, so `wrap_model_request` finds them on the request context.
+    """
+    if attempts := carried_attempts(error):
+        _record_attempts_usage(ctx.state.usage, attempts)
+        request_context._usage_response_ledger.attempts.extend(attempts)  # pyright: ignore[reportPrivateUsage]
+
+
 async def _cancel_rejected_job(
     request_context: ModelRequestContext, outcome: Exception | _messages.ModelResponse
 ) -> None:
@@ -2386,15 +2400,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         except (exceptions.ModelRetry, exceptions.RetryModelRequest):
             raise
         except Exception as e:
+            _record_carried_attempts(ctx, request_context, e)
             if state.response is not None:
                 state.record(ctx, state.response, request_context)
             outcome = e
             recovered = await self._recover_model_request_error(ctx, run_context, request_context, e, failed, start)
             # Not billed, so its usage is committed with the step's response, without the attempts it carries.
             response = failed.log.attach(recovered)
-        except BaseException:
-            # Cancelled, or timed out, after the provider already billed for part of a continuation chain: that
-            # usage is the run's, even though no response is committed.
+        except BaseException as e:
+            # Cancelled, or timed out, after the provider already billed for part of a continuation chain, or for
+            # responses a `FallbackModel` rejected: that usage is the run's, even though no response is committed.
+            _record_carried_attempts(ctx, request_context, e)
             if state.response is not None and not state.usage_recorded:
                 state.record(ctx, state.response, request_context)
             raise
@@ -2933,6 +2949,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         raise error
             except BaseException as e:
                 await attempt_stack.aclose()
+                _record_carried_attempts(ctx, request_context, e)
                 if opened is not None and (partial := opened.get()).usage.has_values():
                     # Priming got past a segment the provider billed, like a suspended one, before the stream failed.
                     self._record_response_usage(ctx, partial, request_context=request_context)
