@@ -2556,6 +2556,7 @@ def _map_responses_citations_for_replay(
             # accepts a range that has moved or runs past the text, so a range edited history moved is left out here.
             if (
                 isinstance(url, str)
+                and url  # OpenAI rejects an empty URL or file ID
                 and isinstance(title, str)
                 and isinstance(start, int)
                 and isinstance(end, int)
@@ -2569,7 +2570,7 @@ def _map_responses_citations_for_replay(
                 )
         elif citation.get('type') == 'file_citation':
             file_id, filename, index = citation.get('file_id'), citation.get('filename'), citation.get('index')
-            if isinstance(file_id, str) and isinstance(filename, str) and isinstance(index, int):
+            if isinstance(file_id, str) and file_id and isinstance(filename, str) and isinstance(index, int):
                 annotations.append(
                     responses.response_output_text_param.AnnotationFileCitation(
                         type='file_citation', file_id=file_id, filename=filename, index=index
