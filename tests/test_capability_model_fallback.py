@@ -7,7 +7,7 @@ The attempt loop it drives (`prepare_model_request`, `RetryModelRequest`) is tes
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from decimal import Decimal
@@ -1652,25 +1652,43 @@ async def test_a_failed_batch_moves_on_down_the_chain_across_resumed_runs():
 async def test_a_rejected_pending_response_has_its_job_cancelled():
     """A response a handler rejects while the provider is still working on it has its job cancelled, as under
     `FallbackModel`, rather than left running while the request moves on."""
-    primary = SlowBatchTestModel(pending_checks=100, model_name='primary')
-    backup = SlowBatchTestModel(model_name='backup')
+    cancelled: list[str | None] = []
+
+    class BackgroundModel(FunctionModel):
+        """Answers with a job the provider is still working on, which the run can end on and check later."""
+
+        def continuation_delay(self, response: ModelResponse) -> float | None:
+            return 60.0
+
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            cancelled.append(response.provider_response_id)
+
+    def pending(job_id: str) -> Callable[[list[ModelMessage], AgentInfo], ModelResponse]:
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[], state='suspended', provider_response_id=job_id)
+
+        return respond
+
     judged: list[str] = []
 
     def reject_the_first(response: ModelResponse) -> bool:
         judged.append(response.state)
         return len(judged) == 1
 
+    primary = BackgroundModel(pending('primary-job'), model_name='primary')
     agent = Agent(
         primary,
         output_type=[str, PendingModelResponse],
-        capabilities=[ModelFallback(backup, fallback_on=reject_the_first), BatchModelRequests(**FAST_BATCH_SETTINGS)],
+        capabilities=[
+            ModelFallback(BackgroundModel(pending('backup-job'), model_name='backup'), fallback_on=reject_the_first)
+        ],
     )
     result = await agent.run('Hello')
 
     assert isinstance(result.output, PendingModelResponse)
     assert judged == ['suspended', 'suspended']
-    assert primary.canceled == [batch.id for batch in primary.created]
-    assert (len(primary.created), len(backup.created), backup.canceled) == (1, 1, [])
+    # Only the rejected job: the accepted one is left for a later run to check on.
+    assert cancelled == ['primary-job']
     assert [(attempt.model_name, attempt.outcome) for attempt in result.response.failed_attempts or []] == [
         ('primary', 'rejected')
     ]

@@ -25,6 +25,7 @@ from ._utils import run_until_complete as _run_until_complete
 from .exceptions import ModelAPIError, UserError
 from .models import StreamedResponse, batch as batch_models, instrumented as instrumented_models
 from .models._batch_codec import BatchJobError
+from .models._batch_model import check_resumable, refuse_pending_batch_request
 from .models._batch_settings import (
     DEFAULT_MAX_POLL_INTERVAL,
     DEFAULT_MAX_RESUBMISSIONS,
@@ -144,6 +145,7 @@ async def model_request(
         The model response and token usage associated with the request.
     """
     model_instance = _prepare_model(model, instrument)
+    check_resumable(model_instance, messages)
     mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
     deadline = start_request_deadline(model_instance, model_settings)
     with enforce_request_deadline(deadline):
@@ -226,6 +228,8 @@ async def model_request_batch(
     )
     if len({request.custom_id for request in requests}) != len(requests):
         raise UserError('Each batch request needs a unique `custom_id`.')
+    for request in requests:
+        refuse_pending_batch_request(request.messages)
     if any(
         'request_timeout' in (settings.merge_model_settings(model_instance.settings, request.model_settings) or {})
         for request in requests
@@ -487,6 +491,7 @@ def model_request_stream(
         A [stream response][pydantic_ai.models.StreamedResponse] async context manager.
     """
     model_instance = _prepare_model(model, instrument)
+    check_resumable(model_instance, messages)
     mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
     return open_request_stream(
         model_instance,

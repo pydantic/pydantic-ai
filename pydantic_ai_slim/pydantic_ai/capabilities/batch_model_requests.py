@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import weakref
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import timedelta
 from types import TracebackType
@@ -48,8 +50,8 @@ class BatchModelRequests(AbstractCapability[Any]):
     limit or server error, is submitted again in a new batch, up to `max_resubmissions` times, as a provider SDK
     retries a live request. Other errors, like an invalid request or a canceled batch, reach the run as usual.
 
-    The capability wraps whichever model serves each request, which must have a batch API. Requests can't be
-    streamed, and batching needs an `asyncio` event loop. Submissions and checks run as tasks shared by the requests
+    The capability wraps whichever model serves each request, which must have a batch API. A streamed request waits
+    for its batch too, and then streams each part of the result in one event. Batching needs an `asyncio` event loop. Submissions and checks run as tasks shared by the requests
     waiting on them; using the capability as an async context manager cancels any that are still running when it
     exits.
     """
@@ -82,7 +84,10 @@ class BatchModelRequests(AbstractCapability[Any]):
     """The longest wait between checks of a submitted batch."""
 
     _pool: BatchPool = field(init=False, repr=False, compare=False)
-    _entered: int = field(default=0, init=False, repr=False, compare=False)
+    _entered: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, int] = field(
+        default_factory=weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, int], init=False, repr=False, compare=False
+    )
+    """How many `async with` blocks are open on each event loop, as exiting the last one closes that loop's batching."""
 
     def __post_init__(self) -> None:
         self._pool = BatchPool(
@@ -108,7 +113,8 @@ class BatchModelRequests(AbstractCapability[Any]):
         await self._pool.flush()
 
     async def __aenter__(self) -> Self:
-        self._entered += 1
+        loop = asyncio.get_running_loop()
+        self._entered[loop] = self._entered.get(loop, 0) + 1
         return self
 
     async def __aexit__(
@@ -117,7 +123,10 @@ class BatchModelRequests(AbstractCapability[Any]):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
-        """Once the outermost `async with` exits, fail the queued requests and cancel the running submissions and checks."""
-        self._entered -= 1
-        if self._entered == 0:
+        """Once the outermost `async with` on this event loop exits, fail its queued requests and cancel its running submissions and checks."""
+        loop = asyncio.get_running_loop()
+        if (entered := self._entered[loop] - 1) == 0:
+            del self._entered[loop]
             await self._pool.close()
+        else:
+            self._entered[loop] = entered

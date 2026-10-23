@@ -121,8 +121,12 @@ async def test_gemini_batch_is_not_on_google_cloud() -> None:
     )
 
     assert model.batch_max_requests is None
-    with pytest.raises(UserError, match='has no batch API'):
+    with pytest.raises(UserError) as exc_info:
         BatchPool().wrap(model)
+    assert str(exc_info.value) == snapshot(
+        "`GoogleModel` 'gemini-2.5-flash-lite' has no batch API on Google Cloud, whose batch prediction jobs read "
+        'from Cloud Storage or BigQuery: batch it through the Gemini API, with the `google:` provider.'
+    )
     with pytest.raises(UserError, match='only supported by the Gemini API, not Google Cloud'):
         await model.batch_encode(_request())
 
@@ -483,6 +487,32 @@ async def test_gemini_batch_results_dont_delete_a_file_another_project_uploaded_
     handle = replace(batch, group=(await other.batch_encode(_request())).group)
     await other.batch_results(await other.batch_status(handle))
     assert deleted == []
+
+
+@pytest.mark.parametrize(
+    'make_error, deleted',
+    [
+        # Built lazily, as `errors` only exists when google-genai is installed.
+        (lambda: errors.ClientError(429, {'error': {'code': 429, 'status': 'RESOURCE_EXHAUSTED'}}), True),
+        (lambda: errors.ServerError(500, {'error': {'code': 500, 'status': 'INTERNAL'}}), False),
+    ],
+    ids=['refused', 'server-error'],
+)
+async def test_gemini_refused_job_deletes_its_input_file(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, make_error: Callable[[], Exception], deleted: bool
+) -> None:
+    """Nothing reads the file of a job Google refused; after a server error, the job may exist and read it."""
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    deleted_files = _fake_jobs(monkeypatch, model, {'state': 'JOB_STATE_PENDING'})
+    error = make_error()
+
+    async def create(*, model: str, src: str, config: Any = None) -> BatchJob:
+        raise error
+
+    monkeypatch.setattr(model.client.aio.batches, 'create', create)
+    with pytest.raises(ModelHTTPError):
+        await model.batch_create([await model.batch_encode(_request())])
+    assert deleted_files == (['files/input'] if deleted else [])
 
 
 async def test_gemini_batch_results_keep_the_input_file_of_a_job_still_running(

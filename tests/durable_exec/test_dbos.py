@@ -64,6 +64,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.models import (
+    Model,
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
@@ -4815,6 +4816,90 @@ async def test_dbos_durability_batch_model_in_workflow(dbos: DBOS) -> None:
     assert step_names.count('DBOS.sleep') == 3
 
 
+class _ScopedModel(WrapperModel):
+    """Records being entered and exited, and whether it was entered when it served a request."""
+
+    def __init__(self, wrapped: Model, events: list[object]) -> None:
+        super().__init__(wrapped)
+        self.events = events
+        self.entered = False
+
+    async def __aenter__(self) -> _ScopedModel:
+        self.events.append('enter')
+        self.entered = True
+        return await super().__aenter__()
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        self.events.append('exit')
+        self.entered = False
+        return await super().__aexit__(*args)
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        self.events.append(('request', self.entered))
+        return await super().request(messages, model_settings, model_request_parameters)
+
+
+@dataclass
+class _Scoped(AbstractCapability[Any]):
+    events: list[object]
+
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        return _ScopedModel(model, self.events)
+
+
+async def test_dbos_durability_enters_a_capabilitys_model_wrapper_around_each_request_step(dbos: DBOS) -> None:
+    """The step that sends the request enters the wrapper; the workflow's copy only answers questions."""
+    events: list[object] = []
+    agent = Agent(TestModel(), name='durability_scoped_wrapper', capabilities=[_Scoped(events), DBOSDurability()])
+
+    @agent.tool_plain
+    def get_city() -> str:
+        return 'Paris'
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Where?')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        await run_durable_agent()
+    assert events == ['enter', ('request', True), 'exit', 'enter', ('request', True), 'exit']
+
+
+async def test_dbos_durability_batch_model_streams_its_result_to_an_event_stream_handler(dbos: DBOS) -> None:
+    """A streamed request waits for its batch in its steps as `request` does, then streams the result's events."""
+    wrapped = SlowBatchTestModel(pending_checks=2)
+    events: list[AgentStreamEvent] = []
+
+    async def handle(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        events.extend([event async for event in stream])
+
+    agent = Agent(
+        wrapped,
+        name='durability_batch_stream',
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('go', event_stream_handler=handle)).output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        assert await run_durable_agent() == 'success (no tool calls)'
+
+    assert [event.part for event in events if isinstance(event, PartStartEvent)] == [
+        TextPart(content='success (no tool calls)')
+    ]
+    assert (len(wrapped.created), wrapped.status_checks) == (1, 3)
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps].count('DBOS.sleep') == 3
+
+
 async def test_dbos_durability_batch_model_resume_from_history(dbos: DBOS) -> None:
     """A run resumed from history ending in a pending batch response waits for that same batch.
 
@@ -4880,7 +4965,9 @@ async def test_dbos_durability_batch_model_recovery_does_not_submit_again(dbos: 
     steps = await dbos.list_workflow_steps_async(wfid)
     handle = await DBOS.fork_workflow_async(wfid, len(steps))
     assert await handle.get_result() == output
-    assert (len(wrapped.created), wrapped.status_checks) == (1, 2)
+    # The fork runs the last step, the check that found the batch ended, again: as every request waiting on the batch
+    # had read its results, they're no longer cached, so the check asks the provider again.
+    assert (len(wrapped.created), wrapped.status_checks) == (1, 3)
 
 
 class _DelayedContinuationModel(ScriptedContinuationModel):

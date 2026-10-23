@@ -188,11 +188,19 @@ async def batch_create(model: GoogleModel, requests: Sequence[EncodedBatchReques
     assert file.name is not None
     # Unlike the upload, the job can't be created twice safely: the first attempt may have created it.
     no_retries = HttpOptionsDict(retry_options={'attempts': 1})
-    job = await client.aio.batches.create(
-        model=model.model_name,
-        src=file.name,
-        config=CreateBatchJobConfigDict(display_name='pydantic-ai-batch', http_options=no_retries),
-    )
+    try:
+        job = await client.aio.batches.create(
+            model=model.model_name,
+            src=file.name,
+            config=CreateBatchJobConfigDict(display_name='pydantic-ai-batch', http_options=no_retries),
+        )
+    except errors.ClientError:
+        # Google refused to create the job, so nothing reads the file, which would otherwise count against the
+        # project's file storage until it expires. After a server error or no response, the job may have been created,
+        # so the file is left for it.
+        with suppress(errors.APIError, httpx2.TransportError):
+            await client.aio.files.delete(name=file.name)
+        raise
     assert job.name is not None
     _UPLOADED_INPUT_FILES[batch_credential(model), job.name] = file.name
     while len(_UPLOADED_INPUT_FILES) > _UPLOADED_INPUT_FILES_SIZE:

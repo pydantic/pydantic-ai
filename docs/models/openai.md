@@ -557,8 +557,9 @@ batched responses are stored unless you set `openai_store=False`, so they can be
 
 The Batch API is only available on OpenAI's own API: not with `OpenAIChatModel`, Azure OpenAI, or other providers
 that implement the Responses API. Through the [Pydantic AI Gateway](../gateway.md), it requires your own OpenAI key.
-Batch requests can't use background mode or streaming, which would fail the whole batch, and per-request `timeout`
-and `extra_headers` are unsupported: configure them on the client instead.
+Batch requests can't use background mode, which would fail the whole batch, and per-request `timeout` and
+`extra_headers` are unsupported: configure them on the client instead. A streamed run gets the batch result's events
+all at once when it arrives.
 
 ## Chat Completions API
 

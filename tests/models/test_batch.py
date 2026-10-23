@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
-from collections.abc import Sequence
+from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Any
@@ -21,6 +21,8 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import (
     Agent,
+    AgentRunResultEvent,
+    AgentStreamEvent,
     ModelRequest,
     NativeOutput,
     PendingModelResponse,
@@ -434,11 +436,127 @@ async def test_a_response_that_is_not_waiting_is_cancelled_by_the_wrapped_model(
     await model.cancel_suspended_response(ModelResponse(parts=[], state='suspended'))
 
 
-async def test_streaming_is_rejected() -> None:
-    agent = Agent(TestModel(), capabilities=[BatchModelRequests()])
-    with pytest.raises(UserError, match='does not support streaming'):
-        async with agent.run_stream('Hello'):
-            pass  # pragma: no cover
+def test_a_response_that_is_not_waiting_is_released_and_limited_by_the_wrapped_model() -> None:
+    """A suspended response that isn't a batch request's, like an OpenAI background response, is the wrapped model's."""
+    response = ModelResponse(parts=[], state='suspended')
+    model = _batched(WrapperModel(TestModel()), **FAST_BATCH_SETTINGS)
+    model._release_suspended_response(response)  # pyright: ignore[reportPrivateUsage]
+    assert model._limits_polls(response)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_an_ended_batchs_results_are_kept_until_every_request_waiting_on_it_has_read_or_left(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Results too large to cache are still kept for the requests waiting on them, and dropped once none are."""
+    monkeypatch.setattr('pydantic_ai.models._batch_model._RESULTS_CACHE_BYTES', 1)
+    wrapped = SlowBatchTestModel()
+    model = _batched(wrapped, **FAST_BATCH_SETTINGS)
+    prompts = [ModelRequest(parts=[UserPromptPart(prompt)]) for prompt in ('one', 'two')]
+    first, second = await asyncio.gather(
+        *(model.request([prompt], None, ModelRequestParameters()) for prompt in prompts)
+    )
+    assert len(wrapped.created) == 1
+
+    response = await model.request([prompts[0], first], None, ModelRequestParameters())
+    assert response.state == 'complete'
+    assert len(model.pool._results) == 1  # pyright: ignore[reportPrivateUsage]
+
+    await model.cancel_suspended_response(second)
+    assert model.pool._results == {}  # pyright: ignore[reportPrivateUsage]
+    assert wrapped.canceled == []
+
+
+async def test_a_request_left_for_a_later_run_no_longer_keeps_its_batchs_results() -> None:
+    wrapped = SlowBatchTestModel()
+    model = _batched(wrapped, **FAST_BATCH_SETTINGS)
+    prompts = [ModelRequest(parts=[UserPromptPart(prompt)]) for prompt in ('one', 'two')]
+    first, second = await asyncio.gather(
+        *(model.request([prompt], None, ModelRequestParameters()) for prompt in prompts)
+    )
+    await model.request([prompts[0], first], None, ModelRequestParameters())
+    assert len(model.pool._results) == 1  # pyright: ignore[reportPrivateUsage]
+
+    model._release_suspended_response(second)  # pyright: ignore[reportPrivateUsage]
+    assert model.pool._results == {}  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_the_results_cache_counts_the_bytes_of_result_bodies(monkeypatch: pytest.MonkeyPatch) -> None:
+    text = 'é' * 1_000
+    wrapped = SlowBatchTestModel()
+    wrapped.custom_output_text = text
+    pending = await _pending_response(_batched(wrapped, **FAST_BATCH_SETTINGS))
+    # Between the characters and the UTF-8 bytes of the result body, which holds the text.
+    monkeypatch.setattr('pydantic_ai.models._batch_model._RESULTS_CACHE_BYTES', 2_000)
+    collecting = _batched(wrapped, **FAST_BATCH_SETTINGS)
+    response = await collecting.request(
+        [ModelRequest(parts=[UserPromptPart('Hello')]), pending], None, ModelRequestParameters()
+    )
+    assert response.parts == [TextPart(text)]
+    assert collecting.pool._results == {}  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_streamed_run_gets_the_batch_result_all_at_once() -> None:
+    """A streamed run waits for its batch like any run, and then streams each part of the result in one event."""
+    wrapped = SlowBatchTestModel(pending_checks=2)
+    agent = Agent(wrapped, capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)])
+
+    async with agent.run_stream('Hello') as result:
+        chunks = [chunk async for chunk in result.stream_text(delta=True)]
+        assert await result.get_output() == 'success (no tool calls)'
+    assert chunks == ['success (no tool calls)']
+    assert (len(wrapped.created), wrapped.status_checks) == (1, 3)
+
+
+async def test_event_stream_handlers_and_run_stream_events_get_a_batched_runs_events() -> None:
+    wrapped = SlowBatchTestModel(pending_checks=1)
+    agent = Agent(wrapped, capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)])
+
+    @agent.tool_plain
+    def get_city() -> str:
+        return 'Paris'
+
+    handled: list[AgentStreamEvent] = []
+
+    async def handle(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        handled.extend([event async for event in events])
+
+    result = await agent.run('Where?', event_stream_handler=handle)
+    assert result.output == snapshot('{"get_city":"Paris"}')
+    async with agent.run_stream_events('Where?') as stream:
+        streamed = [event async for event in stream]
+    assert isinstance(streamed[-1], AgentRunResultEvent)
+    assert streamed[-1].result.output == result.output
+    for events in (handled, streamed):
+        assert [type(event).__name__ for event in events if not isinstance(event, AgentRunResultEvent)] == snapshot(
+            [
+                'PartStartEvent',
+                'PartEndEvent',
+                'FunctionToolCallEvent',
+                'FunctionToolResultEvent',
+                'PartStartEvent',
+                'FinalResultEvent',
+                'PartEndEvent',
+            ]
+        )
+    assert len(wrapped.created) == 4
+
+
+async def test_a_streamed_run_can_end_pending_and_be_collected_later() -> None:
+    wrapped = SlowBatchTestModel(pending_checks=1)
+    agent = Agent(
+        wrapped, output_type=[str, PendingModelResponse], capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)]
+    )
+    async with agent.run_stream('Hello') as result:
+        pending = await result.get_output()
+    assert isinstance(pending, PendingModelResponse)
+    history = result.all_messages()
+
+    async with agent.run_stream(message_history=history) as result:
+        assert isinstance(await result.get_output(), PendingModelResponse)
+        history = result.all_messages()
+    async with agent.run_stream(message_history=history) as result:
+        assert await result.get_output() == 'success (no tool calls)'
+    assert (len(wrapped.created), wrapped.canceled) == (1, [])
 
 
 async def test_model_request_batch_returns_responses_and_errors_in_request_order() -> None:

@@ -501,6 +501,9 @@ class ModelRequestContext:
     _usage_response_ledger: _ModelRequestUsageLedger = field(
         default_factory=_ModelRequestUsageLedger, repr=False, compare=False
     )
+    _serving_wrapper: tuple[Model, Model] | None = field(default=None, repr=False, compare=False)
+    """The model a capability's `get_wrapper_model` returned to serve the request, which is entered around it, and
+    the model it wraps, whose lifecycle its owner manages."""
 
     @property
     def _usage_responses(self) -> tuple[ModelResponse, ...]:
@@ -787,6 +790,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if instance_id is None:
             instance_id = vars(self).setdefault('_batch_instance_id', uuid.uuid4().hex)
         return f'instance:{instance_id}'
+
+    def _no_batch_api_message(self) -> str:
+        """The error for batching this model when [`batch_max_requests`][pydantic_ai.models.Model.batch_max_requests] is `None`."""
+        return f'`{type(self).__name__}` {self.model_name!r} has no batch API.'
 
     def _batch_unlisted_status(self, batch: Batch) -> BatchResultStatus | None:
         """How the provider ended the requests an ended `batch` has no result for, if it says.
@@ -1143,6 +1150,21 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Called between the segments of a suspended turn. `None` by default (e.g. Anthropic `pause_turn`
         continues immediately); a model that polls a server-side job (e.g. OpenAI background mode)
         overrides this to return a poll interval so the graph doesn't busy-poll.
+        """
+        return None
+
+    def _limits_polls(self, response: ModelResponse) -> bool:
+        """Whether polling `response` counts against the graph's limit on how often one job is polled.
+
+        `True` by default; a model whose job ends of its own accord, like a batch the provider expires once its
+        window has passed, returns `False`, so a long job isn't given up on early.
+        """
+        return True
+
+    def _release_suspended_response(self, response: ModelResponse) -> None:
+        """Called when a run ends with `response` still suspended, leaving it for a later run to continue.
+
+        No-op by default; a model that cancels a job once nobody waits on it stops counting this run as waiting.
         """
         return None
 

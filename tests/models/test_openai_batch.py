@@ -75,6 +75,30 @@ def _model(api_key: str = 'test-key', model_name: str = 'gpt-4.1-nano', **client
 
 
 @pytest.mark.parametrize(
+    ('model_factory', 'message'),
+    [
+        pytest.param(
+            lambda: OpenAIChatModel('gpt-4.1-nano', provider=OpenAIProvider(api_key='k')),
+            "`OpenAIChatModel` 'gpt-4.1-nano' has no batch API: batch it through the Responses API, with "
+            '`OpenAIResponsesModel` or the `openai:` prefix.',
+            id='openai',
+        ),
+        pytest.param(
+            lambda: OpenAIChatModel('openai/gpt-4.1-nano', provider=OpenRouterProvider(api_key='k')),
+            "`OpenAIChatModel` 'openai/gpt-4.1-nano' has no batch API.",
+            id='openrouter',
+        ),
+    ],
+)
+def test_batching_a_chat_completions_model_points_to_the_responses_api(
+    model_factory: Callable[[], OpenAIChatModel], message: str
+) -> None:
+    with pytest.raises(UserError) as exc_info:
+        BatchPool().wrap(model_factory())
+    assert str(exc_info.value) == message
+
+
+@pytest.mark.parametrize(
     'model_factory,max_requests',
     [
         pytest.param(lambda: _model(), 50_000, id='openai'),
@@ -995,6 +1019,19 @@ async def test_batch_usage_has_cached_and_reasoning_tokens(allow_model_requests:
         standard_price.output_mtok,
     )
     assert response.cost().total_price < standard.cost().total_price
+
+
+@pytest.mark.parametrize('status_code, deleted', [(429, True), (400, True), (500, False)])
+async def test_a_refused_batch_deletes_its_input_file(
+    allow_model_requests: None, status_code: int, deleted: bool
+) -> None:
+    """Nothing reads the file of a batch OpenAI refused; after a server error, the batch may exist and read it."""
+    error = {'error': {'message': 'Refused', 'type': 'invalid_request_error'}}
+    api = _FakeBatchAPI(batch=_batch_json('validating'), create_error=(status_code, error))
+    model = _fake_model(api)
+    with pytest.raises(ModelHTTPError):
+        await model.batch_create([await model.batch_encode(_request())])
+    assert (('DELETE', '/files/file-input') in api.requests) is deleted
 
 
 @pytest.mark.parametrize(

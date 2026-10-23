@@ -603,9 +603,13 @@ class _ContinuationStreamedResponse(StreamedResponse):
         See `MAX_BACKGROUND_POLLS`. Returns the updated `(accumulate_count, replace_count)`.
         """
         job_id = response.provider_response_id
-        if last_mode == 'replace-same-id':
+        # A batch request waiting for its batch is waiting on a job rather than continuing a generation, even when it
+        # was submitted again under a new ID, as in the non-streaming loop.
+        if last_mode == 'replace-same-id' or (
+            last_mode is not None and not self.model._limits_polls(response)  # pyright: ignore[reportPrivateUsage]
+        ):
             replace_count += 1
-            if replace_count > self.max_background_polls:
+            if replace_count > self.max_background_polls and self.model._limits_polls(response):  # pyright: ignore[reportPrivateUsage]
                 raise UnexpectedModelBehavior(
                     f'Model response for job {job_id!r} remained suspended after polling the maximum of '
                     f'{self.max_background_polls} times'
@@ -649,6 +653,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
                     messages = self.base_messages
                 elif response.state == 'suspended':
                     if self.return_pending and requested and self.model.continuation_delay(response) is not None:
+                        self.model._release_suspended_response(response)  # pyright: ignore[reportPrivateUsage]
                         self._ended_pending = True
                         break
                     accumulate_count, replace_count = self._count_continuation(

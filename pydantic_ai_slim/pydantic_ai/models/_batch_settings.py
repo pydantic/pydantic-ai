@@ -44,7 +44,7 @@ def check_batch_intervals(
 def batch_size(model: Model, max_requests: int | None) -> int:
     """The most requests per batch for `model`: `max_requests` capped by, or else, the provider limit."""
     if (provider_limit := model.batch_max_requests) is None:
-        raise UserError(f'`{type(model).__name__}` {model.model_name!r} has no batch API.')
+        raise UserError(model._no_batch_api_message())  # pyright: ignore[reportPrivateUsage]
     return provider_limit if max_requests is None else min(max_requests, provider_limit)
 
 

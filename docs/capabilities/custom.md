@@ -454,7 +454,11 @@ Resolution results are cached by model ID and resolver tree for the duration of 
 
 ## Wrapping the model
 
-[`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model] lets a capability wrap the model that serves each model request with a [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel], to change how requests are sent. It's called for every attempt at a request, after the [`prepare_model_request`](#model-request-hooks) hooks, with the model that will send it: the agent's model, one passed to the run as `model=`, one a capability or hook [selected](#selecting-the-model), or the one a hook moved the attempt to, like [`ModelFallback`](model-fallback.md)'s next model. [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] uses it to send requests through the provider's [batch API](../batch.md).
+[`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model] lets a capability wrap the model that serves each model request with a [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel], to change how requests are sent. [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] uses it to send requests through the provider's [batch API](../batch.md).
+
+Unlike [`get_wrapper_toolset`](#toolset-wrapping), which wraps the toolset once per run, `get_wrapper_model` is called for every attempt at a model request, with the model that will send it. That's the model chosen after [model selection](#selecting-the-model) and every [`before_model_request`](#model-request-hooks) and `prepare_model_request` hook have run: the agent's model, one passed to the run as `model=`, one a capability's `get_model` such as [`SelectModel`](select-model.md) selected, one a hook swapped in, or the one a hook moved the attempt to, like [`ModelFallback`](model-fallback.md)'s next model, whatever the order of the capabilities. So a run that switches models partway through, or falls back to another one, gets each attempt wrapped around the model serving it.
+
+The returned model is entered (`async with`) around each attempt it serves, and exited when the attempt is done or has failed, as a model passed to the agent is around a run. Set up per-request resources in its `__aenter__`, and keep long-lived ones on the capability.
 
 ```python {title="wrapper_model_example.py"}
 from dataclasses import dataclass

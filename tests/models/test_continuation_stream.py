@@ -975,8 +975,14 @@ async def test_replace_poll_chain_bounded_by_replace_ceiling() -> None:
     assert model.cancelled[0].provider_response_id == 'job1'
 
 
-async def test_model_change_replace_chain_counts_against_strict_ceiling() -> None:
+@pytest.mark.parametrize('polled', [False, True], ids=['continued', 'polled'])
+async def test_model_change_replace_chain_counts_against_strict_ceiling(
+    polled: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A model-change replace chain counts against `max_generation_continuations`, not the generous backstop.
+
+    Also when the model waits between segments: only a batch request, whose model bounds its own polls, is
+    counted as a poll under a new ID.
 
     A replace caused by a model change (or a `FallbackModel` directive) is *fresh* generation, not a
     passive re-poll of one background job, so it must not inherit the generous `max_background_polls`
@@ -1020,6 +1026,12 @@ async def test_model_change_replace_chain_counts_against_strict_ceiling() -> Non
             ),
         ]
     )
+    if polled:
+
+        def poll_at_once(response: ModelResponse) -> float:
+            return 0.0
+
+        monkeypatch.setattr(model, 'continuation_delay', poll_at_once)
     # A generous replace ceiling that a same-id poll chain would sail past — but a model-change chain must
     # be bound by the strict `max_generation_continuations=2` instead and raise, naming the current job id.
     stream = _composite(model, max_generation_continuations=2, max_background_polls=1000)

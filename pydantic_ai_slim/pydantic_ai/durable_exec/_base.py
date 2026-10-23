@@ -62,6 +62,7 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai.workspaces.workspace import workspace_layers
 
 from .. import _usage_attribution
+from ..models.wrapper import serving_wrapper_scope
 from ._capability_operation import (
     CapabilityBoundOperation,
     CapabilityCacheIdentity,
@@ -1027,7 +1028,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 serving_model = (
                     root_capability.get_wrapper_model(active_model) if serving and root_capability is not None else None
                 )
-                yield serving_model or active_model, ctx
+                if serving_model is None:
+                    yield active_model, ctx
+                    return
+                # Entered around the request it sends, as the core enters it outside durable execution.
+                async with serving_wrapper_scope(serving_model, active_model) as entered:
+                    yield entered, ctx
 
     @contextmanager
     def _request_policy_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[None]:

@@ -6,7 +6,7 @@ import inspect
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager, suppress
 from contextvars import Context, ContextVar, copy_context
 from copy import copy, deepcopy
 from dataclasses import field, replace
@@ -91,6 +91,7 @@ from .messages import (
     _merge_consecutive_messages,  # pyright: ignore[reportPrivateUsage]
     _repair_dangling_tool_calls,  # pyright: ignore[reportPrivateUsage]
 )
+from .models._batch_model import check_collectable
 
 # `_ContinuationStreamedResponse` is an intentionally-exported member of the private
 # `_continuation` module (see its `__all__`); the leading underscore is a module-privacy
@@ -108,6 +109,7 @@ from .models._continuation import (
     resumed_response,
 )
 from .models._request_timeout import enforce_request_deadline, start_request_deadline, without_carried_deadline
+from .models.wrapper import serving_wrapper_scope
 from .output import OutputDataT, OutputSpec, PendingModelResponse, StructuredOutputMode
 from .settings import ModelSettings
 from .tools import (
@@ -1405,8 +1407,33 @@ def _keep_default_output_mode(
 # runs the whole chain inside one durable unit.
 
 
+async def _cancel_interrupted_job(request_context: ModelRequestContext, response: _messages.ModelResponse) -> None:
+    """Cancel the job of a suspended response a stream was interrupted on, through the model that sent it.
+
+    A capability's wrapper around that model was exited with the stream, so it's entered again for the cancellation,
+    as for each call it serves, shielded as graph teardown may be under cancellation. Like the cancellation itself,
+    entering it is best effort: a failure doesn't replace the error that interrupted the stream.
+    """
+    if request_context._serving_wrapper is None:  # pyright: ignore[reportPrivateUsage]
+        await cancel_suspended_job(request_context.model, response)
+        return
+    with anyio.CancelScope(shield=True), suppress(Exception):
+        async with _serving_scope(request_context):
+            await cancel_suspended_job(request_context.model, response)
+
+
+@asynccontextmanager
+async def _serving_scope(request_context: ModelRequestContext) -> AsyncGenerator[None]:
+    """Enter the model a capability wrapped the request's model in for the request, if any."""
+    if (wrapped := request_context._serving_wrapper) is None:  # pyright: ignore[reportPrivateUsage]
+        yield
+        return
+    async with serving_wrapper_scope(*wrapped):
+        yield
+
+
 def _split_resume_seed(
-    messages: Sequence[_messages.ModelMessage],
+    messages: Sequence[_messages.ModelMessage], model: models.Model
 ) -> tuple[list[_messages.ModelMessage], _messages.ModelResponse | None]:
     """Split a trailing suspended `ModelResponse` off `messages` as the continuation seed.
 
@@ -1414,9 +1441,10 @@ def _split_resume_seed(
     encoding of a paused turn to resume: the continuation loop echoes that response back to
     the provider itself, so it must not be part of the base history handed to the model.
     A normal request ends in a `ModelRequest`, so the seed is `None` and the messages pass
-    through untouched.
+    through untouched. A seed waiting on a batch request that `model` doesn't collect raises.
     """
     if (seed := resumed_response(messages)) is not None:
+        check_collectable(model, seed)
         # Resuming is a new request, so the deadline a `FallbackModel` carried on the suspended response is dropped.
         return list(messages[:-1]), without_carried_deadline(seed)
     return list(messages), None
@@ -1537,7 +1565,7 @@ async def model_request(  # noqa: C901
     Returns:
         The (merged) model response.
     """
-    base_messages, seed = _split_resume_seed(request_context.messages)
+    base_messages, seed = _split_resume_seed(request_context.messages, model)
 
     # Two independent ceilings distinguished by the generic `merge_mode` signal, mirroring the
     # streamed composite in `_continuation`: every *fresh-generation* re-suspension (accumulate
@@ -1562,15 +1590,16 @@ async def model_request(  # noqa: C901
                 messages = base_messages
             elif response.state == 'suspended':
                 if return_pending and requested and model.continuation_delay(response) is not None:
+                    model._release_suspended_response(response)  # pyright: ignore[reportPrivateUsage]
                     return response
                 job_id = response.provider_response_id
-                # A response the model polls, such as a batch request waiting for its batch, is waiting on a job rather
-                # than continuing a generation, even when it started a new one with a new ID.
+                # A batch request waiting for its batch is waiting on a job rather than continuing a generation, even
+                # when it was submitted again under a new ID.
                 if last_mode == 'replace-same-id' or (
-                    last_mode is not None and model.continuation_delay(response) is not None
+                    last_mode is not None and not model._limits_polls(response)  # pyright: ignore[reportPrivateUsage]
                 ):
                     replace_count += 1
-                    over_limit = replace_count > MAX_BACKGROUND_POLLS
+                    over_limit = replace_count > MAX_BACKGROUND_POLLS and model._limits_polls(response)  # pyright: ignore[reportPrivateUsage]
                     limit_message = (
                         f'Model response for job {job_id!r} remained suspended after polling the maximum '
                         f'of {MAX_BACKGROUND_POLLS} times'
@@ -1683,7 +1712,7 @@ async def model_request_stream(
     Yields:
         A `StreamedResponse` to iterate inside the durable boundary.
     """
-    base_messages, seed = _split_resume_seed(request_context.messages)
+    base_messages, seed = _split_resume_seed(request_context.messages, model)
     with set_current_run_context(run_context):
         sr = _ContinuationStreamedResponse(
             model_request_parameters=request_context.model_request_parameters,
@@ -1804,14 +1833,17 @@ async def _after_streamed_model_request(
         ) from retry
 
 
-async def _cancel_rejected_job(model: models.Model, outcome: Exception | _messages.ModelResponse) -> None:
+async def _cancel_rejected_job(
+    request_context: ModelRequestContext, outcome: Exception | _messages.ModelResponse
+) -> None:
     """Cancel the provider-side job of a response a hook rejected while it was still suspended.
 
     Nothing continues a rejected response, so its job would otherwise keep running, and billing, while the
-    request moves on, as `FallbackModel` cancels a pinned continuation it rejects.
+    request moves on, as `FallbackModel` cancels a pinned continuation it rejects. The attempt's wrapper was exited
+    with its request, so the cancellation enters it again, as for a stream interrupted on a suspended response.
     """
     if isinstance(outcome, _messages.ModelResponse) and outcome.state == 'suspended':
-        await cancel_suspended_job(model, outcome)
+        await _cancel_interrupted_job(request_context, outcome)
 
 
 async def _outside_attempts(awaitable: Awaitable[T]) -> T:
@@ -2152,14 +2184,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     # check; raising `UsageLimitExceeded` here would mask `stream_error`.
                     if agent_stream_holder:  # pragma: no branch
                         partial = agent_stream_holder[0].response
-                        await self._commit_interrupted_response(
-                            ctx,
-                            wrap_request_context.model,
-                            partial,
-                            # The handler recorded the response it billed, unless `wrap_model_request`
-                            # had already stopped it before the consumer did.
-                            _interrupted_response or _interrupted_stream_response(stream_error, partial),
-                            (_handler_request_context or wrap_request_context).messages,
+                        # The handler recorded the response it billed, unless `wrap_model_request` had already
+                        # stopped it before the consumer did.
+                        recorded = _interrupted_response or _interrupted_stream_response(stream_error, partial)
+                        if partial.state == 'suspended' and recorded.state == 'interrupted':
+                            # A genuine failure rather than a walk-away: cancel the still-live job so it doesn't leak.
+                            await _cancel_interrupted_job(wrap_request_context, partial)
+                        self._commit_interrupted_response(
+                            ctx, partial, recorded, (_handler_request_context or wrap_request_context).messages
                         )
                 else:
                     try:
@@ -2193,9 +2225,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 await agent_stream_holder[0].aclose_events()
 
     @staticmethod
-    async def _commit_interrupted_response(
+    def _commit_interrupted_response(
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
-        model: models.Model,
         streamed: _messages.ModelResponse,
         recorded: _messages.ModelResponse,
         request_messages: Sequence[_messages.ModelMessage],
@@ -2206,9 +2237,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         `request_messages` are the messages the stream was requested with, which end in the suspended response it
         resumed, if any.
         """
-        if streamed.state == 'suspended' and recorded.state == 'interrupted':
-            # A genuine failure rather than a walk-away: cancel the still-live job so it doesn't leak.
-            await cancel_suspended_job(model, streamed)
         recorded.run_id = ctx.state.run_id
         recorded.conversation_id = ctx.state.conversation_id
         recorded.workspace_ref = ctx.deps.workspace_ref
@@ -2336,6 +2364,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             except exceptions.RetryModelRequest as retry:
                 # The next attempt is wrapped afresh, for whichever model serves it.
                 request_context.model = attempt_model
+                request_context._serving_wrapper = None  # pyright: ignore[reportPrivateUsage]
                 baseline.rewind_suspended()
                 await self._start_next_attempt(ctx, request_context, retry)
 
@@ -2362,13 +2391,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # response, or the error, also when a hook recovered from it (a recovered response was never billed).
         outcome: Exception | _messages.ModelResponse
         try:
-            outcome = await model_request(
-                request_context.model,
-                request_context=request_context,
-                run_context=run_context,
-                on_progress=on_progress,
-                return_pending=ctx.deps.output_schema.allows_pending_model_response,
-            )
+            async with _serving_scope(request_context):
+                outcome = await model_request(
+                    request_context.model,
+                    request_context=request_context,
+                    run_context=run_context,
+                    on_progress=on_progress,
+                    return_pending=ctx.deps.output_schema.allows_pending_model_response,
+                )
             # Committed before the earlier attempts are attached, so their usage isn't counted twice.
             state.record(ctx, outcome, request_context)
             response = failed.log.attach(outcome)
@@ -2395,11 +2425,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
         except exceptions.RetryModelRequest:
             failed.record(request_context, outcome, start)
-            await _cancel_rejected_job(request_context.model, outcome)
+            await _cancel_rejected_job(request_context, outcome)
             raise
         except exceptions.FallbackExceptionGroup as unrecovered:
             failed.record_exhausted(request_context, outcome, start, unrecovered)
-            await _cancel_rejected_job(request_context.model, outcome)
+            await _cancel_rejected_job(request_context, outcome)
             self._raise_usage_limit_exceeded(ctx, unrecovered)
             raise
 
@@ -2726,8 +2756,20 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         attempt_model = processed_context.model
         # After `prepare_model_request`, so capability model wrappers apply to the model serving this attempt, including
         # one a hook moved the request to, like `ModelFallback`'s next candidate.
-        request_context.model = attempt_model._with_serving_wrapper(  # pyright: ignore[reportPrivateUsage]
-            lambda model: root_capability.get_wrapper_model(model) or model
+        wrappers: list[tuple[models.Model, models.Model]] = []
+
+        def wrap(model: models.Model) -> models.Model:
+            if (wrapper := root_capability.get_wrapper_model(model)) is None:
+                return model
+            wrappers.append((wrapper, model))
+            return wrapper
+
+        request_context.model = attempt_model._with_serving_wrapper(wrap)  # pyright: ignore[reportPrivateUsage]
+        # The wrapper is entered around each call it serves for this attempt, like a model passed to the agent is
+        # around a run. One applied on this side of a durable unit only answers questions like `continuation_delay`,
+        # and the unit enters the one that sends the request.
+        request_context._serving_wrapper = next(  # pyright: ignore[reportPrivateUsage]
+            (wrapped for wrapped in wrappers if wrapped[0] is request_context.model), None
         )
         request_context.messages = list(processed_context.messages)
         request_context.model_settings = processed_context.model_settings or None
@@ -2891,6 +2933,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # `model_request_stream` stitches the (possibly suspended → complete) segments
                 # into one continuous stream, so the whole chain is presented as a single
                 # `AgentStream` and the model-request hooks wrap it once.
+                await attempt_stack.enter_async_context(_serving_scope(request_context))
                 sr = await attempt_stack.enter_async_context(
                     model_request_stream(
                         request_context.model,
@@ -2922,6 +2965,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 except exceptions.RetryModelRequest as retry:
                     # The next attempt is wrapped afresh, for whichever model serves it.
                     request_context.model = attempt_model
+                    request_context._serving_wrapper = None  # pyright: ignore[reportPrivateUsage]
                     baseline.rewind_suspended()
                     await self._start_next_attempt(ctx, request_context, retry)
                     continue
