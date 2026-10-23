@@ -1960,7 +1960,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     self._map_response_builtin_part(item)
                 elif isinstance(item, FilePart):  # pragma: no cover
                     self._map_response_file_part(item)
-                elif isinstance(item, CompactionPart):  # pragma: no cover
+                # Reached from Harness tests that switch to Chat after another provider's compaction.
+                elif isinstance(item, CompactionPart):  # pragma: lax no cover
                     # Compaction parts are not sent back to the Chat Completions API.
                     pass
                 elif isinstance(item, SpeechPart):  # pragma: no cover

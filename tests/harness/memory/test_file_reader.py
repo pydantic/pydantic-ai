@@ -112,11 +112,16 @@ class TestGuidanceStaysStatic:
         assert Memory[None](store=FileStore('.agent-memory')).get_instructions() == default
         assert Memory[None](store_resolver=resolve).get_instructions() == default
 
-    async def test_instructions_match_with_and_without_file_system(self, tmp_path: Path) -> None:
+    async def test_file_system_adds_only_the_directory_block(self, tmp_path: Path) -> None:
         without, _ = await _run(tmp_path, Memory(store=FileStore('.agent-memory')))
         with_file_system, _ = await _run(tmp_path, Memory(store=FileStore('.agent-memory')), FileSystem())
         assert without.instructions[0] is not None
-        assert with_file_system.instructions == without.instructions
+        directory = 'Memory files are in `.agent-memory/main/` in the workspace; read them with `read_file`.'
+        assert directory not in without.instructions[0]
+        [instructions] = with_file_system.instructions
+        assert instructions is not None
+        assert instructions.startswith(without.instructions[0])
+        assert '<context id="toolset:memory:directory">\n' + directory in instructions
 
 
 class TestReaderKept:
@@ -151,3 +156,90 @@ class TestReaderKept:
             store = FileStore('../elsewhere')
         recorder, _ = await _run(work, Memory(store=store), FileSystem())
         assert all('read_memory' in tools and 'read_file' in tools for tools in recorder.offered)
+
+
+class TestDirectoryBlock:
+    async def test_tools_and_instructions_are_the_same_on_every_request_of_a_promptless_run(
+        self, tmp_path: Path
+    ) -> None:
+        offered: list[set[str]] = []
+        instructions: list[str | None] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            offered.append({tool.name for tool in info.function_tools})
+            instructions.append(info.instructions)
+            if len(offered) == 1:
+                return ModelResponse(parts=[ToolCallPart('list_directory', {'path': '.'}, tool_call_id='list')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(respond),
+            deps_type=type(None),
+            capabilities=[LocalWorkspace(tmp_path), FileSystem(), Memory(store=FileStore('.agent-memory'))],
+        )
+        await agent.run(message_history=[ModelRequest(parts=[UserPromptPart('go')])])
+
+        assert len(offered) == 2
+        assert offered[0] == offered[1]
+        assert 'read_memory' not in offered[0]
+        assert instructions[0] == instructions[1]
+        assert instructions[0] is not None and '`.agent-memory/main/`' in instructions[0]
+
+    async def test_memory_loaded_mid_run_names_its_directory(self, tmp_path: Path) -> None:
+        offered: list[set[str]] = []
+        seen: list[str] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            offered.append({tool.name for tool in info.function_tools})
+            # A block that appears mid-run is appended to the history rather than the instructions.
+            seen.append(f'{info.instructions}\n{messages!r}')
+            if len(offered) == 1:
+                return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'memory'}, tool_call_id='load')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        memory = Memory(
+            store=FileStore('.agent-memory'), namespace='acme', description='Long-term memory.', defer_loading=True
+        )
+        agent = Agent(
+            FunctionModel(respond),
+            deps_type=type(None),
+            capabilities=[LocalWorkspace(tmp_path), FileSystem(), memory],
+        )
+        await agent.run('go')
+
+        # Loaded mid-run, Memory records no snapshot, so its instructions are what give the directory.
+        assert len(offered) == 2
+        assert 'read_memory' not in offered[1]
+        assert 'Memory files are in `.agent-memory/acme/main/` in the workspace; read them with `read_file`.' in seen[1]
+
+
+class TestSeveralFileMemories:
+    async def test_each_memory_names_its_own_directory_across_runs(self, tmp_path: Path) -> None:
+        instructions: list[str | None] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions.append(info.instructions)
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(respond),
+            deps_type=type(None),
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                FileSystem(),
+                Memory(store=FileStore('.agent-memory'), heading='Personal notes'),
+                Memory(
+                    store=FileStore('.agent-memory'), agent_name='org', heading='Org notes', id='org_memory'
+                ).prefix_tools('org'),
+            ],
+        )
+        first = await agent.run('first')
+        await agent.run('second', message_history=first.all_messages())
+
+        assert len(instructions) == 2
+        assert instructions[0] == instructions[1]
+        assert instructions[0] is not None
+        assert '<context id="toolset:memory:directory">\nMemory files are in `.agent-memory/main/`' in instructions[0]
+        assert (
+            '<context id="toolset:org_memory:directory">\nMemory files are in `.agent-memory/org/`' in instructions[0]
+        )
