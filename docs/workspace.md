@@ -526,7 +526,7 @@ symlinks should also implement `SupportsRealpath`; see [Resolving symlinks](#res
 
 A backend whose environments can have a graphical display implements
 [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]: `has_display`, which says without I/O
-whether this environment has one, `screenshot` (PNG bytes), and `act`, which performs one [`ComputerAction`][pydantic_ai.workspaces.ComputerAction]
+whether this environment has one, `display_size`, `screenshot` (PNG bytes), and `act`, which performs one [`ComputerAction`][pydantic_ai.workspaces.ComputerAction]
 such as a click or a key press. Tools reach them as `ctx.workspace.screenshot()` and
 `ctx.workspace.act(...)`; under durable execution, calls from workflow code run as workspace
 operations, like file calls. A Linux environment that runs an X server can delegate to
@@ -542,6 +542,9 @@ class MyDesktopSandbox(MySandbox, SupportsDisplay):
     def has_display(self) -> bool:
         return True
 
+    async def display_size(self) -> tuple[int, int]:
+        return await X11Computer(self).display_size()
+
     async def screenshot(self) -> bytes:
         return await X11Computer(self).screenshot()
 
@@ -553,7 +556,8 @@ Starting the X server is the environment's job, for example an image whose entry
 New action kinds may be added to `ComputerAction`, so `act` must raise
 [`UnsupportedComputerActionError`][pydantic_ai.workspaces.UnsupportedComputerActionError] for a kind it
 doesn't know; the conformance suite checks this. Coordinates are pixels of the screenshot, so a backend
-whose screen is scaled, such as a high-density display, scales actions to match its screenshots. `LocalWorkspace` has no display.
+whose screen is scaled, such as a high-density display, reports the screenshot's size and scales actions to
+match. `LocalWorkspace` has no display.
 
 ### Resolving symlinks
 

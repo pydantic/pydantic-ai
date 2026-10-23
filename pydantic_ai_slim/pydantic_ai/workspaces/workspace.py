@@ -543,6 +543,10 @@ class Workspace(WorkspaceBackend):
             'such as a sandbox started with a desktop.'
         )
 
+    async def display_size(self) -> tuple[int, int]:
+        """The screenshot's `(width, height)` in pixels. Raises `UserError` if the workspace has no display."""
+        return await self._computer.display_size()
+
     async def screenshot(self) -> bytes:
         """Capture the whole display as PNG bytes. Raises `UserError` if the workspace has no display."""
         return await self._computer.screenshot()

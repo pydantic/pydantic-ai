@@ -267,7 +267,7 @@ async def binary(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dic
         decoded = False
     await workspace.act(PressKeys(keys=('ctrl', 's')))
     return {
-        'display': (await workspace.screenshot()) == FAKE_SCREENSHOT,
+        'display': [*await workspace.display_size(), (await workspace.screenshot()) == FAKE_SCREENSHOT],
         'round_trip': (await workspace.read_bytes('blob.bin')) == _BINARY,
         'size': (await workspace.stat('blob.bin')).size,
         'exists': [await workspace.exists('blob.bin'), await workspace.exists('nope')],
@@ -372,7 +372,7 @@ async def check_explicit_rejected(kind: str, type: str, fragment: str, run: Runn
 async def check_binary(run: Runner, agents: ScenarioAgents) -> None:
     """Bytes, display calls (a screenshot is bytes too) and the expected errors cross the durable boundary unchanged."""
     assert await run('binary', None) == {
-        'display': True,
+        'display': [1280, 800, True],
         'round_trip': True,
         'size': 11,
         'exists': [True, False],

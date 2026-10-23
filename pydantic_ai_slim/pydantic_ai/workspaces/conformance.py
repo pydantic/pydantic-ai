@@ -58,14 +58,6 @@ def _computer(backend: WorkspaceBackend) -> SupportsDisplay:
     return backend
 
 
-async def _screenshot_size(computer: SupportsDisplay) -> tuple[int, int]:
-    """Take a screenshot and read its size: the PNG signature, then the IHDR chunk's width and height."""
-    png = await computer.screenshot()
-    assert png[:8] == b'\x89PNG\r\n\x1a\n'
-    assert png[12:16] == b'IHDR'
-    return struct.unpack('>II', png[16:24])
-
-
 @dataclass(frozen=True)
 class _UnknownAction:
     """An action kind no backend knows, standing in for one added to `ComputerAction` after the backend was written."""
@@ -585,14 +577,20 @@ class WorkspaceBackendSuite:
         with pytest.raises(WorkspaceUnavailableError):
             await attach_backend(backend.ref).working_dir()
 
-    async def test_screenshot_is_a_png(self, backend: WorkspaceBackend) -> None:
-        width, height = await _screenshot_size(_computer(backend))
+    async def test_screenshot_is_a_png_of_the_display_size(self, backend: WorkspaceBackend) -> None:
+        computer = _computer(backend)
+        width, height = await computer.display_size()
         assert width > 0 and height > 0
+        png = await computer.screenshot()
+        # The PNG signature, then the IHDR chunk, whose first fields are the image's width and height.
+        assert png[:8] == b'\x89PNG\r\n\x1a\n'
+        assert png[12:16] == b'IHDR'
+        assert struct.unpack('>II', png[16:24]) == (width, height)
 
     async def test_every_action_is_performed_or_refused_as_unsupported(self, backend: WorkspaceBackend) -> None:
         """A backend may lack an action kind, but must refuse it with `UnsupportedComputerActionError`."""
         computer = _computer(backend)
-        width, height = await _screenshot_size(computer)
+        width, height = await computer.display_size()
         x, y = width // 2, height // 2
         actions: list[ComputerAction] = [
             MoveMouse(x=x, y=y),

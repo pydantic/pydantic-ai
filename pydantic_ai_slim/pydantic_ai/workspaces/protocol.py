@@ -244,8 +244,12 @@ class SupportsDisplay(Protocol):
         """
         ...
 
+    async def display_size(self) -> tuple[int, int]:
+        """The screenshot's `(width, height)` in pixels: the coordinate space of every action."""
+        ...
+
     async def screenshot(self) -> bytes:
-        """Capture the whole display as PNG bytes. Its pixels are the coordinate space of every action."""
+        """Capture the whole display as PNG bytes, at the size `display_size` reports."""
         ...
 
     async def act(self, action: ComputerAction) -> None:

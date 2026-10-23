@@ -196,6 +196,14 @@ class X11Computer:
         if 'No such key name' in result.stderr:
             raise UnsupportedComputerActionError(f'X11Computer cannot press that key: {result.stderr.strip()}')
 
+    async def display_size(self) -> tuple[int, int]:
+        output = (await self._run(['xdotool', 'getdisplaygeometry'])).stdout.split()
+        try:
+            width, height = output
+            return int(width), int(height)
+        except ValueError:
+            raise WorkspaceError(f'Unexpected `xdotool getdisplaygeometry` output: {" ".join(output)!r}') from None
+
     async def screenshot(self) -> bytes:
         output = (await self._run(_SCREENSHOT)).stdout
         try:

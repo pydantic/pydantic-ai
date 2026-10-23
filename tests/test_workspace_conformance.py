@@ -139,6 +139,9 @@ class _ProviderFilesAndDisplay(FilesystemOnlyWorkspaceBackend, SupportsDisplay):
     def has_display(self) -> bool:
         return self._display.has_display
 
+    async def display_size(self) -> tuple[int, int]:
+        return await self._display.display_size()
+
     async def screenshot(self) -> bytes:
         return await self._display.screenshot()
 

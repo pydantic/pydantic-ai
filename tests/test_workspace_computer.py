@@ -181,11 +181,17 @@ async def test_x11_computer_does_not_release_after_an_action_without_held_input(
     assert len(commands.calls) == 1
 
 
-async def test_x11_computer_takes_a_screenshot_on_its_display() -> None:
+async def test_x11_computer_reads_the_display_size_and_screenshot_on_its_display() -> None:
     encoded = base64.encodebytes(FAKE_SCREENSHOT).decode()  # wrapped lines, as `base64` prints
-    commands = ScriptedCommands(CommandResult(exit_code=0, stdout=encoded, stderr=''))
-    assert await X11Computer(commands, display=':99').screenshot() == FAKE_SCREENSHOT
-    ((screenshot, shell, env),) = commands.calls
+    commands = ScriptedCommands(
+        CommandResult(exit_code=0, stdout='1280 800\n', stderr=''),
+        CommandResult(exit_code=0, stdout=encoded, stderr=''),
+    )
+    computer = X11Computer(commands, display=':99')
+    assert await computer.display_size() == (1280, 800)
+    assert await computer.screenshot() == FAKE_SCREENSHOT
+    (geometry, _, env), (screenshot, shell, _) = commands.calls
+    assert geometry == ['xdotool', 'getdisplaygeometry']
     assert env == {'DISPLAY': ':99'}
     assert shell is True
     assert screenshot == (
@@ -194,18 +200,21 @@ async def test_x11_computer_takes_a_screenshot_on_its_display() -> None:
 
 
 @pytest.mark.parametrize(
-    'result, message',
+    'result, call, message',
     [
         (
             CommandResult(exit_code=1, stdout='', stderr="Can't open display: :1\n"),
+            'display_size',
             "exit code 1 on display :1: Can't open display: :1",
         ),
-        (CommandResult(exit_code=127, stdout='', stderr='sh: scrot: not found'), 'scrot: not found'),
+        (CommandResult(exit_code=0, stdout='garbage\n', stderr=''), 'display_size', "output: 'garbage'"),
+        (CommandResult(exit_code=127, stdout='', stderr='sh: scrot: not found'), 'screenshot', 'scrot: not found'),
     ],
 )
-async def test_x11_computer_failures_raise_workspace_error(result: CommandResult, message: str) -> None:
+async def test_x11_computer_failures_raise_workspace_error(result: CommandResult, call: str, message: str) -> None:
+    computer = X11Computer(ScriptedCommands(result))
     with pytest.raises(WorkspaceError, match=message):
-        await X11Computer(ScriptedCommands(result)).screenshot()
+        await getattr(computer, call)()
 
 
 @pytest.mark.parametrize(
@@ -303,6 +312,7 @@ def test_actions_are_validated_when_built_in_python(build: Any) -> None:
 async def test_workspace_display_methods_reach_a_backend_with_a_display() -> None:
     provider = InMemoryProvider()
     workspace = Workspace(provider.backend(None))
+    assert await workspace.display_size() == (1280, 800)
     assert await workspace.screenshot() == FAKE_SCREENSHOT
     await workspace.act(TypeText(text='hi'))
     assert provider.actions == [TypeText(text='hi')]
@@ -310,14 +320,14 @@ async def test_workspace_display_methods_reach_a_backend_with_a_display() -> Non
 
 async def test_workspace_without_a_display_says_how_to_get_one() -> None:
     workspace = Workspace(FakeWorkspace('no-display'))
-    for call in (workspace.screenshot(), workspace.act(MouseUp())):
+    for call in (workspace.display_size(), workspace.screenshot(), workspace.act(MouseUp())):
         with pytest.raises(UserError, match='has no display to control'):
             await call
 
 
 async def test_unavailable_workspace_reports_its_reason_for_display_calls() -> None:
     workspace = Workspace(UnavailableWorkspace('no workspace here'))
-    for call in (workspace.screenshot(), workspace.act(MouseUp())):
+    for call in (workspace.display_size(), workspace.screenshot(), workspace.act(MouseUp())):
         with pytest.raises(WorkspaceUnavailableError, match='no workspace here'):
             await call
 
@@ -325,6 +335,7 @@ async def test_unavailable_workspace_reports_its_reason_for_display_calls() -> N
 async def test_read_only_workspace_allows_screenshots_and_refuses_actions() -> None:
     provider = InMemoryProvider()
     workspace = ReadOnlyWorkspace(Workspace(provider.backend(None)))
+    assert await workspace.display_size() == (1280, 800)
     assert await workspace.screenshot() == FAKE_SCREENSHOT
     with pytest.raises(WorkspaceReadOnlyError, match='acting on the display'):
         await workspace.act(Click())

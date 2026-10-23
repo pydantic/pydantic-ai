@@ -46,6 +46,9 @@ class UnavailableWorkspace(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         """Always `False`: there is no environment, so no display."""
         return False
 
+    async def display_size(self) -> Never:
+        raise WorkspaceUnavailableError(self.reason)
+
     async def screenshot(self) -> Never:
         raise WorkspaceUnavailableError(self.reason)
 
