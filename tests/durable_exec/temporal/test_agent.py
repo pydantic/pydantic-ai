@@ -1529,12 +1529,13 @@ async def test_multiple_agents(allow_model_requests: None, client: Client):
 
 
 async def test_agent_name_collision(allow_model_requests: None, client: Client):
+    same_name_agent = TemporalAgent(Agent(model, name='simple_agent'), activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
     with pytest.raises(ValueError, match='More than one activity named agent__simple_agent__event_stream_handler'):
         async with Worker(
             client,
             task_queue=TASK_QUEUE,
             workflows=[SimpleAgentWorkflow],
-            plugins=[AgentPlugin(simple_temporal_agent), AgentPlugin(simple_temporal_agent)],
+            plugins=[AgentPlugin(simple_temporal_agent), AgentPlugin(same_name_agent)],
         ):
             pass
 

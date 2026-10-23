@@ -250,7 +250,7 @@ class PydanticAIPlugin(SimplePlugin):
 
         config['activities'] = activities
 
-        return config
+        return _dedupe_activities(config)
 
 
 class AgentPlugin(SimplePlugin):
@@ -278,3 +278,13 @@ class AgentPlugin(SimplePlugin):
             name='AgentPlugin',
             activities=activities,
         )
+
+    def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
+        return _dedupe_activities(super().configure_worker(config))
+
+
+def _dedupe_activities(config: WorkerConfig) -> WorkerConfig:
+    # An agent can be listed on several workflows, or also registered via `AgentPlugin`, contributing the same
+    # activity callables more than once; Temporal rejects duplicate names, so keep each callable once.
+    config['activities'] = list(dict.fromkeys(config.get('activities', [])))  # type: ignore[reportUnknownMemberType]
+    return config
