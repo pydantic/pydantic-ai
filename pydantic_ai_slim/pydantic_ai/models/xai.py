@@ -237,7 +237,7 @@ def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) ->
         return 'low'
     elif thinking == 'medium':
         return 'medium' if 'medium' in supported_efforts else 'high'
-    elif thinking in ('high', 'xhigh'):
+    elif thinking in ('high', 'xhigh', 'max'):
         return 'high'
     else:
         assert_never(thinking)

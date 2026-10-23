@@ -1286,14 +1286,15 @@ class BedrockConverseModel(Model[BaseClient]):
                     'medium': 'high',
                     'high': 'high',
                     'xhigh': 'high',
+                    'max': 'high',
                 }
                 existing['reasoning_config'] = level_map[thinking]
         elif variant == 'xai' and 'reasoning' not in existing:
             # Grok always reasons on Converse, so `thinking=False` is silently ignored (like gpt-oss). `True` leaves
             # the effort out where the profile records that the model's own default applies then (Grok 4.7: `high`).
             if thinking is not False and not (thinking is True and profile.get('grok_default_effort_omitted', False)):
-                # Grok accepts `low`/`medium`/`high`/`xhigh` but not `minimal`, so that folds to `low`;
-                # `True` picks `medium` like the other always-on effort-based variants.
+                # Grok accepts `low`/`medium`/`high`/`xhigh` but not `minimal`, so that folds to `low` and `max`
+                # to `xhigh`; `True` picks `medium` like the other always-on effort-based variants.
                 effort_map: dict[ThinkingLevel, str] = {
                     True: 'medium',
                     'minimal': 'low',
@@ -1301,6 +1302,7 @@ class BedrockConverseModel(Model[BaseClient]):
                     'medium': 'medium',
                     'high': 'high',
                     'xhigh': 'xhigh',
+                    'max': 'xhigh',
                 }
                 existing['reasoning'] = {'effort': effort_map[thinking]}
 
@@ -2295,7 +2297,9 @@ def _add_anthropic_thinking_fields(existing: dict[str, Any], thinking: ThinkingL
                 and 'output_config' not in existing
             ):
                 effort = resolve_anthropic_effort(
-                    thinking, supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False)
+                    thinking,
+                    supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False),
+                    supports_max=profile.get('anthropic_supports_max_effort', True),
                 )
                 existing['output_config'] = {'effort': effort}
     elif thinking is False:

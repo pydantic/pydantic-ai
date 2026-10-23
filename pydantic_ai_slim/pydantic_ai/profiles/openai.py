@@ -36,8 +36,13 @@ OPENAI_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     'medium': 'medium',
     'high': 'high',
     'xhigh': 'xhigh',
+    'max': 'xhigh',
 }
-"""Maps unified thinking values to OpenAI reasoning_effort strings."""
+"""Maps unified thinking values to OpenAI reasoning_effort strings.
+
+`'max'` maps to `'xhigh'` here; `OpenAIChatModel` and `OpenAIResponsesModel` send `'max'` instead on models whose
+profile sets `openai_chat_supports_max_reasoning_effort` or `openai_responses_supports_max_reasoning_effort`.
+"""
 
 SAMPLING_PARAMS = (
     'temperature',
@@ -305,6 +310,21 @@ class OpenAIModelProfile(ModelProfile, total=False):
     unified `thinking='minimal'` falls back to `reasoning_effort='low'`.
     See https://developers.openai.com/api/docs/guides/latest-model.
     Explicit `openai_reasoning_effort='minimal'` settings are still passed through unchanged."""
+
+    openai_chat_supports_max_reasoning_effort: bool
+    """Whether the Chat Completions API accepts `reasoning_effort='max'` for this model. Default: `False`.
+
+    When enabled, unified `thinking='max'` is sent as `reasoning_effort='max'`; otherwise it falls back to `'xhigh'`.
+    OpenAI's own Chat Completions API rejects `'max'` on every model, so only providers that accept it set this
+    (DeepSeek V4, and Kimi K3, K2.6 and K2.7). Explicit `openai_reasoning_effort='max'` settings are still passed through unchanged."""
+
+    openai_responses_supports_max_reasoning_effort: bool
+    """Whether the Responses API accepts `reasoning.effort='max'` for this model. Default: `False`.
+
+    `OpenAIProvider` enables it for the GPT-5.6 and GPT-6 families. `openai_model_profile` leaves it off, because
+    `max` is unverified on the OpenAI-compatible endpoints that share that profile, and so do the Codex and ChatGPT
+    plan usage profiles. When enabled, unified `thinking='max'` is sent as `reasoning.effort='max'`; otherwise it
+    falls back to `'xhigh'`. Explicit `openai_reasoning_effort='max'` settings are still passed through unchanged."""
 
     openai_responses_supports_reasoning_mode: bool
     """Whether the Responses API supports `reasoning.mode` (`'standard' | 'pro'`) for this model. Default: `False`.
