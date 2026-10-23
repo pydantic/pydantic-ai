@@ -449,6 +449,7 @@ class SessionCore:
         answers_tool_calls_per_response: bool = False,
         tracks_tool_rounds: bool = False,
         input_transcription_enabled: bool = True,
+        output_always_transcribed: bool = False,
         retain_input_audio: bool = False,
         retain_output_audio: bool = False,
         retain_audio_max_seconds: float | None = None,
@@ -470,6 +471,8 @@ class SessionCore:
         self._tracks_tool_rounds = tracks_tool_rounds
         """Whether to say when tool rounds are over (`ToolRoundsOver`), for a connection that prunes them."""
         self._transcription = input_transcription_enabled
+        self._output_transcribed = output_always_transcribed
+        """Whether every word of the model's speech is transcribed, though not always in the part holding its audio."""
         self._retain_input = retain_input_audio
         self._retain_output = retain_output_audio
         self._input_rate = input_sample_rate
@@ -1142,6 +1145,14 @@ class SessionCore:
             # Cut off before it said anything or was billed: there is nothing to record.
             return None
         parts = [*response.native_parts, *response.parts]
+        if self._output_transcribed and any(isinstance(part, SpeechPart) and part.transcript for part in parts):
+            # Audio a tool call split off from its words, which the response's other speech has: it was streamed, but
+            # history has nothing to record for it.
+            parts = [
+                part
+                for part in parts
+                if not (isinstance(part, SpeechPart) and part.transcript is None and part.audio is None)
+            ]
         for item_id, (_, part) in response.closed_parts.items():
             if isinstance(part, SpeechPart):
                 self._recorded_items[item_id] = (response, next(i for i, p in enumerate(parts) if p is part))
