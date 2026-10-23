@@ -2048,7 +2048,7 @@ def _can_echo_server_side_tool_part(tool_call_id: str, *, supports_tool_combinat
     """
     if not supports_tool_combination:
         return False
-    return not tool_call_id.startswith('pyd_ai_')
+    return not tool_call_id.startswith(_utils.TOOL_CALL_ID_PREFIX)
 
 
 def _process_part(
