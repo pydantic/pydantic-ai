@@ -21,8 +21,9 @@ one of four ways:
 - `projected_field`: an engine class declares a field of the same name as a member of the core class
   one of its methods takes as a parameter, as `ModelRequestContextProjection.from_context` does.
 
-What the walk cannot resolve to a member, such as `getattr(obj, name)`, falls back to the class. The
-classes in `MEMBER_LEVEL_ONLY` never get a class-level entry: nearly every change to core touches
+What the walk cannot resolve to a member, such as `getattr(obj, name)`, falls back to the class,
+unless the class has a base outside the walked packages (`BaseModel`, `Exception`), which may define
+the member: those accesses record nothing. The classes in `MEMBER_LEVEL_ONLY` never get a class-level entry: nearly every change to core touches
 them, so a class-level entry would match every change.
 
 The manifest maps `core_file -> qualname -> {kinds, engines, sites}`. A change to a core definition
@@ -286,7 +287,7 @@ class Index:
         resolved: list[ClassInfo] = []
         closed = True
         for base in info.node.bases:
-            target = base.value if isinstance(base, ast.Subscript) else base
+            target = _strip_subscript(base)
             symbol = self.symbol(info.module, target)
             if isinstance(symbol, ClassInfo):
                 resolved.append(symbol)
@@ -389,6 +390,10 @@ def _collect_instance_attributes(members: dict[str, Member], method: FunctionNod
 
 def _strip_subscript(expr: ast.expr) -> ast.expr:
     return expr.value if isinstance(expr, ast.Subscript) else expr
+
+
+def _is_static(function: FunctionNode) -> bool:
+    return any(_last_name(decorator) == 'staticmethod' for decorator in function.decorator_list)
 
 
 @dataclass
@@ -543,8 +548,7 @@ class _EngineWalker(ast.NodeVisitor):
         fields = [name for name, member in info.members.items() if member.is_field]
         for method in node.body:
             if isinstance(method, ast.FunctionDef | ast.AsyncFunctionDef):
-                is_static = any(_last_name(decorator) == 'staticmethod' for decorator in method.decorator_list)
-                parameters = [*method.args.posonlyargs, *method.args.args][0 if is_static else 1 :]
+                parameters = [*method.args.posonlyargs, *method.args.args][0 if _is_static(method) else 1 :]
                 for parameter in [*parameters, *method.args.kwonlyargs]:
                     for source in self.index.annotation_classes(self.module, parameter.annotation):
                         for name in fields:
@@ -563,10 +567,9 @@ class _EngineWalker(ast.NodeVisitor):
         enclosing = self.scopes[-1]
         scope = _Scope(self.qualname(node.name), owner=enclosing.owner)
         arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
-        is_static = any(_last_name(decorator) == 'staticmethod' for decorator in node.decorator_list)
         for position, argument in enumerate(arguments):
             if position == 0 and enclosing.owner is not None and enclosing.qualname == enclosing.owner.qualname:
-                if not is_static:
+                if not _is_static(node):
                     self.bind(scope, argument.arg, frozenset({enclosing.owner}))
                     continue
             self.bind(scope, argument.arg, self.index.annotation_classes(self.module, argument.annotation))

@@ -8,6 +8,7 @@ one silently stops routing a change to the engines it can break.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import textwrap
 from collections.abc import Callable
@@ -55,8 +56,8 @@ def test_manifest_is_current():
 
 
 def test_manifest_records_the_member_level_contracts():
-    """The classes nearly every core change touches are recorded member by member, never as a whole."""
-    manifest = generator.build_manifest(REPO_ROOT)
+    """In the committed manifest, the classes nearly every core change touches are recorded member by member only."""
+    manifest: Manifest = json.loads((REPO_ROOT / generator.MANIFEST_PATH).read_text(encoding='utf-8'))
     for core_file, class_name in [
         ('pydantic_ai_slim/pydantic_ai/_run_context.py', 'RunContext'),
         ('pydantic_ai_slim/pydantic_ai/models/__init__.py', 'ModelRequestContext'),

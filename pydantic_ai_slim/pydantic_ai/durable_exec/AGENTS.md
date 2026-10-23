@@ -94,6 +94,7 @@ Read the diff: a new entry is a new dependency an engine took on core.
 
 `tests/durable_exec/test_workflow_side_determinism.py` fails when workflow-side code calls a clock,
 a random source, an unjournaled sleep or I/O. Prefer the replay-safe alternative the durability
-capability supplies, or `set_agent_graph_sleep` for delays. When the call is safe, end its line with
+capability supplies. For a delay, await `_agent_graph_sleep`, which engines route through
+`set_agent_graph_sleep`. When the call is safe, end its line with
 `# workflow-nondeterminism-ok: <reason>` and name why replay cannot diverge. The test docstring
 lists the workflow-side modules and how they were derived.

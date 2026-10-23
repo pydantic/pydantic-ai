@@ -32,15 +32,16 @@ already raises inside a Temporal workflow, whose event loop implements no execut
 `_utils.run_in_executor` runs inline under `_utils.disable_threads` instead.
 
 **Existing call sites** are in `_ACCEPTED`, keyed by module, enclosing qualname and callee so the
-entries survive unrelated edits. A new call is accepted only with a pragma on its line naming the
+entries survive unrelated edits, with the number of such calls each key accepts. A new call is accepted only with a pragma on its line naming the
 reason, `# workflow-nondeterminism-ok: <reason>`; prefer a replay-safe alternative (an id or clock
-the durability capability supplies, `set_agent_graph_sleep`) when one exists.
+the durability capability supplies; `_agent_graph_sleep` for a delay) when one exists.
 """
 
 from __future__ import annotations
 
 import ast
 import re
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -125,27 +126,32 @@ _PRAGMA = re.compile(r'#\s*workflow-nondeterminism-ok:(?P<reason>.*)$')
 _RUN_ID = 'fallback id when the run has none; `TemporalDurability` supplies one from `workflow.uuid4()`'
 _TIMESTAMP = 'stamps the `timestamp` metadata of a message the run appends; no branch reads it'
 
-# (module, enclosing qualname, callee) -> why the existing call is accepted.
-_ACCEPTED: dict[tuple[str, str, str], str] = {
-    (f'{CORE}/_agent_graph.py', 'resolve_conversation_id', 'pydantic_ai._uuid.uuid7'): _RUN_ID,
-    (f'{CORE}/_agent_graph.py', 'resolve_run_id', 'pydantic_ai._uuid.uuid7'): _RUN_ID,
+# (module, enclosing qualname, callee) -> how many such calls are accepted, and why.
+_ACCEPTED: dict[tuple[str, str, str], tuple[int, str]] = {
+    (f'{CORE}/_agent_graph.py', 'resolve_conversation_id', 'pydantic_ai._uuid.uuid7'): (1, _RUN_ID),
+    (f'{CORE}/_agent_graph.py', 'resolve_run_id', 'pydantic_ai._uuid.uuid7'): (1, _RUN_ID),
     (f'{CORE}/_agent_graph.py', 'GraphAgentState', 'pydantic_ai._uuid.uuid7'): (
-        'dataclass default for a state built without resolved ids; the run passes the resolved ones'
+        2,
+        'dataclass defaults for a state built without resolved ids; the run passes the resolved ones',
     ),
     (f'{CORE}/_agent_graph.py', '_agent_graph_sleep', 'anyio.sleep'): (
-        'the default of the `set_agent_graph_sleep` indirection, used only when no engine registered a sleep'
+        1,
+        'the default of the `set_agent_graph_sleep` indirection, used only when no engine registered a sleep',
     ),
-    (f'{CORE}/_agent_graph.py', 'ModelRequestNode._prepare_request', 'pydantic_ai._utils.now_utc'): _TIMESTAMP,
+    (f'{CORE}/_agent_graph.py', 'ModelRequestNode._prepare_request', 'pydantic_ai._utils.now_utc'): (1, _TIMESTAMP),
     (f'{CORE}/_agent_graph.py', 'ModelRequestNode._stream._streaming_handler', 'time.perf_counter'): (
-        'time-to-first-chunk telemetry; nothing in the run reads it'
+        1,
+        'time-to-first-chunk telemetry; nothing in the run reads it',
     ),
-    (f'{CORE}/_agent_graph.py', 'CallToolsNode._handle_tool_calls', 'pydantic_ai._utils.now_utc'): _TIMESTAMP,
-    (f'{CORE}/_agent_graph.py', 'CallToolsNode._handle_final_result', 'pydantic_ai._utils.now_utc'): _TIMESTAMP,
+    (f'{CORE}/_agent_graph.py', 'CallToolsNode._handle_tool_calls', 'pydantic_ai._utils.now_utc'): (1, _TIMESTAMP),
+    (f'{CORE}/_agent_graph.py', 'CallToolsNode._handle_final_result', 'pydantic_ai._utils.now_utc'): (1, _TIMESTAMP),
     (f'{CORE}/agent/__init__.py', '_synthetic_capability_id', 'uuid.uuid4'): (
-        'a run-local key for an unnamed capability; every path that persists a capability key requires an explicit `id`'
+        1,
+        'a run-local key for an unnamed capability; every path that persists a capability key requires an explicit `id`',
     ),
     (f'{CORE}/durable_exec/temporal/_toolset.py', 'heartbeating.beat', 'anyio.sleep'): (
-        'the heartbeat loop of a running activity, which is not workflow code'
+        1,
+        'the heartbeat loop of a running activity, which is not workflow code',
     ),
 }
 
@@ -232,19 +238,30 @@ def nondeterministic_calls(source: str, module: str, *, is_package: bool = False
     return _CallFinder(source, module, is_package).calls
 
 
-def unexplained_calls(relative: str, calls: list[Call]) -> list[str]:
-    """The calls in the module at `relative` that neither `_ACCEPTED` nor a pragma with a reason explains."""
+def unexplained_calls(relative: str, calls: list[Call]) -> tuple[list[str], Counter[tuple[str, str, str]]]:
+    """The problems with the calls in the module at `relative`, and how many calls without a pragma each key has.
+
+    A call is explained by a pragma with a reason, or by `_ACCEPTED` up to the number of calls that entry accepts.
+    """
     problems: list[str] = []
+    without_pragma = Counter((relative, call.qualname, call.callee) for call in calls if call.pragma is None)
     for call in calls:
         if call.pragma == '':
             problems.append(f'{relative}::{call.qualname} has a `workflow-nondeterminism-ok` pragma with no reason')
-        elif call.pragma is None and (relative, call.qualname, call.callee) not in _ACCEPTED:
-            problems.append(f'{relative}::{call.qualname} calls `{call.callee}`, which {call.denial}')
-    return problems
+    denials = {(relative, call.qualname, call.callee): call.denial for call in calls}
+    for key, count in without_pragma.items():
+        accepted = _ACCEPTED.get(key, (0, ''))[0]
+        if count > accepted:
+            _, qualname, callee = key
+            problems.append(
+                f'{relative}::{qualname} calls `{callee}` {count} time(s) and `_ACCEPTED` accepts {accepted}; '
+                f'`{callee}` {denials[key]}'
+            )
+    return problems, without_pragma
 
 
 def test_workflow_side_code_makes_no_new_nondeterministic_calls():
-    found: set[tuple[str, str, str]] = set()
+    found: Counter[tuple[str, str, str]] = Counter()
     problems: list[str] = []
     for relative in WORKFLOW_SIDE_MODULES:
         path = REPO_ROOT / relative
@@ -252,13 +269,14 @@ def test_workflow_side_code_makes_no_new_nondeterministic_calls():
         is_package = parts[-1] == '__init__'
         module = '.'.join(parts[:-1] if is_package else parts)
         calls = nondeterministic_calls(path.read_text(encoding='utf-8'), module, is_package=is_package)
-        found.update((relative, call.qualname, call.callee) for call in calls)
-        problems.extend(unexplained_calls(relative, calls))
+        module_problems, counts = unexplained_calls(relative, calls)
+        problems.extend(module_problems)
+        found.update(counts)
     assert problems == [], "nondeterministic calls in workflow-side code; see this module's docstring:\n" + '\n'.join(
         problems
     )
-    stale = sorted(set(_ACCEPTED) - found)
-    assert stale == [], f'`_ACCEPTED` entries that no longer match a call, remove them: {stale}'
+    stale = sorted(key for key, (accepted, _) in _ACCEPTED.items() if found[key] < accepted)
+    assert stale == [], f'`_ACCEPTED` entries that accept more calls than remain, lower or remove them: {stale}'
 
 
 _FIXTURE = """
@@ -306,14 +324,14 @@ def test_nondeterministic_calls_resolves_imports_and_pragmas():
             ('Node.run', 'open', None),
         ]
     )
-    assert unexplained_calls('fixture.py', calls) == snapshot(
+    assert unexplained_calls('fixture.py', calls)[0] == snapshot(
         [
-            'fixture.py::<module> calls `time.perf_counter`, which reads a clock that has moved by the time the run replays',
             'fixture.py::Node.run has a `workflow-nondeterminism-ok` pragma with no reason',
-            'fixture.py::Node.run calls `pydantic_ai._utils.now_utc`, which reads a clock that has moved by the time the run replays',
-            'fixture.py::Node.run calls `concurrent.futures.ThreadPoolExecutor`, which finishes on another thread in an order that a replay does not reproduce',
-            'fixture.py::Node.run.nested calls `uuid.uuid4`, which draws randomness that a replay does not reproduce',
-            'fixture.py::Node.run.nested calls `pydantic_ai._uuid.uuid7`, which draws randomness that a replay does not reproduce',
-            'fixture.py::Node.run calls `open`, which performs I/O whose result can differ on replay; do it in an activity',
+            'fixture.py::<module> calls `time.perf_counter` 1 time(s) and `_ACCEPTED` accepts 0; `time.perf_counter` reads a clock that has moved by the time the run replays',
+            'fixture.py::Node.run calls `pydantic_ai._utils.now_utc` 1 time(s) and `_ACCEPTED` accepts 0; `pydantic_ai._utils.now_utc` reads a clock that has moved by the time the run replays',
+            'fixture.py::Node.run calls `concurrent.futures.ThreadPoolExecutor` 1 time(s) and `_ACCEPTED` accepts 0; `concurrent.futures.ThreadPoolExecutor` finishes on another thread in an order that a replay does not reproduce',
+            'fixture.py::Node.run.nested calls `uuid.uuid4` 1 time(s) and `_ACCEPTED` accepts 0; `uuid.uuid4` draws randomness that a replay does not reproduce',
+            'fixture.py::Node.run.nested calls `pydantic_ai._uuid.uuid7` 1 time(s) and `_ACCEPTED` accepts 0; `pydantic_ai._uuid.uuid7` draws randomness that a replay does not reproduce',
+            'fixture.py::Node.run calls `open` 1 time(s) and `_ACCEPTED` accepts 0; `open` performs I/O whose result can differ on replay; do it in an activity',
         ]
     )
