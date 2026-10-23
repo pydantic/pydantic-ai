@@ -597,7 +597,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic: documents, including those returned by tools, and Web Fetch
+    * Anthropic (documents, including those returned by tools, and Web Fetch)
 
     Only used when the output is text. A `tool_choice` that forces a tool call raises a `UserError` when the request
     has something to cite. Providers that always cite ignore this setting. See
