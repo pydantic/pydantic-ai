@@ -167,6 +167,13 @@ def _generate_message_id(
     """
     if (ui_message_id := get_ui_message_id(msg)) is not None:
         return ui_message_id
+    return _generate_fresh_message_id(msg, role, message_index)
+
+
+def _generate_fresh_message_id(
+    msg: ModelRequest | ModelResponse, role: Literal['system', 'user', 'assistant'], message_index: int
+) -> str:
+    """Return a deterministic ID from content and position, ignoring the `UIMessage.id` the message was loaded from."""
     if isinstance(msg, ModelResponse) and msg.provider_response_id:
         return f'{msg.provider_response_id}-{message_index}'
     if msg.run_id:
@@ -1158,7 +1165,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         namespace and top-level `ModelResponse.provider_details` do not. `UIMessage.metadata` is
         client-controlled, so framework and provider response state is not exposed or restored through
         it; see `_PydanticAIMessageMetadata`. The `UIMessage.id` that `load_messages` keeps in that
-        namespace is the exception: the default `generate_message_id` restores it.
+        namespace is the exception: the default `generate_message_id` restores it, on the last `UIMessage`
+        dumped from a split request, which is the one it was loaded from.
 
         When `sdk_version=6`, tool calls that have no corresponding result in the message history
         are automatically detected as deferred and emitted with `state='approval-requested'`, so the
@@ -1206,7 +1214,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 user_positions = [position for position, (role, _) in enumerate(segments) if role == 'user']
                 metadata_position = user_positions[-1] if user_positions else len(segments) - 1
                 for position, (role, ui_parts) in enumerate(segments):
-                    ui_message = UIMessage(id=id_generator(msg, role, message_index), role=role, parts=ui_parts)
+                    if generate_message_id is None and position < len(segments) - 1:
+                        # `load_messages` kept the id of the last UIMessage merged into the request, so it
+                        # goes back on the last one dumped from it. The others need ids of their own.
+                        message_id = _generate_fresh_message_id(msg, role, message_index)
+                    else:
+                        message_id = id_generator(msg, role, message_index)
+                    ui_message = UIMessage(id=message_id, role=role, parts=ui_parts)
                     if request_metadata and position == metadata_position:
                         ui_message.metadata = request_metadata
                     result.append(ui_message)
