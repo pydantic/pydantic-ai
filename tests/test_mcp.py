@@ -1117,6 +1117,8 @@ A later <context> element with the same id replaces the earlier one and stays in
         unkeyed = InstructionPart(content='Guidance.', on_change='rewrite')
         assert flatten_instruction_contributions([first, second]) == [unkeyed, unkeyed]
         # An explicit `id` on that key keeps it; only the derived one falls back.
+        # A toolset that derives no key, such as a container passing the part along without an `id`, leaves it unkeyed.
+        assert make_contribution(FunctionToolset[None](), part).parts[0].id is None
         explicit = make_contribution(MCPToolset('https://mcp.example.com/c', id='mcp.example.com'), part)
         assert flatten_instruction_contributions([explicit, first]) == [explicit.parts[0], unkeyed]
         with pytest.raises(UserError, match=re.escape("Two toolsets have the same `id` 'docs'")):
@@ -1127,7 +1129,7 @@ A later <context> element with the same id replaces the earlier one and stays in
                 ]
             )
 
-    async def test_an_id_less_url_subclass_keys_only_the_server_instructions_by_host(self, run_context: RunContext):
+    async def test_an_id_less_url_subclass_keys_only_the_server_instructions_by_host(self):
         """An `MCPToolset` subclass's own blocks aren't keyed by the server's host, only the server instructions are.
 
         Without an `id`, what the subclass writes in its own `get_instructions` goes out unkeyed, as it
@@ -1136,7 +1138,9 @@ A later <context> element with the same id replaces the earlier one and stays in
         """
 
         class OwnInstructionsToolset(MCPToolset[None]):
-            async def get_instructions(self, ctx: RunContext[None]) -> list[InstructionPart]:
+            async def get_instructions(  # pyright: ignore[reportIncompatibleMethodOverride]
+                self, ctx: RunContext[None]
+            ) -> list[InstructionPart]:
                 server = await super().get_instructions(ctx)
                 return [InstructionPart(content='Own guidance.', on_change='append'), *([server] if server else [])]
 
@@ -1151,7 +1155,9 @@ A later <context> element with the same id replaces the earlier one and stays in
         try:
             async with app.router.lifespan_context(app):
                 async with toolset:
-                    parts = await collect_toolset_instructions(toolset, run_context)
+                    parts = await collect_toolset_instructions(
+                        toolset, RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+                    )
         finally:
             await client.aclose()
 

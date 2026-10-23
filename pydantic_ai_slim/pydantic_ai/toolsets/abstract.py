@@ -321,13 +321,6 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def _instruction_source(self) -> ToolsetInstructionSource | None:
-        """This toolset's instruction source, or `None` when it has no key that can be one."""
-        key = self._instruction_key
-        if key is None or ':' in key:
-            return None
-        return ToolsetInstructionSource(key)
-
     @abstractmethod
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """The tools that are available in this toolset."""
