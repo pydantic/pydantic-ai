@@ -109,13 +109,13 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
     },
     {
-      "against": "v2.59.0",
+      "against": "v2.60.0",
       "fingerprint": "3117872a15e16323c8d117fb57d59843d9195ea9f31f6b270f64af0b2d5e03bc",
       "reason": "Not a compatibility impact: `HTTPX2TenacityTransport.wrapped` keeps its type, and an explicit `wrapped=` is used as before. Only the default inner transport changes, to one with Pydantic AI's connection pool limits (1000 connections, 100 kept alive) instead of HTTPX's 100/20, matching the clients Pydantic AI creates.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11073"
     },
     {
-      "against": "v2.59.0",
+      "against": "v2.60.0",
       "fingerprint": "878d18e715555e8aae2c8745ea2d1598677ce8dae6383cdc6622dfd0beb52245",
       "reason": "Not a compatibility impact: `AsyncHTTPX2TenacityTransport.wrapped` keeps its type, and an explicit `wrapped=` is used as before. Only the default inner transport changes, to one with Pydantic AI's connection pool limits (1000 connections, 100 kept alive) instead of HTTPX's 100/20, matching the clients Pydantic AI creates.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11073"
