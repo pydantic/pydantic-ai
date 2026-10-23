@@ -35,7 +35,6 @@ from .protocol import (
 from .readonly import ReadOnlyWorkspace
 from .unavailable import UnavailableWorkspace
 from .workspace import Workspace, WrapperWorkspace
-from .x11 import X11Computer
 
 __all__ = (
     'Click',
@@ -70,5 +69,4 @@ __all__ = (
     'SupportsRealpath',
     'UnavailableWorkspace',
     'UnsupportedComputerActionError',
-    'X11Computer',
 )

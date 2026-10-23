@@ -29,7 +29,7 @@ from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
-from .._computer_use import COMPUTER_KIND, SAFETY_CHECKS, computer_tool
+from ..computer_use import COMPUTER_KIND, SAFETY_CHECKS, computer_tool
 from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, TEXT_DOCUMENT_MEDIA_TYPES
 from .._http import to_httpx2_timeout
 from .._instrumentation import get_instructions

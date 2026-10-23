@@ -21,14 +21,10 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability, ComputerUse, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.durable_exec._workspace import DurableWorkspace
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.workspaces import (
-    Click,
     HoldKeys,
     PressKeys,
     ReadOnlyWorkspace,
@@ -105,14 +101,6 @@ async def write_note(ctx: RunContext[Any]) -> str:
     return (await ctx.workspace.run(['cat', 'note.txt'])).stdout
 
 
-def _click_the_middle(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """Click the middle of the grid, then answer with the tool's summary."""
-    returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
-    if returns:
-        return ModelResponse(parts=[TextPart(str(returns[0].content_items()[0]))])
-    return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'click', 'x': 500, 'y': 500}]})])
-
-
 @dataclass
 class ScenarioAgents:
     provider: InMemoryProvider
@@ -124,19 +112,9 @@ class ScenarioAgents:
     local: Agent[None, str]
     amnesiac: Agent[None, str]
     uncaught: Agent[None, str]
-    computer: Agent[None, str]
 
     def all(self) -> list[Agent[None, str]]:
-        return [
-            self.fresh,
-            self.plain,
-            self.read_only,
-            self.explicit,
-            self.local,
-            self.amnesiac,
-            self.uncaught,
-            self.computer,
-        ]
+        return [self.fresh, self.plain, self.read_only, self.explicit, self.local, self.amnesiac, self.uncaught]
 
 
 def scenario_agents(
@@ -178,13 +156,6 @@ def scenario_agents(
         ),
         uncaught=Agent(
             TestModel(), name=f'{prefix}uncaught', capabilities=[ReadMissingInHook(), workspaces(), durability()]
-        ),
-        computer=Agent(
-            # A grid model: its coordinates are scaled to pixels with `display_size`, read from workflow code.
-            FunctionModel(_click_the_middle, profile=ModelProfile(computer_use_coordinate_grid=1000)),
-            name=f'{prefix}computer',
-            # A settle pause, so the tool's sleep runs in workflow code too.
-            capabilities=[ComputerUse(settle_seconds=0.01), workspaces(), durability()],
         ),
     )
 
@@ -329,25 +300,9 @@ async def uncaught(agents: ScenarioAgents, arg: str | None, engine_id: str) -> s
     return (await agents.uncaught.run('Nothing to do.')).output
 
 
-async def computer(agents: ScenarioAgents, arg: str | None, engine_id: str) -> str:
-    return (await agents.computer.run('Look at the screen.')).output
-
-
 SCENARIOS: dict[str, Scenario] = {
     scenario.__name__: scenario
-    for scenario in (
-        fresh,
-        multi_turn,
-        two_agents,
-        run_id,
-        read_only,
-        explicit,
-        binary,
-        local,
-        amnesiac,
-        uncaught,
-        computer,
-    )
+    for scenario in (fresh, multi_turn, two_agents, run_id, read_only, explicit, binary, local, amnesiac, uncaught)
 }
 
 
@@ -428,18 +383,6 @@ async def check_binary(run: Runner, agents: ScenarioAgents) -> None:
     assert agents.provider.actions == [PressKeys(keys=('ctrl', 's'))]
 
 
-async def check_computer(run: Runner, agents: ScenarioAgents) -> None:
-    """The `computer` tool runs in workflow code, and each action and screenshot reaches the display in its own unit.
-
-    The fake provider refuses any call made outside a durable unit, so the run only succeeds if every display call was
-    routed through one; a grid model's scaling reads the display size the same way.
-    """
-    assert await run('computer', None) == 'Ran 1 action. Screenshot attached.'
-    # The middle of the 0-999 grid, in pixels on the fake's 1280x800 display.
-    assert agents.provider.actions == [Click(x=640, y=400)]
-    assert agents.provider.display_size_calls == 1
-
-
 async def check_local(run: Runner, agents: ScenarioAgents) -> None:
     shutil.rmtree(agents.local_dir, ignore_errors=True)
     os.makedirs(agents.local_dir)
@@ -494,7 +437,6 @@ CASES: dict[str, Check] = {
     'local': check_local,
     'amnesiac': partial(check_failure, 'amnesiac', 'UserError', 'which the run just created'),
     'uncaught': partial(check_failure, 'uncaught', 'FileNotFoundError', '/remote/missing.txt'),
-    'computer': check_computer,
 }
 
 

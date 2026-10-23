@@ -107,12 +107,6 @@
       "fingerprint": "f5277165732c4c6ae79c0ff3e286f1fbccca262094e6dee75b26bfca7455c244",
       "reason": "False positive: only adds `repr=False` so the credential-bearing URL stays out of `repr`; the attribute's type, default, and constructor parameter are unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
-    },
-    {
-      "against": "v2.60.0",
-      "fingerprint": "aae5dac1ec2ff7cc58769d5d5b856c0b1549592e61f1816f6460f1f4bf9010a4",
-      "reason": "Adds `ComputerUse` to `CAPABILITY_TYPES`; every existing entry is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11037"
     }
   ]
 }

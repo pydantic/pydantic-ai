@@ -1,4 +1,4 @@
-"""Anthropic's `computer_toolset_20260801` behind the `ComputerUse` capability."""
+"""Anthropic's `computer_toolset_20260801`, sent for a tool of the `computer` kind."""
 
 from __future__ import annotations as _annotations
 
@@ -7,8 +7,9 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability, ComputerUse
+from pydantic_ai import Agent, Tool
+from pydantic_ai.computer_use import COMPUTER_KIND, ComputerToolAction
+from pydantic_ai.exceptions import ToolFailed
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -16,15 +17,16 @@ from pydantic_ai.messages import (
     PartStartEvent,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.workspaces import Click, TypeText, WorkspaceBackend, WorkspaceError, WorkspaceRef
+from pydantic_ai.workspaces import Click, TypeText
 
 from ...conftest import try_import
-from ...workspace_fakes import InMemoryProvider, ProviderBackend
+from ...workspace_fakes import InMemoryProvider, computer_toolset
 from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
@@ -71,7 +73,7 @@ def _members(body: dict[str, Any], kind: str) -> list[dict[str, Any]]:
 
 
 def _agent(model: AnthropicModel, provider: InMemoryProvider, **settings: Any) -> Agent[None, str]:
-    return Agent(model, capabilities=[provider.capability(**settings), ComputerUse(settle_seconds=0)])
+    return Agent(model, toolsets=[computer_toolset()], capabilities=[provider.capability(**settings)])
 
 
 @pytest.mark.vcr
@@ -174,15 +176,8 @@ async def test_a_lone_failed_call_gets_text_only(allow_model_requests: None) -> 
 
 
 async def test_a_failed_call_gives_every_member_its_text(allow_model_requests: None) -> None:
-    provider = InMemoryProvider()
-
-    class NoScreenshots(ProviderBackend):
-        async def screenshot(self) -> bytes:
-            raise WorkspaceError('scrot: not found')
-
-    class Supplier(AbstractCapability[Any]):
-        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
-            return NoScreenshots(provider, ref)
+    async def computer(actions: list[ComputerToolAction]) -> ToolReturn:
+        raise ToolFailed('Taking the screenshot failed: scrot: not found')
 
     client = MockAnthropic.create_mock(
         [
@@ -191,14 +186,14 @@ async def test_a_failed_call_gives_every_member_its_text(allow_model_requests: N
         ]
     )
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    await Agent(model, capabilities=[Supplier(), ComputerUse(settle_seconds=0)]).run('Go.')
+    await Agent(model, tools=[Tool(computer, tool_kind=COMPUTER_KIND)]).run('Go.')
 
     _, second = get_mock_chat_completion_kwargs(client)
-    # The click ran, so no member may claim it didn't: each carries the text that says what happened.
+    # The call may have acted before it failed, so no member may claim it didn't: each carries the text.
     results = second['messages'][-1]['content']
     assert [(r['is_error'], [block['text'] for block in r['content']]) for r in results] == [
-        (True, ['Ran 2 actions. Taking the screenshot failed: scrot: not found']),
-        (True, ['Ran 2 actions. Taking the screenshot failed: scrot: not found']),
+        (True, ['Taking the screenshot failed: scrot: not found']),
+        (True, ['Taking the screenshot failed: scrot: not found']),
     ]
 
 
@@ -261,7 +256,7 @@ async def test_an_older_model_gets_a_function(allow_model_requests: None) -> Non
 
 def test_the_toolset_goes_to_the_claude_api_only() -> None:
     pytest.importorskip('botocore')
-    params = ModelRequestParameters(function_tools=[ComputerUse().get_toolset().tools['computer'].tool_def])
+    params = ModelRequestParameters(function_tools=[computer_toolset().tools['computer'].tool_def])
     native: dict[str, bool] = {}
     for name, client in (
         ('direct', None),

@@ -218,7 +218,6 @@ To let the users of an open-source or local app run it on their own ChatGPT plan
 | `ImageGeneration` | Image generation — native when supported, direct fallback via an image model name or `ImageGenerator` | Yes |
 | `MCP` | MCP server — native when supported, direct connection | Yes |
 | `LocalWorkspace` | A `ctx.workspace` on this machine (host subprocesses and files, no isolation); `read_only=True` refuses commands and changes | Yes |
-| `ComputerUse` | A `computer` tool that clicks, types and takes screenshots on `ctx.workspace`'s display; needs a workspace with a display and a model that accepts images | Yes |
 | `FileUnderstanding` | Replaces files the model's profile rejects with descriptions written by `fallback_subagent_model` | Yes |
 | `PrepareTools` | Filters or modifies tool definitions per step | No |
 | `PrefixTools` | Wraps a capability and prefixes its tool names | Yes |

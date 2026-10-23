@@ -35,6 +35,7 @@ from pydantic_ai_harness import (
     ClearToolResults,
     CodeMode,
     Coder,
+    ComputerUse,
     DayAI,
     DeduplicateFileReads,
     FallbackCompaction,
@@ -97,6 +98,7 @@ from ..append_only import (
     run_conversation,
     skip_unless_installed,
 )
+from ..workspace_fakes import InMemoryProvider
 
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
 pytestmark = pytest.mark.filterwarnings(
@@ -192,6 +194,7 @@ FIXTURES: dict[str, Fixture] = {
     'ClampOversizedMessages': lambda _: ClampOversizedMessages(max_part_chars=100_000),
     'ClearToolResults': lambda _: ClearToolResults(max_messages=6, keep_pairs=1),
     'Coder': _workspace(Coder),
+    'ComputerUse': lambda _: [InMemoryProvider().capability(), ComputerUse()],
     'ConversationSearch': lambda _: ConversationSearch(
         SnapshotHistorySource(InMemoryStepStore()), scope='conversation'
     ),
