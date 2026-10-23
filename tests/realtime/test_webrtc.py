@@ -1068,6 +1068,7 @@ async def test_azure_hangs_up_on_its_v1_calls_endpoint(endpoint: str, api_versio
     """Azure OpenAI ends a call on its `/openai/v1` API, as it relays offers, whatever `api_version` is set.
 
     Its classic `/openai/realtime/calls/{id}/hangup?api-version=...` path, where the SDK client would go, is a 404.
+    Mocked to show which URL each provider form requests; the hangup itself is recorded in `test_azure_ws.py`.
     """
     requests: list[httpx2.Request] = []
 
@@ -1090,21 +1091,18 @@ async def test_azure_hangs_up_on_its_v1_calls_endpoint(endpoint: str, api_versio
 
 
 @pytest.mark.parametrize(
-    'status,body,ended',
+    'status,body',
     [
-        (
-            404,
-            {'error': {'message': 'No session found', 'type': 'invalid_request_error', 'code': 'call_id_not_found'}},
-            True,
-        ),
-        (404, {'error': {'code': '404', 'message': 'Resource not found'}}, False),
-        (404, None, False),
+        (404, {'error': {'code': '404', 'message': 'Resource not found'}}),
+        (404, None),
     ],
-    ids=['ended', 'other-404', 'not-json'],
+    ids=['other-404', 'not-json'],
 )
-async def test_azure_hang_up_of_a_call_that_already_ended_is_not_an_error(
-    status: int, body: dict[str, Any] | None, ended: bool
-) -> None:
+async def test_azure_hang_up_any_other_not_found_is_an_error(status: int, body: dict[str, Any] | None) -> None:
+    """Only Azure's `call_id_not_found` means the call is gone (recorded in `test_azure_ws.py`); a 404 from a wrong URL
+    or without a JSON body is a real failure. Mocked, as neither can be recorded on demand.
+    """
+
     def handler(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(status, json=body) if body is not None else httpx2.Response(status, text='Not Found')
 
@@ -1116,12 +1114,9 @@ async def test_azure_hang_up_of_a_call_that_already_ended_is_not_an_error(
     hang_up = AzureRealtimeModel('gpt-realtime', provider=provider).hang_up(
         WebRTCSession(provider_name='azure', session_id='rtc_gone')
     )
-    if ended:
+    with pytest.raises(ModelHTTPError) as exc_info:
         await hang_up
-    else:
-        with pytest.raises(ModelHTTPError) as exc_info:
-            await hang_up
-        assert exc_info.value.status_code == status
+    assert exc_info.value.status_code == status
 
 
 @pytest.mark.parametrize(
@@ -1136,7 +1131,10 @@ async def test_azure_hang_up_of_a_call_that_already_ended_is_not_an_error(
     ids=['connect-error-then-ok', '5xx-then-ok', 'unreachable', 'timed-out', 'persistent-5xx'],
 )
 async def test_azure_hang_up_retries_once_as_the_sdk_does(first: int | str, second: int | str, succeeds: bool) -> None:
-    """A failed hangup leaves the call up, so a failure to reach Azure or a 5xx is retried once, like OpenAI's."""
+    """A failed hangup leaves the call up, so a failure to reach Azure or a 5xx is retried once, like OpenAI's.
+
+    Mocked, as transport failures and 5xx responses can't be recorded on demand.
+    """
     outcomes = [first, second]
 
     def handler(request: httpx2.Request) -> httpx2.Response:

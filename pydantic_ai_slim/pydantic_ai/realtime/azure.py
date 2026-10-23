@@ -721,6 +721,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             hangup_url=self._webrtc_url(f'realtime/calls/{quote(session.session_id, safe="")}/hangup'),
             headers=await self._webrtc_headers(),
             model_name=self.model_name,
+            ended_code='call_id_not_found',
         )
 
     async def create_client_secret(

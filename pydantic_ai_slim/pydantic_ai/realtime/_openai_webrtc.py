@@ -58,8 +58,13 @@ def ignore_ended_call(ended_code: str) -> Generator[None]:
     try:
         yield
     except ModelHTTPError as e:
-        if not (e.status_code == 404 and _utils.is_str_dict(e.body) and e.body.get('code') == ended_code):
+        if not _is_ended_call(e.status_code, e.body, ended_code):
             raise
+
+
+def _is_ended_call(status_code: int, error: object, ended_code: str) -> bool:
+    """Whether a hangup's failure says the provider no longer knows the call: a 404 whose error has `ended_code`."""
+    return status_code == 404 and _utils.is_str_dict(error) and error.get('code') == ended_code
 
 
 class _ClientSecretResponse(BaseModel):
@@ -148,7 +153,7 @@ async def mint_client_secret(
 
 
 async def hang_up_call(
-    *, http_client: AsyncHTTPClient, hangup_url: str, headers: dict[str, str], model_name: str
+    *, http_client: AsyncHTTPClient, hangup_url: str, headers: dict[str, str], model_name: str, ended_code: str
 ) -> None:
     """`POST .../realtime/calls/{call_id}/hangup` to end a call; one the provider no longer knows is already over.
 
@@ -168,19 +173,18 @@ async def hang_up_call(
                 ) from e
         else:
             if response.status_code < 500 or not retries_left:
-                _check_hang_up_response(response, model_name)
+                _check_hang_up_response(response, model_name, ended_code)
                 return
         retries_left -= 1
 
 
-def _check_hang_up_response(response: httpx.Response | httpx2.Response, model_name: str) -> None:
+def _check_hang_up_response(response: httpx.Response | httpx2.Response, model_name: str, ended_code: str) -> None:
     if response.status_code == 404:
         try:
             data = response.json()
         except ValueError:
             data = None
-        error = data.get('error') if _utils.is_str_dict(data) else None
-        if _utils.is_str_dict(error) and error.get('code') == 'call_id_not_found':
+        if _is_ended_call(response.status_code, data.get('error') if _utils.is_str_dict(data) else None, ended_code):
             return
     _raise_for_status(response, model_name)
 
