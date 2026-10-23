@@ -43,8 +43,13 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness import BackgroundTools, GuardrailResult, InputBlocked, InputGuardrail
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness import (
+    BackgroundTools,
+    GuardrailResult,
+    HarnessDeprecationWarning,
+    InputBlocked,
+    InputGuardrail,
+)
 from pydantic_ai_harness.guardrails._capability import (
     _find_prompt_part,  # pyright: ignore[reportPrivateUsage]
     _prompt_text,  # pyright: ignore[reportPrivateUsage]

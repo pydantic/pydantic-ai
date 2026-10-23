@@ -165,7 +165,8 @@ def takes_ctx(func: Callable[..., object]) -> bool:
     means the run context, and any other type means the guarded value. A first
     parameter with no annotation, `Any`, `object`, or a type that cannot be
     resolved still gets the run context, as it always has, with a
-    `HarnessDeprecationWarning`. A callable whose signature cannot be
+    `HarnessDeprecationWarning`, unless the unresolved annotation names
+    `RunContext`, which needs no warning. A callable whose signature cannot be
     introspected is treated as taking the value only.
     """
     try:
