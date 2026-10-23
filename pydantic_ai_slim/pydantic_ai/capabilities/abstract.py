@@ -129,6 +129,29 @@ For dynamic descriptions, return a callable from
 having the method itself take `RunContext`.
 """
 
+_REALTIME_UNCALLED_HOOKS: tuple[str, ...] = (
+    'before_node_run',
+    'after_node_run',
+    'wrap_node_run',
+    'on_node_run_error',
+    'before_model_request',
+    'after_model_request',
+    'wrap_model_request',
+    'on_model_request_error',
+    'before_output_validate',
+    'after_output_validate',
+    'wrap_output_validate',
+    'on_output_validate_error',
+    'before_output_process',
+    'after_output_process',
+    'wrap_output_process',
+    'on_output_process_error',
+)
+"""Hooks a realtime session never calls: it has no graph nodes, no per-request boundary, and no output stage.
+
+KEEP IN SYNC with the hook table in `docs/realtime/capabilities.md`.
+"""
+
 
 @dataclass
 class CapabilityOrdering:
@@ -395,6 +418,19 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         here. Override this alongside `on_event` when you can report something narrower.
         """
         return type(self).on_event is not AbstractCapability.on_event or marked_listens_to(type(self), event)
+
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        """The hooks this capability itself implements that a realtime session never calls.
+
+        A realtime session warns about every capability in its tree that reports any. Containers and
+        wrappers report only their own overrides: the session asks each capability in the tree for
+        itself. A built-in whose behavior a session provides another way reports none.
+        """
+        return self._realtime_uncalled_hooks_overriding(AbstractCapability)
+
+    def _realtime_uncalled_hooks_overriding(self, base: type[AbstractCapability[Any]]) -> tuple[str, ...]:
+        """The realtime-uncalled hooks this capability's class overrides relative to `base`."""
+        return tuple(hook for hook in _REALTIME_UNCALLED_HOOKS if getattr(type(self), hook) is not getattr(base, hook))
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

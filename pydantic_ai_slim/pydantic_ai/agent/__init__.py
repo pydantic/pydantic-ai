@@ -94,7 +94,7 @@ from ..capabilities import (
     ToolSearch as ToolSearchCap,
 )
 from ..capabilities._dynamic import wrap_capability_funcs
-from ..capabilities._ordering import has_capability_type
+from ..capabilities._ordering import collect_leaves, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.abstract import (
     _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
@@ -4056,6 +4056,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 'contribute tools or native tools are not supported; remove `defer_loading=True` '
                 f'from: {formatted_ids}.'
             )
+        _warn_realtime_uncalled_hooks(run_capability)
         # `_resolve_run_capabilities` already registered `run_context.capabilities` for the toolset/connect
         # `for_run` below, exactly as the graph run relies on. The root of that chain has to be published
         # too, or the context contradicts itself: `capabilities` populated while `root_capability` is
@@ -4479,7 +4480,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     '`message_history`.'
                 )
 
-            output_modality = (resolved.model_settings or {}).get('output_modality', 'audio')
+            session_settings: RealtimeModelSettings | None = resolved.model_settings
+            # A model that only writes text (a perception model, say) defaults to it, rather than to speech.
+            supports_audio_output = resolved.model_profile.get('supports_audio_output', True)
+            if not supports_audio_output and 'output_modality' not in (session_settings or {}):
+                session_settings = {**(session_settings or {}), 'output_modality': 'text'}
+            output_modality = (session_settings or {}).get('output_modality', 'audio')
             # Unlike a setting the provider merely ignores, this one changes what the caller gets back:
             # a model that can't do it either fails the handshake (Gemini) or answers with speech anyway
             # (xAI), so it is rejected here rather than after a connection is open.
@@ -4489,18 +4495,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     'it only generates audio. Read the spoken answer from the transcript on the '
                     '`SpeechPart` instead.'
                 )
+            if output_modality == 'audio' and not supports_audio_output:
+                raise exceptions.UserError(
+                    f"The {resolved.model.model_name!r} realtime model does not support `output_modality='audio'`; "
+                    "it only generates text. Leave `output_modality` unset, or set it to `'text'`."
+                )
 
             connection_manager = (
                 resolved.model.connect(
                     messages=resolved.request_messages,
-                    model_settings=resolved.model_settings,
+                    model_settings=session_settings,
                     model_request_parameters=resolved.model_request_parameters,
                 )
                 if provider_session is None
                 else resolved.model.connect_webrtc(
                     provider_session,
                     messages=resolved.request_messages,
-                    model_settings=resolved.model_settings,
+                    model_settings=session_settings,
                     model_request_parameters=resolved.model_request_parameters,
                 )
             )
@@ -4540,7 +4551,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     # Surfaced on the session span so the session's configured native tools and realtime
                     # settings are inspectable, respecting `include_model_request_parameters`.
                     model_request_parameters=resolved.model_request_parameters,
-                    model_settings=resolved.model_settings,
+                    model_settings=session_settings,
                     wrap_event_stream=resolved.wrap_event_stream,
                 )
                 lifecycle.session = session
@@ -5025,6 +5036,33 @@ _AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
     PendingMessageDrainCapability,
 )
 """Infrastructure capabilities auto-injected when not already present."""
+
+
+def _warn_realtime_uncalled_hooks(run_capability: AbstractCapability[Any]) -> None:
+    """Warn once about each capability in a realtime session's tree that implements a hook the session never calls."""
+    found: dict[int, tuple[AbstractCapability[Any], tuple[str, ...]]] = {}
+
+    def visit(capability: AbstractCapability[Any]) -> None:
+        if id(capability) in found:
+            return
+        found[id(capability)] = (capability, capability._realtime_uncalled_hooks())  # pyright: ignore[reportPrivateUsage]
+        if isinstance(capability, WrapperCapability):
+            # `apply` visits a wrapper over a single leaf in that leaf's place, so ask the leaf too.
+            wrapped_leaves = collect_leaves(capability.wrapped)
+            if len(wrapped_leaves) == 1 and wrapped_leaves[0] is capability.wrapped:
+                visit(capability.wrapped)
+
+    run_capability.apply(visit)
+    for capability, hooks in found.values():
+        if hooks:
+            name = f'`{type(capability).__name__}`' + (f' (id={capability.id!r})' if capability.id else '')
+            warnings.warn(
+                f'Capability {name} implements {", ".join(f"`{hook}`" for hook in hooks)}, which realtime '
+                'sessions never call, so it may not work as intended in this session. See '
+                'https://pydantic.dev/docs/ai/realtime/capabilities/ for the hooks a session runs.',
+                UserWarning,
+                stacklevel=2,
+            )
 
 
 def _run_instrumentation_settings(

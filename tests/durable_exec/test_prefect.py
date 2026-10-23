@@ -1407,6 +1407,13 @@ async def test_realtime_session_outside_flow() -> None:
         assert [event async for event in session] == []
 
 
+async def test_realtime_session_with_durability_capability_outside_flow() -> None:
+    """Outside a flow the durability capability's model-request hooks pass through, so a session doesn't warn about them."""
+    agent = Agent(TestModel(), name='realtime_durability', capabilities=[PrefectDurability()])
+    async with agent.realtime(_FakeRealtimeModel()).session() as session:
+        assert [event async for event in session] == []
+
+
 async def test_iter_in_flow(allow_model_requests: None) -> None:
     """Test that iter works inside a Prefect flow."""
 
