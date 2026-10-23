@@ -453,7 +453,16 @@ class LoadedInstructionValues:
         return loaded
 
     def observe(self, part: ModelRequestPart | ModelResponsePart) -> str | None:
-        """Fold in `part`, returning the capability it loads if it's a `load_capability` return completing a load."""
+        """Fold in `part`, returning the capability it loads if it's a `load_capability` return completing a load.
+
+        An instruction baseline recording a loaded capability's block as an append-mode block of the prefix, because
+        the capability is eager now, ends the load's ownership of the block: its later changes are the prefix's.
+        """
+        if isinstance(part, InstructionBaselinePart):
+            for block in part.instructions:
+                if isinstance(block, InstructionPart) and (capability_id := _loaded_block_capability_id(block.id)):
+                    self.values.pop(capability_id, None)
+                    self._changed.discard(capability_id)
         if (capability_id := self._loads.observe(part)) is not None:
             assert isinstance(part, LoadCapabilityReturnPart)
             # Moved to the end, so the values stay in load order.
@@ -533,45 +542,6 @@ def _loaded_texts(parts: Sequence[InstructionPart]) -> dict[str, str | None]:
     }
 
 
-def restate_loaded_instructions(
-    messages: Sequence[ModelMessage], parts: Sequence[InstructionPart], targets: Sequence[ModelRequest]
-) -> list[ModelMessage]:
-    """Put back the first statement of each loaded capability's instructions where history lost it, for one request.
-
-    The request after a load records the capability's instructions as an
-    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] at the end of the request holding the
-    load return. A UI client's history comes back without it, since a client can't be trusted with the system
-    voice (see [`sanitize_messages`][pydantic_ai.messages.sanitize_messages]), so the capability would lose its
-    instructions. Each load in the window whose return carries no instructions and that no change follows gets
-    the capability's current text, from `parts`, in that same place, in the returned copy only: unchanged
-    instructions give the bytes the original request sent. A load on one of `targets`, the request being sent,
-    is left to [`update_loaded_instruction_history`][pydantic_ai._instructions.update_loaded_instruction_history],
-    which records its first statement.
-    """
-    loaded = LoadedInstructionValues()
-    unstated: dict[str, int] = {}
-    for index, part in loaded_window_parts(messages):
-        if loaded.tracks(part):
-            unstated.pop(_changed_capability_id(part), None)
-            loaded.apply(part)
-        elif (capability_id := loaded.observe(part)) is not None:
-            assert isinstance(part, LoadCapabilityReturnPart)
-            if part.instructions is None and not any(messages[index] is target for target in targets):
-                unstated[capability_id] = index
-            else:
-                unstated.pop(capability_id, None)
-    if not unstated:
-        return list(messages)
-    texts = _loaded_texts(parts)
-    restated = list(messages)
-    for capability_id, index in unstated.items():
-        if (content := texts.get(capability_id)) is not None:
-            message = restated[index]
-            change = InstructionDeltaPart(id=loaded_instruction_id(capability_id), content=content)
-            restated[index] = replace(message, parts=[*message.parts, change])
-    return restated
-
-
 def update_loaded_instruction_history(
     messages: Sequence[ModelMessage],
     parts: Sequence[InstructionPart],
@@ -617,6 +587,7 @@ def _recorded_instruction_values(
     for _, part in loaded_window_parts(messages):
         if part is baseline:
             in_window = True
+            loaded.observe(part)
         elif loaded.tracks(part):
             # A loaded capability's block is delivered through history, not the prefix: its changes are no part of
             # this window, and leaving it out of `current` is no withdrawal.
@@ -669,7 +640,13 @@ def update_instruction_history(
         if baseline is not None and (baseline.instructions or recorded != {}):
             _record_baseline(targets, [])
         return None
-    if baseline is not None and (recorded is None or not continues_window(baseline, normalized)):
+    loaded = LoadedInstructionValues.of(messages).values
+    # A block a loaded capability holds that the prefix now carries, because the capability is eager, changes owner
+    # at a new window's baseline, so its changes from then on are the prefix's.
+    takes_over = any(
+        part.on_change == 'append' and _loaded_block_capability_id(part.id) in loaded for part in normalized
+    )
+    if baseline is not None and (recorded is None or takes_over or not continues_window(baseline, normalized)):
         baseline = None
         if not any(part.on_change == 'append' for part in normalized):
             # Nothing appends any more, so only end the window its blocks' old changes belong to.
@@ -679,6 +656,16 @@ def update_instruction_history(
         if not any(part.on_change == 'append' for part in normalized):
             return normalized
         baseline = _record_baseline(targets, normalized)
+        # A block that was a loaded capability's is now the prefix's. The capability's statements in history come
+        # after the prefix, so the block is stated once more after them, where it supersedes them.
+        takeovers = [
+            InstructionDeltaPart(id=part.id, content=part.content or None)
+            for part in baseline.instructions
+            if isinstance(part, InstructionPart) and _loaded_block_capability_id(part.id) in loaded
+        ]
+        if takeovers:
+            for target in targets:
+                target.parts = [*target.parts, *takeovers]
     else:
         assert recorded is not None
         current = {part.id: part.content or None for part in normalized if part.on_change == 'append' and part.id}

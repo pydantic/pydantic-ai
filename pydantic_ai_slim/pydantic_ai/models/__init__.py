@@ -3463,10 +3463,11 @@ def _project_instruction_state(
                 if index >= current_start and part.id is not None:
                     text = part.render(inline_system=inline_system, previous=values.apply(part))
                     parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
-            elif not isinstance(part, InstructionBaselinePart):
+            else:
                 if in_loads_window:
                     loaded.observe(part)
-                parts.append(part)
+                if not isinstance(part, InstructionBaselinePart):
+                    parts.append(part)
         instructions = message.instructions
         if (
             window is not None

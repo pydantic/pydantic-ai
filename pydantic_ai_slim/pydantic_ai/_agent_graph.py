@@ -84,7 +84,6 @@ from ._instructions import (
     instruction_window,
     loaded_part_capability_id,
     recorded_prefix,
-    restate_loaded_instructions,
     update_instruction_history,
     update_loaded_instruction_history,
 )
@@ -1017,20 +1016,35 @@ async def _get_loaded_instructions(
 
 
 def _split_loaded_instruction_parts(
-    params: models.ModelRequestParameters, loaded_capability_ids: Collection[str]
+    params: models.ModelRequestParameters,
+    resolved: Sequence[_messages.InstructionPart],
+    loaded_capability_ids: Collection[str],
 ) -> tuple[list[_messages.InstructionPart] | None, list[_messages.InstructionPart]]:
     """Separate the parts delivered through history from the prefix, after the `before_model_request` hooks.
 
-    A part marked `'via_history'` that no capability in `loaded_capability_ids` owns has no block to be delivered
-    in, so it stays in the prefix rather than being lost.
+    `resolved` are the loaded capabilities' parts as this request resolved them, before the hooks, and
+    `loaded_capability_ids` the capabilities the processed history still loads. A capability whose parts a hook
+    left out, as a hook that builds `instruction_parts` from scratch does, is delivered as it resolved; a hook
+    withdraws one by emptying its parts instead. A capability history processing unloaded is delivered nowhere,
+    and a part marked `'via_history'` that no resolved capability owns stays in the prefix rather than being lost.
     """
     if params.instruction_parts is None:
         return None, []
+    resolved_ids = {loaded_part_capability_id(part) for part in resolved}
     prefix: list[_messages.InstructionPart] = []
     loaded: list[_messages.InstructionPart] = []
     for part in params.instruction_parts:
-        via_history = params.instruction_visibility_of(part) == 'via_history'
-        (loaded if via_history and loaded_part_capability_id(part) in loaded_capability_ids else prefix).append(part)
+        capability_id = loaded_part_capability_id(part)
+        if params.instruction_visibility_of(part) != 'via_history' or capability_id not in resolved_ids:
+            prefix.append(part)
+        elif capability_id in loaded_capability_ids:
+            loaded.append(part)
+    kept = {loaded_part_capability_id(part) for part in loaded}
+    loaded.extend(
+        part
+        for part in resolved
+        if (capability_id := loaded_part_capability_id(part)) in loaded_capability_ids and capability_id not in kept
+    )
     return prefix, loaded
 
 
@@ -2154,17 +2168,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # Loaded capabilities' instructions reach the model through history: changes to them are appended
             # after the prefix's, and they leave the parts the model is sent.
             prefix_parts, loaded_parts = _split_loaded_instruction_parts(
-                model_request_parameters, LoadedInstructionValues.of(messages).values
+                model_request_parameters, self._resolved_loaded_parts, LoadedInstructionValues.of(messages).values
             )
-            # A capability whose parts a hook left out, as a hook that builds `instruction_parts` from scratch
-            # does, is delivered as it resolved; a hook withdraws one by emptying its parts instead.
-            kept = {loaded_part_capability_id(part) for part in loaded_parts}
-            loaded_parts = [
-                *loaded_parts,
-                *(part for part in self._resolved_loaded_parts if loaded_part_capability_id(part) not in kept),
-            ]
             recording_targets = _history_recording_targets(ctx, messages)
-            messages = restate_loaded_instructions(messages, loaded_parts, recording_targets)
             model_request_parameters = replace(
                 model_request_parameters,
                 instruction_parts=update_instruction_history(messages, prefix_parts, recording_targets),

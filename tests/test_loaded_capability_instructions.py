@@ -12,7 +12,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks
+from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ProcessHistory
 from pydantic_ai.messages import (
     AgentInstructionSource,
     CapabilityInstructionSource,
@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     SystemPromptPart,
     TextPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolsetInstructionSource,
     UserPromptPart,
@@ -379,24 +380,25 @@ async def test_compaction_ends_the_load():
     assert [delta.content for delta in deltas(second.new_messages())] == [f'{RULES}\n\nThe count is 2.']
 
 
-async def test_client_round_trip_restates_after_the_load():
-    """A UI client's history has no instruction records, so the request restates the instructions after the load."""
+async def test_client_round_trip_states_the_instructions_again():
+    """A UI client's history has no instruction records, so the next request states them again, and keeps them."""
     received = Received()
     first = await scripted_agent(LOAD, received=received).run('Count.', deps=Counter())
-    sent_after_load = received.statements[-1]
     with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
         sanitized = sanitize_messages(first.all_messages(), strip_system_prompts=True)
     assert deltas(sanitized) == []
 
-    # Unchanged, the restatement is what the original request sent, in the same place, and nothing is recorded.
-    agent = scripted_agent(received=received)
-    second = await agent.run('Again.', deps=Counter(), message_history=sanitized)
-    assert received.statements[-1] == sent_after_load
-    assert deltas(second.new_messages()) == []
-
-    # Changed since, the current text is restated there instead.
-    await agent.run('Again.', deps=Counter(1), message_history=sanitized)
-    assert received.statements[-1] == [f'<context id="capability:counter">\n{RULES}\n\nThe count is 1.\n</context>']
+    # The statement is recorded on the request being sent, and a change a tool makes is appended after it: what the
+    # first request was sent is never rewritten.
+    second = await scripted_agent(BUMP, received=received).run('Again.', deps=Counter(), message_history=sanitized)
+    assert [delta.content for delta in deltas(second.new_messages())] == [
+        f'{RULES}\n\nThe count is 0.',
+        f'{RULES}\n\nThe count is 1.',
+    ]
+    before_bump, after_bump = received.statements[-2:]
+    assert before_bump == [f'<context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</context>']
+    assert after_bump[: len(before_bump)] == before_bump
+    assert len(after_bump) == 2
 
 
 async def test_client_round_trip_of_a_capability_no_longer_configured():
@@ -668,3 +670,62 @@ Use trash.
             ],
         }
     )
+
+
+async def test_history_processing_that_unloads_a_capability_delivers_it_nowhere():
+    """A history processor that removes the load exchange unloads the capability: its instructions go nowhere."""
+    received = Received()
+    first = await scripted_agent(LOAD, received=received).run('Count.', deps=Counter())
+
+    def unload(messages: list[ModelMessage]) -> list[ModelMessage]:
+        kept: list[ModelMessage] = []
+        for message in messages:
+            parts = [
+                part
+                for part in message.parts
+                if not isinstance(
+                    part,
+                    LoadCapabilityCallPart
+                    | LoadCapabilityReturnPart
+                    | InstructionDeltaPart
+                    | ToolAvailabilityDeltaPart,
+                )
+            ]
+            if parts:
+                kept.append(replace(message, parts=parts))
+        return kept
+
+    agent = scripted_agent(received=received, capabilities=[counter_capability(), ProcessHistory(unload)])
+    second = await agent.run('Again.', deps=Counter(), message_history=first.all_messages())
+    assert RULES not in (received.instructions[-1] or '')
+    assert received.statements[-1] == []
+    assert deltas(second.new_messages()) == []
+
+
+async def test_a_loaded_capability_made_eager_hands_its_block_to_the_prefix():
+    """Once eager with an append-mode block, the capability's changes are the prefix's: B, C, B and C again."""
+    received = Received()
+    first = await scripted_agent(LOAD, received=received).run('Count.', deps=Counter())
+
+    eager = Capability[Counter](id='counter')
+
+    @eager.instructions
+    def state(ctx: RunContext[Counter]) -> InstructionPart:
+        return InstructionPart(f'The value is {"BCBCC"[ctx.deps.value or 0]}.', on_change='append')
+
+    agent = scripted_agent(received=received, capabilities=[eager])
+    history = first.all_messages()
+    recorded: list[list[str | None]] = []
+    for step in range(5):
+        result = await agent.run('Again.', deps=Counter(step), message_history=history)
+        history = result.all_messages()
+        recorded.append([delta.content for delta in deltas(result.new_messages())])
+    # Taking the block over states it once more after the load's statements; then only real changes are appended.
+    assert recorded == [
+        ['The value is B.'],
+        ['The value is C.'],
+        ['The value is B.'],
+        ['The value is C.'],
+        [],
+    ]
+    assert received.statements[-1][-1] == '<context id="capability:counter">\nThe value is C.\n</context>'
