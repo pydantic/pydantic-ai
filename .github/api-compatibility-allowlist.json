@@ -2,24 +2,6 @@
   "allowed_breakages": [
     {
       "against": "v2.59.0",
-      "fingerprint": "ca884de6c28ed4e97d48cd6c522936a934a38a929e25cb3440f903884b53d9c8",
-      "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `inputs=inputs`.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
-    },
-    {
-      "against": "v2.59.0",
-      "fingerprint": "e728299e8b022b01f0a06b3eb8cf95974e2e124d4408d8933c3b0b1485596485",
-      "reason": "Adds `QueueChanged` to the web plugin's `ServerMessage` union; every existing member is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
-    },
-    {
-      "against": "v2.59.0",
-      "fingerprint": "f7079c197a72ddfbdce33497a8729dae68f70b5456ebaa87d968ccd05ed8ae8a",
-      "reason": "Adds `QueueChanged` to the web plugin's `SessionMessage` union; every existing member is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
-    },
-    {
-      "against": "v2.59.0",
       "fingerprint": "b881938683d7a5ced698e9551495f8a1098fce10d9c64642076231d15d211336",
       "reason": "Adds `RunInstructionSource` to the `InstructionSource` union; every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10789"
@@ -44,12 +26,6 @@
     },
     {
       "against": "v2.59.0",
-      "fingerprint": "679024394731649b9cd4c4300679de05df481ee1512142e772055756302b9541",
-      "reason": "Adds the xAI Grok 4.6 and 4.7 Bedrock ids to `LatestBedrockModelNames`; every existing member is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8639"
-    },
-    {
-      "against": "v2.59.0",
       "fingerprint": "1b295e087b0c5d9ce099eef747012b54cb660fed111f5b9c051942f8c5ed9d9f",
       "reason": "Adds `FileUnderstanding` to `CAPABILITY_TYPES`; every existing capability type is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8453"
@@ -65,6 +41,124 @@
       "fingerprint": "481effa0702c0a046ac7a6eebbd1a1689f975c12ab516e981a6a000c3f6e6f1f",
       "reason": "Harness 0.x: the same `GitHub.description` default text change, reported on `GitHub.__init__`; calls that pass or omit `description` keep working.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10815"
+    }
+  ],
+  "model_name_literals": [
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/__init__.py",
+      "symbol": "KnownEmbeddingModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/bedrock.py",
+      "symbol": "LatestBedrockEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/cohere.py",
+      "symbol": "LatestCohereEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/google.py",
+      "symbol": "LatestGoogleGLAEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/google.py",
+      "symbol": "LatestGoogleVertexEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",
+      "symbol": "LatestVoyageAIEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/images/__init__.py",
+      "symbol": "KnownImageGenerationModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/images/google.py",
+      "symbol": "LatestGoogleImageGenerationModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/_known_model_names.py",
+      "symbol": "KnownModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/bedrock.py",
+      "symbol": "LatestBedrockModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/bedrock_mantle.py",
+      "symbol": "LatestBedrockMantleModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/cohere.py",
+      "symbol": "LatestCohereModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/google.py",
+      "symbol": "LatestGoogleModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/groq.py",
+      "symbol": "PreviewGroqModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/groq.py",
+      "symbol": "ProductionGroqModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/mistral.py",
+      "symbol": "LatestMistralModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/openai.py",
+      "symbol": "OpenAIModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/openai_decisions.py",
+      "symbol": "OpenAIDecisionsModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/typesafe.py",
+      "symbol": "LatestTypeSafeModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/xai.py",
+      "symbol": "XaiModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/native_tools/__init__.py",
+      "symbol": "AdvisorModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/native_tools/__init__.py",
+      "symbol": "ImageGenerationModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/providers/deepseek.py",
+      "symbol": "DeepSeekModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/providers/meta.py",
+      "symbol": "MetaModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/providers/moonshotai.py",
+      "symbol": "MoonshotAIModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/elevenlabs.py",
+      "symbol": "LatestElevenLabsRealtimeModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/model.py",
+      "symbol": "KnownRealtimeModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/openai_live.py",
+      "symbol": "LatestOpenAILiveModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/settings.py",
+      "symbol": "KnownRealtimeTranscriptionModelName"
     }
   ]
 }
