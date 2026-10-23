@@ -7,6 +7,9 @@ and off the recorded body for Groq, whose provider only takes a legacy `httpx` c
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
 import pytest
 from cassetter import Cassette
 
@@ -15,7 +18,6 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ThinkingPart
 from pydantic_ai.settings import ModelSettings
 
 from ._inline_snapshot import snapshot
-from .cassette_utils import single_request_body
 from .conftest import RequestCapture, try_import
 
 with try_import() as anthropic_imports:
@@ -31,6 +33,8 @@ with try_import() as openai_imports:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as groq_imports:
+    import httpx
+
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.providers.groq import GroqProvider
 
@@ -131,11 +135,19 @@ async def test_openai_responses_thinking_summary(
 async def test_groq_thinking_summary_false_hides_reasoning(
     allow_model_requests: None, groq_api_key: str, vcr: Cassette
 ):
-    """gpt-oss on Groq returns its reasoning by default; `False` asks for `reasoning_format='hidden'`, so none comes back."""
-    model = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
-    result = await Agent(model, model_settings=ModelSettings(thinking_summary=False)).run(PROMPT)
+    """gpt-oss on Groq returns its reasoning by default; `False` asks for `reasoning_format='hidden'`, so none comes back.
 
-    body = single_request_body(vcr)
-    assert body['reasoning_format'] == 'hidden'
-    assert 'include_reasoning' not in body
+    `GroqProvider` takes a legacy `httpx` client rather than the shared `httpx2` one, so the outbound body is read
+    off that client's request hook, which also fires on replay.
+    """
+    sent: list[dict[str, Any]] = []
+
+    async def record(request: httpx.Request) -> None:
+        sent.append(json.loads(request.content))
+
+    async with httpx.AsyncClient(event_hooks={'request': [record]}) as http_client:
+        model = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key, http_client=http_client))
+        result = await Agent(model, model_settings=ModelSettings(thinking_summary=False)).run(PROMPT)
+
+    assert [body.get('reasoning_format') for body in sent] == snapshot(['hidden'])
     assert _thinking_parts(result.all_messages()) == []

@@ -356,49 +356,6 @@ class TestAnthropicThinkingTranslation:
         result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
         assert result == {'type': 'adaptive', 'display': 'summarized'}
 
-    def test_display_summarized_on_adaptive(self, adaptive_model: FunctionModel):
-        params = ModelRequestParameters(thinking=True)
-        settings: AnthropicModelSettings = {'anthropic_thinking_display': 'summarized'}
-        result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
-        assert result == snapshot({'type': 'adaptive', 'display': 'summarized'})
-
-    def test_display_omitted_on_adaptive(self, adaptive_model: FunctionModel):
-        params = ModelRequestParameters(thinking=True)
-        settings: AnthropicModelSettings = {'anthropic_thinking_display': 'omitted'}
-        result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
-        assert result == snapshot({'type': 'adaptive', 'display': 'omitted'})
-
-    def test_display_on_enabled_shape(self, non_adaptive_model: FunctionModel):
-        """display is also emitted on the budget-based 'enabled' shape (pre-adaptive models)."""
-        params = ModelRequestParameters(thinking='high')
-        settings: AnthropicModelSettings = {'anthropic_thinking_display': 'summarized'}
-        result = AnthropicModel._translate_thinking(non_adaptive_model, settings, params)
-        assert result == snapshot({'type': 'enabled', 'budget_tokens': 16384, 'display': 'summarized'})
-
-    def test_display_ignored_when_thinking_false(self, adaptive_model: FunctionModel):
-        """display setting is dropped on the OMIT path — no thinking block to attach to."""
-        params = ModelRequestParameters(thinking=False)
-        settings: AnthropicModelSettings = {'anthropic_thinking_display': 'summarized'}
-        result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
-        assert result is anthropic_omit
-
-    def test_display_ignored_when_thinking_none(self, adaptive_model: FunctionModel):
-        """display setting is dropped on the OMIT path — no thinking block to attach to."""
-        params = ModelRequestParameters(thinking=None)
-        settings: AnthropicModelSettings = {'anthropic_thinking_display': 'summarized'}
-        result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
-        assert result is anthropic_omit
-
-    def test_raw_anthropic_thinking_wins_over_display(self, adaptive_model: FunctionModel):
-        """Raw `anthropic_thinking` dict wins; `anthropic_thinking_display` is not injected on top."""
-        params = ModelRequestParameters(thinking=True)
-        settings: AnthropicModelSettings = {
-            'anthropic_thinking': {'type': 'adaptive'},
-            'anthropic_thinking_display': 'summarized',
-        }
-        result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
-        assert result == snapshot({'type': 'adaptive'})
-
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 class TestOpenAIChatThinkingTranslation:
@@ -1284,89 +1241,6 @@ class TestBedrockThinkingTranslation:
         )
         assert result == {'thinking': {'type': 'disabled'}}
 
-    def test_anthropic_variant_adaptive_display_summarized(self):
-        model = self._adaptive_model()
-        settings = BedrockModelSettings(bedrock_thinking_display='summarized')
-        result = model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking=True), [])
-        assert result == snapshot({'thinking': {'type': 'adaptive', 'display': 'summarized'}})
-
-    def test_anthropic_variant_adaptive_display_omitted(self):
-        model = self._adaptive_model()
-        settings = BedrockModelSettings(bedrock_thinking_display='omitted')
-        result = model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking=True), [])
-        assert result == snapshot({'thinking': {'type': 'adaptive', 'display': 'omitted'}})
-
-    def test_anthropic_variant_adaptive_display_with_effort(self):
-        """display coexists with output_config.effort on adaptive models."""
-        model = self._adaptive_model()
-        settings = BedrockModelSettings(bedrock_thinking_display='summarized')
-        result = model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking='high'), [])
-        assert result == snapshot(
-            {'thinking': {'type': 'adaptive', 'display': 'summarized'}, 'output_config': {'effort': 'high'}}
-        )
-
-    def test_anthropic_variant_enabled_display(self):
-        """display is also attached to the budget-based 'enabled' shape (pre-adaptive Anthropic models)."""
-        model = _bedrock_model(
-            BedrockModelProfile(
-                bedrock_thinking_variant='anthropic',
-                supports_thinking=True,
-            )
-        )
-        settings = BedrockModelSettings(bedrock_thinking_display='summarized')
-        result = model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking='high'), [])
-        assert result == snapshot({'thinking': {'type': 'enabled', 'budget_tokens': 16384, 'display': 'summarized'}})
-
-    def test_anthropic_variant_display_dropped_when_thinking_false(self):
-        """display is not injected on the 'disabled' shape — Anthropic's API doesn't accept it there."""
-        model = _bedrock_model(
-            BedrockModelProfile(
-                bedrock_thinking_variant='anthropic',
-                supports_thinking=True,
-            )
-        )
-        settings = BedrockModelSettings(bedrock_thinking_display='summarized')
-        result = model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking=False), [])
-        assert result == snapshot({'thinking': {'type': 'disabled'}})
-
-    def test_anthropic_variant_adaptive_display_dropped_when_thinking_false(self):
-        model = self._adaptive_model()
-        settings = BedrockModelSettings(bedrock_thinking_display='summarized')
-        result = model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking=False), [])
-        assert result is None
-
-    def test_openai_variant_ignores_display(self):
-        model = _bedrock_model(
-            BedrockModelProfile(
-                bedrock_thinking_variant='openai',
-                supports_thinking=True,
-            )
-        )
-        settings = BedrockModelSettings(bedrock_thinking_display='summarized')
-        result = model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking='high'), [])
-        assert result == snapshot({'reasoning_effort': 'high'})
-
-    def test_qwen_variant_ignores_display(self):
-        model = _bedrock_model(
-            BedrockModelProfile(
-                bedrock_thinking_variant='qwen',
-                supports_thinking=True,
-            )
-        )
-        settings = BedrockModelSettings(bedrock_thinking_display='summarized')
-        result = model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking=True), [])
-        assert result == snapshot({'reasoning_config': 'high'})
-
-    def test_anthropic_variant_raw_thinking_dict_wins_over_display(self):
-        """Raw `thinking` dict in additionalModelRequestFields wins; display is not injected on top."""
-        model = self._adaptive_model()
-        settings = BedrockModelSettings(
-            bedrock_thinking_display='summarized',
-            bedrock_additional_model_requests_fields={'thinking': {'type': 'adaptive'}},
-        )
-        result = model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking=True), [])
-        assert result == snapshot({'thinking': {'type': 'adaptive'}})
-
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 class TestOpenRouterThinkingTranslation:
@@ -2197,6 +2071,18 @@ class TestAnthropicThinkingSummary:
         result = AnthropicModel._translate_thinking(adaptive_model, settings, ModelRequestParameters(thinking=True))
         assert result == {'type': 'between_tools'}
 
+    def test_provider_display_on_budget_shape(self):
+        """A pre-adaptive model gets `display` on the budget-based `enabled` block."""
+        model = FunctionModel(_echo, profile=AnthropicModelProfile(supports_thinking=True))
+        settings: AnthropicModelSettings = {'anthropic_thinking_display': 'omitted'}
+        result = AnthropicModel._translate_thinking(model, settings, ModelRequestParameters(thinking='high'))
+        assert result == {'type': 'enabled', 'budget_tokens': 16384, 'display': 'omitted'}
+
+    def test_provider_display_alone_on_a_model_that_only_thinks_when_asked(self, adaptive_model: FunctionModel):
+        settings: AnthropicModelSettings = {'anthropic_thinking_display': 'summarized'}
+        result = AnthropicModel._translate_thinking(adaptive_model, settings, ModelRequestParameters())
+        assert result is anthropic_omit
+
 
 @pytest.mark.skipif(not bedrock_imports(), reason='boto3 not installed')
 class TestBedrockThinkingSummary:
@@ -2290,6 +2176,41 @@ class TestBedrockThinkingSummary:
             settings, ModelRequestParameters(), []
         )
         assert result == {'thinking': {'type': 'adaptive'}}
+
+    def test_claude_provider_display_with_effort(self):
+        """`display` sits beside `output_config.effort` on adaptive models."""
+        model = _bedrock_model(
+            BedrockModelProfile(
+                bedrock_thinking_variant='anthropic',
+                bedrock_supports_adaptive_thinking=True,
+                bedrock_supports_effort=True,
+                supports_thinking=True,
+            )
+        )
+        settings = BedrockModelSettings(bedrock_thinking_display='omitted')
+        result = model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking='high'), [])
+        assert result == {'thinking': {'type': 'adaptive', 'display': 'omitted'}, 'output_config': {'effort': 'high'}}
+
+    def test_claude_budget_shape(self):
+        """A pre-adaptive Claude model gets `display` on the budget-based `enabled` block, and none on `disabled`."""
+        model = _bedrock_model(BedrockModelProfile(bedrock_thinking_variant='anthropic', supports_thinking=True))
+        settings = BedrockModelSettings(bedrock_thinking_display='omitted')
+        assert model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking='high'), []) == {
+            'thinking': {'type': 'enabled', 'budget_tokens': 16384, 'display': 'omitted'}
+        }
+        assert model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking=False), []) == {
+            'thinking': {'type': 'disabled'}
+        }
+
+    @pytest.mark.parametrize(
+        ('variant', 'expected'),
+        [('openai', {'reasoning_effort': 'high'}), ('qwen', {'reasoning_config': 'high'})],
+    )
+    def test_provider_display_ignored_on_other_variants(self, variant: Any, expected: dict[str, Any]):
+        model = _bedrock_model(BedrockModelProfile(bedrock_thinking_variant=variant, supports_thinking=True))
+        settings = BedrockModelSettings(bedrock_thinking_display='summarized')
+        result = model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking='high'), [])
+        assert result == expected
 
     def test_gpt_oss_false_drops_the_reasoning(self):
         settings = BedrockModelSettings(thinking_summary=False)
