@@ -3529,6 +3529,25 @@ class TestCrossScopeThinkingOverrideWarning:
         ]
         assert get_mock_chat_completion_kwargs(client)[0]['reasoning_effort'] == 'low'
 
+    async def test_fallback_child_setting_overriding_run_thinking_summary(self, allow_model_requests: None):
+        """As for `thinking`: the child warns once, not again from `FallbackModel`'s dry-run `prepare_request`."""
+        client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='4', role='assistant')))
+        model = OpenAIChatModel(
+            'qwen3',
+            provider=VLLMProvider(openai_client=client),
+            settings=OpenAIChatModelSettings(extra_body={'include_reasoning': True}),
+        )
+        agent = Agent(FallbackModel(model))
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            await agent.run('What is 2+2?', model_settings=ModelSettings(thinking_summary=False))
+        assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == [
+            "`extra_body` from the model's `settings` takes precedence over `thinking_summary=False` "
+            "from the request's `model_settings`. Set `extra_body` in the request's `model_settings` "
+            "instead of `thinking_summary`, or remove it from the model's `settings`."
+        ]
+        assert get_mock_chat_completion_kwargs(client)[0]['extra_body'] == {'include_reasoning': True}
+
     async def test_fallback_agent_setting_overriding_run_thinking(self, allow_model_requests: None):
         """The agent's layers reach each model a `FallbackModel` may use."""
         model, client = _mock_openai_chat('gpt-5', ModelSettings())
