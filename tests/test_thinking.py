@@ -2566,6 +2566,15 @@ _CROSS_SCOPE_CASES = [
         marks=_SKIP_WITHOUT_BEDROCK,
     ),
     _CrossScopeCase(
+        'bedrock-openai-responses-reasoning',
+        _bedrock_probe('us.openai.gpt-5.6-luna'),
+        lambda: BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning': {'effort': 'high'}}),
+        'low',
+        _bedrock_sent,
+        overrides=True,
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    _CrossScopeCase(
         'bedrock-qwen-reasoning-config',
         _bedrock_probe('qwen.qwen3-32b-v1:0'),
         lambda: BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning_config': 'high'}),
