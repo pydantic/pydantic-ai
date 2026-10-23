@@ -102,7 +102,8 @@ class GitHub(AbstractCapability[AgentDepsT]):
         else:
             toolset = self._connect(self.auth)
         # The hosted connection also sends `X-MCP-Readonly`; filtering here keeps write tools out when the header is
-        # dropped or ignored on the way. The filtered toolset keeps the connection's `id` for durable execution.
+        # dropped or ignored on the way. Keep the hosted connection's `id` so durable execution can still find its
+        # held connection by it.
         return read_only_toolset(toolset) if self.read_only else toolset
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
