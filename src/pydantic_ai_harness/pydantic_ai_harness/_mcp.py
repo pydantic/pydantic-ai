@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Callable
+from dataclasses import dataclass
 from os import environ
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
+from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, PreparedToolset
 from pydantic_ai_harness._warn import MCPReadOnlyNoToolsWarning
 
 
@@ -56,8 +57,20 @@ def is_read_only(tool: ToolDefinition) -> bool:
             return False
 
 
-def read_only_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-    """Keep tools marked as read-only and warn when the filter removes every tool."""
+@dataclass
+class _IdentifiedPreparedToolset(PreparedToolset[AgentDepsT]):
+    """A `PreparedToolset` that keeps the wrapped toolset's `id`, so durable execution can still find it by that id."""
+
+    @property
+    def id(self) -> str | None:
+        return self.wrapped.id
+
+
+def read_only_toolset(toolset: AbstractToolset[AgentDepsT], *, keep_id: bool = False) -> AbstractToolset[AgentDepsT]:
+    """Keep tools marked as read-only and warn when the filter removes every tool.
+
+    `keep_id=True` gives the filtered toolset the wrapped toolset's `id`; otherwise it has none, like any wrapper.
+    """
 
     def prepare_read_only(_ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         read_only_tools = [tool for tool in tool_defs if is_read_only(tool)]
@@ -72,4 +85,6 @@ def read_only_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[A
             )
         return read_only_tools
 
+    if keep_id:
+        return _IdentifiedPreparedToolset(toolset, prepare_read_only)
     return toolset.prepared(prepare_read_only)

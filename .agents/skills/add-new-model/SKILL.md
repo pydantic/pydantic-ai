@@ -142,7 +142,7 @@ If the new model is just another sibling in an existing family (e.g. `gpt-5.5` a
 
 If the model is a new family or has unclear capabilities, write a small comparison script (`local-notes/probe_<model>.py`) that hits the new model AND its closest neighbour with:
 - `temperature` / `top_p` (does the API reject sampling params?)
-- `reasoning.effort` values (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) — note which the API accepts. OpenAI's 400 lists the accepted values
+- `reasoning.effort` values (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) — note which the API accepts. OpenAI's 400 lists the accepted values. Probe `max` on both the Responses and Chat Completions APIs: they accept different sets, recorded in `openai_responses_supports_max_reasoning_effort` (set in `OpenAIProvider.model_profile`) and `openai_chat_supports_max_reasoning_effort` (set in each OpenAI-compatible provider's `model_profile`)
 - New parameters mentioned in the release notes
 - Streaming / tool calls if the family is new
 

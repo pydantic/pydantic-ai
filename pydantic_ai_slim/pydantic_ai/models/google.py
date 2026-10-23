@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 import httpx2
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
-from .._context_size import mark_initial_input_tokens
+from .._context_size import mark_context_input_tokens
 from .._run_context import RunContext
 from ..exceptions import (
     ModelAPIError,
@@ -489,7 +489,9 @@ def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
         'low': 'LOW',
         'medium': 'MEDIUM',
         'high': 'HIGH',
-        'xhigh': 'HIGH',  # Gemini has no `xhigh`; map it to the highest level.
+        # Gemini has nothing above `HIGH`; map the higher levels to it.
+        'xhigh': 'HIGH',
+        'max': 'HIGH',
     }
     return level_by_effort[thinking]
 
@@ -1063,6 +1065,7 @@ class GoogleModel(Model[Client]):
                 'medium': 8192,
                 'high': 24576,
                 'xhigh': 24576,  # max for Flash; Pro goes to 32768 but we use a safe common max
+                'max': 24576,
             }
             return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
 
@@ -1242,7 +1245,7 @@ class GoogleModel(Model[Client]):
             file_search_enabled=_file_search_enabled(model_request_parameters),
         )
         if (initial_input_tokens := _initial_input_tokens(response)) is not None:
-            mark_initial_input_tokens(model_response, initial_input_tokens)
+            mark_context_input_tokens(model_response, initial_input_tokens)
         return model_response
 
     async def _process_streamed_response(
@@ -1589,7 +1592,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     cumulative=True,
                 )
                 if (initial_input_tokens := _initial_input_tokens(chunk)) is not None:
-                    mark_initial_input_tokens(self, initial_input_tokens)
+                    mark_context_input_tokens(self, initial_input_tokens)
                 # Grounding is counted from each chunk alone, and `web_searches` isn't carried forward like the token
                 # fields in `_usage_metadata_as_usage`: Gemini sends all grounding metadata once, on the final chunk,
                 # with the last `usage_metadata`. Seen in every grounded stream cassette and in live streams on
