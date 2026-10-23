@@ -425,6 +425,36 @@ def _check_types(example: CodeExample, examples_type_errors: dict[str, list[str]
         pytest.fail('pyright failed:\n' + indent('\n'.join(type_errors), '  '), pytrace=False)
 
 
+def _shared_typecheck_examples(
+    examples: Sequence[CodeExample], tmp_path_factory: pytest.TempPathFactory
+) -> dict[str, list[str]]:
+    # All workers of a session share the parent of their base temp directory.
+    shared_dir = tmp_path_factory.getbasetemp().parent
+    result_file = shared_dir / 'docs-examples-pyright.json'
+    try:
+        os.close(os.open(shared_dir / 'docs-examples-pyright.lock', os.O_CREAT | os.O_EXCL))
+    except FileExistsError:
+        # Allow for the other worker's writing and pyright's startup on top of its own deadline.
+        deadline = time.monotonic() + _TYPECHECK_TIMEOUT + 60
+        while not result_file.exists():
+            if time.monotonic() > deadline:  # pragma: no cover
+                raise TimeoutError('Timed out waiting for another xdist worker to type-check the examples')
+            time.sleep(0.5)
+    else:
+        try:
+            result: dict[str, object] = {'errors': _typecheck_examples(examples, tmp_path_factory.mktemp('pyright'))}
+        except Exception as e:  # pragma: no cover
+            result = {'failure': repr(e)}
+        tmp_file = result_file.with_suffix('.tmp')
+        tmp_file.write_text(json.dumps(result), encoding='utf-8')
+        tmp_file.replace(result_file)
+
+    cached_result = json.loads(result_file.read_text(encoding='utf-8'))
+    if failure := cached_result.get('failure'):  # pragma: no cover
+        raise RuntimeError(f'Type-checking the examples failed: {failure}')
+    return cached_result['errors']
+
+
 @pytest.fixture(scope='session')
 def examples_type_errors(
     request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
@@ -452,39 +482,38 @@ def examples_type_errors(
 
     if os.environ.get('PYTEST_XDIST_WORKER') is None:
         return _typecheck_examples(examples, tmp_path_factory.mktemp('pyright'))  # pragma: lax no cover
+    return _shared_typecheck_examples(examples, tmp_path_factory)
 
-    # All workers of a session share the parent of their base temp directory.
-    shared_dir = tmp_path_factory.getbasetemp().parent
-    result_file = shared_dir / 'docs-examples-pyright.json'
-    try:
-        os.close(os.open(shared_dir / 'docs-examples-pyright.lock', os.O_CREAT | os.O_EXCL))
-    except FileExistsError:
-        # Allow for the other worker's writing and pyright's startup on top of its own deadline.
-        deadline = time.monotonic() + _TYPECHECK_TIMEOUT + 60
-        while not result_file.exists():
-            if time.monotonic() > deadline:  # pragma: no cover
-                raise TimeoutError('Timed out waiting for another xdist worker to type-check the examples')
-            time.sleep(0.5)
-    else:
-        try:
-            result: dict[str, Any] = {'errors': _typecheck_examples(examples, tmp_path_factory.mktemp('pyright'))}
-        except Exception as e:  # pragma: no cover
-            result = {'failure': repr(e)}
-        tmp_file = result_file.with_suffix('.tmp')
-        tmp_file.write_text(json.dumps(result), encoding='utf-8')
-        tmp_file.replace(result_file)
 
-    result = json.loads(result_file.read_text(encoding='utf-8'))
-    if failure := result.get('failure'):  # pragma: no cover
-        raise RuntimeError(f'Type-checking the examples failed: {failure}')
-    return result['errors']
+def test_typecheck_examples_shares_worker_result(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, mocker: MockerFixture
+):
+    """The lock owner publishes errors once, and another worker reuses them without running pyright."""
+    worker_dir = tmp_path / 'worker'
+    worker_dir.mkdir()
+    mocker.patch.object(tmp_path_factory, 'getbasetemp', return_value=worker_dir)
+    example = CodeExample.create('x: int = 1\n')
+    errors: dict[str, list[str]] = {'docs/example.md:10': ['example error']}
+    typecheck = mocker.patch(f'{__name__}._typecheck_examples', return_value=errors)
+
+    assert _shared_typecheck_examples([example], tmp_path_factory) == errors
+    assert _shared_typecheck_examples([example], tmp_path_factory) == errors
+    typecheck.assert_called_once_with([example], mocker.ANY)
 
 
 @pytest.mark.subprocess(reason='runs pyright, which is launched through `python -m pyright`')
 @pytest.mark.skipif(not _typecheck_enabled(), reason='type checking the examples is off')
-def test_typecheck_examples_reports_errors_at_their_source(tmp_path: Path):
-    """A type error is reported at its line and column in the Markdown or docstring the example came from."""
-    example = CodeExample.create("x: int = 'a'\n", path=Path('docs/example.md'), start_line=10, indent=4)
+def test_typecheck_examples_reports_errors_at_their_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Report the example's own errors at their source location, excluding errors in required files."""
+    dependency = CodeExample.create("value: int = 'b'\n")
+    monkeypatch.setitem(code_examples, 'example_dependency.py', dependency)
+    example = CodeExample.create(
+        "x: int = 'a'\nfrom example_dependency import value\n",
+        path=Path('docs/example.md'),
+        start_line=10,
+        indent=4,
+        prefix='requires="example_dependency.py"',
+    )
 
     errors = _typecheck_examples([example], tmp_path)
 
