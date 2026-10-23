@@ -3575,15 +3575,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         *,
         include_citations: bool = False,
     ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
+        yielded_content = False
+        saw_blank_text = False
         if isinstance(part.content, str):
-            if part.content:  # Only yield non-empty text
+            if part.content.strip():  # Only yield non-blank text
                 yield BetaTextBlockParam(text=part.content, type='text')
+                yielded_content = True
+            else:
+                saw_blank_text = True
         else:
             for item in part.content:
                 if isinstance(item, str | TextContent):
                     text = item if isinstance(item, str) else item.content
-                    if text:  # Only yield non-empty text
+                    if text.strip():  # Only yield non-blank text
                         yield BetaTextBlockParam(text=text, type='text')
+                        yielded_content = True
+                    else:
+                        saw_blank_text = True
                 elif isinstance(item, CachePoint):
                     yield item
                 elif isinstance(item, UploadedFile):
@@ -3593,6 +3601,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
                             type='image',
                         )
+                        yielded_content = True
                     elif item.media_type.startswith(('text/', 'application/')):
                         yield _with_document_citations(
                             BetaRequestDocumentBlockParam(
@@ -3601,6 +3610,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             ),
                             include_citations,
                         )
+                        yielded_content = True
                     else:
                         raise UserError(
                             f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
@@ -3612,8 +3622,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         'user prompts',
                         include_citations=include_citations,
                     )
+                    yielded_content = True
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
+
+        if saw_blank_text and not yielded_content:
+            # A user turn whose text was entirely blank is dropped above, but Anthropic rejects
+            # an empty `messages` list, so send the same minimal turn `_anchor_system_messages` uses.
+            yield BetaTextBlockParam(text=_USER_ANCHOR_TEXT, type='text')
 
     def _map_tool_definition(
         self,

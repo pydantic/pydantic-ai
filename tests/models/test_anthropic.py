@@ -11107,7 +11107,8 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
         ModelRequest(parts=[UserPromptPart(content='')], kind='request', timestamp=IsDatetime()),
     ]
     _, anthropic_messages = await model._map_message(messages_empty_string, ModelRequestParameters(), {})  # type: ignore[attr-defined]
-    assert anthropic_messages == snapshot([])  # Empty content should be filtered out
+    # The turn is kept as the minimal anchor turn: Anthropic rejects an empty `messages` list
+    assert anthropic_messages == snapshot([{'role': 'user', 'content': [{'text': '.', 'type': 'text'}]}])
 
     # Test _map_message with list containing empty strings in user prompt
     messages_mixed_content: list[ModelMessage] = [
@@ -11136,6 +11137,59 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
     ]
     _, anthropic_messages = await model._map_message(messages_resp, ModelRequestParameters(), {})  # type: ignore[attr-defined]
     assert len(anthropic_messages) == 0  # No messages should be added
+
+
+@pytest.mark.parametrize('prompt', ['', ' ', ' \t\n', [' ', TextContent(content='')]])
+async def test_anthropic_blank_user_prompt_uses_anchor(env: TestEnv, prompt: str | list[str | TextContent]):
+    """A user turn whose text is entirely blank is sent as the minimal anchor turn.
+
+    Unit test on the private mapper: cassette matchers are not body-sensitive, so a VCR test
+    cannot assert on the mapped request shape.
+    """
+    env.set('ANTHROPIC_API_KEY', 'test-key')
+    model = AnthropicModel('claude-sonnet-4-5', provider='anthropic')
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=prompt)], kind='request', timestamp=IsDatetime()),
+    ]
+    _, anthropic_messages = await model._map_message(messages, ModelRequestParameters(), {})  # type: ignore[attr-defined]
+    assert anthropic_messages == snapshot([{'role': 'user', 'content': [{'text': '.', 'type': 'text'}]}])
+
+
+async def test_anthropic_blank_user_prompt_mid_history_keeps_turn(env: TestEnv):
+    """A blank prompt between real turns keeps the user turn in the message history."""
+    env.set('ANTHROPIC_API_KEY', 'test-key')
+    model = AnthropicModel('claude-sonnet-4-5', provider='anthropic')
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')], kind='request', timestamp=IsDatetime()),
+        ModelResponse(parts=[TextPart(content='Hello!')], kind='response'),
+        ModelRequest(parts=[UserPromptPart(content=' \t\n')], kind='request', timestamp=IsDatetime()),
+    ]
+    _, anthropic_messages = await model._map_message(messages, ModelRequestParameters(), {})  # type: ignore[attr-defined]
+    assert anthropic_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Hi', 'type': 'text'}]},
+            {'role': 'assistant', 'content': [{'text': 'Hello!', 'type': 'text'}]},
+            {'role': 'user', 'content': [{'text': '.', 'type': 'text'}]},
+        ]
+    )
+
+
+async def test_anthropic_blank_text_items_omitted_from_mixed_prompt(env: TestEnv):
+    """Blank or whitespace-only text items are dropped from a mixed prompt while real text is kept."""
+    env.set('ANTHROPIC_API_KEY', 'test-key')
+    model = AnthropicModel('claude-sonnet-4-5', provider='anthropic')
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content=[' ', 'Hello', '', 'World'])], kind='request', timestamp=IsDatetime()
+        ),
+    ]
+    _, anthropic_messages = await model._map_message(messages, ModelRequestParameters(), {})  # type: ignore[attr-defined]
+    assert anthropic_messages == snapshot(
+        [{'role': 'user', 'content': [{'text': 'Hello', 'type': 'text'}, {'text': 'World', 'type': 'text'}]}]
+    )
 
 
 async def test_anthropic_tool_output(
