@@ -772,6 +772,8 @@ class SessionEntry:
     current: bool
     archived: bool
     """Hidden from the sidebar unless it lists archived sessions too."""
+    source: str | None = None
+    """The agent it was imported from, `Claude Code` or `Codex`; `None` for CLAI's own sessions."""
 
 
 @dataclass(frozen=True, kw_only=True)

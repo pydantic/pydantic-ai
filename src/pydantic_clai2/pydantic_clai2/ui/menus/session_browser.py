@@ -20,6 +20,7 @@ from termflow.tui.layout import collapsed, split_frame, truncate
 from termflow.tui.terminal import terminal_session, terminal_size
 
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
+from pydantic_clai2.runtime.imported_sessions import imported_from, source_label, source_tag
 from pydantic_clai2.runtime.project_identity import MISSING, ProjectIdentity, placements, project_identity
 from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.rendering import theme
@@ -275,16 +276,19 @@ class SessionBrowser:
             risk = ' !' if entry.outcome in ('running', 'failed', 'cancelled') else ''
             archived = ' (archived)' if entry.archived_at is not None else ''
             title = f'{marker}{entry.updated_at.astimezone():%H:%M} {entry.title}{risk}{archived}'
-            counts = f'{entry.message_count} msgs / {entry.total_tokens:,} tok'
+            source = imported_from(entry)
+            label = '' if source is None else f'{source_label(source)} · '
+            counts = f'{label}{entry.message_count} msgs / {entry.total_tokens:,} tok'
             if len(counts) > width // 2:
-                counts = f'{entry.message_count} msgs'
+                counts = f'{label}{entry.message_count} msgs'
             if self.importing(entry):
-                counts = 'to import'
+                counts = f'{label}to import'
             title = truncate(plain(title), max(1, width - len(counts) - 1))
             if entry == selected and self.mode == 'sessions':
                 title = f'{theme.sgr(theme.INFO, bold=True)}{title}\x1b[0m'
             lines.append(title + ' ' * max(1, width - visible_length(title) - len(counts)) + counts)
-            tags = list(entry.tags)
+            # The tag saying where a session came from is shown beside its counts, not as a topic.
+            tags = [tag for tag in entry.tags if source is None or tag != source_tag(source)]
             while tags and len(' '.join(f'#{t}' for t in tags)) > width // 2:
                 tags.pop()
             chips = ' '.join(f'#{t}' for t in tags)

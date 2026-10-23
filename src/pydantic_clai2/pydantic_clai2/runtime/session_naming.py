@@ -18,6 +18,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     SqliteConversationStore,
     conversation_text,
 )
+from pydantic_clai2.runtime.imported_sessions import imported_from, source_tag
 
 
 class SessionName(BaseModel):
@@ -175,11 +176,14 @@ class SessionNamer:
         if result is None:
             return None
         title = ' '.join(result.name.title.split()[:8])
+        # Topic tags are replaced, but not the one saying which agent the session was imported from.
+        source = imported_from(saved.summary)
+        kept = () if source is None else (source_tag(source),)
         named = await self.store.name(
             source=saved.summary,
             title=title,
             subtitle=' '.join(result.name.subtitle.split()[:12]),
-            tags=tuple(result.name.tags),
+            tags=(*kept, *result.name.tags),
             tokens=result.tokens,
         )
         return title if named else None

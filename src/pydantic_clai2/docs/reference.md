@@ -2133,11 +2133,23 @@ CLAI, each resume reads the original again, so later turns in Claude Code or
 Codex come along. Once you send a prompt in CLAI, the copy is CLAI's own and
 later turns in Claude Code or Codex are not merged into it.
 
+A session from Claude Code or Codex says so wherever it is listed, before and after
+importing it: its browser card shows **Claude Code** or **Codex** beside the message
+count, and the web UI shows the same label beside its title in the sidebar and above
+the transcript. CLAI's own sessions show no label. CLAI records it as the tag
+`from:claude` or `from:codex`, which background naming keeps. A session imported by
+an earlier CLAI has no such tag: it keeps its label while its subtitle still names the
+original session, as in `Claude Code session ID`, and the first background name after
+that adds the tag. One renamed by background naming before then shows no label until
+you open it again from the `/resume` browser, with `/resume claude ID` or `/resume codex ID`,
+or with `--resume-claude` or `--resume-codex`, before continuing it in CLAI.
+
 #### Background names
 
 A saved session immediately gets a fallback title from its first prompt. A
 single background worker can replace it with a short title, subtitle, and up to
-four topic tags. The browser refreshes names while idle without moving selection.
+four topic tags. It never replaces the tag saying a session came from Claude Code or
+Codex. The browser refreshes names while idle without moving selection.
 
 The worker uses the previous summary plus up to 2,400 characters of recent
 user/assistant text. It refreshes generated names after 16 content revisions;

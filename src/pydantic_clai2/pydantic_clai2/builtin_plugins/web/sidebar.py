@@ -11,6 +11,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
 )
 from pydantic_clai2.builtin_plugins.web.protocol import SessionEntry, SessionState, Worktree
 from pydantic_clai2.plugins import LiveSession
+from pydantic_clai2.runtime.imported_sessions import imported_from, source_label
 from pydantic_clai2.runtime.project_identity import ProjectIdentity
 
 
@@ -31,6 +32,7 @@ def session_entry(summary: ConversationSummary, *, live: LiveSession | None, bus
         model=summary.model,
         current=current,
         archived=summary.archived_at is not None,
+        source=None if (source := imported_from(summary)) is None else source_label(source),
     )
 
 

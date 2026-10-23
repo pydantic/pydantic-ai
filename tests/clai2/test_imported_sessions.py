@@ -2,7 +2,9 @@
 
 import json
 import os
+import re
 from collections.abc import Sequence
+from dataclasses import replace
 from io import StringIO
 from pathlib import Path
 
@@ -44,9 +46,11 @@ from pydantic_clai2.runtime.imported_sessions import (
     ImportCatalog,
     find_import,
     import_source,
+    imported_from,
     merge,
     save_import,
 )
+from pydantic_clai2.runtime.session_naming import NamingClient, NamingResult, SessionName, SessionNamer
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -386,7 +390,7 @@ async def test_catalog_lists_both_agents_newest_first(tmp_path: Path) -> None:
     (codex.parent / 'rollout-2026-10-01T13-00-00-gone.jsonl').symlink_to(tmp_path / 'missing')
     catalog = ImportCatalog(('claude', 'codex'))
     first, second = catalog.listing()
-    assert (first.title, first.title_source, first.tags) == ('Verbose flag', 'generated', ('codex',))
+    assert (first.title, first.title_source, first.tags) == ('Verbose flag', 'generated', ('from:codex',))
     assert first.subtitle == f'Codex session {CODEX_ID}'
     assert first.workspace == str((tmp_path / 'codex-project').resolve())
     assert (second.title, second.title_source, second.revision) == ('Fix the parser', 'generated', 0)
@@ -414,13 +418,14 @@ async def test_import_refreshes_only_an_untouched_copy(tmp_path: Path) -> None:
     imported = find_import('codex', CODEX_ID)
     conversation_id = await save_import(store, imported)
     saved = await store.get(conversation_id=conversation_id)
-    assert (saved.summary.revision, saved.summary.tags) == (1, ('codex',))
+    assert (saved.summary.revision, saved.summary.tags) == (1, ('from:codex',))
     assert saved.messages == codex_sessions.messages(path)
     assert await store.name(source=saved.summary, title='My rename', subtitle='Mine', tags=('flags',), manual=True)
     assert await save_import(store, imported) == conversation_id
     renamed = (await store.get(conversation_id=conversation_id)).summary
-    # A refresh keeps the copy's name.
-    assert (renamed.revision, renamed.title, renamed.subtitle, renamed.tags) == (1, 'My rename', 'Mine', ('flags',))
+    # A refresh keeps the copy's name, and tags where it came from again if the name dropped that.
+    assert (renamed.revision, renamed.title, renamed.subtitle) == (1, 'My rename', 'Mine')
+    assert renamed.tags == ('from:codex', 'flags')
     assert (renamed.title_source, renamed.naming_version) == ('user', 1)
     # Codex continued the session, even after this listing read it and the copy was saved: the
     # untouched copy still follows it, whatever the file's time says.
@@ -440,6 +445,75 @@ async def test_import_refreshes_only_an_untouched_copy(tmp_path: Path) -> None:
     continued = await store.save(summary=refreshed.summary, messages=refreshed.messages[:1])
     assert await save_import(store, find_import('codex', CODEX_ID)) == conversation_id
     assert (await store.get(conversation_id=conversation_id)).summary == continued
+
+
+async def test_the_agent_a_session_came_from_survives_naming(tmp_path: Path) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    codex_session(tmp_path)
+    claude_session(tmp_path)
+    new = await save_import(store, find_import('codex', CODEX_ID))
+    # Imported before imports were tagged: a bare topic-like tag, and the subtitle import gave it.
+    old = replace(find_import('claude', CLAUDE_ID).summary, tags=('claude',), title_source='fallback')
+    assert old.subtitle == f'Claude Code session {CLAUDE_ID}'
+    history = [ModelRequest(parts=[UserPromptPart('Fix the parser please')])]
+    await store.save(summary=old, messages=history)
+    # CLAI's own session about Claude Code, with a subtitle that does not name its own ID.
+    native = await store.save(
+        summary=ConversationSummary(workspace=str(tmp_path), subtitle='Claude Code session x', tags=('claude',)),
+        messages=history,
+    )
+    assert [imported_from(entry) for entry in await store.listing()] == [None, 'claude', 'codex']
+
+    async def generate(prompt: str) -> NamingResult:
+        return NamingResult(name=SessionName(title='Renamed', subtitle='Generated', tags=['claude', 'codex']))
+
+    namer, client = SessionNamer(store=store), NamingClient(generate=generate)
+    for conversation_id in (new, old.id, native.id):
+        assert await namer.name(conversation_id=conversation_id, client=client)
+    named = {entry.id: entry for entry in await store.listing()}
+    # Naming replaces the topics and the old subtitle, but keeps the source, tagging the old import now.
+    assert named[new].tags == ('from:codex', 'claude', 'codex')
+    assert named[old.id].tags == ('from:claude', 'claude', 'codex') and named[old.id].subtitle == 'Generated'
+    assert named[native.id].tags == ('claude', 'codex')
+    # A CLAI turn keeps it too.
+    continued = await store.save(summary=named[old.id], messages=[*history, ModelResponse(parts=[TextPart('Done')])])
+    assert [imported_from(named[new]), imported_from(continued), imported_from(named[native.id])] == [
+        'codex',
+        'claude',
+        None,
+    ]
+
+
+def test_browser_says_where_sessions_came_from(tmp_path: Path) -> None:
+    claude_session(tmp_path)
+    to_import = find_import('claude', CLAUDE_ID).summary
+    imported = ConversationSummary(
+        workspace='/w', title='Codex copy', revision=2, message_count=4, tags=('from:codex', 'flags')
+    )
+    native = ConversationSummary(workspace='/w', title='CLAI session', revision=2, message_count=2, tags=('cli',))
+    entries = [replace(to_import, workspace='/w'), imported, native]
+    browser = SessionBrowser(
+        entries=entries,
+        workspace='/w',
+        active_id='',
+        refresh=lambda query, limit, archived: entries,
+        preview=lambda session_id: '',
+        delete=lambda entry: None,
+        rename=lambda entry, title: None,
+        archive=lambda entry, archived: None,
+        importing=lambda entry: not entry.revision,
+        output=StringIO(),
+        size=lambda: (120, 20),
+    )
+    browser.mode = 'sessions'
+    frame = re.sub(r'\x1b\[[0-9;]*m', '', '\n'.join(browser.frame(width=120, height=20)))
+    assert re.search(r'Fix the parser +Claude Code · to import\n', frame)
+    assert re.search(r'Codex copy +Codex · 4 msgs / 0 tok\n.*#flags\n', frame)
+    assert re.search(r'CLAI session +2 msgs / 0 tok\n.*#cli', frame)
+    assert '#from:' not in frame
+    # A narrow pane drops the tokens, label included, before it squeezes the title.
+    narrow = re.sub(r'\x1b\[[0-9;]*m', '', '\n'.join(browser.frame(width=40, height=20)))
+    assert re.search(r'Codex copy +Codex · 4 msgs\n', narrow)
 
 
 async def test_import_rejects_a_session_without_a_conversation(tmp_path: Path) -> None:
@@ -486,7 +560,7 @@ async def test_resume_command_imports_by_id_and_continues(tmp_path: Path) -> Non
     with pytest.raises(ValueError, match='Session belongs to'):
         await service.command(['codex', CODEX_ID])
     # Refused before it is saved, so the browser does not gain a session nobody resumed.
-    assert [entry.tags for entry in await store.listing()] == [('claude',)]
+    assert [entry.tags for entry in await store.listing()] == [('from:claude',)]
 
 
 async def test_resume_browser_lists_imports_beside_saved_sessions(
@@ -505,7 +579,7 @@ async def test_resume_browser_lists_imports_beside_saved_sessions(
         seen.append([entry.title for entry in browser.entries])
         assert [browser.importing(entry) for entry in browser.entries] == [False, True, True]
         browser.reload()
-        claude = next(entry for entry in browser.entries if entry.tags == ('claude',))
+        claude = next(entry for entry in browser.entries if entry.tags == ('from:claude',))
         assert 'user: Fix the parser please' in browser.preview(claude.id)
         assert 'A CLAI session' in browser.preview(native_id)
         with pytest.raises(LookupError):
@@ -519,7 +593,7 @@ async def test_resume_browser_lists_imports_beside_saved_sessions(
     assert len(await store.listing()) == 2
 
     def only_codex(browser: SessionBrowser) -> str:
-        assert [entry.tags for entry in browser.entries] == [('codex',)]
+        assert [entry.tags for entry in browser.entries] == [('from:codex',)]
         browser.query = 'other'
         browser.reload()
         assert len(browser.entries) == 1
@@ -544,7 +618,7 @@ async def test_an_archived_copy_keeps_its_original_out_of_resume(
     claude_session(tmp_path)
 
     def pick(browser: SessionBrowser) -> str:
-        return next(entry.id for entry in browser.entries if entry.tags == ('claude',))
+        return next(entry.id for entry in browser.entries if entry.tags == ('from:claude',))
 
     monkeypatch.setattr(SessionBrowser, 'run', pick)
     await service.command([])
@@ -628,7 +702,7 @@ async def test_startup_flags_import_through_chat_and_headless(
     assert code == 0
     assert capsys.readouterr().out == 'headless answer\n'
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
-    codex = next(entry for entry in await store.listing() if entry.tags == ('codex',))
+    codex = next(entry for entry in await store.listing() if entry.tags == ('from:codex',))
     saved = await store.get(conversation_id=codex.id)
     assert 'Add a --verbose flag' in str(saved.messages[0].parts[0])
     request = saved.messages[-2]

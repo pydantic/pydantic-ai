@@ -317,6 +317,8 @@ export interface SessionEntry {
   current: boolean
   /** Hidden from the sidebar unless it lists archived sessions too. */
   archived: boolean
+  /** The agent it was imported from, `Claude Code` or `Codex`; `null` for CLAI's own sessions. */
+  source: string | null
 }
 
 export interface Worktree {
