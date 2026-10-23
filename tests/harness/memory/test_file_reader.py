@@ -151,3 +151,29 @@ class TestReaderKept:
             store = FileStore('../elsewhere')
         recorder, _ = await _run(work, Memory(store=store), FileSystem())
         assert all('read_memory' in tools and 'read_file' in tools for tools in recorder.offered)
+
+
+class TestDeferredFileMemory:
+    async def test_memory_loaded_mid_run_keeps_read_memory(self, tmp_path: Path) -> None:
+        offered: list[set[str]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            offered.append({tool.name for tool in info.function_tools})
+            if len(offered) == 1:
+                return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'memory'}, tool_call_id='load')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        memory = Memory(
+            store=FileStore('.agent-memory'), namespace='acme', description='Long-term memory.', defer_loading=True
+        )
+        agent = Agent(
+            FunctionModel(respond),
+            deps_type=type(None),
+            capabilities=[LocalWorkspace(tmp_path), FileSystem(), memory],
+        )
+        await agent.run('go')
+
+        # Loaded mid-run, Memory records no snapshot, so nothing names its directory: `read_memory` stays.
+        assert len(offered) == 2
+        assert 'read_memory' in offered[1]
+        assert 'read_file' in offered[1]

@@ -17,6 +17,14 @@ from typing_extensions import TypedDict
 from pydantic_ai import ModelRetry
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ToolFailed, UserError
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextContent,
+    UserPromptPart,
+    post_compaction_window,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import (
@@ -62,6 +70,32 @@ _READ_TRUNCATION_MARKER = (
 
 MEMORY_DATA_PREFIX = '<memory>\n'
 MEMORY_DATA_SUFFIX = '\n</memory>'
+
+
+MEMORY_ORIGIN = 'pydantic-ai-harness.memory.v1'
+"""The `origin` in a snapshot's `TextContent.metadata`, next to its hashed scope and the capability's `id`."""
+
+
+def snapshot_metadata(scope: str, memory_id: str | None) -> dict[str, str]:
+    """Identifies a snapshot by the scope it shows and the capability that wrote it.
+
+    Two `Memory` capabilities can share a scope, and render it differently (another `heading` or store), so
+    each one compares only against its own snapshots.
+    """
+    scope_hash = hashlib.sha256(scope.encode()).hexdigest()[:16]
+    return {'origin': MEMORY_ORIGIN, 'scope': scope_hash, 'id': memory_id or ''}
+
+
+def _snapshot_discloses(messages: list[ModelMessage], metadata: dict[str, str], directory: str) -> bool:
+    """Whether a snapshot of this capability the model still sees names `directory`."""
+    return any(
+        isinstance(item, TextContent) and item.metadata == metadata and directory in item.content
+        for message in post_compaction_window(messages)
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+        for item in part.content
+    )
 
 
 def snapshot_content_budget(max_tokens: int, guidance: str | None) -> int:
@@ -282,7 +316,17 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         ):
             return tool_def
         store, scope = self._resolve_scope(ctx)
-        if run_workspace_directory(store, scope) is None:
+        if (directory := run_workspace_directory(store, scope)) is None:
+            return tool_def
+        # A snapshot only gives the directory when one is recorded: in a run that answers a prompt before the
+        # model's first response, or already visible in history. A run that continues earlier work, or loads
+        # `Memory` mid-run, records none, so `read_memory` stays unless an earlier snapshot already says where.
+        will_record = ctx.prompt is not None and not any(
+            isinstance(message, ModelResponse) and message.run_id == ctx.run_id for message in ctx.messages
+        )
+        if not will_record and not _snapshot_discloses(
+            ctx.messages, snapshot_metadata(scope, capability.id), directory
+        ):
             return tool_def
         return step_aside_for_read_file(ctx, tool_def)
 

@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
-from typing import TYPE_CHECKING, Protocol, Self, assert_never, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, Self, TypeGuard, assert_never, runtime_checkable
 
 from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start
@@ -36,6 +36,7 @@ from pydantic_ai.messages import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
     is_multi_modal_content,
 )
@@ -701,6 +702,17 @@ _TOOL_PAIR_SEARCH_RANGE = 5
 """Number of messages to search around a cutoff point for tool-call pairs."""
 
 
+def _is_tool_reply(
+    part: ModelRequestPart,
+) -> TypeGuard[ToolReturnPart | RetryPromptPart]:  # pyright: ignore[reportDeprecated]
+    """Whether *part* answers a tool call, so it is sent paired with that call."""
+    # TODO(v3): remove RetryPromptPart; a caller-passed history can still hold one
+    return isinstance(part, ToolReturnPart) or (
+        isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+        and part.tool_name is not None
+    )
+
+
 def _is_safe_cutoff(
     messages: list[ModelMessage],
     cutoff: int,
@@ -709,7 +721,8 @@ def _is_safe_cutoff(
     """Return True if cutting at *cutoff* does not orphan any tool-call pair.
 
     A tool-call pair is a `ToolCallPart` in a `ModelResponse` together with
-    the corresponding `ToolReturnPart` in a subsequent `ModelRequest`.  Both
+    the corresponding `ToolReturnPart` (a retried call's included), or a legacy
+    `RetryPromptPart` that rejected it, in a subsequent `ModelRequest`.  Both
     sides must end up on the same side of the cut.
     """
     if cutoff >= len(messages):
@@ -736,7 +749,7 @@ def _is_safe_cutoff(
             if not isinstance(later, ModelRequest):
                 continue
             for rpart in later.parts:
-                if isinstance(rpart, ToolReturnPart) and rpart.tool_call_id in call_ids:
+                if _is_tool_reply(rpart) and rpart.tool_call_id in call_ids:
                     call_before = i < cutoff
                     return_before = j < cutoff
                     if call_before != return_before:
@@ -748,10 +761,10 @@ def _is_safe_cutoff(
 def find_safe_cutoff(messages: list[ModelMessage], keep: int) -> int:
     """Find a cutoff index that keeps *keep* tail messages without splitting tool pairs.
 
-    Returns 0 if trimming is unnecessary (fewer messages than *keep*).
+    The newest message is always kept, since in a run it is the request being answered, so a
+    *keep* of 0 keeps one. Returns 0 if trimming is unnecessary (no more messages than *keep*).
     """
-    if keep == 0:
-        return len(messages)
+    keep = max(keep, 1)
     if len(messages) <= keep:
         return 0
 
@@ -775,11 +788,7 @@ def _include_tool_dependencies(messages: list[ModelMessage], cutoff: int) -> int
                     calls[part.tool_call_id] = index
         else:
             for part in message.parts:
-                # TODO(v3): remove RetryPromptPart; a caller-passed history can still hold one
-                if isinstance(part, ToolReturnPart) or (
-                    isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
-                    and part.tool_name is not None
-                ):
+                if _is_tool_reply(part):
                     earliest = min(earliest, calls.get(part.tool_call_id, index))
         dependencies.append(earliest)
 
@@ -856,9 +865,85 @@ def find_token_cutoff(
 # ---------------------------------------------------------------------------
 
 
+# Interim, deliberately generic rule: a harness capability that tags the content it adds on the user channel
+# with an `origin` under this prefix is covered by this one check, without per-capability code. Today that is
+# `BackgroundTools` results, `TrajectoryJudge` feedback, `SubAgents` task reports and `Memory` snapshots (older
+# `Memory` releases marked theirs with a plain string, also recognized). The rule is temporary: once core
+# provenance (`CapabilityPart`) lands, recognize that instead of this metadata convention.
+HARNESS_ORIGIN_PREFIX = 'pydantic-ai-harness.'
+"""The prefix of the `origin` metadata harness capabilities put on content they add on the user channel."""
+
+_LEGACY_MEMORY_MARKER = 'pydantic-ai-harness.memory.v1'
+"""The plain-string metadata older `Memory` releases put on a snapshot, alone or followed by `:<scope hash>`."""
+
+
+def harness_data_origin(part: UserPromptPart) -> str | None:
+    """The `origin` of user-channel content a harness capability added, or `None` for anything else.
+
+    A part counts when its first item is a `TextContent` whose metadata names a harness origin: that tag
+    marks the whole part, as a `BackgroundTools` result marks the files and text that follow it. A part
+    that only mentions such content later, after what the user wrote, is never relabeled.
+    """
+    # TODO: switch to the core provenance field once it exists.
+    match part.content:
+        case [TextContent(metadata=metadata), *_] if (
+            is_str_dict(metadata)
+            and isinstance(origin := metadata.get('origin'), str)
+            and origin.startswith(HARNESS_ORIGIN_PREFIX)
+        ):
+            return origin
+        case [item, *_] if _is_legacy_memory(item):
+            return _LEGACY_MEMORY_MARKER
+        case _:
+            return None
+
+
+def _is_legacy_memory(item: UserContent) -> bool:
+    return isinstance(item, TextContent) and (
+        item.metadata == _LEGACY_MEMORY_MARKER
+        or (isinstance(item.metadata, str) and item.metadata.startswith(f'{_LEGACY_MEMORY_MARKER}:'))
+    )
+
+
+def split_legacy_memory(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Give each legacy `Memory` snapshot that shares a user prompt part with other content a part of its own.
+
+    Older `Memory` releases could add their snapshot to the user's own prompt part, so it sits next to what the
+    user wrote, in either order. Split apart, the snapshot is summarized as harness data and the user's text
+    stays a user turn. The message count is unchanged: only parts inside a message are split.
+    """
+    out: list[ModelMessage] = []
+    for message in messages:
+        if not isinstance(message, ModelRequest) or not any(
+            isinstance(part, UserPromptPart)
+            and not isinstance(part.content, str)
+            and len(part.content) > 1
+            and any(_is_legacy_memory(item) for item in part.content)
+            for part in message.parts
+        ):
+            out.append(message)
+            continue
+        parts: list[ModelRequestPart] = []
+        for part in message.parts:
+            if not isinstance(part, UserPromptPart) or isinstance(part.content, str) or len(part.content) < 2:
+                parts.append(part)
+                continue
+            user = [item for item in part.content if not _is_legacy_memory(item)]
+            if user:
+                parts.append(replace(part, content=user))
+            parts.extend(replace(part, content=[item]) for item in part.content if _is_legacy_memory(item))
+        out.append(replace(message, parts=parts))
+    return out
+
+
+def is_harness_data(part: ModelRequestPart) -> bool:
+    """Whether *part* is user-channel content a harness capability added, such as a `SubAgents` task report."""
+    return isinstance(part, UserPromptPart) and harness_data_origin(part) is not None
+
+
 def _is_harness_marker_part(part: ModelRequestPart) -> bool:
-    """Return whether a user-role part is harness bookkeeping rather than a user turn."""
-    return is_pinned(part) or is_receipt_part(part)
+    """Return whether a user-role part is harness bookkeeping or data rather than a user turn."""
+    return is_pinned(part) or is_receipt_part(part) or is_harness_data(part)
 
 
 def find_first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
@@ -880,14 +965,17 @@ def prepend_first_user_message(
 
     If the first `ModelRequest` containing a `UserPromptPart` in *original*
     was discarded (its index is before *cutoff*) and is not already in *trimmed*,
-    prepend it.
+    prepend it. Harness data merged into that request, such as a `SubAgents` task
+    report delivered with the user's prompt, is left out: it isn't the user's turn,
+    and keeping it would hold it outside the window on every run.
     """
     first = find_first_user_message(original)
     if first is None:
         return trimmed
     idx = original.index(first)
     if idx < cutoff and first not in trimmed:
-        return [first, *trimmed]
+        genuine = [part for part in first.parts if not is_harness_data(part)]
+        return [first if len(genuine) == len(first.parts) else replace(first, parts=genuine), *trimmed]
     return trimmed
 
 

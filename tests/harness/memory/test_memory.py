@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import json
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Mapping
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
@@ -80,8 +82,10 @@ from tests.conftest import try_import
 from tests.harness._recording_durability import RecordingDurability
 
 with try_import() as provider_imports:
+    import httpx2
+
     from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -1981,6 +1985,47 @@ class TestInjection:
         assert len(sent) == 1
         assert not _memory_contexts(sent[0])
         assert not _memory_contexts(result.all_messages())
+
+    @pytest.mark.skipif(not provider_imports(), reason='openai not installed')
+    async def test_emptied_memory_is_recorded_for_a_provider_that_ignores_another_providers_compaction(
+        self, allow_model_requests: None
+    ) -> None:
+        store = InMemoryStore()
+        mutation = await _seed(store, 'main/MEMORY.md', '- likes tea')
+        first = await Agent(TestModel(call_tools=[]), capabilities=[Memory(store=store)]).run('first')
+        history: list[ModelMessage] = [
+            *first.all_messages(),
+            ModelRequest(parts=[UserPromptPart('compact')]),
+            ModelResponse(parts=[CompactionPart(content='A summary.', provider_name='anthropic')]),
+        ]
+        await store.delete('main/MEMORY.md', expected_version=mutation.version)
+        bodies: list[dict[str, Any]] = []
+
+        def handle(request: httpx2.Request) -> httpx2.Response:
+            bodies.append(json.loads(request.read()))
+            message = {'role': 'assistant', 'content': 'done'}
+            return httpx2.Response(
+                200,
+                json={
+                    'id': 'chatcmpl-1',
+                    'object': 'chat.completion',
+                    'created': 0,
+                    'model': 'gpt-5.6-sol',
+                    'choices': [{'index': 0, 'message': message, 'finish_reason': 'stop'}],
+                    'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2},
+                },
+            )
+
+        client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
+        model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(api_key='x', http_client=client))
+        await Agent(model, capabilities=[Memory(store=store)]).run('next', message_history=history)
+
+        # Chat doesn't honor Anthropic's compaction, so it still sends the old snapshot: the empty one must follow it.
+        [body] = bodies
+        sent = json.dumps(body['messages'])
+        assert '- likes tea' in sent
+        assert '[memory is empty]' in sent
+        assert sent.index('- likes tea') < sent.index('[memory is empty]')
 
     async def test_memory_loaded_mid_run_waits_for_the_next_prompt(self) -> None:
         store = InMemoryStore()

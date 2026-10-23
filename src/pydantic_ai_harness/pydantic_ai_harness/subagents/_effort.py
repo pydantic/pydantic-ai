@@ -10,7 +10,7 @@ MINIMUM_EFFORT_FLOOR: ThinkingEffort = 'low'
 `clamp_effort` raises anything below this to the floor. The constant is exported
 so applications can preserve the former sub-agent policy when needed."""
 
-_EFFORT_RANK: dict[ThinkingEffort, int] = {'minimal': 0, 'low': 1, 'medium': 2, 'high': 3, 'xhigh': 4}
+_EFFORT_RANK: dict[ThinkingEffort, int] = {'minimal': 0, 'low': 1, 'medium': 2, 'high': 3, 'xhigh': 4, 'max': 5}
 """Ordering of the concrete effort levels, low to high."""
 
 

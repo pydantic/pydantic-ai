@@ -372,7 +372,8 @@ configured retention can delete older snapshots.
   Pass `connection=` instead of `database=` to share a `sqlite3.Connection`
   with the rest of your application; the connection must be opened with
   `check_same_thread=False` because hook calls are dispatched onto a
-  worker thread.
+  worker thread; the store leaves its busy timeout and journal mode as the
+  caller set them.
 - `MongoStepStore(client= or db_url=, database=...)` -- MongoDB collections
   `runs`, `events`, `snapshots`, `snapshot_messages`, `snapshot_idempotency_keys`,
   `tool_effects`, and `counters` (atomic `$inc` for monotonic `seq`). Run registration uses an
