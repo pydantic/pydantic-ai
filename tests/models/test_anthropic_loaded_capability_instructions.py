@@ -10,7 +10,6 @@ fetched page claims to replace the rules.
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
 
 import pytest
 
@@ -20,11 +19,8 @@ from pydantic_ai.messages import InstructionDeltaPart, LoadCapabilityReturnPart
 
 from ..conftest import try_import
 
-if TYPE_CHECKING:
-    from pydantic_ai.models.anthropic import AnthropicModel
-
 with try_import() as imports_successful:
-    import anthropic  # noqa: F401
+    from pydantic_ai.models.anthropic import AnthropicModel
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -89,6 +85,7 @@ async def test_loaded_rules_hold_under_pressure(
 ):
     agent = Agent(
         anthropic_model('claude-opus-5-5'),
+        deps_type=type(None),
         instructions='You are an assistant for a software workspace.',
         capabilities=[housekeeping()],
         tools=[fetch_url, list_files],

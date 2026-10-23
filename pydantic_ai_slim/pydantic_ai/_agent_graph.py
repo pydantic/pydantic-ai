@@ -1509,7 +1509,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     )
     _did_stream: bool = field(repr=False, init=False, default=False)
     last_request_context: ModelRequestContext | None = field(repr=False, init=False, default=None)
-    _resolved_loaded_parts: list[_messages.InstructionPart] = field(repr=False, init=False, default_factory=list)
+    _resolved_loaded_parts: list[_messages.InstructionPart] = field(
+        repr=False, init=False, default_factory=list[_messages.InstructionPart]
+    )
     """The loaded capabilities' instruction parts this request resolved, before the hooks ran."""
 
     async def run(

@@ -2403,7 +2403,7 @@ async def test_run_stream_load_capability_tool_kind_metadata(sdk_version: Litera
             {
                 'type': 'tool-output-available',
                 'toolCallId': 'load-1',
-                'output': {'instructions': 'Refund instructions.'},
+                'output': {},
             },
         ],
         6: [
@@ -2424,7 +2424,7 @@ async def test_run_stream_load_capability_tool_kind_metadata(sdk_version: Litera
             {
                 'type': 'tool-output-available',
                 'toolCallId': 'load-1',
-                'output': {'instructions': 'Refund instructions.'},
+                'output': {},
             },
         ],
     }
