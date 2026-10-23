@@ -15,7 +15,7 @@ import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from types import UnionType
-from typing import Annotated, Any, Literal, Union, assert_never, get_args, get_origin
+from typing import Annotated, Any, ForwardRef, Literal, Union, assert_never, get_args, get_origin
 
 from typing_extensions import TypeIs
 
@@ -170,7 +170,8 @@ def takes_ctx(func: Callable[..., object]) -> bool:
     means the run context, and any other type means the guarded value. A first
     parameter with no annotation, `Any`, `object`, or a type that cannot be
     resolved still gets the run context, as it always has, with a
-    `HarnessDeprecationWarning`. A callable whose signature cannot be
+    `HarnessDeprecationWarning`, unless the unresolved annotation names
+    `RunContext`, which needs no warning. A callable whose signature cannot be
     introspected is treated as taking the value only.
     """
     try:
@@ -188,8 +189,11 @@ def takes_ctx(func: Callable[..., object]) -> bool:
     if positional[1].default is inspect.Parameter.empty:
         return True
     annotation = _resolve(func, positional[0].annotation)
+    while get_origin(annotation) is Annotated:
+        annotation = get_args(annotation)[0]
     either = annotation is inspect.Parameter.empty or annotation is Any or annotation is object
-    if either or (isinstance(annotation, str) and not _names_run_context(annotation)):
+    unresolved = isinstance(annotation, str) or _has_forward_ref(annotation)
+    if either or (unresolved and not _is_run_context(annotation)):
         warnings.warn(
             f'Guard {_guard_name(func)} has a second positional parameter with a default and a first parameter '
             'that is unannotated, `Any`, `object` or unresolvable, so it is passed the RunContext first, as before. '
@@ -227,6 +231,8 @@ def _is_run_context(annotation: object) -> bool:
     """
     if isinstance(annotation, str):
         return _names_run_context(annotation)
+    if isinstance(annotation, ForwardRef):
+        return _names_run_context(annotation.__forward_arg__)
     if annotation is RunContext:
         return True
     origin = get_origin(annotation)
@@ -237,6 +243,11 @@ def _is_run_context(annotation: object) -> bool:
     if origin is Union or origin is UnionType:
         return any(_is_run_context(arg) for arg in get_args(annotation) if arg is not type(None))
     return False
+
+
+def _has_forward_ref(annotation: object) -> bool:
+    """Whether a type annotation holds a quoted name that was never resolved, as in `Optional['Deps']`."""
+    return isinstance(annotation, ForwardRef) or any(_has_forward_ref(arg) for arg in get_args(annotation))
 
 
 def _names_run_context(annotation: str) -> bool:
@@ -271,7 +282,8 @@ async def evaluate(
 
 def _guard_name(guard: GuardCallable) -> str:
     """A guard's name for a message, without its `repr`, which can show bound arguments such as keys."""
-    return getattr(guard, '__qualname__', type(guard).__name__)
+    target: object = guard.func if isinstance(guard, functools.partial) else guard
+    return getattr(target, '__qualname__', None) or type(target).__name__
 
 
 def is_guard_chain(guard: object) -> TypeIs[Sequence[GuardCallable]]:
