@@ -58,6 +58,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
     Capability,
+    Hooks,
     ImageGeneration,
     ProcessHistory,
     durable_operation,
@@ -1529,12 +1530,13 @@ async def test_multiple_agents(allow_model_requests: None, client: Client):
 
 
 async def test_agent_name_collision(allow_model_requests: None, client: Client):
+    same_name_agent = TemporalAgent(Agent(model, name='simple_agent'), activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
     with pytest.raises(ValueError, match='More than one activity named agent__simple_agent__event_stream_handler'):
         async with Worker(
             client,
             task_queue=TASK_QUEUE,
             workflows=[SimpleAgentWorkflow],
-            plugins=[AgentPlugin(simple_temporal_agent), AgentPlugin(simple_temporal_agent)],
+            plugins=[AgentPlugin(simple_temporal_agent), AgentPlugin(same_name_agent)],
         ):
             pass
 
@@ -4476,6 +4478,94 @@ async def test_run_context_cancel_in_activity_surfaces_user_error(client: Client
         '`cancel` is only available during an agent run (from tools, event stream handlers, or capability hooks) '
         'in the same process as the run itself. This `RunContext` has no run to cancel.'
     )
+
+
+_self_cancelling_sub_agent = Agent(TestModel(), name='self_cancelling_sub_agent')
+
+
+@_self_cancelling_sub_agent.tool
+def _stop_sub_agent(ctx: RunContext[object]) -> str:
+    ctx.cancel()
+    return 'discarded'
+
+
+_sub_agent_delegations: list[None] = []
+
+
+async def _delegate_to_self_cancelling_sub_agent() -> str:
+    _sub_agent_delegations.append(None)
+    return (await _self_cancelling_sub_agent.run('stop')).output
+
+
+# Appended to workflow-side, so the workflow reads it back from its own copy of this module.
+_sub_agent_cancel_hook_errors: list[str] = []
+
+
+async def _record_sub_agent_cancel(
+    ctx: RunContext[object],
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: dict[str, Any],
+    error: Exception,
+) -> Any:
+    assert isinstance(error, RunCancelled)
+    _sub_agent_cancel_hook_errors.append(
+        f'{type(error).__name__}: run_id={error.run_id is not None}, '
+        f'messages={len(error.all_messages())}, requests={error.usage.requests}'
+    )
+    raise error
+
+
+_sub_agent_cancel_agent = Agent(
+    TestModel(),
+    name='sub_agent_cancel_agent',
+    tools=[_delegate_to_self_cancelling_sub_agent],
+    capabilities=[Hooks(tool_execute_error=_record_sub_agent_cancel), TemporalDurability()],
+)
+
+
+@workflow.defn
+class SubAgentCancelWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> tuple[list[str], list[str]]:
+        _sub_agent_cancel_hook_errors.clear()
+        result = await _sub_agent_cancel_agent.run(prompt)
+        tool_returns = [
+            f'{part.outcome}: {part.content}'
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        return tool_returns, list(_sub_agent_cancel_hook_errors)
+
+
+async def test_sub_agent_self_cancel_in_activity_is_a_failed_tool_return(client: Client) -> None:
+    """A sub-agent that cancels itself inside a tool activity fails that tool call, as it does in-process.
+
+    The cancellation crosses the activity boundary as a result, so the activity succeeds once
+    rather than being retried under the default retry policy until the workflow fails. The
+    workflow-side tool-execute hook sees the `RunCancelled`, with its message only: run state does
+    not cross the activity boundary.
+    """
+    _sub_agent_delegations.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SubAgentCancelWorkflow],
+        plugins=[AgentPlugin(_sub_agent_cancel_agent)],
+    ):
+        tool_returns, hook_errors = await client.execute_workflow(
+            SubAgentCancelWorkflow.run,
+            args=['delegate'],
+            id=f'{SubAgentCancelWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+
+    assert tool_returns == snapshot(['failed: The sub-agent run was cancelled: The agent run was cancelled.'])
+    assert hook_errors == snapshot(['RunCancelled: run_id=False, messages=0, requests=0'])
+    assert len(_sub_agent_delegations) == 1
 
 
 # --- Usage mutated inside an activity ---

@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
@@ -39,7 +40,7 @@ from pydantic_ai_harness.step_persistence import (
     StepPersistence,
     ToolEffectRecord,
 )
-from tests.harness.step_persistence._histories import growing_histories
+from tests.harness.step_persistence._histories import growing_histories, history_with_unordered_keys
 
 
 def _sample_messages_with_media(payload_size: int) -> list[ModelMessage]:
@@ -587,6 +588,41 @@ class TestEndToEndMediaWithAgent:
         blobs = list((tmp_path / 'runs' / 'media').glob('*.bin'))
         assert len(blobs) == 1
 
+    @pytest.mark.parametrize(
+        'tool_output',
+        [
+            pytest.param({'__harness_external_media__': True, 'status': 'ok'}, id='marker-key'),
+            pytest.param({'kind': 'binary', 'data': 'hello'}, id='binary-shaped-not-base64'),
+        ],
+    )
+    async def test_tool_output_shaped_like_walker_data_persists_and_resumes(
+        self, tmp_path: Path, tool_output: dict[str, object]
+    ) -> None:
+        """Tool output that looks like a marker or like `BinaryContent` saves with the snapshot and restores unchanged."""
+        store = SqliteStepStore(database=tmp_path / 'runs.db')
+        agent: Agent[None, str] = Agent(
+            TestModel(call_tools=['fetch']), capabilities=[StepPersistence(store=store, run_id='r1')]
+        )
+
+        @agent.tool_plain
+        def fetch() -> dict[str, object]:
+            """Fetch a remote JSON document."""
+            return tool_output
+
+        result = await agent.run('go')
+
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        returns = [
+            part.content
+            for message in snap.messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        assert returns == [tool_output]
+        assert len(snap.messages) == len(result.all_messages())
+
 
 # ---------------------------------------------------------------------------
 # Auto / opt-out / explicit media_store semantics on both stores
@@ -819,6 +855,16 @@ def _count(db: Path, table: str) -> int:
 
 
 class TestSqliteStoresEachMessageOnce:
+    async def test_dict_key_order_round_trips(self, tmp_path: Path) -> None:
+        """A reloaded history keeps its dict key order, so the next request sends the provider the same bytes."""
+        store = SqliteStepStore(database=tmp_path / 'runs.db', media_store=None)
+        history = history_with_unordered_keys()
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=history))
+
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        assert ModelMessagesTypeAdapter.dump_json(snap.messages) == ModelMessagesTypeAdapter.dump_json(history)
+
     async def test_stores_each_message_once_and_restores_every_snapshot(self, tmp_path: Path) -> None:
         db = tmp_path / 'runs.db'
         store = SqliteStepStore(database=db, media_store=None, max_snapshots_per_run=1)

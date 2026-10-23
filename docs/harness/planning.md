@@ -207,6 +207,21 @@ result = agent.run_sync('...')
 print(result.output)
 ```
 
+## Relationship to `pydantic-ai-todo`
+
+`Planning` incorporates the task-list features of [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo), a community package by [Vstorm](https://vstorm.co/) -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed:
+
+| `pydantic-ai-todo` | `Planning` |
+|---|---|
+| `write_todos` | `write_plan` |
+| `read_todos` | `read_plan` |
+| `add_todo` | `add_task` |
+| `update_todo_status` / `update_todo_statuses` | `update_task_status` / `update_task_statuses` |
+| `remove_todo` | `remove_task` |
+| `add_subtask`, `set_dependency`, `get_available_tasks` | unchanged |
+
+Two differences to plan for: there is no connection-string convenience (`create_storage(backend=...)` and friends are gone -- you construct your own asyncpg pool or Redis client, which is what keeps the harness driver-free), and `PlanEvent` carries no `timestamp`, so a consumer that ordered or logged by it supplies its own clock.
+
 ## Further reading
 
 - [Pydantic AI capabilities](../capabilities/overview.md)

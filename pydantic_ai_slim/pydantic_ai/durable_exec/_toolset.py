@@ -18,7 +18,15 @@ from pydantic_ai._cancel import RunCancellation
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._run_context import ToolNamePath, with_tool_name_path, without_tool_name_path
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UserError
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    RunCancelled,
+    RunTimedOut,
+    ToolFailed,
+    UserError,
+)
 from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -359,6 +367,16 @@ class _ToolFailed:
     kind: Literal['tool_failed'] = 'tool_failed'
 
 
+@dataclass
+class _RunCancelled:
+    # A sub-agent run awaited inside the tool cancelled itself; `_ToolCallProcessor._call_tool`
+    # turns the re-raised exception into a failed tool return, as it does in-process.
+    message: str
+    _: KW_ONLY
+    timed_out: bool = False
+    kind: Literal['run_cancelled'] = 'run_cancelled'
+
+
 def _result_discriminator(value: Any) -> str:
     if isinstance(value, ToolReturn) or (is_str_dict(value) and value.get('kind') == 'tool-return'):
         return 'tool-return'
@@ -391,7 +409,14 @@ class _ToolContentResult:
 
 
 CallToolResult = Annotated[
-    _ApprovalRequired | _CallDeferred | _ModelRetry | _ValidationError | _ToolReturn | _ToolContentResult | _ToolFailed,
+    _ApprovalRequired
+    | _CallDeferred
+    | _ModelRetry
+    | _ValidationError
+    | _ToolReturn
+    | _ToolContentResult
+    | _ToolFailed
+    | _RunCancelled,
     Discriminator('kind'),
 ]
 
@@ -410,6 +435,8 @@ async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
         return _ModelRetry(message=exc.message)
     except ToolFailed as exc:
         return _ToolFailed(message=exc.message)
+    except RunCancelled as exc:
+        return _RunCancelled(message=exc.message, timed_out=isinstance(exc, RunTimedOut))
     except ValidationError as exc:
         return _ValidationError(
             title=exc.title,
@@ -452,6 +479,10 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
         raise ModelRetry(result.message)
     if isinstance(result, _ToolFailed):
         raise ToolFailed(result.message)
+    if isinstance(result, _RunCancelled):
+        if result.timed_out:
+            raise RunTimedOut(result.message)
+        raise RunCancelled(result.message)
     assert_never(result)
 
 
@@ -562,7 +593,8 @@ def unwrap_recorded_tool_call_result(result: Any) -> Any:
         | _CallDeferred
         | _ModelRetry
         | _ValidationError
-        | _ToolFailed,
+        | _ToolFailed
+        | _RunCancelled,
     ):
         return unwrap_tool_call_result(result)
     return result
@@ -897,18 +929,23 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
             durable_registrations=durable_registrations,
             durable_config=durable_config,
         )
-        self._mcp_toolset = wrapped
         self._get_tools_operation = get_tools_operation
         self._get_instructions_operation = get_instructions_operation
         self._call_tool_operation = call_tool_operation
         self._resolve_tool_config = resolve_tool_config
 
+    @property
+    def _mcp_toolset(self) -> MCPToolset[AgentDepsT]:
+        # Read through `wrapped` rather than kept apart, so a per-run copy `_with_wrapped` installs
+        # (an `MCPToolset` whose `auth`/`headers` resolve per run) is the one the run calls.
+        return cast('MCPToolset[AgentDepsT]', self.wrapped)
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        if (
-            self._lifecycle != 'enter-in-durable-unit'
-            or not self._in_durable_context()
-            or (toolset_id := self.id) is None
-        ):
+        if not self._in_durable_context():
+            # No durable unit runs outside the durable context, so whatever the lifecycle, the run
+            # calls the wrapped toolset directly — or its per-run copy, when it resolves one.
+            return self._with_wrapped(await self.wrapped.for_run(ctx))
+        if self._lifecycle != 'enter-in-durable-unit' or (toolset_id := self.id) is None:
             return await super().for_run(ctx)
         # Per-run copy isolates `_run_held` from the process-shared instance; the shallow copy
         # shares the engine-registered operations, so this is only state isolation.
@@ -917,7 +954,9 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         # server is connected to once instead of once per unit and `cache_tools` survives between
         # units. Entry is refcounted by the toolset itself, so concurrent runs sharing this
         # process-wide toolset share its session, and it stays open until the last of them ends.
-        run_copy._run_held = RunHeldToolset(toolset_id, self.wrapped)
+        # An `MCPToolset` whose `auth`/`headers` resolve per run returns its own copy for the run to
+        # hold, so the session is this run's own and opened with this run's credentials.
+        run_copy._run_held = RunHeldToolset(toolset_id, await self.wrapped.for_run(ctx))
         return run_copy
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
