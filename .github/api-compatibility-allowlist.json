@@ -1,6 +1,12 @@
 {
   "allowed_breakages": [
     {
+      "against": "v2.60.0",
+      "fingerprint": "5e8f426984cff27ac6dac898c912c13ff573d3ebcfaf224ba731c237d3aae4ee",
+      "reason": "Adds `kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed` to `MoonshotAIModelName`; every existing model name is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11173"
+    },
+    {
       "against": "v2.59.0",
       "fingerprint": "ca884de6c28ed4e97d48cd6c522936a934a38a929e25cb3440f903884b53d9c8",
       "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `inputs=inputs`.",

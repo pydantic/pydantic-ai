@@ -454,6 +454,7 @@ def create_shell(
     updates.report = lambda: loader.fire if loader.handles(UpdateProgress) else None
     # Only a page has no terminal to watch uv in; elsewhere uv keeps drawing its progress there.
     updates.capture = lambda: web_serving(loader) is not None
+    updates.serving = lambda: web_serving(loader)
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
@@ -773,7 +774,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     def handoff(self) -> WebHandoff | None:
         """The web UI to serve again once `/update` restarts CLAI as this session; `None` when it does not, or none runs."""
-        return None if self.updates.relaunch is None else web_serving(self.loader)
+        return self.updates.web
 
     def relaunch(self, *, web: WebHandoff | None) -> Relaunch | None:
         """Restart as the build `/update` installed, resuming this conversation and serving `web` again; else `None`."""
