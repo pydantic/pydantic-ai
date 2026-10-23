@@ -59,6 +59,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, DynamicToolset, FunctionToolset
 from pydantic_ai.toolsets._instruction_collection import (
+    collect_toolset_instructions,
     flatten_instruction_contributions,
     make_contribution,
 )
@@ -1104,7 +1105,8 @@ A later <context> element with the same id replaces the earlier one and stays in
 
         Only `id`s an author chose collide, as they always have.
         """
-        part = InstructionPart(content='Guidance.', on_change='append')
+        # The server instructions `MCPToolset.get_instructions` builds, which the framework appends.
+        part = InstructionPart(content='Guidance.', on_change='append', _framework_appended=True)
         first = make_contribution(MCPToolset('https://mcp.example.com/a'), part)
         second = make_contribution(MCPToolset('https://mcp.example.com/b'), part)
         assert first.parts[0].id == InstructionId(ToolsetInstructionSource('mcp.example.com'))
@@ -1124,6 +1126,39 @@ A later <context> element with the same id replaces the earlier one and stays in
                     make_contribution(MCPToolset('https://b.example.com/mcp', id='docs'), part),
                 ]
             )
+
+    async def test_an_id_less_url_subclass_keys_only_the_server_instructions_by_host(self, run_context: RunContext):
+        """An `MCPToolset` subclass's own blocks aren't keyed by the server's host, only the server instructions are.
+
+        Without an `id`, what the subclass writes in its own `get_instructions` goes out unkeyed, as it
+        always has, so it can't replace or collide with the server's block. The server instructions it
+        gets from `super()` keep the host key.
+        """
+
+        class OwnInstructionsToolset(MCPToolset[None]):
+            async def get_instructions(self, ctx: RunContext[None]) -> list[InstructionPart]:
+                server = await super().get_instructions(ctx)
+                return [InstructionPart(content='Own guidance.', on_change='append'), *([server] if server else [])]
+
+        server: FastMCP[None] = FastMCP('remote_server', instructions='Remote guidance.')
+        app = server.http_app(stateless_http=True, json_response=True)
+        client: httpx.AsyncClient | httpx2.AsyncClient
+        if MCP_SDK_V2:
+            client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
+        else:
+            client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
+        toolset = OwnInstructionsToolset('http://testserver/mcp', http_client=client, include_instructions=True)
+        try:
+            async with app.router.lifespan_context(app):
+                async with toolset:
+                    parts = await collect_toolset_instructions(toolset, run_context)
+        finally:
+            await client.aclose()
+
+        assert [(part.content, str(part.id) if part.id else None) for part in parts] == [
+            ('Own guidance.', None),
+            ('Remote guidance.', 'toolset:testserver'),
+        ]
 
     async def test_id_less_dynamic_toolsets_on_one_host_keep_working(self):
         """Two id-less `DynamicToolset`s that build `MCPToolset`s on one host run as they did before keys were derived."""

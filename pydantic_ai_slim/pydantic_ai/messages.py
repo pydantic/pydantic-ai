@@ -2769,9 +2769,15 @@ class AgentInstructionSource:
 
 @dataclass(frozen=True, repr=False)
 class ToolsetInstructionSource:
-    """A toolset with an `id`."""
+    """A toolset, identified by its `id` or, for instructions the framework appends on its behalf, a key it derives.
+
+    An [`MCPToolset`][pydantic_ai.mcp.MCPToolset] without an `id` keys the server instructions it
+    includes by its server URL's hostname. Everything else a toolset contributes is keyed only by an
+    `id` its author set.
+    """
 
     id: str
+    """The toolset's `id`, or the key the framework derived for its instructions."""
 
     def __str__(self) -> str:
         return f'toolset:{self.id}'
@@ -2817,7 +2823,7 @@ class InstructionId:
     """The key an instruction part is addressed by: who contributed it, and which of their parts it is."""
 
     source: InstructionSource
-    """Who contributed the part: the agent, a toolset with an `id`, a capability with an `id`, or a run."""
+    """Who contributed the part: the agent, an identified toolset, a capability with an `id`, or a run."""
 
     _: KW_ONLY
 
@@ -2929,7 +2935,8 @@ class InstructionPart:
     [`InstructionId.source`][pydantic_ai.messages.InstructionId.source] is who contributed the part:
 
     - [`AgentInstructionSource`][pydantic_ai.messages.AgentInstructionSource] — the agent's literal instructions
-    - [`ToolsetInstructionSource`][pydantic_ai.messages.ToolsetInstructionSource] — a toolset with an `id`
+    - [`ToolsetInstructionSource`][pydantic_ai.messages.ToolsetInstructionSource] — a toolset with an `id`, or MCP
+      server instructions keyed by their server's hostname
     - [`CapabilityInstructionSource`][pydantic_ai.messages.CapabilityInstructionSource] — a capability with an `id`
     - [`RunInstructionSource`][pydantic_ai.messages.RunInstructionSource] — a named part passed to a run method's `instructions`
 
@@ -2939,6 +2946,15 @@ class InstructionPart:
 
     part_kind: Literal['instruction'] = 'instruction'
     """Part type identifier, used as a discriminator for deserialization."""
+
+    _framework_appended: Annotated[bool, pydantic.Field(exclude=True)] = field(default=False, repr=False, compare=False)
+    """Whether the framework, not the part's author, chose `on_change='append'` for it, such as for MCP server instructions.
+
+    Where appending isn't supported, such a part falls back to rewriting without the warning an author's
+    own opt-in gets, and an id-less `MCPToolset`'s server instructions are keyed by the server's
+    hostname. Carried by `dataclasses.replace` through every toolset that passes the part along or keys
+    it anew, and never serialized, so it reaches neither history nor a provider.
+    """
 
     @staticmethod
     def join(parts: Sequence[InstructionPart]) -> str | None:

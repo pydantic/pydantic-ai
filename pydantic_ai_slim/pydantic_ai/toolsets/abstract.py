@@ -61,8 +61,6 @@ class _RelayedPart:
     """A copy of the part as the child contributed it, so a part edited in place no longer counts as relayed."""
     derived_key: bool = False
     """Whether the framework chose the part's key; see `InstructionContribution.derived_key`."""
-    framework_appended: bool = False
-    """Whether the part appends by the framework's choice; see `InstructionContribution.framework_appended`."""
 
 
 @dataclass
@@ -261,7 +259,6 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
                         relay.source_id,
                         (part,),
                         derived_key=relay.derived_key,
-                        framework_appended=relay.framework_appended,
                     )
                 )
             else:
@@ -289,7 +286,6 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
                         part,
                         replace(part),
                         derived_key=contribution.derived_key,
-                        framework_appended=contribution.framework_appended,
                     ),
                 )
                 for contribution in contributions
@@ -312,13 +308,18 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
 
     @property
     def _instruction_key(self) -> str | None:
-        """The id this toolset's instruction parts are keyed by, as `toolset:<key>`.
-
-        Its [`id`][pydantic_ai.toolsets.AbstractToolset.id] by default. A toolset that can name its
-        instructions' source without an `id`, such as an `MCPToolset` by its server's host, overrides
-        this rather than defaulting `id`, which also names durable operations.
-        """
+        """The id this toolset's instruction parts are keyed by, as `toolset:<key>`: its [`id`][pydantic_ai.toolsets.AbstractToolset.id]."""
         return self.id
+
+    @property
+    def _derived_instruction_key(self) -> str | None:
+        """The key for the parts the framework appends on this toolset's behalf when it has no `id`.
+
+        `None` by default. An `MCPToolset` derives one from its server's host for the server instructions
+        it includes; parts its author writes, such as a subclass's own, are only ever keyed by `id`. A key
+        derived here rather than defaulting `id`, which also names durable operations.
+        """
+        return None
 
     def _instruction_source(self) -> ToolsetInstructionSource | None:
         """This toolset's instruction source, or `None` when it has no key that can be one."""

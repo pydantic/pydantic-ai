@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import warnings
 from collections import Counter
-from collections.abc import Collection, Sequence
+from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, replace
 from typing import Generic
 
@@ -121,22 +121,20 @@ def append_on_change_by_default(
 def explicitly_appended_blocks(
     instructions: Sequence[SourcedInstruction[AgentDepsT]],
     parts: Sequence[InstructionPart],
-    *,
-    framework_toolset_parts: Collection[InstructionPart] = (),
 ) -> list[str]:
     """The blocks among `parts` an author, rather than the framework, asked `on_change='append'` for, by id or name.
 
-    `parts` are what `instructions` (and any toolsets) resolved to. `framework_toolset_parts` are the
-    very part objects among them that toolsets append by the framework's choice rather than their
-    author's, such as MCP server instructions, told apart by identity rather than by an id an author's
-    block could share.
+    `parts` are what `instructions` (and any toolsets) resolved to. A toolset part the framework appends,
+    such as MCP server instructions, says so itself, so it's told apart from an author's block that
+    shares its id.
     """
     framework_ids = {sourced.id for sourced in instructions if sourced.framework_default}
-    framework_parts = {id(part) for part in framework_toolset_parts}
     return [
         str(part.id) if part.id is not None else part.name or 'unnamed'
         for part in parts
-        if part.on_change == 'append' and id(part) not in framework_parts and part.id not in framework_ids
+        if part.on_change == 'append'
+        and not part._framework_appended  # pyright: ignore[reportPrivateUsage]
+        and part.id not in framework_ids
     ]
 
 

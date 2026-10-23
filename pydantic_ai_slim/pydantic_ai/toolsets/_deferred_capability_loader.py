@@ -19,7 +19,7 @@ from pydantic_ai.messages import InstructionPart, ModelResponse, ToolReturn
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._instruction_collection import (
-    collect_toolset_instructions_with_framework_parts,
+    collect_toolset_instructions,
 )
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
@@ -101,10 +101,9 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         sourced = capability._collect_instructions()  # pyright: ignore[reportPrivateUsage]
         parts = await resolve_sourced_instructions(sourced, ctx)
 
-        toolset_parts, framework_toolset_parts = await self._collect_owned_toolset_instructions(capability_id, ctx)
-        parts.extend(toolset_parts)
+        parts.extend(await self._collect_owned_toolset_instructions(capability_id, ctx))
 
-        if appended := explicitly_appended_blocks(sourced, parts, framework_toolset_parts=framework_toolset_parts):
+        if appended := explicitly_appended_blocks(sourced, parts):
             warnings.warn(
                 "`on_change='append'` is not supported for deferred capability instructions, so instruction blocks "
                 f'{", ".join(map(repr, appended))} are delivered when the capability loads and their later changes '
@@ -122,7 +121,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
 
     async def _collect_owned_toolset_instructions(
         self, capability_id: str, ctx: RunContext[AgentDepsT]
-    ) -> tuple[list[InstructionPart], list[InstructionPart]]:
+    ) -> list[InstructionPart]:
         owned: list[CapabilityOwnedToolset[AgentDepsT]] = []
 
         def collect(ts: AbstractToolset[AgentDepsT]) -> None:
@@ -132,12 +131,9 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         self.apply(collect)
 
         parts: list[InstructionPart] = []
-        framework_parts: list[InstructionPart] = []
         for ts in owned:
-            ts_parts, ts_framework_parts = await collect_toolset_instructions_with_framework_parts(ts.wrapped, ctx)
-            parts.extend(ts_parts)
-            framework_parts.extend(ts_framework_parts)
-        return parts, framework_parts
+            parts.extend(await collect_toolset_instructions(ts.wrapped, ctx))
+        return parts
 
 
 def _is_duplicate_load_in_response(ctx: RunContext[Any], capability_id: str) -> bool:

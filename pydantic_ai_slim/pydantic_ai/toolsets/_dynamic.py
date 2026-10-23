@@ -7,7 +7,12 @@ from typing import Any, Self, TypeAlias
 from .._run_context import AgentDepsT, RunContext, without_tool_name_path
 from ..messages import InstructionPart, ToolsetInstructionSource
 from ..tools import ToolDefinition
-from ._instruction_collection import InstructionContribution, flatten_marked_contributions, make_contribution
+from ._instruction_collection import (
+    InstructionContribution,
+    flatten_instruction_contributions,
+    is_framework_appended,
+    make_contribution,
+)
 from .abstract import AbstractToolset, ToolsetTool
 
 ToolsetFunc: TypeAlias = Callable[
@@ -143,11 +148,13 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         # on every request, so they keep the key the built toolset gave them. That key is the framework's
         # choice, not an `id` given here.
         contributions: list[InstructionContribution[AgentDepsT]] = []
-        for part, framework in flatten_marked_contributions(await toolset._collect_instruction_contributions(ctx)):
-            if framework and part.id is not None and isinstance(part.id.source, ToolsetInstructionSource):
-                contributions.append(
-                    InstructionContribution(self, part.id.source, (part,), derived_key=True, framework_appended=True)
-                )
+        for part in flatten_instruction_contributions(await toolset._collect_instruction_contributions(ctx)):
+            if (
+                is_framework_appended(part)
+                and part.id is not None
+                and isinstance(part.id.source, ToolsetInstructionSource)
+            ):
+                contributions.append(InstructionContribution(self, part.id.source, (part,), derived_key=True))
             else:
                 contributions.append(make_contribution(self, part))
         return contributions

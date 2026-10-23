@@ -40,7 +40,6 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 # importing a family that the other generation's installs don't ship.
 from ._http import AsyncHTTPClient, HTTPAuth, HTTPTimeout
 from .direct import model_request
-from .toolsets._instruction_collection import mark_framework_appended
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 try:
@@ -1469,23 +1468,23 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # entered, so they're static for prompt caching. A later connection can bring different text,
         # which appends as a change rather than rewriting the prefix. Appending addresses the block by
         # its key, so a server with neither an `id` nor a URL to key it by keeps rewriting.
-        if self._instruction_source() is None:
+        if self.id is None and self._derived_instruction_key is None:
             return None if self._instructions is None else messages.InstructionPart(content=self._instructions)
         # A keyed server contributes its block even while it sends no instructions, so instructions a later
         # connection adds are appended as a change, and ones it drops are withdrawn, without moving the prefix.
-        return mark_framework_appended(
-            messages.InstructionPart(content=self._instructions or '', dynamic=False, on_change='append')
+        # Appending is the framework's choice here, not the author's, which also lets an id-less toolset key
+        # these instructions, and only these, by its server's host.
+        return messages.InstructionPart(
+            content=self._instructions or '', dynamic=False, on_change='append', _framework_appended=True
         )
 
     @property
-    def _instruction_key(self) -> str | None:
-        """The `id`, or else the server URL's hostname, so a remote server's instructions always have a key.
+    def _derived_instruction_key(self) -> str | None:
+        """The server URL's hostname, which keys the server instructions of a toolset without an `id`.
 
         `id` itself isn't defaulted: it also names durable operations, which require one chosen
-        explicitly.
+        explicitly. Instructions a subclass writes itself are keyed only by `id`.
         """
-        if self.id is not None:
-            return self.id
         url = getattr(getattr(self.client, 'transport', None), 'url', None)
         host = urlparse(url).hostname if isinstance(url, str) else None
         # `:` delimits id segments, so an IPv6 literal such as `::1` is spelled with `-` instead.
