@@ -731,9 +731,10 @@ bullet holds the gating rule's gateway reasoning. The rules govern the code a
 diff adds. A PR that aligns existing code must also meet the guide's scope
 rules: flag as MEDIUM a structural alignment whose PR doesn't show the request
 bodies captured on `main` and on the branch to be byte-identical, and a
-behavioral one that doesn't name each change it makes. A violation is HIGH when it has a concrete trigger
-that changes a request or a replayed history, or that the user's `profile=`
-can't override. A violation of code shape alone is MEDIUM.
+behavioral one that doesn't name each change it makes. A violation is HIGH
+when it has a concrete trigger that changes a request or a replayed history,
+or that the user's `profile=` can't override. A violation of code shape alone
+is MEDIUM.
 
 **Flag this (HIGH):**
 ```python
