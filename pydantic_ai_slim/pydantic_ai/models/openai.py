@@ -21,10 +21,10 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
+from typing import Annotated, Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
-from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
 
@@ -426,7 +426,7 @@ _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = get_args(_OPENAI_IMAGE_SIZ
 
 
 class _ChatCompletionChoice(chat_completion.Choice):
-    finish_reason: str  # type: ignore[reportIncompatibleVariableOverride]
+    finish_reason: Annotated[str, Field(min_length=1)]  # type: ignore[reportIncompatibleVariableOverride]
     """OpenAI-compatible providers can return arbitrary `finish_reason` values (e.g. `"guardrail_intervened"`)."""
 
 

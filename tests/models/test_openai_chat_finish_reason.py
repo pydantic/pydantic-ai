@@ -119,9 +119,9 @@ async def test_unknown_finish_reason(
     assert response.provider_details == {'finish_reason': finish_reason}
 
 
-@pytest.mark.parametrize('finish_reason', [123, ['stop']])
-async def test_non_string_finish_reason_raises(allow_model_requests: None, finish_reason: object) -> None:
-    """A `finish_reason` that isn't a string still fails validation."""
+@pytest.mark.parametrize('finish_reason', ['', 123, ['stop']])
+async def test_invalid_finish_reason_raises(allow_model_requests: None, finish_reason: object) -> None:
+    """A `finish_reason` that isn't a non-empty string still fails validation."""
     async with AsyncOpenAI(
         api_key='test',
         base_url='https://example.com/v1',
