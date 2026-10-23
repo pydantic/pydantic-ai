@@ -21,14 +21,15 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
+from typing import Annotated, Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
-from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
 
-from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
+from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, TEXT_DOCUMENT_MEDIA_TYPES
 from .._http import to_httpx2_timeout
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
@@ -43,7 +44,11 @@ from .._utils import (
     number_to_datetime,
 )
 from ..capabilities.abstract import AbstractCapability
-from ..exceptions import SuspendedResponseExpired, UserError
+from ..exceptions import (
+    ModelConnectionError,
+    SuspendedResponseExpired,
+    UserError,
+)
 from ..messages import (
     STANDING_PROMPT_PLANTED_KEY,
     AudioUrl,
@@ -56,6 +61,8 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     InstructionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -70,7 +77,6 @@ from ..messages import (
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
     PartStartEvent,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -123,9 +129,12 @@ from . import (
     OpenAIResponsesCompatibleProvider,
     StreamedResponse,
     ToolVisibility,
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -147,6 +156,7 @@ try:
         APIConnectionError,
         APIError,
         APIStatusError,
+        APITimeoutError,
         AsyncAzureOpenAI,
         AsyncOpenAI,
         AsyncStream,
@@ -197,7 +207,7 @@ try:
     from openai.types.responses.response_input_file_content_param import ResponseInputFileContentParam
     from openai.types.responses.response_input_image_content_param import ResponseInputImageContentParam
     from openai.types.responses.response_input_item_param import ToolSearchCall as ToolSearchCallParam
-    from openai.types.responses.response_input_param import FunctionCallOutput, Message
+    from openai.types.responses.response_input_param import FunctionCallOutput
     from openai.types.responses.response_input_text_content_param import ResponseInputTextContentParam
     from openai.types.responses.response_reasoning_item_param import (
         Content as ReasoningContent,
@@ -238,30 +248,59 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gene
     try:
         yield
     except APIStatusError as e:
-        if (status_code := e.status_code) >= 400:
-            body: object | None = e.body
-            suggested_model_id = None
-            if _utils.is_str_dict(body) and body.get('code') == 'model_not_found':
-                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-            raise ModelHTTPError(
-                status_code=status_code,
-                model_name=model_name,
-                body=body,
-                headers=dict(e.response.headers),
-                suggested_model_id=suggested_model_id,
-            ) from e
+        if e.status_code >= 400:
+            raise _map_status_error(e, model_name, model_id_namespace) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
-        raise ModelAPIError(model_name=model_name, message=e.message) from e
+        raise _map_connection_error(e, model_name) from e
     except APIError as e:
         # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
-        # been received, so there is no status code to report.
-        raise ModelAPIError(model_name=model_name, message=e.message) from e
+        # been received; it gets the status the same error has before a stream opens.
+        raise _model_errors.stream_error(model_name, e.message, e.body) from e
 
 
-def _response_error(model_name: str, code: str | None, message: str) -> ModelAPIError:
-    """Build the error for a Responses API failure reported in a 200 body or stream, which has no HTTP status."""
-    return ModelAPIError(model_name=model_name, message=f'{code}: {message}' if code else message)
+def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: str) -> ModelHTTPError:
+    body: object | None = e.body
+    suggested_model_id = None
+    if e.code == 'model_not_found':
+        suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+    category = _model_errors.openai_compatible_category(e.status_code, e.code, e.type, e.message)
+    return ModelHTTPError.for_category(
+        category,
+        status_code=e.status_code,
+        model_name=model_name,
+        body=body,
+        headers=dict(e.response.headers),
+        suggested_model_id=suggested_model_id,
+        provider_error_code=e.code,
+        provider_error_type=e.type,
+    )
+
+
+def _map_connection_error(e: APIConnectionError, model_name: str) -> ModelConnectionError:
+    return _model_errors.connection_error(model_name, e.message, e, timeout=isinstance(e, APITimeoutError))
+
+
+def _response_error(model_name: str, code: str | None, message: str, *, in_stream: bool) -> ModelAPIError:
+    """Build the error for a Responses API failure reported in a 200 body or stream.
+
+    It gets the same category either way. In a stream, it also gets the status the same error has before the stream
+    opens where that's clear, like any other in-stream error. A failed response body, e.g. a background response
+    retrieved later, has no status to report.
+    """
+    if in_stream:
+        error = _model_errors.stream_error(model_name, message, {'code': code, 'message': message})
+        if isinstance(error, ModelHTTPError):
+            return error
+    category = _model_errors.openai_compatible_category(
+        _model_errors.openai_compatible_status(code, None), code, None, message
+    )
+    return (category or ModelAPIError)(
+        model_name=model_name,
+        message=f'{code}: {message}' if code else message,
+        provider_error_code=code,
+        in_stream=in_stream,
+    )
 
 
 __all__ = (
@@ -386,13 +425,23 @@ _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = get_args(_OPENAI_IMAGE_SIZE)
 
 
+class _ChatCompletionChoice(chat_completion.Choice):
+    finish_reason: Annotated[str, Field(min_length=1)]  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenAI-compatible providers can return arbitrary `finish_reason` values (e.g. `"guardrail_intervened"`)."""
+
+
 class _ChatCompletion(chat.ChatCompletion):
-    """Relaxes strict Literal validation on fields that OpenAI-compatible providers may return non-standard values for."""
+    """Relaxes validation on fields that OpenAI-compatible providers may return non-standard values for."""
 
     model_config = {'title': 'ChatCompletion'}
 
+    choices: list[_ChatCompletionChoice]  # type: ignore[reportIncompatibleVariableOverride]
+
     service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
     """OpenAI-compatible providers can return arbitrary `service_tier` values (e.g. `"standard"`, `"on_demand"`)."""
+
+    metadata: dict[str, Any] | None = None
+    """OpenAI-compatible providers can return non-string `metadata` values (e.g. Nebius returns a list under `weight_versions`)."""
 
 
 class _ChatCompletionChunk(ChatCompletionChunk):  # pyright: ignore[reportUnusedClass] — subclassed in openrouter.py
@@ -420,14 +469,23 @@ class _AzureContentFilterResult(BaseModel):
 
 
 class _AzureInnerError(BaseModel):
-    code: str
-    content_filter_result: _AzureContentFilterResult
+    code: str | None = None
+    content_filter_result: _AzureContentFilterResult | None = None
+
+
+class _AzureContentFilter(BaseModel):
+    """An entry of the top-level `content_filters` list the Responses API sends for a blocked prompt."""
+
+    blocked: bool | None = None
+    source_type: str | None = None
+    content_filter_results: _AzureContentFilterResult | None = None
 
 
 class _AzureError(BaseModel):
     code: str
-    message: str
+    message: str | None = None
     innererror: _AzureInnerError | None = None
+    content_filters: list[_AzureContentFilter] | None = None
 
 
 def _resolve_openai_image_generation_size(
@@ -499,10 +557,14 @@ def _check_azure_content_filter(
             if error_data.code == 'content_filter':
                 provider_details: dict[str, Any] = {'finish_reason': 'content_filter'}
 
-                if error_data.innererror:
+                if error_data.innererror and error_data.innererror.content_filter_result:
                     provider_details['content_filter_result'] = error_data.innererror.content_filter_result.model_dump(
                         exclude_none=True
                     )
+                if error_data.content_filters:
+                    provider_details['content_filters'] = [
+                        content_filter.model_dump(exclude_none=True) for content_filter in error_data.content_filters
+                    ]
 
                 return ModelResponse(
                     parts=[],  # Empty parts to trigger content filter error in agent graph
@@ -545,10 +607,18 @@ def _merge_leading_system_messages(
     return [merged, *openai_messages[leading_count:]]
 
 
-def _resolve_openai_thinking_effort(thinking: ThinkingLevel, profile: OpenAIModelProfile) -> ReasoningEffort:
-    """Map unified thinking to the closest reasoning effort the model supports."""
+def _resolve_openai_thinking_effort(
+    thinking: ThinkingLevel, profile: OpenAIModelProfile, *, supports_max: bool
+) -> ReasoningEffort:
+    """Map unified thinking to the closest reasoning effort the model supports.
+
+    `supports_max` says whether the API the request goes to accepts `'max'` for the model, which differs
+    between OpenAI's Chat Completions and Responses APIs.
+    """
     if thinking == 'minimal' and not profile.get('openai_supports_minimal_reasoning_effort', True):
         return 'low'
+    if thinking == 'max' and supports_max:
+        return 'max'
     return OPENAI_REASONING_EFFORT_MAP[thinking]  # type: ignore[return-value]
 
 
@@ -1244,6 +1314,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    # Chat Completions has no video content part.
+    _unsupported_file_inputs = frozenset({'video'})
+
     unsupported_settings = frozenset({'top_k'})
 
     _model_name: OpenAIModelName = field(repr=False)
@@ -1344,6 +1417,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             user = self._profile
             if user is None or (not callable(user) and 'openai_chat_supports_document_input' not in user):
                 _profile = merge_profile(_profile, OpenAIModelProfile(openai_chat_supports_document_input=False))
+        if not _profile.get('openai_chat_supports_document_input', True):
+            # Without a `file` content part, a text document is still inlined into the prompt as text,
+            # so documents are narrowed to those rather than turned off.
+            document_media_types = _profile.get('supported_document_media_types', KNOWN_DOCUMENT_MEDIA_TYPES)
+            _profile = merge_profile(
+                _profile,
+                ModelProfile(supported_document_media_types=document_media_types & TEXT_DOCUMENT_MEDIA_TYPES),
+            )
         if not _profile.get('openai_chat_supports_web_search', False):
             new_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {WebSearchTool}
             _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))
@@ -1403,7 +1484,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return OMIT
-        return _resolve_openai_thinking_effort(thinking, self.profile)
+        return _resolve_openai_thinking_effort(
+            thinking,
+            self.profile,
+            supports_max=self.profile.get('openai_chat_supports_max_reasoning_effort', False),
+        )
 
     @asynccontextmanager
     async def request_stream(
@@ -1528,7 +1613,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom completion validations.
         """
-        return _ChatCompletion.model_validate(response.model_dump())
+        return _ChatCompletion.model_validate(response.model_dump(warnings=False))
 
     def _missing_finish_reason(
         self, choice: chat_completion.Choice
@@ -1789,6 +1874,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             self.profile, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
 
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_translate_thinking` sends an explicit effort instead of the one unified `thinking` maps to.
+        return ('openai_reasoning_effort',) if model_settings.get('openai_reasoning_effort') else ()
+
     def _supports_tool_forcing(
         self, model_settings: OpenAIChatModelSettings, model_request_parameters: ModelRequestParameters
     ) -> bool:
@@ -1987,14 +2076,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return self._MapModelResponseContext(self).map_assistant_message(message)
 
-    def _map_finish_reason(
-        self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
-    ) -> FinishReason | None:
+    def _map_finish_reason(self, key: str) -> FinishReason | None:
         """Hooks that maps a finish reason key to a [FinishReason][pydantic_ai.messages.FinishReason].
 
         This method may be overridden by subclasses of `OpenAIChatModel` to accommodate custom keys.
         """
-        return _CHAT_FINISH_REASON_MAP.get(key)
+        return _CHAT_FINISH_REASON_MAP[key] if key in _CHAT_FINISH_REASON_MAP else None
 
     async def _map_messages(  # noqa: C901
         self,
@@ -2007,10 +2094,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         openai_messages: list[chat.ChatCompletionMessageParam] = []
         profile = self.profile
         # DeepSeek-style APIs 400 on a tool-calling assistant turn that omits their thinking field while
-        # the run is reasoning. A turn another model or provider produced can lack it: a `FallbackModel`
-        # step, or a foreign native tool search that `prepare_messages` splits into a synthesized
-        # `search_tools` turn. `'field'` mode sets the configured field empty on every such turn; `'auto'`
-        # mode is handled after mapping, below.
+        # the run is reasoning. A turn another model or provider produced, or one served with thinking off,
+        # can lack it: a `FallbackModel` step, a resumed run, or a foreign native tool search that
+        # `prepare_messages` splits into a synthesized `search_tools` turn. `'field'` mode sets the configured
+        # field empty on every such turn once the history holds a `ThinkingPart`, or, for a profile that sets
+        # `openai_chat_thinking_requires_field_on_tool_calls`, once the request itself thinks, as it can before
+        # any step has thought; `'auto'` mode is handled after mapping, below.
         send_back_thinking = profile.get('openai_chat_send_back_thinking_parts', 'auto')
         thinking_active = any(
             isinstance(part, ThinkingPart)
@@ -2020,7 +2109,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         )
         backfill_field = (
             profile.get('openai_chat_thinking_field', None)
-            if thinking_active and send_back_thinking == 'field'
+            if send_back_thinking == 'field'
+            and (
+                thinking_active
+                or (
+                    profile.get('openai_chat_thinking_requires_field_on_tool_calls', False)
+                    and self._request_thinks(model_settings, model_request_parameters)
+                )
+            )
             else None
         )
         for message in messages:
@@ -2155,7 +2251,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         file_content: list[UserContent] = []
-        for part in message.parts:
+        for part in _sendable_request_parts(message.parts):
             if isinstance(part, SystemPromptPart):
                 system_prompt_role = self.profile.get('openai_system_prompt_role', None)
                 if system_prompt_role == 'developer':
@@ -2174,17 +2270,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     tool_call_id=_guard_tool_call_id(t=part),
                     content=tool_text,
                 )
-            elif isinstance(part, RetryPromptPart):
-                if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
-                else:
-                    yield chat.ChatCompletionToolMessageParam(
-                        role='tool',
-                        tool_call_id=_guard_tool_call_id(t=part),
-                        content=part.model_response(),
-                    )
-            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                raise _unprojected_instruction_delta_error()
+            elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                raise _unprepared_part_error(part)
             elif isinstance(part, SpeechPart):
                 # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                 raise _unconverted_speech_part_error()
@@ -2408,8 +2497,30 @@ def _continuation_digest(history: _Hasher, parts: Sequence[ModelResponsePart]) -
     hasher = history.copy()
     for part in parts:
         hasher.update(b'\n')
-        hasher.update(_RESPONSE_PART_ADAPTER.dump_json(_part_without_application_metadata(part), exclude_none=True))
+        hasher.update(
+            _RESPONSE_PART_ADAPTER.dump_json(
+                _part_without_application_metadata(_call_as_sent(part) if isinstance(part, ToolCallPart) else part),
+                exclude_none=True,
+            )
+        )
     return hasher.hexdigest()
+
+
+def _call_as_sent(part: ToolCallPart) -> ToolCallPart:
+    """`part` as the server holds it: a base call, without the `tool_kind` the agent graph stamps on after `request()`.
+
+    The digest is taken in `request()`, and the graph then promotes the call to its kind's typed subclass. Neither
+    the kind nor the subclass is sent, so leaving them in would make a response compared later never match.
+    """
+    args = part.args if part.args is None or isinstance(part.args, str) else {**part.args}
+    return ToolCallPart(
+        tool_name=part.tool_name,
+        args=args,
+        tool_call_id=part.tool_call_id,
+        id=part.id,
+        provider_name=part.provider_name,
+        provider_details=part.provider_details,
+    )
 
 
 def _without_application_metadata(message: ModelMessage) -> ModelMessage:
@@ -2471,6 +2582,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     # keeps serving them: a latent directive that never fired before the boundary still governs
     # post-compaction replies without being re-sent (live-verified).
     compaction_retains_standing_prompt = True
+    # Audio content goes nowhere the API reads it and video has no input type, so neither is sent.
+    _unsupported_file_inputs = frozenset({'audio', 'video'})
 
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
@@ -2717,16 +2830,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         except APIStatusError as e:  # pragma: lax no cover
             if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
                 return model_response
-            if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self.model_name,
-                    body=e.body,
-                    headers=dict(e.response.headers),
-                ) from e
+            if e.status_code >= 400:
+                raise _map_status_error(e, self.model_name, self._provider.model_id_namespace) from e
             raise
         except APIConnectionError as e:  # pragma: lax no cover
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+            raise _map_connection_error(e, self.model_name) from e
 
     async def request(
         self,
@@ -2948,7 +3056,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Process a non-streamed response, and prepare a message to return."""
         response = check_json_response(self.model_name, response)
         if error := response.error:
-            raise _response_error(self.model_name, error.code, error.message)
+            raise _response_error(self.model_name, error.code, error.message, in_stream=False)
         items: list[ModelResponsePart] = []
         refusal_text: str | None = None
         tool_search_output_call_ids = _tool_search_output_call_ids(response)
@@ -3131,7 +3239,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
         if isinstance(first_chunk, responses.ResponseErrorEvent):
             # Raise while the stream is being opened, so `FallbackModel` can still fall back on it.
-            raise _response_error(self.model_name, first_chunk.code, first_chunk.message)
+            raise _response_error(self.model_name, first_chunk.code, first_chunk.message, in_stream=True)
 
         if isinstance(first_chunk, responses.ResponseCreatedEvent):
             model_name = first_chunk.response.model
@@ -3607,7 +3715,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         # Fall back to unified thinking when openai_reasoning_effort is not set
         if reasoning_effort is None and (thinking := model_request_parameters.thinking) is not None:
-            reasoning_effort = _resolve_openai_thinking_effort(thinking, self.profile)
+            reasoning_effort = _resolve_openai_thinking_effort(
+                thinking,
+                self.profile,
+                supports_max=self.profile.get('openai_responses_supports_max_reasoning_effort', False),
+            )
 
         reasoning: Reasoning = {}
         if reasoning_effort:
@@ -3642,6 +3754,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return _reasoning_active(
             self.profile, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
+
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_translate_thinking` sends an explicit effort instead of the one unified `thinking` maps to.
+        return ('openai_reasoning_effort',) if model_settings.get('openai_reasoning_effort') is not None else ()
 
     def _get_responses_tool_choice(
         self,
@@ -4020,7 +4136,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message_index, message in enumerate(messages):
             if isinstance(message, ModelRequest):
-                for part in message.parts:
+                for part in _sendable_request_parts(message.parts):
                     if isinstance(part, SystemPromptPart):
                         openai_messages.append(
                             responses.EasyInputMessageParam(
@@ -4029,6 +4145,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         )
                     elif isinstance(part, UserPromptPart):
                         openai_messages.append(await self._map_user_prompt(part))
+                    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                        raise _unprojected_instruction_delta_error()
                     elif isinstance(part, ToolAvailabilityDeltaPart):
                         if self.tool_addition_mode != 'with_definitions':
                             # `prepare_messages` projects the delta onto the local tool-search exchange
@@ -4042,7 +4160,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             # silently rendering a shape whose support we haven't verified, for a tool
                             # this same path has removed from `tools`, is how an availability change
                             # goes missing with nothing to show for it.
-                            raise _unsynthesized_tool_availability_delta_error()
+                            raise _unprepared_part_error(part)
                         additional_tools = self._map_additional_tools(
                             part.tools_added, model_request_parameters, rendered=rendered_additional_tools
                         )
@@ -4086,21 +4204,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 )
                                 if additional_tools['tools']:
                                     openai_messages.append(additional_tools)
-                    elif isinstance(part, RetryPromptPart):
-                        if part.tool_name is None:
-                            openai_messages.append(
-                                Message(role='user', content=[{'type': 'input_text', 'text': part.model_response()}])
-                            )
-                        else:
-                            call_id = _guard_tool_call_id(t=part)
-                            call_id, _ = _split_combined_tool_call_id(call_id)
-                            call_id = _provider_response_tool_call_id(call_id, response_id)
-                            item = FunctionCallOutput(
-                                type='function_call_output',
-                                call_id=call_id,
-                                output=part.model_response(),
-                            )
-                            openai_messages.append(item)
+                    elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                        raise _unprepared_part_error(part)
                     elif isinstance(part, SpeechPart):  # pragma: no cover
                         # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                         raise _unconverted_speech_part_error()
@@ -4631,6 +4736,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _model_settings: OpenAIChatModelSettings | None = None
+    _usage_received: bool | None = field(default=False, init=False)
     # Content segments are anonymous; reasoning segments also carry their field identity.
     _content_generation: int = field(default=0, init=False)
     _reasoning_generation: int = field(default=0, init=False)
@@ -4654,13 +4760,11 @@ class OpenAIStreamedResponse(StreamedResponse):
                         'timestamp': self._provider_timestamp,
                     }
 
-                chunk_usage = self._map_usage(chunk)
-                if self._model_settings and self._model_settings.get('openai_continuous_usage_stats'):
-                    # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
-                    # so we replace rather than increment to avoid double-counting.
-                    self._usage = chunk_usage
-                else:
-                    self._usage += chunk_usage
+                # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
+                # so we replace rather than increment to avoid double-counting.
+                cumulative = bool(self._model_settings and self._model_settings.get('openai_continuous_usage_stats'))
+                if chunk.usage is not None or not cumulative:
+                    self._add_usage(self._map_usage(chunk), reported=chunk.usage is not None, cumulative=cumulative)
 
                 if chunk.id:  # pragma: no branch
                     self.provider_response_id = chunk.id
@@ -4972,6 +5076,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _process_provider_details: Callable[[responses.Response], dict[str, Any] | None]
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
+    _usage_received: bool | None = field(default=False, init=False)
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
     _last_sequence_number: int | None = field(default=None, init=False)
@@ -5143,7 +5248,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
                             mcp_list_tools_return_ids.add(item.id)
 
-                    self._usage += self._map_usage(chunk.response)
+                    self._record_usage(chunk.response)
                     self._store_conversation_id(chunk.response)
                     self._set_state(chunk.response.status)
 
@@ -5178,11 +5283,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     self._store_conversation_id(chunk.response)
 
                 elif isinstance(chunk, responses.ResponseFailedEvent):
-                    self._usage += self._map_usage(chunk.response)
+                    self._record_usage(chunk.response)
                     # Record the terminal state first, so a failed background job isn't cancelled after the raise.
                     self._set_state(chunk.response.status)
                     if error := chunk.response.error:
-                        raise _response_error(self._model_name, error.code, error.message)
+                        raise _response_error(self._model_name, error.code, error.message, in_stream=True)
                     # Parity with the non-streaming `_process_response`: a `failed` status maps to 'error'.
                     if not self._has_refusal:
                         self.provider_details = {**(self.provider_details or {}), 'finish_reason': 'failed'}
@@ -5205,11 +5310,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield event
 
                 elif isinstance(chunk, (responses.ResponseInProgressEvent, responses.ResponseQueuedEvent)):
-                    self._usage += self._map_usage(chunk.response)
+                    self._record_usage(chunk.response)
                     self._set_state(chunk.response.status)
 
                 elif isinstance(chunk, responses.ResponseIncompleteEvent):
-                    self._usage += self._map_usage(chunk.response)
+                    self._record_usage(chunk.response)
                     # Parity with the non-streaming `_process_response`: map the incomplete
                     # reason when the provider sends one, leave the finish reason unset otherwise.
                     raw_finish_reason = details.reason if (details := chunk.response.incomplete_details) else None
@@ -5649,7 +5754,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     pass  # there's nothing we need to do here
 
                 elif isinstance(chunk, responses.ResponseErrorEvent):
-                    raise _response_error(self._model_name, chunk.code, chunk.message)
+                    raise _response_error(self._model_name, chunk.code, chunk.message, in_stream=True)
 
                 else:  # pragma: no cover
                     warnings.warn(
@@ -5673,6 +5778,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
+
+    def _record_usage(self, response: responses.Response) -> None:
+        self._add_usage(self._map_usage(response), reported=response.usage is not None)
 
     @property
     def model_name(self) -> OpenAIModelName:
@@ -6005,9 +6113,11 @@ def _map_usage(
     if response_usage is None:
         if web_search_requests:
             return usage.RequestUsage(
-                web_searches=web_search_requests, details={'web_search_requests': web_search_requests}
+                unmeasured_requests=1,
+                web_searches=web_search_requests,
+                details={'web_search_requests': web_search_requests},
             )
-        return usage.RequestUsage()
+        return usage.RequestUsage(unmeasured_requests=1)
 
     usage_data = response_usage.model_dump(exclude_none=True)
     details = {
@@ -6117,8 +6227,8 @@ def _group_settled_portable_function_calls(
 
     unsettled_call_counts: dict[str, int] = {}
     # Active tool search calls are replayed as `tool_search_call` items, not function calls, so
-    # neither they nor their answers count. A retry carries no `tool_kind`; it is matched to its
-    # search call by id and that call's name.
+    # neither they nor their answers count. A retried return carries no `tool_kind`; it is matched to
+    # its search call by id and that call's name.
     search_call_names: dict[str, str] = {}
     for part in parts:
         if client_tool_search_active and isinstance(part, ToolSearchCallPart):
@@ -6131,16 +6241,11 @@ def _group_settled_portable_function_calls(
             break
         for part in following_message.parts:
             if (
-                (
-                    isinstance(part, ToolReturnPart)
-                    and not (client_tool_search_active and isinstance(part, ToolSearchReturnPart))
-                )
-                or (
-                    isinstance(part, RetryPromptPart)
-                    and part.tool_name is not None
-                    and search_call_names.get(part.tool_call_id) != part.tool_name
-                )
-            ) and (count := unsettled_call_counts.get(part.tool_call_id)):
+                isinstance(part, ToolReturnPart)
+                and not (client_tool_search_active and isinstance(part, ToolSearchReturnPart))
+                and search_call_names.get(part.tool_call_id) != part.tool_name
+                and (count := unsettled_call_counts.get(part.tool_call_id))
+            ):
                 if count == 1:
                     del unsettled_call_counts[part.tool_call_id]
                 else:

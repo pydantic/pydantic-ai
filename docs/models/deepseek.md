@@ -89,6 +89,8 @@ agent = Agent(
 
 Passing `tool_choice='required'` explicitly while thinking is on raises a [`UserError`][pydantic_ai.exceptions.UserError] rather than failing at the API.
 
+DeepSeek also rejects a thinking request when a tool-calling assistant turn after the last user message lacks `reasoning_content`, such as one served by another model or with thinking off. Whenever the request thinks, [`DeepSeekProvider`][pydantic_ai.providers.deepseek.DeepSeekProvider] sends the field empty on every tool-calling turn that lacks it. Set [`OpenAIModelProfile.openai_chat_thinking_requires_field_on_tool_calls`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_thinking_requires_field_on_tool_calls] on your own profile, alongside `openai_chat_send_back_thinking_parts='field'` and `openai_chat_thinking_field='reasoning_content'`, if you serve DeepSeek's Chat Completions shape from another endpoint.
+
 ## Responses API
 
 As an alternative to the Chat Completions API shown above, DeepSeek also serves an OpenAI-compatible [Responses API](openai.md#responses-api-features) for [both V4 models](https://api-docs.deepseek.com/guides/responses_api). Use it by pairing [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with [`DeepSeekProvider`][pydantic_ai.providers.deepseek.DeepSeekProvider]:

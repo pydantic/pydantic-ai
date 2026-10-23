@@ -131,6 +131,8 @@ xai-realtime = ["pydantic-ai-slim[xai,openai,realtime]"]
 # ElevenLabs needs no provider SDK: its REST preflight uses the built-in HTTP client, so the extra
 # is just the realtime transport deps.
 elevenlabs-agents-realtime = ["pydantic-ai-slim[realtime]"]
+# `openai` supplies the event types of the OpenAI Realtime codec the ElevenLabs realtime model reuses.
+elevenlabs-realtime = ["pydantic-ai-slim[openai,realtime]"]
 # MCP — `fastmcp-slim[client]` is the lightweight client-only distribution (no Starlette /
 # Uvicorn server stack). Pulls the `mcp` SDK transitively. For an in-process FastMCP server,
 # install the full `fastmcp` package directly alongside `[mcp]`. FastMCP 4 (MCP SDK v2) is
@@ -164,7 +166,10 @@ temporal = ["temporalio>=1.27.0"]
 # DBOS
 dbos = ["dbos>=2.10.0"]
 # Prefect
-prefect = ["prefect>=3.7.5"]
+# 3.9.0 is the first Prefect to cap `fastapi<0.151` (PrefectHQ/prefect#23478) and drop the `min_items`
+# keyword FastAPI 0.155 rejects (PrefectHQ/prefect#23476); earlier ones fail to import their server on
+# a current FastAPI.
+prefect = ["prefect>=3.9.0"]
 # Spec (YAML agent specs)
 spec = ["pyyaml>=6.0.2", "pydantic-handlebars>=0.1.0"]
 

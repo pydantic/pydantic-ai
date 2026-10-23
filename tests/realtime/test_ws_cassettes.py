@@ -69,6 +69,7 @@ async def test_recording_scrubs_secrets_and_internal_config(tmp_path: Path, monk
             'api-key': 'sk-fake_api_key_123456',
             'google-api-key': 'AIzaFakeApiKey123456',
             'xai-key': 'xai-fake_api_key_123456',
+            'xi-api-key': 'sk_0123456789abcdef0123456789abcdef',
         },
         # A WebRTC ephemeral client secret a provider echoes back inside a frame body.
         'client_secret': 'ek_fake_secret_123456',
@@ -101,6 +102,7 @@ async def test_recording_scrubs_secrets_and_internal_config(tmp_path: Path, monk
         'sk-fake_api_key_123456',
         'AIzaFakeApiKey123456',
         'xai-fake_api_key_123456',
+        'sk_0123456789abcdef0123456789abcdef',
         'ek_fake_secret_123456',
         '0paque-azure-key-value-42',
         'internal.service:443',
@@ -117,6 +119,7 @@ async def test_recording_scrubs_secrets_and_internal_config(tmp_path: Path, monk
                     'api-key': '<scrubbed>',
                     'google-api-key': '<scrubbed>',
                     'xai-key': '<scrubbed>',
+                    'xi-api-key': '<scrubbed>',
                 },
                 'client_secret': '<scrubbed>',
                 'note': 'the key is <scrubbed> here',

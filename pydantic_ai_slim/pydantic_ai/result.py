@@ -1224,7 +1224,8 @@ def _get_usage_checking_stream_response(
 
         async def _usage_checking_iterator():
             async for item in events:
-                limits.check_tokens(get_usage())
+                # Omitted usage is warned about once the response completes, not on every event.
+                limits._check_token_limits(get_usage())  # pyright: ignore[reportPrivateUsage]
                 # `get_request_input_tokens` builds a response snapshot, so only pay for it when the limit is set.
                 if limits.per_request_input_tokens_limit is not None:
                     limits.check_per_request_input_tokens(get_request_input_tokens())

@@ -114,10 +114,11 @@ the run continues and the model can pick an allowed command instead. So does
 every other failure the model can act on: a working directory an earlier command
 deleted or replaced with a file, and a command the operating system refuses to
 spawn because it holds a NUL byte or contains a character the operating system
-cannot encode. Failures
+cannot encode, and a command too long for the operating system to start, which
+the model is asked to write to a file and run instead. Failures
 the model can do nothing about still abort the run: a host that cannot allocate
-a process, an argument or environment that exceeds the platform's combined
-size limit, and an invalid character in an application-supplied `env`. A command that runs past its timeout returns its output so far, ending in
+a process, an application-supplied `env` too large to start even a short
+command, and an invalid character in an application-supplied `env`. A command that runs past its timeout returns its output so far, ending in
 `[Command timed out after Ns]`. A workspace that is gone ends the run.
 
 !!! warning "Best-effort, not a security boundary"
