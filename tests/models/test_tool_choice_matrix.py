@@ -324,7 +324,18 @@ EXPECTED_TOOL_CHOICE: dict[tuple[str, Scenario], Any] = {
     ('openai', 'required'): snapshot('required'),
     ('openai', 'list_single'): snapshot({'type': 'function', 'function': {'name': 'get_weather'}}),
     ('openai', 'none_with_output'): snapshot({'type': 'function', 'function': {'name': 'final_result'}}),
-    ('openai', 'tools_plus_output'): snapshot('required'),
+    ('openai', 'tools_plus_output'): snapshot(
+        {
+            'type': 'allowed_tools',
+            'allowed_tools': {
+                'mode': 'required',
+                'tools': [
+                    {'type': 'function', 'function': {'name': 'get_weather'}},
+                    {'type': 'function', 'function': {'name': 'final_result'}},
+                ],
+            },
+        }
+    ),
     ('openai_responses', 'auto'): snapshot('auto'),
     ('openai_responses', 'none'): snapshot('none'),
     ('openai_responses', 'required'): snapshot('required'),

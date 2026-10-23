@@ -1141,10 +1141,9 @@ async def test_anthropic_no_forcing_model_explicit_forcing_raises(
 
 
 @skip_if_no_openai
-async def test_openai_chat_fallback_single_tool_filters_tool_defs(allow_model_requests: None):
-    """`ToolOrOutput` single function tool on a no-forcing model falls back to auto and filters tool_defs."""
-    mock_client = MagicMock()
-    provider = OpenAIProvider(openai_client=mock_client)
+async def test_openai_chat_fallback_single_tool_uses_allowed_tools(allow_model_requests: None):
+    """`ToolOrOutput` single function tool on a no-forcing OpenAI model uses `allowed_tools` to preserve cache."""
+    provider = OpenAIProvider(api_key='test-key')
     profile = OpenAIModelProfile(supports_forced_tool_choice=False)
     m = OpenAIChatModel('gpt-4o-mini', provider=provider, profile=profile)
     params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=True)
@@ -1152,8 +1151,75 @@ async def test_openai_chat_fallback_single_tool_filters_tool_defs(allow_model_re
     tools, tool_choice = m._get_tool_choice(  # pyright: ignore[reportPrivateUsage]
         {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}, params
     )
+    assert tool_choice == {
+        'type': 'allowed_tools',
+        'allowed_tools': {'mode': 'auto', 'tools': [{'type': 'function', 'function': {'name': 'tool_a'}}]},
+    }
+    assert [t['function']['name'] for t in tools] == ['tool_a', 'tool_b']
+
+
+@skip_if_no_openai
+@pytest.mark.parametrize(
+    ('base_url', 'profile'),
+    [
+        pytest.param(
+            None,
+            OpenAIModelProfile(supports_forced_tool_choice=False, openai_chat_supports_allowed_tools=False),
+            id='opted-out',
+        ),
+        pytest.param(
+            'http://localhost:8000/v1', OpenAIModelProfile(supports_forced_tool_choice=False), id='custom-base-url'
+        ),
+        pytest.param(
+            'https://openrouter.ai/api/v1', OpenAIModelProfile(supports_forced_tool_choice=False), id='compatible-host'
+        ),
+    ],
+)
+async def test_openai_chat_fallback_single_tool_filters_tool_defs_without_allowed_tools(
+    allow_model_requests: None, base_url: str | None, profile: OpenAIModelProfile
+):
+    """Without `openai_chat_supports_allowed_tools`, a no-forcing model falls back to auto and filters tool_defs.
+
+    `OpenAIProvider` pointed at an OpenAI-compatible server through `base_url` doesn't get the flag: such servers
+    may silently ignore `allowed_tools`, which would drop the restriction.
+    """
+    provider = OpenAIProvider(api_key='test-key', base_url=base_url)
+    m = OpenAIChatModel('gpt-4o-mini', provider=provider, profile=profile)
+    assert m.profile.get('openai_chat_supports_allowed_tools') is False
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=True)
+
+    tools, tool_choice = m._get_tool_choice(  # pyright: ignore[reportPrivateUsage]
+        {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}, params
+    )
     assert tool_choice == 'auto'
     assert {t['function']['name'] for t in tools} == {'tool_a'}
+
+
+@skip_if_no_openai
+async def test_openai_chat_custom_base_url_can_opt_into_allowed_tools(allow_model_requests: None):
+    """A compatible server known to honor `allowed_tools` opts back in through the model's `profile`."""
+    provider = OpenAIProvider(api_key='test-key', base_url='http://localhost:8000/v1')
+    m = OpenAIChatModel(
+        'gpt-4o-mini', provider=provider, profile=OpenAIModelProfile(openai_chat_supports_allowed_tools=True)
+    )
+    params = ModelRequestParameters(
+        function_tools=[make_tool('tool_a'), make_tool('tool_b'), make_tool('tool_c')], allow_text_output=False
+    )
+
+    tools, tool_choice = m._get_tool_choice({'tool_choice': ['tool_a', 'tool_b']}, params)  # pyright: ignore[reportPrivateUsage]
+    assert tool_choice == (
+        {
+            'type': 'allowed_tools',
+            'allowed_tools': {
+                'mode': 'required',
+                'tools': [
+                    {'type': 'function', 'function': {'name': 'tool_a'}},
+                    {'type': 'function', 'function': {'name': 'tool_b'}},
+                ],
+            },
+        }
+    )
+    assert [t['function']['name'] for t in tools] == ['tool_a', 'tool_b', 'tool_c']
 
 
 @skip_if_no_openai

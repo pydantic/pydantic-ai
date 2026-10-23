@@ -23,6 +23,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
 from typing import Annotated, Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
+from urllib.parse import urlsplit
 
 from httpx2 import Timeout as HTTPX2Timeout
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
@@ -543,6 +544,10 @@ def _map_openai_image_generation_tool(tool: ImageGenerationTool) -> responses.to
     if tool.input_fidelity is not None:
         image_generation_tool['input_fidelity'] = tool.input_fidelity
     return image_generation_tool
+
+
+_OPENAI_API_HOST = 'api.openai.com'
+"""Host of OpenAI's own API, as opposed to an OpenAI-compatible server reached through a custom `base_url`."""
 
 
 def _is_azure(client: AsyncOpenAI, system: str) -> bool:
@@ -1410,6 +1415,20 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """Return all of `native_tool`'s restricting settings, as Chat Completions' `web_search_options` takes none."""
         return native_tool.restricting_settings
 
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Narrow `openai_chat_supports_allowed_tools` to OpenAI's own API, before the user's `profile=` applies.
+
+        `OpenAIProvider` picks its profile by model name alone, but it also reaches OpenAI-compatible servers
+        through a custom `base_url` (vLLM, LiteLLM, OpenRouter, a self-hosted gateway, ...), which may reject
+        an `allowed_tools` `tool_choice` or, worse, silently ignore the restriction. Narrowing the default
+        rather than the resolved profile lets a user whose server does honor it opt back in.
+        """
+        if profile.get('openai_chat_supports_allowed_tools', False) and (
+            urlsplit(self._provider.base_url).hostname != _OPENAI_API_HOST
+        ):
+            return merge_profile(profile, OpenAIModelProfile(openai_chat_supports_allowed_tools=False))
+        return profile
+
     @cached_property
     def profile(self) -> OpenAIModelProfile:
         """The model profile.
@@ -1854,18 +1873,25 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             supports = self._supports_tool_forcing(model_settings, model_request_parameters)
-            if tool_choice_mode == 'required' and len(tool_names) == 1:
-                if supports:
-                    tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
-                else:
-                    # Forcing not supported: filter so the model can only see the requested tool.
-                    # Breaks caching, but OpenAI Chat doesn't support limiting tools via API arg.
-                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                    tool_choice = 'auto'
+            effective_mode = 'auto' if tool_choice_mode == 'auto' or not supports else tool_choice_mode
+            if tool_choice_mode == 'required' and len(tool_names) == 1 and supports:
+                tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
+            elif self.profile.get('openai_chat_supports_allowed_tools', False):
+                # `allowed_tools` restricts the choice via the API rather than the tools list, so caching is
+                # preserved. Used for the multi-tool case and as the cache-preserving fallback when forcing
+                # isn't supported.
+                tool_choice = {
+                    'type': 'allowed_tools',
+                    'allowed_tools': {
+                        'mode': effective_mode,
+                        # Ignore names that are not currently available, keeping declaration order.
+                        'tools': [{'type': 'function', 'function': {'name': n}} for n in tool_defs if n in tool_names],
+                    },
+                }
             else:
-                # Breaks caching, but OpenAI Chat doesn't support limiting tools via API arg
+                # Breaks caching, but this API isn't known to support `allowed_tools`.
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                tool_choice = 'auto' if tool_choice_mode == 'auto' or not supports else tool_choice_mode
+                tool_choice = effective_mode
         else:
             assert_never(resolved_tool_choice)
 

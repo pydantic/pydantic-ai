@@ -121,6 +121,12 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 openai_responses_supports_max_reasoning_effort=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # Set here rather than in `openai_model_profile` because OpenAI-compatible Chat Completions APIs
+                # don't all honor it: OpenRouter and xAI silently ignore it, and OpenRouter rejects it for Claude.
+                # This provider also reaches those through a custom `base_url`, so `OpenAIChatModel` narrows it
+                # back to `False` unless the `base_url` is OpenAI's own API.
+                # https://platform.openai.com/docs/api-reference/chat/create
+                openai_chat_supports_allowed_tools=True,
             ),
         )
 

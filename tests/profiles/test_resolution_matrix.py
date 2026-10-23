@@ -372,6 +372,7 @@ def test_openai_gpt_5_4():
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': False,
             'supported_cache_retentions': (),
+            'openai_chat_supports_allowed_tools': True,
         }
     )
 
@@ -426,6 +427,7 @@ def test_openai_gpt_5_6():
             'supports_cache': True,
             'supported_cache_retentions': ('30m',),
             'openai_responses_supports_prompt_cache_diagnostics': True,
+            'openai_chat_supports_allowed_tools': True,
         }
     )
 
@@ -468,6 +470,7 @@ def test_openai_gpt_6_astra():
             'supports_cache': True,
             'supported_cache_retentions': ('30m',),
             'openai_responses_supports_prompt_cache_diagnostics': True,
+            'openai_chat_supports_allowed_tools': True,
         }
     )
 
@@ -604,6 +607,7 @@ def test_openai_gpt_4o():
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': False,
             'supported_cache_retentions': (),
+            'openai_chat_supports_allowed_tools': True,
         }
     )
 
@@ -631,6 +635,7 @@ def test_openai_o3_mini():
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': False,
             'supported_cache_retentions': (),
+            'openai_chat_supports_allowed_tools': True,
         }
     )
 
@@ -666,6 +671,7 @@ def test_openai_codex_gpt_5_6():
             'default_cache_retention': timedelta(seconds=1800),
             'supports_cache': False,
             'supported_cache_retentions': (),
+            'openai_chat_supports_allowed_tools': True,
             'openai_responses_requires_streaming': True,
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
