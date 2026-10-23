@@ -528,12 +528,11 @@ A backend whose environments can have a graphical display implements
 [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]: `has_display`, which says without I/O
 whether this environment has one, `display_size`, `screenshot` (PNG bytes), and `act`, which performs one [`ComputerAction`][pydantic_ai.workspaces.ComputerAction]
 such as a click or a key press. Tools reach them as `ctx.workspace.screenshot()` and
-`ctx.workspace.act(...)`; under durable execution, calls from workflow code run as workspace
-operations, like file calls.
+`ctx.workspace.act(...)`.
 
 New action kinds may be added to `ComputerAction`, so `act` must raise
 [`UnsupportedComputerActionError`][pydantic_ai.workspaces.UnsupportedComputerActionError] for a kind it
-doesn't know; the conformance suite checks this. Coordinates are pixels of the screenshot, so a backend
+doesn't know; [`WorkspaceBackendSuite`][pydantic_ai.workspaces.conformance.WorkspaceBackendSuite] checks this. Coordinates are pixels of the screenshot, so a backend
 whose screen is scaled, such as a high-density display, reports the screenshot's size and scales actions to
 match. `LocalWorkspace` has no display.
 

@@ -1,9 +1,7 @@
 """The actions a [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay] backend performs on a display.
 
-The vocabulary follows OpenAI's computer tool (`click`, `move`, `drag`, `scroll`, `type`, `keypress`), plus the
-pointer and key holds Anthropic's tool adds. Actions are validated on construction, every model-controlled amount is
-bounded, and unknown fields are ignored. Coordinates are pixels of the backend's screenshot, with the origin at the top left; a click or
-scroll without coordinates happens at the pointer.
+Coordinates are pixels of the backend's screenshot, with the origin at the top left; a click or scroll without
+coordinates happens at the pointer.
 
 Common key names are normalized to one lowercase spelling, and a combination written as one name, such as `ctrl+s`,
 is split into its keys. Other names, such as the X keysym `KP_Enter`, are kept as written; a backend refuses names it
