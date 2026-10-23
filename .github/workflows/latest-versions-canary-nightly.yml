@@ -24,6 +24,11 @@ jobs:
     needs: [canary]
     # A green run reports too: it is how an issue learns its failure passed.
     if: ${{ !cancelled() }}
+    # Filing lists the open issues and then creates the missing ones, so two reports at once, such as a
+    # re-run beside the next night's run, could file one signature twice.
+    concurrency:
+      group: latest-versions-canary-report
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

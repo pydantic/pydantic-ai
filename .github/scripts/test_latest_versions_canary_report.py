@@ -399,11 +399,20 @@ def test_a_session_that_stopped_short_is_incomplete(tmp_path: Path, root: Path):
 
     assert list(report.collect(interrupted, root).failures) == [UNION]
     assert not report.collect(interrupted, root).complete
-    for reports in (crashed, mismatched):
+    for reports, stop, detail in (
+        (crashed, 'a pytest-xdist worker crashes', CRASHED_WORKER),
+        (mismatched, 'pytest-xdist workers collect different tests', DIFFERENT_COLLECTION.splitlines()[0]),
+    ):
         observation = report.collect(reports, root)
-        assert list(observation.failures) == ['a pytest-xdist worker crashes or collects different tests', UNION]
-        assert observation.failures['a pytest-xdist worker crashes or collects different tests'].tests == {}
+        assert list(observation.failures) == [stop, UNION]
+        assert observation.failures[stop].tests == {}
+        assert observation.failures[stop].details == [detail]
         assert not observation.complete
+
+    # The crash issue names the node the worker was running.
+    filer = FakeClient()
+    assert run(filer, root, crashed, 1)[0] == '#100: filed `a pytest-xdist worker crashes`'
+    assert f'```text\n{CRASHED_WORKER}\n```' in str(filer.created[0]['body'])
 
     # An open issue for a signature the stopped session never reached is not told it passes.
     client = FakeClient()
@@ -619,7 +628,8 @@ def test_an_open_issue_records_a_pass_once_and_a_return(tmp_path: Path, root: Pa
 def test_issues_this_script_did_not_file_are_ignored(tmp_path: Path, root: Path):
     reports = failing_reports(tmp_path, 'reports', [case('tests/models/test_anthropic.py', 'test_request', UNION_311)])
     client = FakeClient()
-    client.add_issue(UNION, user={'login': 'someone'})
+    # Closed, so the search returns it beside the issue below with no `closed_at`.
+    client.close(client.add_issue(UNION, user={'login': 'someone'}))
     client.add_issue(UNION, pull_request={'url': 'https://example.com'})
     client.add_issue('', body='Agent workflow failure')
     client.issues[client.add_issue(UNION)].update(state='closed', closed_at=None)

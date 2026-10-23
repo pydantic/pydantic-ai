@@ -73,10 +73,12 @@ _EXCEPTION_NAME = re.compile(r'[A-Za-z_][\w.]{0,99}')
 _SHORT_ENTRY = re.compile(r'in ([A-Za-z_]\w{0,99})')
 _DEFINITION = re.compile(r'^\s*(?:async\s+)?def ([A-Za-z_]\w{0,99})\(', re.MULTILINE)
 _TEST_MODULE = re.compile(r'test_\w*\.py')
-# How pytest-xdist reports a lost worker or a collection mismatch between workers, as the raw text of a
-# JUnit error. The session can stop after either, leaving tests unrun.
-_XDIST_STOP = re.compile(r"worker '[^']*' crashed while running |Different tests were collected between ")
-_XDIST_SIGNATURE = 'a pytest-xdist worker crashes or collects different tests'
+# How pytest-xdist reports a lost worker and a collection mismatch between workers, each as the raw text
+# of a JUnit error. The session can stop after either, leaving tests unrun. They are different causes.
+_XDIST_STOPS = (
+    (re.compile(r"worker '[^']*' crashed while running "), 'a pytest-xdist worker crashes'),
+    (re.compile(r'Different tests were collected between '), 'pytest-xdist workers collect different tests'),
+)
 _PACKAGE = re.compile(r'/site-packages/([A-Za-z_][\w-]{0,99})')
 
 StepOutcome = Literal['success', 'failure', 'cancelled', 'skipped']
@@ -139,6 +141,8 @@ class Failure:
     pythons: set[str] = field(default_factory=set[str])
     # Test node ID -> first line of its failure. Untrusted text, for issue bodies only.
     tests: dict[str, str] = field(default_factory=dict[str, str])
+    # First lines of failures tied to no test, such as the node a crashed worker was running. Untrusted too.
+    details: list[str] = field(default_factory=list[str])
 
 
 @dataclass
@@ -222,6 +226,8 @@ def collect(reports: Path, root: Path) -> Observation:
             failure.pythons.add(python)
             if test:
                 failure.tests.setdefault(test, message)
+            elif message and message not in failure.details:
+                failure.details.append(message)
     ranked = sorted(
         failures,
         key=lambda signature: (bool(failures[signature].tests), -len(failures[signature].tests), signature),
@@ -266,8 +272,8 @@ def _test_failures(junit: Path, root: Path) -> Iterator[tuple[str, str, str]]:
             if result.tag not in ('failure', 'error'):
                 continue
             text = result.text or ''
-            if _XDIST_STOP.match(text):
-                yield _XDIST_SIGNATURE, '', _first_line(text)
+            if stop := next((signature for pattern, signature in _XDIST_STOPS if pattern.match(text)), None):
+                yield stop, '', _first_line(text)
                 continue
             locations = list(_LOCATION.finditer(text))
             frames = [
@@ -534,6 +540,8 @@ def _issue_body(
         if len(failure.tests) > _LISTED_TEST_LIMIT:
             listed.append(f'... and {len(failure.tests) - _LISTED_TEST_LIMIT} more in the run')
         sections.append(f'<details><summary>Failing tests</summary>\n\n{_fenced(listed)}\n</details>')
+    if failure.details:
+        sections.append(_fenced(failure.details[:_LISTED_TEST_LIMIT]))
     for python, lines in moved.items():
         sections.append(
             f'<details><summary>Dependencies past <code>uv.lock</code> on Python {python}</summary>\n\n'
