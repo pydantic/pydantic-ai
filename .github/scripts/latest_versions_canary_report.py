@@ -11,7 +11,7 @@ and reconciles them with the issues it filed before, one issue per signature:
   leg's suite first, then those with the most failing tests. The rest are logged
   and wait for a later run.
 - A signature that an open issue carries gets one comment on that issue per run.
-- A run in which every leg reached its test report shows which signatures pass.
+- A run in which every leg finished its test session shows which signatures pass.
   Each issue records a pass once; closing stays a maintainer decision.
 - A signature whose last issue was closed gets a new issue only if a run
   recorded it passing after its last failure. A close is not proof of recovery:
@@ -73,8 +73,10 @@ _EXCEPTION_NAME = re.compile(r'[A-Za-z_][\w.]{0,99}')
 _SHORT_ENTRY = re.compile(r'in ([A-Za-z_]\w{0,99})')
 _DEFINITION = re.compile(r'^\s*(?:async\s+)?def ([A-Za-z_]\w{0,99})\(', re.MULTILINE)
 _TEST_MODULE = re.compile(r'test_\w*\.py')
-# How pytest-xdist reports a worker it lost, after which the suite may stop short.
-_CRASHED_WORKER = re.compile(r"^worker '[^']*' crashed while running ")
+# How pytest-xdist reports a lost worker or a collection mismatch between workers, as the raw text of a
+# JUnit error. The session can stop after either, leaving tests unrun.
+_XDIST_STOP = re.compile(r"worker '[^']*' crashed while running |Different tests were collected between ")
+_XDIST_SIGNATURE = 'a pytest-xdist worker crashes or collects different tests'
 _PACKAGE = re.compile(r'/site-packages/([A-Za-z_][\w-]{0,99})')
 
 StepOutcome = Literal['success', 'failure', 'cancelled', 'skipped']
@@ -145,7 +147,7 @@ class Observation:
 
     # Failures that stopped a leg's suite first, then most failing tests first: the order a capped run files.
     failures: dict[str, Failure]
-    # Every leg reached its test report, so a signature missing from `failures` passed.
+    # Every leg finished its test session, so a signature missing from `failures` passed.
     complete: bool
 
 
@@ -209,12 +211,9 @@ def collect(reports: Path, root: Path) -> Observation:
         found = _leg_failures(leg, python, outcome, root)
         # A failed session counts only if it finished: an interrupted, internally failed or worker-starved
         # one writes JUnit for just the tests it reached, and the absent rest must not read as passes.
+        # Failures not tied to a test, xdist's included, carry no test ID.
         tested = outcome is not None and (
-            outcome.test == 'success'
-            or (
-                outcome.pytest_exit == 1
-                and all(test and not _CRASHED_WORKER.match(message) for _, test, message in found)
-            )
+            outcome.test == 'success' or (outcome.pytest_exit == 1 and all(test for _, test, _ in found))
         )
         complete = complete and tested
         totals.add(outcome.legs if outcome else 0)
@@ -267,6 +266,9 @@ def _test_failures(junit: Path, root: Path) -> Iterator[tuple[str, str, str]]:
             if result.tag not in ('failure', 'error'):
                 continue
             text = result.text or ''
+            if _XDIST_STOP.match(text):
+                yield _XDIST_SIGNATURE, '', _first_line(text)
+                continue
             locations = list(_LOCATION.finditer(text))
             frames = [
                 (index, path)
@@ -494,8 +496,9 @@ def _closed_issues(client: attention.GitHubClient, repo: str) -> dict[str, Track
     params = urllib.parse.urlencode({'q': query, 'sort': 'created', 'order': 'desc', 'per_page': _CLOSED_SEARCH_LIMIT})
     result = _SearchResult.model_validate(client.get(f'/search/issues?{params}'))
     closed: dict[str, Tracked] = {}
-    for issue in sorted(result.items, key=lambda issue: issue.closed_at or dt.datetime.min):
-        if issue.closed_at is not None and (tracked := _track(client, repo, issue)) is not None:
+    closes = [(issue.closed_at, issue) for issue in result.items if issue.closed_at is not None]
+    for _, issue in sorted(closes, key=lambda close: close[0]):
+        if (tracked := _track(client, repo, issue)) is not None:
             closed[tracked.signature] = tracked
     return closed
 

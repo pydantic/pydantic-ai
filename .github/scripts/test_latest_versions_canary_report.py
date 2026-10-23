@@ -141,7 +141,17 @@ E       ImportError: cannot import name '_logger' from 'dbos'
 tests/conftest.py:523: ImportError
 """
 
+# What pytest-xdist reports, as pytest's JUnit writes it: an `error` whose text is xdist's raw message.
 CRASHED_WORKER = "worker 'gw3' crashed while running 'tests/models/test_anthropic.py::test_request'"
+DIFFERENT_COLLECTION = """Different tests were collected between gw0 and gw1. The difference is:
+--- gw0
+
++++ gw1
+
+@@ -1,2 +1 @@
+ tests/models/test_anthropic.py::test_request
+-tests/models/test_anthropic.py::test_container
+To see why this happens see 'Known limitations' in documentation for pytest-xdist"""
 
 
 def assertion_text(line: int) -> str:
@@ -375,11 +385,25 @@ def test_a_session_that_stopped_short_is_incomplete(tmp_path: Path, root: Path):
     write_leg(interrupted, '3.15', pytest_exit=2, cases=[union])
     crashed = tmp_path / 'crashed'
     write_leg(crashed, '3.11', cases=[union])
-    write_leg(crashed, '3.15', cases=[case('tests/models/test_anthropic.py', 'test_request', '', message=CRASHED_WORKER)])
+    crash = case(
+        'tests/models/test_anthropic.py',
+        'test_request',
+        CRASHED_WORKER,
+        tag='error',
+        message=f'failed on setup with "{CRASHED_WORKER}"',
+    )
+    write_leg(crashed, '3.15', cases=[crash])
+    mismatched = tmp_path / 'mismatched'
+    write_leg(mismatched, '3.11', cases=[union])
+    write_leg(mismatched, '3.15', cases=[case('gw1', 'gw1', DIFFERENT_COLLECTION, tag='error')])
 
     assert list(report.collect(interrupted, root).failures) == [UNION]
     assert not report.collect(interrupted, root).complete
-    assert not report.collect(crashed, root).complete
+    for reports in (crashed, mismatched):
+        observation = report.collect(reports, root)
+        assert list(observation.failures) == ['a pytest-xdist worker crashes or collects different tests', UNION]
+        assert observation.failures['a pytest-xdist worker crashes or collects different tests'].tests == {}
+        assert not observation.complete
 
     # An open issue for a signature the stopped session never reached is not told it passes.
     client = FakeClient()
@@ -598,8 +622,9 @@ def test_issues_this_script_did_not_file_are_ignored(tmp_path: Path, root: Path)
     client.add_issue(UNION, user={'login': 'someone'})
     client.add_issue(UNION, pull_request={'url': 'https://example.com'})
     client.add_issue('', body='Agent workflow failure')
+    client.issues[client.add_issue(UNION)].update(state='closed', closed_at=None)
 
-    assert run(client, root, reports, 1) == [f'#103: filed `{UNION}`']
+    assert run(client, root, reports, 1) == [f'#104: filed `{UNION}`']
 
 
 def test_main_reports_only_failed_or_green_runs(tmp_path: Path, root: Path, monkeypatch: pytest.MonkeyPatch):
