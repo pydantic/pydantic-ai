@@ -4980,6 +4980,40 @@ async def test_dbos_durability_batch_model_withdraws_a_pending_response_a_hook_r
     assert wrapped.canceled == [wrapped.created[0].id]
 
 
+async def test_dbos_durability_batch_model_withdraws_a_pending_response_whose_wrapper_fails_to_exit(
+    dbos: DBOS,
+) -> None:
+    """A step whose capability wrapper fails to exit after the request returned withdraws the pending request."""
+    wrapped = SlowBatchTestModel(pending_checks=10**6)
+
+    class FailingExit(WrapperModel):
+        async def __aexit__(self, *args: Any) -> bool | None:
+            await super().__aexit__(*args)
+            raise RuntimeError('teardown failed')
+
+    @dataclass
+    class WrapWithFailingExit(AbstractCapability[object]):
+        def get_wrapper_model(self, model: Model) -> Model | None:
+            return FailingExit(model)
+
+    agent = Agent(
+        wrapped,
+        name='durability_batch_failing_exit',
+        output_type=[str, PendingModelResponse],
+        capabilities=[WrapWithFailingExit(), BatchModelRequests(**FAST_BATCH_SETTINGS), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> None:
+        await agent.run('go')
+
+    with SetWorkflowID(str(uuid.uuid4())), pytest.raises(RuntimeError, match='teardown failed'):
+        await run_durable_agent()
+
+    assert len(wrapped.created) == 1
+    assert wrapped.canceled == [wrapped.created[0].id]
+
+
 async def test_dbos_durability_batch_model_recovery_does_not_submit_again(dbos: DBOS) -> None:
     """Re-executing the workflow, as recovery does, replays the recorded submission and checks instead of repeating them."""
     wrapped = SlowBatchTestModel(pending_checks=1)
