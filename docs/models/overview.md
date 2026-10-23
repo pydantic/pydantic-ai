@@ -293,11 +293,11 @@ these categories, whichever provider it came from:
 | [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] | The provider couldn't find the model, deployment or other resource the request names, e.g. an HTTP 404. A subclass of `ModelRequestRejectedError`. |
 
 A provider's own signal decides between categories that share a status code: a 429 is a rate limit unless the
-provider says the quota is exhausted, a 503 is only unavailable unless the provider says it's overloaded, and a 400 is
-a `ModelRequestRejectedError` with no more specific category unless the provider says why: the input exceeds the
-context window, the model doesn't exist (OpenAI's Responses API sends `model_not_found` as a 400), or the API key is
-invalid (the Gemini API sends `API_KEY_INVALID` as a 400) make it the matching subclass, and exhausted credits
-(Anthropic sends a 400) make it a `ModelQuotaExceededError` instead.
+provider says the quota is exhausted, and a 503 is only unavailable unless the provider says it's overloaded. A 400 is
+a `ModelRequestRejectedError`, or one of its subclasses when the provider says why: a `ModelContextWindowExceededError`,
+a `ModelNotFoundError` (OpenAI's Responses API sends `model_not_found` as a 400), or a `ModelAuthenticationError` (the
+Gemini API sends `API_KEY_INVALID` as a 400). Exhausted credits are a `ModelQuotaExceededError` instead, even when the
+provider sends them as a 400, as Anthropic does.
 
 Other errors are raised as a plain `ModelAPIError` or [`ModelHTTPError`](#handling-http-errors), as they always were.
 Categories are assigned from the provider's error code or type where it sends one, and from the error message
