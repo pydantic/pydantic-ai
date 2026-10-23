@@ -778,9 +778,11 @@ class ModelAuthenticationError(ModelRequestRejectedError):
     credentials, and that they have access to the model. A subclass of
     [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError].
 
-    A 403 the provider says to retry is not one: Bedrock's `MPAgreementBeingCreated`, sent while the account's AWS
-    Marketplace subscription to the model is being processed, is a
-    [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError].
+    A 403 isn't always about credentials. OpenRouter also sends one for a guardrail block, without saying which it is,
+    so that's a `ModelAuthenticationError` too, but input its moderation flagged is a plain
+    `ModelRequestRejectedError`. Bedrock's `MPAgreementBeingCreated` 403, sent while the account's AWS Marketplace
+    subscription to the model is being processed, is a
+    [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError], since AWS says to retry it.
     """
 
 

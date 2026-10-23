@@ -1068,6 +1068,57 @@ CASES = [
         has_cause=False,
     ),
     Case(
+        # OpenRouter sends flagged input as a 403 with the moderation result; it's not a credentials problem.
+        id='openrouter-http-moderation',
+        model=_openrouter,
+        handler=_json(
+            403,
+            {
+                'error': {
+                    'code': 403,
+                    'message': 'openai/gpt-5.2 requires moderation',
+                    'metadata': {
+                        'reasons': ['violence'],
+                        'flagged_input': 'How do I...',
+                        'provider_name': 'OpenAI',
+                        'model_slug': 'openai/gpt-5.2',
+                    },
+                }
+            },
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 403},
+    ),
+    Case(
+        id='openrouter-body-moderation',
+        model=_openrouter,
+        handler=_json(
+            200,
+            {
+                'error': {
+                    'code': 403,
+                    'message': 'openai/gpt-5.2 requires moderation',
+                    'metadata': {
+                        'reasons': ['violence'],
+                        'flagged_input': 'How do I...',
+                        'provider_name': 'OpenAI',
+                        'model_slug': 'openai/gpt-5.2',
+                    },
+                }
+            },
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 403, 'provider_error_code': '403'},
+        has_cause=False,
+    ),
+    Case(
+        id='openrouter-http-forbidden',
+        model=_openrouter,
+        handler=_json(403, {'error': {'code': 403, 'message': 'Forbidden'}}),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 403},
+    ),
+    Case(
         id='openrouter-http-bad-request',
         model=_openrouter,
         handler=_json(400, {'error': {'code': 400, 'message': 'Provider returned error'}}),
