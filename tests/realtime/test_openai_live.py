@@ -2589,9 +2589,14 @@ async def test_audio_a_delegated_call_splits_from_its_words_is_not_recorded_as_s
 
     # The audio was still streamed, for playback, as a part of its own.
     assert len(streamed) == 2
-    assert [[type(part).__name__ for part in message.parts] for message in session.all_messages()] == snapshot(
-        [['SpeechPart', 'ToolCallPart'], ['ToolReturnPart']]
+    calling, returned = session.all_messages()
+    assert calling.parts == snapshot(
+        [
+            SpeechPart(speaker='assistant', transcript='Checking on that.'),
+            ToolCallPart(tool_name='weather', args='{}', tool_call_id='c1'),
+        ]
     )
+    assert [type(part) for part in returned.parts] == [ToolReturnPart]
 
 
 @pytest.mark.parametrize('reported_zero', [False, True], ids=['missing-usage', 'reported-zero'])

@@ -471,7 +471,7 @@ class SessionCore:
         self._tracks_tool_rounds = tracks_tool_rounds
         """Whether to say when tool rounds are over (`ToolRoundsOver`), for a connection that prunes them."""
         self._transcription = input_transcription_enabled
-        self._output_transcribed = output_always_transcribed
+        self._output_always_transcribed = output_always_transcribed
         """Whether every word of the model's speech is transcribed, though not always in the part holding its audio."""
         self._retain_input = retain_input_audio
         self._retain_output = retain_output_audio
@@ -1145,7 +1145,7 @@ class SessionCore:
             # Cut off before it said anything or was billed: there is nothing to record.
             return None
         parts = [*response.native_parts, *response.parts]
-        if self._output_transcribed and any(isinstance(part, SpeechPart) and part.transcript for part in parts):
+        if self._output_always_transcribed and any(isinstance(part, SpeechPart) and part.transcript for part in parts):
             # Audio a tool call split off from its words, which the response's other speech has: it was streamed, but
             # history has nothing to record for it.
             parts = [
