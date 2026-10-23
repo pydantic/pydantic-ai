@@ -1,3 +1,4 @@
+# description: Runs every pydantic-ai-harness sandbox provider's live tests daily and opens an issue when a scheduled run fails.
 name: Sandbox live nightly
 
 # Sandbox live tests run only in this workflow. The daily schedule runs every provider against

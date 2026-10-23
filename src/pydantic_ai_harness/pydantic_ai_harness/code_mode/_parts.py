@@ -32,7 +32,10 @@ class RunCodeArgs(TypedDict):
     """Whether to reset the REPL state before running `code`."""
 
 
-RUN_CODE_KIND = ToolKind('code_mode', 'run_code', args=RunCodeArgs)
+RUN_CODE_TOOL_NAME = 'run_code'
+"""The name `CodeMode` gives its tool; a wrapped tool with this name is rejected as a conflict."""
+
+RUN_CODE_KIND = ToolKind('code_mode', RUN_CODE_TOOL_NAME, args=RunCodeArgs)
 """The kind of `CodeMode`'s `run_code` tool."""
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Annotated, Any, Literal, TypeAlias, cast
@@ -1075,6 +1075,11 @@ class OpenRouterModel(OpenAIChatModel):
                 and openrouter_reasoning.get('effort') != 'none'
             )
         return super()._request_thinks(model_settings, model_request_parameters)
+
+    @override
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `openrouter_reasoning` replaces the unified mapping. `openai_reasoning_effort` is sent beside it instead.
+        return ('openrouter_reasoning',) if 'openrouter_reasoning' in model_settings else ()
 
     @override
     def _supports_tool_forcing(

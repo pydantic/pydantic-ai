@@ -876,6 +876,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'supported_native_tools': frozenset(),
             'bedrock_tool_result_colocatable_content': frozenset({'image', 'text'}),
             'bedrock_supports_leading_assistant_message': True,
+            'bedrock_supports_citations': True,
             'bedrock_supports_tool_choice': True,
             'bedrock_supports_adaptive_thinking': False,
             'bedrock_supports_effort': False,
@@ -953,6 +954,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_send_back_thinking_parts': True,
             'bedrock_tool_result_colocatable_content': frozenset({'image', 'text'}),
             'bedrock_supports_leading_assistant_message': True,
+            'bedrock_supports_citations': True,
             'bedrock_supports_prompt_caching': True,
             'bedrock_supports_adaptive_thinking': False,
             'bedrock_supports_effort': False,
@@ -993,6 +995,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'bedrock_send_back_thinking_parts': True,
             'bedrock_tool_result_colocatable_content': frozenset({'image', 'text'}),
             'bedrock_supports_leading_assistant_message': True,
+            'bedrock_supports_citations': True,
             'bedrock_supports_prompt_caching': True,
             'bedrock_supports_adaptive_thinking': False,
             'bedrock_supports_effort': False,
@@ -2203,7 +2206,36 @@ def test_litellm_mistral_small_latest():
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_fireworks_llama():
     profile = FireworksProvider.model_profile('accounts/fireworks/models/llama-v3p3-70b-instruct')
-    assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_fireworks_unprofiled():
+    profile = FireworksProvider.model_profile('accounts/fireworks/models/kimi-k3')
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'supports_json_schema_output': True}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_fireworks_gemma():
+    profile = FireworksProvider.model_profile('accounts/fireworks/models/gemma-3-27b-it')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_tool_return_schema': True,
+            'supports_video_input': True,
+            'google_supports_thinking_level': False,
+            'google_web_search_billed_per_prompt': False,
+        }
+    )
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
