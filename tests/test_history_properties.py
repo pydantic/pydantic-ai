@@ -17,6 +17,7 @@ draws it out of that property's histories, and a strict expected failure on a ha
 from __future__ import annotations as _annotations
 
 import asyncio
+import os
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from functools import cache
@@ -25,7 +26,7 @@ from typing import Literal, assert_never
 import pydantic_core
 import pytest
 from _pytest.mark import ParameterSet
-from hypothesis import given, strategies as st
+from hypothesis import HealthCheck, given, settings, strategies as st
 from pydantic import JsonValue
 
 from pydantic_ai.messages import (
@@ -104,7 +105,22 @@ pytestmark = pytest.mark.filterwarnings(
     'ignore:Do not use the `random` module inside strategies:hypothesis.errors.HypothesisDeprecationWarning'
 )
 
+_long_run_examples = os.environ.get('HISTORY_PROPERTY_EXAMPLES')
+PROPERTY_SETTINGS = settings(
+    max_examples=int(_long_run_examples) if _long_run_examples else 50,
+    derandomize=_long_run_examples is None,
+    database=None,
+    deadline=None,
+    print_blob=_long_run_examples is not None,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+"""A small, derandomized batch by default, so a run is reproducible, fits the per-test budget in `cost_guards`, and
+covers the same branches on every xdist worker. `HISTORY_PROPERTY_EXAMPLES` sets a long, randomized run to hunt for
+new failures, as `REALTIME_SIMULATION_EXAMPLES` does for the realtime simulation. `cost_guards` bounds each test's
+time, so Hypothesis's own check on slow drawing, which a loaded worker can trip, is off."""
 
+
+@PROPERTY_SETTINGS
 @given(histories())
 def test_history_survives_serialization(history: list[ModelMessage]):
     """`ModelMessagesTypeAdapter` loads back what it dumped, in Python and in JSON."""
@@ -112,6 +128,7 @@ def test_history_survives_serialization(history: list[ModelMessage]):
     assert round_trip_violations(history, mode='json') == []
 
 
+@PROPERTY_SETTINGS
 @given(histories(well_formed=False))
 def test_repair_makes_tool_calls_pair_up(history: list[ModelMessage]):
     """Repair answers every call once in the next request, keeps every part but orphan returns, and settles."""
@@ -594,6 +611,7 @@ def _check(checked: CheckedProperty, case: MapperCase, data: st.DataObject) -> l
 
 
 @pytest.mark.parametrize('case', _params([case for case in MAPPER_CASES if case.id in REPEATED_CALL_ID_REJECTIONS]))
+@PROPERTY_SETTINGS
 @given(data=st.data())
 def test_mapped_call_ids_are_unique(case: MapperCase, data: st.DataObject):
     """P2: no call id is sent twice, on the APIs that reject one sent twice."""
@@ -601,6 +619,7 @@ def test_mapped_call_ids_are_unique(case: MapperCase, data: st.DataObject):
 
 
 @pytest.mark.parametrize('case', _params(MAPPER_CASES))
+@PROPERTY_SETTINGS
 @given(data=st.data())
 def test_mapped_results_answer_calls(case: MapperCase, data: st.DataObject):
     """P2: every result answers an earlier call (where required, one of the message right before), and every call
@@ -609,6 +628,7 @@ def test_mapped_results_answer_calls(case: MapperCase, data: st.DataObject):
 
 
 @pytest.mark.parametrize('case', _params(MAPPER_CASES))
+@PROPERTY_SETTINGS
 @given(data=st.data())
 def test_mapped_messages_are_not_empty(case: MapperCase, data: st.DataObject):
     """P4: the body has a message, and every message has content."""
@@ -616,6 +636,7 @@ def test_mapped_messages_are_not_empty(case: MapperCase, data: st.DataObject):
 
 
 @pytest.mark.parametrize('case', _params([case for case in MAPPER_CASES if case.rejects_empty_text]))
+@PROPERTY_SETTINGS
 @given(data=st.data())
 def test_mapped_text_is_not_empty(case: MapperCase, data: st.DataObject):
     """P4: no text block is empty or whitespace-only, where the API rejects one."""
@@ -623,6 +644,7 @@ def test_mapped_text_is_not_empty(case: MapperCase, data: st.DataObject):
 
 
 @pytest.mark.parametrize('case', _params(MAPPER_CASES))
+@PROPERTY_SETTINGS
 @given(data=st.data())
 def test_mapping_is_deterministic(case: MapperCase, data: st.DataObject):
     """P5: mapping a history again, or after a JSON round trip, gives the same body."""
