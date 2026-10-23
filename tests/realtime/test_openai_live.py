@@ -278,6 +278,8 @@ def test_delegation_settings_reach_the_backend(model: OpenAILiveModel) -> None:
         # Resolved against the backend's profile, as a direct Responses request to it would be.
         pytest.param('gpt-5.6-sol', 'minimal', 'low', id='no-minimal-effort'),
         pytest.param('gpt-5', 'minimal', 'minimal', id='minimal-effort'),
+        # The delegation's efforts stop at `xhigh`, even for a backend whose Responses API takes `max`.
+        pytest.param('gpt-6.1-sol', 'max', 'xhigh', id='max-effort'),
         # A backend that always reasons can't be turned off, so `False` leaves it at its default.
         pytest.param('gpt-5', False, None, id='always-reasons'),
         # A backend that doesn't reason is sent no effort at all.
@@ -396,6 +398,34 @@ async def test_an_image_needs_respond_true(model: OpenAILiveModel) -> None:
         'response.create',
         'session.close',
     ]
+
+
+async def test_session_start_carries_seeded_system_prompts(model: OpenAILiveModel) -> None:
+    """The standing system prompt opens the backend instructions; a later one is seeded in place as `<system>` text."""
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _FakeWebSocket([started])
+    history = [
+        ModelRequest(parts=[SystemPromptPart(content='Standing prompt.'), UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[SystemPromptPart(content='Mid-conversation note.'), UserPromptPart(content='more')]),
+        ModelResponse(parts=[TextPart(content='sure')]),
+    ]
+
+    with _patched_connect(ws):
+        async with Agent(instructions='Agent instructions.').realtime(model, message_history=history).session():
+            pass
+
+    session = json.loads(ws.sent[0])['session']
+    assert session['delegation']['responses']['instructions'] == 'Standing prompt.\n\nAgent instructions.'
+    assert session['input'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': 'hi'}]},
+            {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'hello'}]},
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': '<system>Mid-conversation note.</system>'}]},
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': 'more'}]},
+            {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'sure'}]},
+        ]
+    )
 
 
 def test_seeding_projects_history_to_text() -> None:

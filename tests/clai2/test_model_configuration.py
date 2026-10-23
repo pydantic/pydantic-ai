@@ -72,8 +72,8 @@ def test_anthropic_modes_and_effort() -> None:
     assert 'xhigh' not in adaptive['anthropic_effort']
     assert 'xhigh' in model_options(model='anthropic:claude-opus-4-7')['anthropic_effort']
     assert 'anthropic_thinking_budget' in model_options(model='anthropic:unknown')
-    for name in ('claude-opus-4-5', 'claude-sonnet-4-6'):
-        assert 'max' not in model_options(model=f'anthropic:{name}')['anthropic_effort']
+    assert 'max' not in model_options(model='anthropic:claude-opus-4-5')['anthropic_effort']
+    assert 'max' in model_options(model='anthropic:claude-sonnet-4-6')['anthropic_effort']
 
 
 @pytest.mark.parametrize(
