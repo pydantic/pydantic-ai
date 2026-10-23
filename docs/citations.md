@@ -178,9 +178,9 @@ from:
 | Anthropic | Web search citations, except on clients without web search, such as Bedrock |
 | OpenAI Responses | Web and file citations, when message IDs are sent, which is the default for reasoning models. See [`openai_send_reasoning_ids`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_send_reasoning_ids] |
 
-Other citations stay on the saved messages, but their text is sent as plain text. That covers document and
-fetched-page citations, citations from other providers and APIs (such as OpenAI Chat), and history sent to a different
-provider. A citation is also left out when its text was changed or joined with other text.
+Every other citation stays on the saved messages, but its text goes back as plain text: document and fetched-page
+citations, citations from OpenAI Chat, and history sent to a different provider. So does a citation whose text was
+changed or joined with other text.
 
 If you edit the text of a saved answer, also clear that part's `citations` and its `provider_details['citations']`.
 Pydantic AI leaves out citations whose text clearly changed, but an edit that keeps the same length can go unnoticed.
