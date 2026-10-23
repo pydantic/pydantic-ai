@@ -6,7 +6,9 @@ import re
 import time
 from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import nullcontext
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import anyio
 import pytest
@@ -20,7 +22,8 @@ from rich.text import Text
 from termflow.tui import MenuItem
 from termflow.tui.menu import Menu, MenuResult
 
-from pydantic_ai import Agent, AgentStreamEvent, RunContext
+from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     ModelMessage,
@@ -478,7 +481,6 @@ async def test_presentation_keeps_ordinary_tool_events() -> None:
 
 
 async def test_task_commands_and_plugin_lifetime(tmp_path: Path) -> None:
-    from prompt_toolkit.history import InMemoryHistory
 
     from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
 
@@ -777,13 +779,10 @@ async def test_consumed_background_report_does_not_start_another_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from prompt_toolkit.application import create_app_session
-    from prompt_toolkit.history import InMemoryHistory
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
 
     from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptWakeup
-    from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
-    from pydantic_clai2.ui.prompt.terminal import Terminal
 
     shell = shell_for(tmp_path, ForkModel(), io.StringIO())
     shell.console = Console(file=io.StringIO(), force_terminal=True, width=100, height=24)
@@ -975,36 +974,101 @@ async def test_a_custom_agent_with_task_control_shows_its_tasks_questions(tmp_pa
     assert output.getvalue().count('asks: Which flavour?') == 1
 
 
-@pytest.mark.parametrize(('prompt', 'wakes'), [('hello', 1), ('explode', 0)])
-async def test_a_question_a_completed_turn_left_unread_wakes_the_editor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prompt: str, wakes: int
+async def test_a_question_asked_after_a_turns_last_read_starts_the_next_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A question asked as a turn ends starts the next one; after a failed turn, it waits for a prompt."""
-    shell = shell_for(tmp_path, ForkModel(), io.StringIO())
-    shell.console = Console(file=io.StringIO(), force_terminal=True, width=100, height=24)
-    Terminal[None, str](console=shell.console, transcript=TranscriptBuffer(), history=InMemoryHistory()).attach(shell)
-    asked = False
-
-    def waiting(conversation_id: str) -> bool:
-        return asked
-
-    monkeypatch.setattr(shell.tasks, 'waiting', waiting)
-    woken = 0
-
-    def wake(live: LivePrompt) -> None:
-        nonlocal woken
-        woken += 1
+    """A question asked once the turn read its last queued message, as it still receives, waits for the next turn."""
+    ending, queued, idle, continued = (asyncio.Event() for _ in range(4))
+    reads = 0
+    original_read = LivePrompt.read
 
     async def read(live: LivePrompt) -> str:
-        nonlocal asked
-        if asked:
-            raise EOFError
-        # The question comes while the turn runs, too late for it to read.
-        asked = True
-        return prompt
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            idle.set()
+        return await original_read(live)
 
-    monkeypatch.setattr(LivePrompt, 'wake', wake)
     monkeypatch.setattr(LivePrompt, 'read', read)
-    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        assert await shell.run() == 'eof'
-    assert woken == wakes
+
+    @dataclass
+    class AskAfterTheLastRead(AbstractCapability[None]):
+        """Holds the first turn's end, past its last read of queued messages, until the child asked."""
+
+        held: bool = False
+
+        async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            if not self.held:
+                self.held = True
+                ending.set()
+                await queued.wait()
+            return result
+
+    def task_texts(request: ModelMessage) -> list[str]:
+        assert isinstance(request, ModelRequest)
+        return [
+            item.content
+            for part in request.parts
+            if is_task_report(part)
+            for item in part.content
+            if isinstance(item, TextContent)
+        ]
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        first, last = messages[0], messages[-1]
+        assert isinstance(first, ModelRequest) and isinstance(last, ModelRequest)
+        prompt = next(part.content for part in first.parts if isinstance(part, UserPromptPart))
+        if prompt == 'child':
+            if len(messages) == 1:
+                await ending.wait()
+                yield {0: DeltaToolCall(name='ask_parent', json_args='{"question":"Which flavour?"}')}
+            else:
+                yield f'Chose {next(part.content for part in last.parts if isinstance(part, ToolReturnPart))}'
+        elif question := next((text for text in task_texts(last) if text.startswith('<task_question ')), None):
+            match = re.search(r'task_id="([0-9a-f]{32})"', question)
+            assert match is not None
+            yield {0: DeltaToolCall(name='answer_task', json_args=f'{{"task_id":"{match[1]}","answer":"cheddar"}}')}
+        elif any(text.startswith('<task_output ') for text in task_texts(last)):
+            yield 'Report read.'
+            continued.set()
+        elif len(messages) == 1:
+            yield {
+                0: DeltaToolCall(
+                    name='delegate_task', json_args='{"agent_name":"self","task":"child","background":true}'
+                )
+            }
+        else:
+            yield 'Started.'
+
+    shell = create_shell(
+        create_stock_agent(FunctionModel(stream_function=stream)),
+        deps=None,
+        plugins=[Coder(repo_context=False, task_control=True), AskAfterTheLastRead()],
+        usage_limits=None,
+        console=Console(file=io.StringIO(), force_terminal=True, width=100, height=24),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    original_observer = shell.tasks.owner.observer
+
+    async def observe(update: DelegationTaskEvent) -> None:
+        assert original_observer is not None
+        await original_observer(update)
+        if isinstance(update.event, TaskQuestionEvent):
+            queued.set()
+
+    shell.tasks.owner.observer = observe
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
+        async with anyio.create_task_group() as group:
+            group.start_soon(shell.run)
+            pipe.send_text('launch\r')
+            await idle.wait()
+            # Nothing was typed: the question woke the prompt for the turn that answered it, and the report the next.
+            await continued.wait()
+            assert shell.editor is not None
+            shell.editor.submit('/exit')
+    (record,) = shell.tasks.owner.records.values()
+    assert (record.outcome, record.output) == ('ok', 'Chose cheddar')

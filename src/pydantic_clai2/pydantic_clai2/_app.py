@@ -69,10 +69,6 @@ def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str
     return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[customization_guide()], name='clai2')
 
 
-_HOST_DEFAULTS: Mapping[str, Mapping[str, JsonValue]] = {'coder': {'task_control': False}}
-"""Stock settings an application's agent starts from instead of the CLI's: task control is opt-in there."""
-
-
 @asynccontextmanager
 async def open_stock_agent(
     *,
@@ -103,6 +99,8 @@ async def open_stock_agent(
     from pydantic_clai2.models.model_settings import default_model_settings
 
     stock = {plugin.id: plugin for plugin in STOCK_PLUGINS if plugin.id in ('coder', 'repo_context', 'compaction')}
+    # Task control is opt-in for an application's agent, unlike in the CLI.
+    defaults: Mapping[str, Mapping[str, JsonValue]] = {'coder': {'task_control': False}}
     overrides = plugin_settings or {}
     if unknown := sorted(overrides.keys() - stock.keys()):
         raise UserError(
@@ -110,9 +108,7 @@ async def open_stock_agent(
         )
     declarations = [
         plugin.model_copy(
-            update={
-                'settings': {**plugin.settings, **_HOST_DEFAULTS.get(plugin.id, {}), **overrides.get(plugin.id, {})}
-            }
+            update={'settings': {**plugin.settings, **defaults.get(plugin.id, {}), **overrides.get(plugin.id, {})}}
         )
         for plugin in stock.values()
     ]

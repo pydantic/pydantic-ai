@@ -1330,11 +1330,6 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             )
             self.console.print()
         await self.interrupts.run(self.loader.fire(ended or TurnEnd(text=start.text, outcome='cancelled')))
-        if ended is not None and ended.outcome == 'completed' and self.editor is not None:
-            # A question asked as the turn ended is queued on it but not read, and its ask woke nothing.
-            # After a failed or cancelled turn, it waits for the next prompt instead.
-            if self.tasks.waiting(self.session.summary.id):
-                self.editor.wake()
         return self.interrupts.exit_requested
 
     async def run_turn(
