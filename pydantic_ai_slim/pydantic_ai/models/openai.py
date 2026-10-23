@@ -23,6 +23,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
 from typing import Annotated, Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
+from urllib.parse import urlsplit
 
 from httpx2 import Timeout as HTTPX2Timeout
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
@@ -543,6 +544,10 @@ def _map_openai_image_generation_tool(tool: ImageGenerationTool) -> responses.to
     if tool.input_fidelity is not None:
         image_generation_tool['input_fidelity'] = tool.input_fidelity
     return image_generation_tool
+
+
+_OPENAI_API_HOST = 'api.openai.com'
+"""Host of OpenAI's own API, as opposed to an OpenAI-compatible server reached through a custom `base_url`."""
 
 
 def _is_azure(client: AsyncOpenAI, system: str) -> bool:
@@ -1409,6 +1414,20 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
         """Return all of `native_tool`'s restricting settings, as Chat Completions' `web_search_options` takes none."""
         return native_tool.restricting_settings
+
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Narrow `openai_chat_supports_allowed_tools` to OpenAI's own API, before the user's `profile=` applies.
+
+        `OpenAIProvider` picks its profile by model name alone, but it also reaches OpenAI-compatible servers
+        through a custom `base_url` (vLLM, LiteLLM, OpenRouter, a self-hosted gateway, ...), which may reject
+        an `allowed_tools` `tool_choice` or, worse, silently ignore the restriction. Narrowing the default
+        rather than the resolved profile lets a user whose server does honor it opt back in.
+        """
+        if profile.get('openai_chat_supports_allowed_tools', False) and (
+            urlsplit(self._provider.base_url).hostname != _OPENAI_API_HOST
+        ):
+            return merge_profile(profile, OpenAIModelProfile(openai_chat_supports_allowed_tools=False))
+        return profile
 
     @cached_property
     def profile(self) -> OpenAIModelProfile:

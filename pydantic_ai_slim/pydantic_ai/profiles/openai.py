@@ -412,8 +412,10 @@ class OpenAIModelProfile(ModelProfile, total=False):
 
     When `True`, a [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] that restricts the model to a
     subset of tools is sent as `allowed_tools`, keeping the full `tools` array (and so the prompt cache) intact.
-    When `False`, the `tools` array is filtered down to the subset instead. Set by `OpenAIProvider`, since
+    When `False`, the `tools` array is filtered down to the subset instead. Set by `OpenAIProvider`, and only kept
+    by `OpenAIChatModel` when the provider's `base_url` is OpenAI's own API (`api.openai.com`), since
     OpenAI-compatible APIs don't all honor it: OpenRouter and xAI ignore it, and OpenRouter rejects it for some models.
+    Set it explicitly in the model's `profile` for a compatible server that does.
     """
 
     openai_supports_prompt_cache_breakpoints: bool
