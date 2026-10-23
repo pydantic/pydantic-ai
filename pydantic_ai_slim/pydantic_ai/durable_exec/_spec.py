@@ -34,8 +34,9 @@ class DurabilityEngineSpec:
     serialization_failure: Callable[[Exception], BaseException] | None = None
     """Convert deterministic codec failures into an engine's terminal error type.
 
-    JSON-journal engines set this to map `PydanticSerializationError` and `TypeError` failures so
-    the engine does not retry values that can never be encoded.
+    JSON-journal engines set this to map `PydanticSerializationError`, `TypeError`, and `ValueError`
+    (raised for a circular reference) failures so the engine does not retry values that can never be
+    encoded.
     """
 
     wrapped_toolset_kinds: frozenset[ToolsetKind] = frozenset({'function', 'mcp', 'dynamic'})

@@ -74,6 +74,12 @@ def build_agent(tool: Any, *, output_type: Any = None, **kwargs: Any) -> Agent[A
     return agent
 
 
+def _circular_dict() -> dict[str, object]:
+    value: dict[str, object] = {}
+    value['self'] = value
+    return value
+
+
 class TestDurableRun:
     def test_checkpoints_model_and_tool_steps(self) -> None:
         agent = build_agent(lambda: 'sunny')
@@ -380,11 +386,21 @@ class TestToolResultSerialization:
         assert result.output == 'done'
         assert ctx.failed == []
 
-    def test_non_serializable_tool_result_fails_without_retry(self) -> None:
-        agent = build_agent(lambda: object())
+    @pytest.mark.parametrize(
+        ('make_result', 'reason'),
+        [
+            (object, 'Unable to serialize unknown type'),
+            (_circular_dict, 'Circular reference detected'),
+        ],
+        ids=['unknown-type', 'circular'],
+    )
+    def test_non_serializable_tool_result_fails_without_retry(
+        self, make_result: Callable[[], object], reason: str
+    ) -> None:
+        agent = build_agent(lambda: make_result())
         ctx = FakeDurableContext()
 
-        with pytest.raises(ExecutionError, match='Unable to serialize unknown type'):
+        with pytest.raises(ExecutionError, match=reason):
             run_durable(lambda: agent.run('go'), context=ctx)
 
         assert len(ctx.failed) == 1
