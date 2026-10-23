@@ -31,7 +31,8 @@ async def test_graph_releases_dependencies(complete: bool) -> None:
     try:
         deps = Deps()
         ref = weakref.ref(deps)
-        async with graph.iter(deps=deps) as run:
+        # Before Python 3.13, name inference snapshots the caller's locals and retains `deps` there.
+        async with graph.iter(deps=deps, infer_name=False) as run:
             if complete:
                 async for _ in run:
                     pass

@@ -84,7 +84,8 @@ async def test_completed_run_releases_dependencies() -> None:
 
     deps = Deps()
     ref = weakref.ref(deps)
-    result = await agent.run('hello', deps=deps)
+    # Before Python 3.13, name inference snapshots the caller's locals and retains `deps` there.
+    result = await agent.run('hello', deps=deps, infer_name=False)
     assert result.output == 'done'
     del deps, result
     assert ref() is None
@@ -100,10 +101,11 @@ async def test_deferred_resume_releases_dependencies() -> None:
 
     deps = Deps()
     ref = weakref.ref(deps)
-    deferred = await agent.run('hello', deps=deps)
+    deferred = await agent.run('hello', deps=deps, infer_name=False)
     assert isinstance(deferred.output, DeferredToolRequests)
     resumed = await agent.run(
         deps=deps,
+        infer_name=False,
         message_history=deferred.all_messages(),
         deferred_tool_results=DeferredToolResults(approvals={deferred.output.approvals[0].tool_call_id: True}),
     )
@@ -122,7 +124,7 @@ async def test_retained_run_keeps_result_and_messages() -> None:
 
     deps = Deps()
     ref = weakref.ref(deps)
-    async with agent.iter('hello', deps=deps) as run:
+    async with agent.iter('hello', deps=deps, infer_name=False) as run:
         async for _ in run:
             pass
     del deps
@@ -156,7 +158,7 @@ async def test_retained_contexts_keep_tools() -> None:
 
     deps = Deps()
     ref = weakref.ref(deps)
-    result = await agent.run('hello', deps=deps)
+    result = await agent.run('hello', deps=deps, infer_name=False)
     del deps, result
     assert ref() is not None
     assert contexts
@@ -182,7 +184,7 @@ async def test_interrupted_iteration_releases_dependencies(exit_kind: Literal['b
     ref = weakref.ref(deps)
     run = None
     try:
-        async with agent.iter('hello', deps=deps) as run:
+        async with agent.iter('hello', deps=deps, infer_name=False) as run:
             async for _ in run:
                 if contexts:
                     break
@@ -199,6 +201,15 @@ async def test_interrupted_iteration_releases_dependencies(exit_kind: Literal['b
     assert run is not None
     assert run.result is None
     assert contexts[0].tools.keys() == {'lookup'}
+    if exit_kind == 'error':
+        # Consumer errors can retain run state independently of these edges on Python 3.11.
+        assert run._graph_run._iterator_instance is None  # pyright: ignore[reportPrivateUsage]
+        assert run._graph_run._iterator is None  # pyright: ignore[reportPrivateUsage]
+        manager = run.ctx.deps.tool_manager
+        assert manager.ctx is not None
+        assert manager.ctx.tool_manager is None
+        del manager
     contexts.clear()
     del deps, run
-    assert ref() is None
+    if exit_kind != 'error':
+        assert ref() is None
