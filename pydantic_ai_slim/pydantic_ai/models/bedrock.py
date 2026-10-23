@@ -651,6 +651,18 @@ def _insert_cache_point_before_trailing_documents(
         return False
 
 
+def _has_cited_document(value: object) -> bool:
+    """Whether Bedrock messages hold a document block with citations turned on, including in tool results."""
+    if isinstance(value, list):
+        return any(_has_cited_document(item) for item in cast(list[object], value))
+    if _utils.is_str_dict(value):
+        document = value.get('document')
+        if _utils.is_str_dict(document) and 'citations' in document:
+            return True
+        return any(_has_cited_document(item) for item in value.values())
+    return False
+
+
 def _stays_in_place(block: Any) -> bool:
     """Whether Bedrock keeps this document where it is, and accepts a `cachePoint` after it, on Anthropic models."""
     document = block.get('document', {})
@@ -1595,21 +1607,12 @@ class BedrockConverseModel(Model[BaseClient]):
         # Most families accept a `status` field on `toolResult` blocks; Writer Palmyra rejects it.
         supports_tool_result_status = profile.get('bedrock_supports_tool_result_status', True)
         # Anthropic models write their `<cite>` markup into tool and prompted output, so citations are only turned on for
-        # text output, and into a forced tool call's arguments, so that combination is an error.
+        # text output, and into a forced tool call's arguments, so that combination is an error (checked below).
         include_citations = (
             settings.get('citations', False)
             and profile.get('bedrock_supports_citations', False)
             and model_request_parameters.output_mode == 'text'
         )
-        if include_citations:
-            tool_choice = resolve_tool_choice(settings, model_request_parameters)
-            if tool_choice == 'required' or (isinstance(tool_choice, tuple) and tool_choice[0] == 'required'):
-                raise UserError(
-                    "`Citations()` can't be used with a `tool_choice` that forces a tool call on Anthropic models: "
-                    "the model writes its citation markup into the tool's arguments. "
-                    'Remove `Citations()`, or let the model choose whether to call the tool.'
-                )
-
         # Media returned from a tool that can't live inside a `toolResult` block (see
         # `bedrock_supported_media_kinds_in_tool_returns`) is emitted as a sibling block. Models like
         # Mistral and Llama require every `toolResult` for a tool-use turn to sit together in the message
@@ -1959,6 +1962,15 @@ class BedrockConverseModel(Model[BaseClient]):
             and not profile.get('bedrock_supports_leading_assistant_message', False)
         ):
             processed_messages.insert(0, {'role': 'user', 'content': [{'text': '.'}]})
+
+        if include_citations and _has_cited_document(processed_messages):
+            tool_choice = resolve_tool_choice(settings, model_request_parameters)
+            if tool_choice == 'required' or (isinstance(tool_choice, tuple) and tool_choice[0] == 'required'):
+                raise UserError(
+                    "`Citations()` can't be used with a `tool_choice` that forces a tool call on Anthropic models: "
+                    "the model writes its citation markup into the tool's arguments. "
+                    'Remove `Citations()`, or let the model choose whether to call the tool.'
+                )
 
         return system_prompt, processed_messages
 

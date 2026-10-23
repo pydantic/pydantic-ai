@@ -603,7 +603,8 @@ class ModelSettings(TypedDict, total=False):
     * xAI (inline citations), for text output only
 
     Providers that always return citations ignore this setting. On Anthropic, combining it with a `tool_choice` that
-    forces a tool call raises a `UserError`, and so it does on Bedrock. See
+    forces a tool call, in a request with a document or Web Fetch, raises a `UserError`, and so it does on Bedrock
+    with a document. See
     [Citations, tools and structured output](../citations.md#citations-tools-and-structured-output).
     """
 
