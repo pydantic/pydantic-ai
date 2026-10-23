@@ -675,6 +675,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             raise serialization_user_error(error) from error
         raise error
 
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        # `before_model_request` only acts inside a workflow, like the base hooks it extends.
+        return self._realtime_uncalled_hooks_overriding(TemporalDurability)
+
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
