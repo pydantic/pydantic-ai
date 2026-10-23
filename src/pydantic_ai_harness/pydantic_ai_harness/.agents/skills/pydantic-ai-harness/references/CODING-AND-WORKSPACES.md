@@ -204,8 +204,8 @@ Tool arguments: `run_command(command, timeout_seconds=None)`, `start_command(com
 Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `shutdown`, `reboot`,
 `halt`, `poweroff`, `init`), `denied_operators`, `default_timeout=30.0`, `max_output_chars=50_000`
 (keeps the **tail**; `shell` already returns at most the last 16,000 bytes), `max_file_bytes=None`
-(per-file `ulimit -f`), `max_log_bytes=100_000_000` (see below), `persist_cwd=False` (sticky `cd`), `allow_interactive=False`, `env`,
-`denied_env_patterns`.
+(per-file `ulimit -f`), `max_log_bytes=100_000_000` (see below), `persist_cwd=False` (sticky `cd`),
+`allow_interactive=False`, `env`, `denied_env_patterns`.
 
 - `max_log_bytes` bounds `start_command` and `shell` logs, including with `tools=['shell']`: a log past
   it is emptied and gets a `[Log exceeded max_log_bytes=...]` notice while the command keeps running.

@@ -196,12 +196,11 @@ class _TermIgnored(LocalWorkspaceBackend):
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
-class _ClearedWhileCounted(LocalWorkspaceBackend):
+class _ClearedWhileCounted(_FirstReadMarked):
     """Clears the log, as the watcher would, at the first read from its start once the command has exited."""
 
     def __init__(self, working_dir: Path) -> None:
         super().__init__(working_dir)
-        self.markers = working_dir
         self.cleared = False
 
     async def run(
@@ -334,11 +333,13 @@ class TestShellLogLimits:
                 os.killpg(group, signal.SIGTERM)
 
     async def test_finished_event_reports_a_clear_while_the_log_is_measured(self, tmp_path: Path) -> None:
+        # The command exits only once the events have read its output, so the next read from the log's start, and
+        # with it the clear, is the line count's.
         recorder = Recorder()
         output = await call_tool(
             [Shell[None](denied_commands=[], tools=['shell'], max_log_bytes=2000), recorder],
             'shell',
-            {'command': 'echo first; sleep 0.3', 'timeout': 30},
+            {'command': 'echo first; until [ -e read ]; do sleep 0.01; done', 'timeout': 30},
             workspace=_ClearedWhileCounted(tmp_path),
         )
         assert '"exit_code": 0' in output
