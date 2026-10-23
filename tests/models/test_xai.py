@@ -5179,27 +5179,40 @@ async def test_xai_include_settings(allow_model_requests: None):
     [
         pytest.param('shared', True, id='shared-setting'),
         pytest.param('provider-disabled', False, id='provider-setting-wins'),
+        pytest.param('structured-output', False, id='structured-output'),
     ],
 )
 async def test_xai_citations_setting(
     allow_model_requests: None,
-    settings_kind: Literal['shared', 'provider-disabled'],
+    settings_kind: Literal['shared', 'provider-disabled', 'structured-output'],
     expect_inline_citations: bool,
 ) -> None:
-    """The shared setting maps to xAI's inline-citation include option.
+    """The shared setting maps to xAI's inline-citation include option, for text output only.
+
+    With inline citations on, the model answers in cited text instead of calling the output tool, so structured output
+    leaves them off.
 
     Unit test: pins the `include` option sent, including the provider override no recording uses.
     """
     settings = (
-        ModelSettings(citations=True)
-        if settings_kind == 'shared'
-        else XaiModelSettings(citations=True, xai_include_inline_citations=False)
+        XaiModelSettings(citations=True, xai_include_inline_citations=False)
+        if settings_kind == 'provider-disabled'
+        else ModelSettings(citations=True)
     )
-    response = create_response(content='test', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    if settings_kind == 'structured-output':
+        response = create_response(
+            tool_calls=[create_tool_call('call_1', 'final_result', {'response': 1})],
+            finish_reason='tool_call',
+            usage=create_usage(prompt_tokens=10, completion_tokens=5),
+        )
+    else:
+        response = create_response(content='test', usage=create_usage(prompt_tokens=10, completion_tokens=5))
     mock_client = MockXai.create_mock([response])
     model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
 
-    await Agent(model).run('Hello', model_settings=settings)
+    await Agent(model, output_type=int if settings_kind == 'structured-output' else str).run(
+        'Hello', model_settings=settings
+    )
 
     expected_include = [chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS] if expect_inline_citations else []
     assert get_mock_chat_create_kwargs(mock_client)[0]['include'] == expected_include
