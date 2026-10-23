@@ -59,16 +59,15 @@ class Linear(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the Linear tools."""
-        id = self.id or _ID
         if self.client is not None:
             toolset: AbstractToolset[AgentDepsT] = MCPToolset(
-                self.client, id=id, include_instructions=self.include_instructions
+                self.client, id=self.id or _ID, include_instructions=self.include_instructions
             )
             if self.read_only:
                 return read_only_toolset(toolset)
             return toolset
         if callable(self.auth):
-            return per_run_connection(self.auth, self._connect, id=id)
+            return per_run_connection(self.auth, self._connect, id=self.id or _ID)
         return self._connect(self.auth)
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
