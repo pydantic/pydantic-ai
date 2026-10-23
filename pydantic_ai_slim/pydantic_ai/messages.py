@@ -6366,7 +6366,7 @@ class ModelSettingsDeltaEvent:
     """
 
     part: ModelSettingsDeltaPart
-    """The thinking effort delta part that will be recorded in message history."""
+    """The model settings delta part that will be recorded in message history."""
 
     event_kind: Literal['model_settings_delta'] = 'model_settings_delta'
     """Event type identifier, used as a discriminator."""

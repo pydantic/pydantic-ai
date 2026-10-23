@@ -3504,15 +3504,21 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         the history as stored against the response it continues.
         """
         baseline, has_changes = _effort_window_baseline(messages)
-        if has_changes and not (
-            model_settings.get('openai_reasoning_effort')
-            or model_settings.get('openai_truncation') == 'auto'
-            or model_settings.get('openai_context_management')
-            or any(
-                isinstance(part, CompactionPart)
-                for message in messages
-                if isinstance(message, ModelResponse)
-                for part in message.parts
+        # `prepare_messages` already dropped the parts on a model without the channel, but a direct `request`
+        # call with stored history doesn't run it.
+        if (
+            has_changes
+            and self.profile.get('supports_mid_conversation_effort', False)
+            and not (
+                model_settings.get('openai_reasoning_effort')
+                or model_settings.get('openai_truncation') == 'auto'
+                or model_settings.get('openai_context_management')
+                or any(
+                    isinstance(part, CompactionPart)
+                    for message in messages
+                    if isinstance(message, ModelResponse)
+                    for part in message.parts
+                )
             )
         ):
             if baseline is not None and isinstance(model_request_parameters.thinking, str):

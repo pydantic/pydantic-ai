@@ -498,3 +498,29 @@ async def test_agent_history_works_with_direct_requests(allow_model_requests: No
     request = get_mock_responses_kwargs(responses_client)[0]
     assert request['reasoning']['effort'] == 'medium'
     assert not any(item.get('type') == 'configuration_update' for item in request['input'])
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_direct_request_without_the_channel_sends_effort_at_request_level(allow_model_requests: None):
+    """A direct `request` skips `prepare_messages`, so the adapter itself drops the parts on a model without the channel."""
+    mock_client = MockOpenAIResponses.create_mock(_responses_text('Shelf 40, bin 7.'))
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.request(_history(), ModelSettings(thinking='xhigh'), ModelRequestParameters())
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['reasoning']['effort'] == 'xhigh'
+    assert not any(item.get('type') == 'configuration_update' for item in request['input'])
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_anthropic_direct_request_without_the_channel_sends_effort_at_request_level(allow_model_requests: None):
+    mock_client = MockAnthropic.create_mock(_anthropic_text('Shelf 40, bin 7.'))
+    model = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    await model.request(_history(), AnthropicModelSettings(thinking='xhigh'), ModelRequestParameters())
+
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert request['output_config'] == {'effort': 'xhigh'}
+    assert not any('output_config' in message for message in request['messages'])
+    assert 'mid-conversation-output-config-2026-07-01' not in str(request.get('betas'))
