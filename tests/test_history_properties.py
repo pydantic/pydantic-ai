@@ -93,7 +93,12 @@ with try_import() as mistral_imports_successful:
     from pydantic_ai.providers.mistral import MistralProvider
 
 with try_import() as openai_imports_successful:
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.models.openai import (
+        OpenAIChatModel,
+        OpenAIChatModelSettings,
+        OpenAIResponsesModel,
+        OpenAIResponsesModelSettings,
+    )
     from pydantic_ai.providers.openai import OpenAIProvider
 
 # Hypothesis compares the global `random` state before and after each draw and notes this deprecation when it
@@ -147,9 +152,13 @@ class Body:
 
 
 def _prepare(model: Model, history: list[ModelMessage]) -> tuple[ModelRequestParameters, list[ModelMessage]]:
-    """What an agent run does to a history before the model maps it."""
-    _, parameters = model.prepare_request(None, ModelRequestParameters())
-    return parameters, repair_messages(model.prepare_messages(repair_messages(history), parameters))
+    """What an agent run does to a history before the model maps it, in its order: the run repairs the history,
+    prepares it with the run's parameters, and repairs it again, then the model's `request` prepares the
+    parameters it maps the messages with."""
+    run_parameters = ModelRequestParameters()
+    messages = repair_messages(model.prepare_messages(repair_messages(history), run_parameters))
+    _, parameters = model.prepare_request(None, run_parameters)
+    return parameters, messages
 
 
 def _body(system: object, messages: object) -> Body:
@@ -167,7 +176,10 @@ def _openai_chat_model() -> OpenAIChatModel:
 async def _openai_chat_body(history: list[ModelMessage]) -> Body:
     model = _openai_chat_model()
     parameters, messages = _prepare(model, history)
-    return _body(None, await model._map_messages(messages, parameters))  # pyright: ignore[reportPrivateUsage]
+    mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, model_request_parameters=parameters, model_settings=OpenAIChatModelSettings()
+    )
+    return _body(None, mapped)
 
 
 @cache
@@ -179,7 +191,7 @@ async def _openai_responses_body(history: list[ModelMessage]) -> Body:
     model = _openai_responses_model()
     parameters, messages = _prepare(model, history)
     instructions, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, OpenAIResponsesModelSettings(), parameters
+        messages, model_settings=OpenAIResponsesModelSettings(), model_request_parameters=parameters
     )
     return _body(instructions if isinstance(instructions, str) else None, items)
 
@@ -193,7 +205,7 @@ async def _anthropic_body(history: list[ModelMessage]) -> Body:
     model = _anthropic_model()
     parameters, messages = _prepare(model, history)
     system, mapped = await model._map_message(  # pyright: ignore[reportPrivateUsage]
-        messages, parameters, AnthropicModelSettings()
+        messages, model_request_parameters=parameters, model_settings=AnthropicModelSettings()
     )
     return _body(system, mapped)
 
@@ -206,7 +218,9 @@ def _google_model() -> GoogleModel:
 async def _google_body(history: list[ModelMessage]) -> Body:
     model = _google_model()
     parameters, messages = _prepare(model, history)
-    system, contents = await model._map_messages(messages, parameters)  # pyright: ignore[reportPrivateUsage]
+    system, contents = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, model_request_parameters=parameters
+    )
     return _body(system, contents)
 
 
@@ -220,7 +234,9 @@ def _bedrock_model() -> BedrockConverseModel:
 async def _bedrock_body(history: list[ModelMessage]) -> Body:
     model = _bedrock_model()
     parameters, messages = _prepare(model, history)
-    system, mapped = await model._map_messages(messages, parameters, None)  # pyright: ignore[reportPrivateUsage]
+    system, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, model_request_parameters=parameters, model_settings=None
+    )
     return _body(system, mapped)
 
 
@@ -232,7 +248,7 @@ def _groq_model() -> GroqModel:
 async def _groq_body(history: list[ModelMessage]) -> Body:
     model = _groq_model()
     parameters, messages = _prepare(model, history)
-    return _body(None, await model._map_messages(messages, parameters))  # pyright: ignore[reportPrivateUsage]
+    return _body(None, await model._map_messages(messages, model_request_parameters=parameters))  # pyright: ignore[reportPrivateUsage]
 
 
 @cache
@@ -243,7 +259,7 @@ def _mistral_model() -> MistralModel:
 async def _mistral_body(history: list[ModelMessage]) -> Body:
     model = _mistral_model()
     parameters, messages = _prepare(model, history)
-    return _body(None, await model._map_messages(messages, parameters))  # pyright: ignore[reportPrivateUsage]
+    return _body(None, await model._map_messages(messages, model_request_parameters=parameters))  # pyright: ignore[reportPrivateUsage]
 
 
 @cache
@@ -254,7 +270,7 @@ def _cohere_model() -> CohereModel:
 async def _cohere_body(history: list[ModelMessage]) -> Body:
     model = _cohere_model()
     parameters, messages = _prepare(model, history)
-    return _body(None, model._map_messages(messages, parameters))  # pyright: ignore[reportPrivateUsage]
+    return _body(None, model._map_messages(messages, model_request_parameters=parameters))  # pyright: ignore[reportPrivateUsage]
 
 
 @cache
@@ -265,7 +281,7 @@ def _huggingface_model() -> HuggingFaceModel:
 async def _huggingface_body(history: list[ModelMessage]) -> Body:
     model = _huggingface_model()
     parameters, messages = _prepare(model, history)
-    return _body(None, await model._map_messages(messages, parameters))  # pyright: ignore[reportPrivateUsage]
+    return _body(None, await model._map_messages(messages, model_request_parameters=parameters))  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclass(frozen=True)
@@ -280,6 +296,13 @@ class MapperCase:
     """Whether a tool result must answer a call of the message right before its own."""
     rejects_empty_text: bool = False
     """Whether the API rejects a text block with no text, which the adapter's own handling of empty text shows."""
+    takes_system_alone: bool = False
+    """Whether the API takes a system prompt with no message as a request: OpenAI Responses (gpt-5.5) accepted
+    instructions with an empty `input`, probed 2026-10-23 (UTC)."""
+    takes_empty_assistant_turns: bool = False
+    """Whether the API takes an assistant turn with no content, which the adapter sends for a response with no
+    parts: Groq (openai/gpt-oss-120b) accepted one, and the Hugging Face router's vLLM validation reported only an
+    unrelated error on the same body, probed 2026-10-23 (UTC)."""
     marks: tuple[pytest.MarkDecorator, ...] = ()
 
 
@@ -324,6 +347,7 @@ MAPPER_CASES = [
             WireMessage('function_call_output', [WireBlock('result', 'call_1')]),
             WireMessage('assistant', [WireBlock('text', 'Found it')]),
         ],
+        takes_system_alone=True,
         marks=_needs(openai_imports_successful, 'openai'),
     ),
     MapperCase(
@@ -356,6 +380,7 @@ MAPPER_CASES = [
         _groq_body,
         chat_completions_wire,
         _baseline_turns(assistant='assistant', results='tool'),
+        takes_empty_assistant_turns=True,
         marks=_needs(groq_imports_successful, 'groq'),
     ),
     MapperCase(
@@ -378,6 +403,7 @@ MAPPER_CASES = [
         _huggingface_body,
         chat_completions_wire,
         _baseline_turns(assistant='assistant', results='tool'),
+        takes_empty_assistant_turns=True,
         marks=_needs(huggingface_imports_successful, 'huggingface-hub'),
     ),
 ]
@@ -403,11 +429,17 @@ async def _violations(checked: CheckedProperty, case: MapperCase, history: list[
     wire = case.wire(body.messages)
     match checked:
         case 'call_ids_are_unique':
-            return duplicate_call_id_violations(wire)
+            return duplicate_call_id_violations(
+                wire, across_messages=case.id in REPEATED_CALL_ID_ACROSS_RESPONSES_REJECTIONS
+            )
         case 'results_answer_calls':
             return call_pairing_violations(wire, results_follow_their_call=case.results_follow_their_call)
         case 'messages_are_not_empty':
-            return empty_message_violations(wire)
+            return empty_message_violations(
+                wire,
+                system_suffices=case.takes_system_alone and body.system is not None,
+                empty_assistant_turns_pass=case.takes_empty_assistant_turns,
+            )
         case 'text_is_not_empty':
             return empty_text_violations(wire)
         case 'deterministic':
@@ -459,6 +491,14 @@ _REPEATED_CALL_ID: list[ModelMessage] = [
     ModelRequest(parts=[ToolReturnPart('lookup', 'a', 'call_0'), ToolReturnPart('lookup', 'b', 'call_0')]),
 ]
 
+_REPEATED_CALL_ID_ACROSS_RESPONSES: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart('Look a up, then b')]),
+    ModelResponse(parts=[ToolCallPart('lookup', {'q': 'a'}, 'call_0')]),
+    ModelRequest(parts=[ToolReturnPart('lookup', 'a', 'call_0')]),
+    ModelResponse(parts=[ToolCallPart('lookup', {'q': 'b'}, 'call_0')]),
+    ModelRequest(parts=[ToolReturnPart('lookup', 'b', 'call_0')]),
+]
+
 _WHITESPACE_PROMPT: list[ModelMessage] = [
     ModelRequest(parts=[UserPromptPart('Hi')]),
     ModelResponse(parts=[TextPart('Hello')]),
@@ -483,6 +523,13 @@ REPEATED_CALL_ID_REJECTIONS = {
 https://github.com/pydantic/pydantic-ai/issues/11125: once that is fixed, probe a repeated call id there again. The
 misspelling in OpenAI's error is its own."""
 
+REPEATED_CALL_ID_ACROSS_RESPONSES_REJECTIONS = {
+    'cohere': 'command-r7b-12-2024: 400 "invalid tool call provided in messages[3].tool_calls[0]: '
+    "cannot have duplicate tool ids 'call_0'\"",
+}
+"""The APIs that also rejected a call id an earlier response used, and how. Of the others, OpenAI Chat, Anthropic,
+Google, Bedrock and Mistral accepted it, so on them an id is unique per message."""
+
 KNOWN_FINDINGS = [
     KnownFinding(
         'F1',
@@ -490,6 +537,16 @@ KNOWN_FINDINGS = [
         frozenset({'repeated_call_id'}),
         'https://github.com/pydantic/pydantic-ai/issues/11120',
         tuple(Pin(case_id, _REPEATED_CALL_ID, rejection) for case_id, rejection in REPEATED_CALL_ID_REJECTIONS.items()),
+    ),
+    KnownFinding(
+        'F1b',
+        'call_ids_are_unique',
+        frozenset({'repeated_call_id_across_responses'}),
+        'https://github.com/pydantic/pydantic-ai/issues/11120',
+        tuple(
+            Pin(case_id, _REPEATED_CALL_ID_ACROSS_RESPONSES, rejection)
+            for case_id, rejection in REPEATED_CALL_ID_ACROSS_RESPONSES_REJECTIONS.items()
+        ),
     ),
     KnownFinding(
         'F3',
@@ -544,13 +601,20 @@ KNOWN_FINDINGS = [
     KnownFinding(
         'F5',
         'messages_are_not_empty',
-        frozenset({'empty_prompt'}),
+        frozenset({'empty_prompt', 'empty_parts'}),
         'https://github.com/pydantic/pydantic-ai/issues/11123',
         (
             Pin(
                 'anthropic',
                 [ModelRequest(parts=[UserPromptPart('')])],
                 'claude-sonnet-5-5: 400 "messages: at least one message is required"',
+                label='empty-prompt',
+            ),
+            Pin(
+                'anthropic',
+                [ModelRequest(parts=[], instructions='Be brief.')],
+                'claude-sonnet-5-5: 400 "messages: at least one message is required"',
+                label='instructions-only',
             ),
         ),
     ),
@@ -614,7 +678,8 @@ def _check(checked: CheckedProperty, case: MapperCase, data: st.DataObject) -> l
 @PROPERTY_SETTINGS
 @given(data=st.data())
 def test_mapped_call_ids_are_unique(case: MapperCase, data: st.DataObject):
-    """P2: no call id is sent twice, on the APIs that reject one sent twice."""
+    """P2: no call id is sent twice in one message, nor in one body where the API rejects that too, on the APIs that
+    reject one sent twice."""
     assert _check('call_ids_are_unique', case, data) == []
 
 
@@ -631,7 +696,7 @@ def test_mapped_results_answer_calls(case: MapperCase, data: st.DataObject):
 @PROPERTY_SETTINGS
 @given(data=st.data())
 def test_mapped_messages_are_not_empty(case: MapperCase, data: st.DataObject):
-    """P4: the body has a message, and every message has content."""
+    """P4: the body has a message, and every message has content, except what the API takes without."""
     assert _check('messages_are_not_empty', case, data) == []
 
 

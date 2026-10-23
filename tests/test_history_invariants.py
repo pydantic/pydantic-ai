@@ -248,9 +248,9 @@ WIRE_CASES = [
 def test_well_formed_body_passes_every_body_checker(case: WireCase):
     wire = case.project(case.messages)
     assert wire == case.expected
-    assert duplicate_call_id_violations(wire) == []
+    assert duplicate_call_id_violations(wire, across_messages=True) == []
     assert call_pairing_violations(wire, results_follow_their_call=True) == []
-    assert empty_message_violations(wire) == []
+    assert empty_message_violations(wire, system_suffices=False, empty_assistant_turns_pass=False) == []
     assert empty_text_violations(wire) == []
 
 
@@ -262,7 +262,21 @@ def test_duplicate_call_id():
             {'role': 'tool', 'tool_call_id': 'call_0', 'content': 'b'},
         ]
     )
-    assert duplicate_call_id_violations(wire) == ['wire.duplicate_call_id']
+    assert duplicate_call_id_violations(wire, across_messages=False) == ['wire.duplicate_call_id']
+
+
+def test_duplicate_call_id_across_messages():
+    """An id an earlier message used counts only where the API rejects it across messages too."""
+    wire = chat_completions_wire(
+        [
+            {'role': 'assistant', 'tool_calls': [{'id': 'call_0'}]},
+            {'role': 'tool', 'tool_call_id': 'call_0', 'content': 'a'},
+            {'role': 'assistant', 'tool_calls': [{'id': 'call_0'}]},
+            {'role': 'tool', 'tool_call_id': 'call_0', 'content': 'b'},
+        ]
+    )
+    assert duplicate_call_id_violations(wire, across_messages=False) == []
+    assert duplicate_call_id_violations(wire, across_messages=True) == ['wire.duplicate_call_id']
 
 
 def test_orphan_result_without_a_call():
@@ -290,12 +304,26 @@ def test_unanswered_call():
 
 
 def test_empty_body():
-    assert empty_message_violations(anthropic_wire([])) == ['wire.empty_body']
+    wire = anthropic_wire([])
+    assert empty_message_violations(wire, system_suffices=False, empty_assistant_turns_pass=False) == [
+        'wire.empty_body'
+    ]
+    assert empty_message_violations(wire, system_suffices=True, empty_assistant_turns_pass=False) == []
 
 
 def test_empty_message():
     wire = chat_completions_wire([{'role': 'assistant', 'content': None}])
-    assert empty_message_violations(wire) == ['wire.empty_message']
+    assert empty_message_violations(wire, system_suffices=False, empty_assistant_turns_pass=False) == [
+        'wire.empty_message'
+    ]
+    assert empty_message_violations(wire, system_suffices=False, empty_assistant_turns_pass=True) == []
+
+
+def test_empty_message_outside_an_assistant_turn():
+    wire = chat_completions_wire([{'role': 'user', 'content': None}])
+    assert empty_message_violations(wire, system_suffices=False, empty_assistant_turns_pass=True) == [
+        'wire.empty_message'
+    ]
 
 
 def test_empty_text():

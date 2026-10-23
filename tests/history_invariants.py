@@ -94,7 +94,12 @@ def round_trip_violations(history: list[ModelMessage], *, mode: Literal['python'
 def idempotence_violations(
     transform: Callable[[list[ModelMessage]], list[ModelMessage]], history: list[ModelMessage]
 ) -> list[str]:
-    """`history.not_idempotent`: applying `transform` to its own output changes nothing."""
+    """`history.not_idempotent`: applying `transform` to its own output changes nothing.
+
+    Compared by value: idempotence is about what the history says. That `Model.prepare_messages` returns the same
+    list object when it has nothing to change, which the agent graph relies on to skip a second repair, is a separate
+    contract, pinned in `tests/models/test_model.py` by `test_prepare_messages_keeps_history_identity_when_*`.
+    """
     once = transform(history)
     return ['history.not_idempotent'] if transform(once) != once else []
 
@@ -256,10 +261,14 @@ def google_wire(contents: JsonValue) -> list[WireMessage]:
     return wire
 
 
-def duplicate_call_id_violations(messages: Sequence[WireMessage]) -> list[str]:
-    """`wire.duplicate_call_id`: every call id is sent once."""
-    call_ids = Counter(block.value for message in messages for block in message.blocks if block.kind == 'call')
-    return ['wire.duplicate_call_id'] * sum(count - 1 for count in call_ids.values())
+def duplicate_call_id_violations(messages: Sequence[WireMessage], *, across_messages: bool) -> list[str]:
+    """`wire.duplicate_call_id`: no call id is sent twice in one message, or, `across_messages`, in the whole body."""
+    scopes = [messages] if across_messages else [[message] for message in messages]
+    call_ids = [
+        Counter(block.value for message in scope for block in message.blocks if block.kind == 'call')
+        for scope in scopes
+    ]
+    return ['wire.duplicate_call_id'] * sum(count - 1 for counts in call_ids for count in counts.values())
 
 
 def call_pairing_violations(messages: Sequence[WireMessage], *, results_follow_their_call: bool) -> list[str]:
@@ -291,14 +300,24 @@ def call_pairing_violations(messages: Sequence[WireMessage], *, results_follow_t
     return violations + ['wire.unanswered_call' for call_id in dict.fromkeys(calls) if call_id not in answered]
 
 
-def empty_message_violations(messages: Sequence[WireMessage]) -> list[str]:
-    """`wire.empty_body`, `wire.empty_message`: the body has a message, and every message has a block."""
-    if not messages:
-        return ['wire.empty_body']
-    return ['wire.empty_message' for message in messages if not message.blocks]
-
-
 _ASSISTANT_ROLES = frozenset({'assistant', 'model'})
+
+
+def empty_message_violations(
+    messages: Sequence[WireMessage], *, system_suffices: bool, empty_assistant_turns_pass: bool
+) -> list[str]:
+    """`wire.empty_body`, `wire.empty_message`: the body has a message, and every message has a block.
+
+    With `system_suffices`, the body sends a system prompt the API takes as a request on its own, so it needs no
+    message. With `empty_assistant_turns_pass`, the API takes an assistant turn with no block.
+    """
+    if not messages:
+        return [] if system_suffices else ['wire.empty_body']
+    return [
+        'wire.empty_message'
+        for message in messages
+        if not message.blocks and not (empty_assistant_turns_pass and message.role in _ASSISTANT_ROLES)
+    ]
 
 
 def empty_text_violations(messages: Sequence[WireMessage]) -> list[str]:

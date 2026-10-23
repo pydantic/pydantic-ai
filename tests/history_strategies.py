@@ -30,6 +30,8 @@ and users never produce, or one whose shape needs its own strategy:
   provider-specific, and drawing them needs a strategy per provider.
 - Damage that adds a message puts it after a request, never between a call's response and the request
   answering it: the agent loop never puts one there, and repair pairs results with calls by order.
+- `empty_parts` never leaves a history with no part and no instructions: the agent refuses to run on one
+  (`No message history, user prompt, or instructions provided`).
 """
 
 from __future__ import annotations as _annotations
@@ -194,11 +196,13 @@ Damage = Literal[
     'orphan_return',
     'dangling_call',
     'repeated_call_id',
+    'repeated_call_id_across_responses',
     'thinking_only_response',
     'consecutive_request',
     'empty_prompt',
     'empty_system_prompt',
     'empty_response_text',
+    'empty_parts',
 ]
 _DAMAGE: list[Damage] = list(get_args(Damage))
 _NEEDS_A_RESPONSE: frozenset[Damage] = frozenset({'dangling_call', 'repeated_call_id', 'empty_response_text'})
@@ -219,8 +223,35 @@ def _damaged_histories(draw: st.DrawFn, without: frozenset[Damage]) -> list[Mode
         fresh_id = draw(TOOL_CALL_IDS.filter(lambda call_id: call_id not in used_ids))
         requests = {index: message for index, message in enumerate(history) if isinstance(message, ModelRequest)}
         responses = {index: message for index, message in enumerate(history) if isinstance(message, ModelResponse)}
+        # Each response a request answers, with each call id of a response before it that it doesn't call itself,
+        # so the id repeats only across responses.
+        reusable_ids = [
+            (later, part.tool_call_id)
+            for later, later_response in responses.items()
+            if later + 1 in requests
+            for earlier, response in responses.items()
+            if earlier < later
+            for part in response.parts
+            if isinstance(part, ToolCallPart)
+            and not any(
+                isinstance(call, ToolCallPart) and call.tool_call_id == part.tool_call_id
+                for call in later_response.parts
+            )
+        ]
+        # Each message that can lose its parts and leave the run something to send.
+        emptiable = [
+            index
+            for index in range(len(history))
+            if any(request.instructions for request in requests.values())
+            or any(message.parts for other, message in enumerate(history) if other != index)
+        ]
         applicable: list[Damage] = [
-            kind for kind in _DAMAGE if kind not in without and (responses or kind not in _NEEDS_A_RESPONSE)
+            kind
+            for kind in _DAMAGE
+            if kind not in without
+            and (responses or kind not in _NEEDS_A_RESPONSE)
+            and (reusable_ids or kind != 'repeated_call_id_across_responses')
+            and (emptiable or kind != 'empty_parts')
         ]
         damage = draw(st.sampled_from(applicable))
         request_index = draw(st.sampled_from(list(requests)))
@@ -241,7 +272,7 @@ def _damaged_histories(draw: st.DrawFn, without: frozenset[Damage]) -> list[Mode
                     response, parts=[*response.parts, ToolCallPart(draw(_TOOL_NAMES), {}, fresh_id)]
                 )
             case 'repeated_call_id':
-                # A model that numbers its calls per response (`call_0`, ...) can repeat an id in one response.
+                # An id repeated in one response, as `end_strategy='graceful'` can record (#9815).
                 response_index = draw(st.sampled_from(list(responses)))
                 response = responses[response_index]
                 existing_ids = [part.tool_call_id for part in response.parts if isinstance(part, ToolCallPart)]
@@ -250,9 +281,19 @@ def _damaged_histories(draw: st.DrawFn, without: frozenset[Damage]) -> list[Mode
                 history[response_index] = replace(response, parts=[*response.parts, *repeats])
                 answered_by = history[response_index + 1] if response_index + 1 < len(history) else None
                 if isinstance(answered_by, ModelRequest) and draw(st.booleans()):
-                    # Every call with the id answered, as `end_strategy='graceful'` can record (#9815).
+                    # Every call with the id answered.
                     extra_returns = [ToolReturnPart(repeat.tool_name, draw(_TEXT), call_id) for repeat in repeats]
                     history[response_index + 1] = replace(answered_by, parts=[*extra_returns, *answered_by.parts])
+            case 'repeated_call_id_across_responses':
+                # An id an earlier response used, answered again, as `TestModel` records when it calls an output tool
+                # again after a retry: it names both calls `pyd_ai_tool_call_id__{name}`.
+                response_index, call_id = draw(st.sampled_from(reusable_ids))
+                response = responses[response_index]
+                call = ToolCallPart(draw(_TOOL_NAMES), {}, call_id)
+                history[response_index] = replace(response, parts=[*response.parts, call])
+                answered_by = requests[response_index + 1]
+                answer = ToolReturnPart(call.tool_name, draw(_TEXT), call_id)
+                history[response_index + 1] = replace(answered_by, parts=[answer, *answered_by.parts])
             case 'thinking_only_response':
                 # A response with nothing but thinking, as an interrupted stream or a `no_output` retry leaves.
                 history.insert(request_index + 1, ModelResponse(parts=[draw(st.builds(ThinkingPart, _TEXT))]))
@@ -269,6 +310,10 @@ def _damaged_histories(draw: st.DrawFn, without: frozenset[Damage]) -> list[Mode
                 response_index = draw(st.sampled_from(list(responses)))
                 response = responses[response_index]
                 history[response_index] = replace(response, parts=[*response.parts, TextPart(draw(_BLANK))])
+            case 'empty_parts':
+                # A message left with no parts, as a history processor that filters parts out (thinking, say) leaves.
+                message_index = draw(st.sampled_from(emptiable))
+                history[message_index] = replace(history[message_index], parts=[])
             case _:
                 assert_never(damage)
     return history
