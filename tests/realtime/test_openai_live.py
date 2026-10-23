@@ -3961,8 +3961,8 @@ async def test_a_continuation_the_dropping_sideband_swallowed_is_sent_again_then
 
     if backend == 'confirms':
         events: list[Any] = []
-        # Well past the point where it would have been given up on.
-        with anyio.move_on_after(0.5):
+        # Past both deadlines, the one to send it again and the one to give up on it, with room to spare.
+        with anyio.move_on_after(3 * live_module._CONTINUATION_CONFIRM_SECONDS):  # pyright: ignore[reportPrivateUsage]
             async for event in connection:  # pragma: no branch
                 events.append(event)
         assert events == [RealtimeSessionReconnectEvent(state_restored=True)]
