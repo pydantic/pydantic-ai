@@ -1183,9 +1183,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """The toolset's `id`: the one it was given, or else its server URL's hostname.
 
         A hostname-derived `id`, with `-` in place of the `:`s of an IPv6 address, keys the server's
-        [instructions](../mcp/client.md#server-instructions) and shows up as tool definitions'
-        `toolset_id`, but durable execution doesn't accept it: an activity or step name has to be one you
-        chose, so pass `id=` explicitly there. A stdio or in-process server without one has no `id`.
+        [instructions](../mcp/client.md#server-instructions) and labels the toolset in error messages.
+        It isn't stamped on tool definitions' `toolset_id`, telemetry masks it, and durable execution
+        doesn't accept it: an activity or step name has to be one you chose, so pass `id=` explicitly
+        there. A stdio or in-process server without one has no `id`.
         """
         return self._id
 

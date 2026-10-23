@@ -3100,6 +3100,27 @@ def test_resolve_tool_task_config_reads_metadata() -> None:
         resolve_tool_task_config(tool, 'fn_tool', {})
 
 
+def test_a_hostname_derived_toolset_id_leaves_tool_cache_keys_as_they_were() -> None:
+    """A URL `MCPToolset` without an `id` takes its hostname, which neither its tools' keys nor their definitions carry.
+
+    The projection is what it was when the toolset had no `id`, so a flow run before the upgrade still finds its tasks.
+    """
+    from pydantic_ai.durable_exec.prefect._cache_policies import _replace_toolset_tools  # pyright: ignore[reportPrivateUsage]
+
+    def projection(toolset: MCPToolset[None]) -> object:
+        tool = ToolsetTool(
+            toolset=toolset, tool_def=ToolDefinition(name='ping'), max_retries=0, args_validator=TOOL_SCHEMA_VALIDATOR
+        )
+        return _replace_toolset_tools({'tool': tool})
+
+    derived = MCPToolset[None]('https://mcp.example.com/mcp')
+    assert derived.id == 'mcp.example.com'
+    # A toolset with no `id` at all, as the URL toolset was before ids were derived.
+    without_id = MCPToolset[None](StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
+    assert without_id.id is None
+    assert projection(derived) == projection(without_id)
+
+
 @pytest.mark.parametrize('kind', ['function', 'mcp', 'mcp-url'])
 def test_prefect_durability_rejects_idless_toolsets(kind: str) -> None:
     """Wrapped leaf toolsets without an `id` fail loudly at construction.

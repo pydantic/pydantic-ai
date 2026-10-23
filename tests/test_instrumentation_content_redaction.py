@@ -73,7 +73,8 @@ with try_import() as otel_sdk_installed:
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 with try_import() as mcp_installed:
-    from fastmcp import FastMCP
+    from fastmcp import Client, FastMCP
+    from fastmcp.client.transports import StreamableHttpTransport
 
     from pydantic_ai._mcp_compat import is_mcp_sdk_v2
     from pydantic_ai.mcp import MCPToolset
@@ -408,7 +409,7 @@ async def test_a_url_mcp_toolsets_hostname_derived_id_is_masked(
 ) -> None:
     """An `MCPToolset` built from a URL without an `id` takes its hostname, which telemetry masks like other URL-derived ids.
 
-    It reaches spans as tool definitions' `toolset_id` and as the server instructions' id; neither carries it.
+    It reaches spans as the server instructions' id, which is masked; tool definitions don't carry it.
     """
     app = guidance_server_app
     client: httpx.AsyncClient | httpx2.AsyncClient
@@ -439,10 +440,22 @@ async def test_a_url_mcp_toolsets_hostname_derived_id_is_masked(
     serialized = chat.attributes['model_request_parameters']
     assert isinstance(serialized, str)
     parameters = json.loads(serialized)
-    assert [tool['toolset_id'] for tool in parameters['function_tools']] == ['[REDACTED]']
+    # A hostname-derived `id` isn't stamped on tool definitions at all.
+    assert [tool['toolset_id'] for tool in parameters['function_tools']] == [None]
     assert [part['id'] for part in parameters['instruction_parts']] == ['toolset:[REDACTED]']
     if not include_content:
         assert 'testserver' not in serialized
+
+
+@pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
+@pytest.mark.parametrize('local', ['client', 'transport'])
+def test_an_mcp_capability_keeps_its_local_toolsets_own_marker(local: str):
+    """`MCP(local=...)` with no URL or `id` of its own has no marker to give, so the toolset keeps the one its hostname-derived `id` set."""
+    url = 'http://private-tenant.example/mcp'
+    capability = MCP(local=Client(url) if local == 'client' else StreamableHttpTransport(url))
+    assert isinstance(capability.local, MCPToolset)
+    assert capability.local.id == 'private-tenant.example'
+    assert capability.local._telemetry_url_derived_id == 'private-tenant.example'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_a_hostname_derived_id_is_masked_only_while_its_derived():
