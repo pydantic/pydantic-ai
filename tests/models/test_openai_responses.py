@@ -291,6 +291,9 @@ async def test_openai_responses_leaves_out_annotations_it_cannot_rebuild() -> No
                             {**url_citation, 'start_index': 0, 'end_index': 10},
                             # Replaying a file citation needs its filename.
                             {'type': 'file_citation', 'file_id': 'file-123', 'index': 3},
+                            # OpenAI rejects an empty file ID or URL, which an OpenAI-compatible API may send.
+                            {'type': 'file_citation', 'file_id': '', 'filename': '', 'index': 3},
+                            {**url_citation, 'url': ''},
                             # Only URL and file citations are replayed.
                             {'type': 'file_path', 'file_id': 'file-123', 'index': 3},
                         ]
