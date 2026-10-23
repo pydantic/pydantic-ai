@@ -23,7 +23,7 @@ already includes cache reads and writes; no CLAI sum adds them again.
 | Surface | Source | What the number means |
 | --- | --- | --- |
 | Status row `context: X/Y`, before each request | `compaction` `_ContextGauge` on harness `ContextUsageEvent` (`ReportContextUsage`, `estimate_context_tokens`) | Latest response's `context_tokens` (input as `context_input_tokens` reads it, plus output), plus a heuristic for the messages and newly revealed tool schemas since, minus the reclaim of a compaction in this request. With no reported usage yet, the heuristic alone, without most tool definitions, shown with `~` |
-| Status row `context`, during streaming | `Session._stream`, every event | Latest response's `context_tokens` (a long decode's input is its first request's) |
+| Status row `context`, during streaming | `Session._stream`, every event | Latest response's `context_tokens` (input as `context_input_tokens` reads it, plus output) |
 | Status row `context`, end of turn | `_run_prompt` | Last response's `context_tokens` |
 | Status row window `Y` | gauge window (honours the `compaction` override), else `Model.context_window` | Model window |
 | Status row `~N streamed tokens` / `N output tokens` | streamed characters / 4, then `result.usage.output_tokens` | Turn output, including a summary call and forwarded subagent usage |

@@ -41,7 +41,7 @@ from pydantic_ai import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
     StructuredContent,
     TextPart,
     ToolAvailabilityDeltaPart,
@@ -75,7 +75,7 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
 )
 
-from .conftest import TestEnv, try_import
+from .conftest import TestEnv, legacy_retry_prompt_part, try_import
 from .docs_model_aliases import resolve_model_aliases, restore_model_aliases
 from .realtime_connections import InferredConnection
 
@@ -119,6 +119,15 @@ class ExamplesConfig(BaseExamplesConfig):
         return config
 
 
+RUNNABLE_HARNESS_PAGES = frozenset({'memory.md'})
+"""`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
+
+
+def _is_harness_page(path: Path) -> bool:
+    root_dir = Path(__file__).parent.parent
+    return (root_dir / path).resolve().is_relative_to(root_dir / 'docs' / 'harness')
+
+
 def find_filter_examples() -> Iterable[ParameterSet]:
     # Ensure this is run from the package root regardless of where/how the tests are run
     root_dir = Path(__file__).parent.parent
@@ -127,7 +136,7 @@ def find_filter_examples() -> Iterable[ParameterSet]:
     for ex in find_examples('README.md', 'docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if '.agents' in ex.path.parts:
             continue
-        if ex.path.resolve().is_relative_to(root_dir / 'docs' / 'harness'):
+        if _is_harness_page(ex.path) and ex.path.name not in RUNNABLE_HARNESS_PAGES:
             # Written for the harness repository, which never ran them; not yet made runnable here.
             continue
         if ex.path.name == 'README.md' and (
@@ -620,6 +629,11 @@ def test_docs_examples(
             else:  # pragma: no cover
                 raise KeyError(f'Example {req} not found, check the `requires` header of this example.')
 
+    known_first_party = ['pydantic_ai', 'pydantic_evals', 'pydantic_graph']
+    if _is_harness_page(example.path):
+        # Harness pages group harness imports with Pydantic AI's, like their package READMEs.
+        known_first_party.append('pydantic_ai_harness')
+
     ruff_ignore: list[str] = ['D', 'Q001']
     # `from bank_database import DatabaseConn` wrongly sorted in imports
     # waiting for https://github.com/pydantic/pytest-examples/issues/43
@@ -639,7 +653,7 @@ def test_docs_examples(
         isort=True,
         upgrade=True,
         quotes='single',
-        known_first_party=['pydantic_ai', 'pydantic_evals', 'pydantic_graph'],
+        known_first_party=known_first_party,
         known_local_folder=known_local_folder,
     )
     eval_example.print_callback = print_callback
@@ -736,7 +750,7 @@ class MockMCPServer(AbstractToolset[Any]):
 
     @property
     def id(self) -> str | None:
-        return None
+        return None  # pragma: no cover
 
     async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
         return None
@@ -1144,6 +1158,14 @@ async def model_logic(  # noqa: C901
         # docs/models/decision.md: a run with no new prompt judges the history it was given
         return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': True})])
     m = messages[-1].parts[-1]
+    # The framework now answers a retried tool call with `ToolReturnPart(outcome='retried')` rather
+    # than a `RetryPromptPart`. This mock dispatches on the legacy shape in a dozen places, so map it
+    # back here rather than splitting every tool-return branch below in two.
+    if isinstance(m, ToolReturnPart) and m.outcome == 'retried':
+        m = legacy_retry_prompt_part(
+            content=m.model_response_str(wrap_if_error=False), tool_name=m.tool_name, tool_call_id=m.tool_call_id
+        )
+
     # Handle multimodal tool returns (content directly in ToolReturnPart)
     if (
         isinstance(m, ToolReturnPart)
@@ -1197,6 +1219,17 @@ async def model_logic(  # noqa: C901
         ):
             # `select_the_model_per_step.py`: the router is asked which model takes the run's prompt
             return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': route})])
+        elif isinstance(m.content, list) and isinstance(m.content[0], DocumentUrl):
+            # docs/capabilities/file-understanding.md and docs/models/typesafe.md: the describing model
+            return ModelResponse(parts=[TextPart('A field guide to the animals of the Serengeti.')])
+        elif (
+            isinstance(m.content, list) and isinstance(m.content[0], str) and m.content[0].startswith('-----BEGIN FILE')
+        ):
+            # docs/capabilities/file-understanding.md and docs/models/typesafe.md: Jev judges the description
+            wants_bool = info.output_tools[0].parameters_json_schema['properties']['response'].get('type') == 'boolean'
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'response': True if wants_bool else 'animals'})]
+            )
         elif isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
         elif (
@@ -1632,7 +1665,7 @@ async def model_logic(  # noqa: C901
         if 'Write fizzbuzz to fizzbuzz.py and run it.' in prompts:
             return ModelResponse(parts=[TextPart('fizzbuzz.py is written and runs clean.')])
     if (
-        isinstance(m, RetryPromptPart)
+        isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
         and isinstance(m.content, str)
         and m.content.startswith("No user found with name 'Joh")
     ):
@@ -1643,7 +1676,7 @@ async def model_logic(  # noqa: C901
                 )
             ]
         )
-    elif isinstance(m, RetryPromptPart) and m.tool_name == 'infinite_retry_tool':
+    elif isinstance(m, RetryPromptPart) and m.tool_name == 'infinite_retry_tool':  # pyright: ignore[reportDeprecated]
         return ModelResponse(
             parts=[ToolCallPart(tool_name='infinite_retry_tool', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
@@ -1657,7 +1690,7 @@ async def model_logic(  # noqa: C901
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'do_work':
         return ModelResponse(parts=[ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id')])
-    elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':
+    elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':  # pyright: ignore[reportDeprecated]
         return ModelResponse(
             parts=[ToolCallPart(tool_name='calc_volume', args={'size': 6}, tool_call_id='pyd_ai_tool_call_id')]
         )
@@ -1718,7 +1751,7 @@ async def model_logic(  # noqa: C901
             parts=[ToolCallPart(tool_name='get_document', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif (
-        isinstance(m, RetryPromptPart)
+        isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
         and m.tool_name == 'final_result_run_sql_query'
         and m.content == "Only 'SELECT *' is supported, you'll have to do column filtering manually."
     ):
@@ -1732,7 +1765,7 @@ async def model_logic(  # noqa: C901
             ]
         )
     elif (
-        isinstance(m, RetryPromptPart)
+        isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
         and m.tool_name == 'final_result_hand_off_to_sql_agent'
         and m.content
         == "SQL agent failed: Unknown table 'capitals' in query 'SELECT * FROM capitals;'. Available tables: capital_cities."
@@ -1747,7 +1780,7 @@ async def model_logic(  # noqa: C901
             ]
         )
     elif (
-        isinstance(m, RetryPromptPart)
+        isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
         and m.tool_name == 'final_result_run_sql_query'
         and m.content == "Unknown table 'pets' in query 'SELECT * FROM pets;'. Available tables: capital_cities."
     ):
@@ -1764,7 +1797,7 @@ async def model_logic(  # noqa: C901
         )
     # SQL agent failed: The table 'pets' does not exist in the database. Only the table 'capital_cities' is available.
     elif (
-        isinstance(m, RetryPromptPart)
+        isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
         and m.tool_name == 'final_result_hand_off_to_sql_agent'
         and m.content
         == "SQL agent failed: The table 'pets' does not exist in the database. Only the table 'capital_cities' is available."

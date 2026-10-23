@@ -579,7 +579,6 @@ def validate_uploaded_file_provider(item: _messages.UploadedFile, *, system: str
 def guard_tool_call_id(
     t: _messages.ToolCallPart
     | _messages.ToolReturnPart
-    | _messages.RetryPromptPart
     | _messages.NativeToolCallPart
     | _messages.NativeToolReturnPart,
 ) -> str:
@@ -720,6 +719,18 @@ class PeekableAsyncStream(Generic[T, SourceT]):
 
 def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> str:
     return x._traceparent(required=False) or ''  # type: ignore[reportPrivateUsage]
+
+
+def dataclass_fields_equal(left: object, right: object) -> bool:
+    """Whether two instances of one class are equal by the class's `compare` dataclass fields.
+
+    A class that hashes by identity (one that isn't a dataclass, or a `@dataclass(eq=False)` over bases that
+    don't generate equality) compares by identity, so equal instances always hash equal.
+    """
+    if not is_dataclass(left) or type(left).__hash__ is object.__hash__:
+        return left is right
+    names = [f.name for f in fields(left) if f.compare]
+    return tuple(getattr(left, name) for name in names) == tuple(getattr(right, name) for name in names)
 
 
 def dataclasses_no_defaults_repr(self: Any) -> str:
@@ -961,32 +972,27 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
             new_name = name_mapping.get(original_name, original_name)
             s['$ref'] = f'#/$defs/{new_name}'
 
-    # Recursively update refs in properties and patternProperties
-    for keyword in ['properties', 'patternProperties']:
+    # Handle keywords whose values map names to schemas.
+    for keyword in ['properties', 'patternProperties', 'dependentSchemas']:
         if keyword in s:
             props: dict[str, dict[str, Any]] = s[keyword]
             for prop in props.values():
                 if isinstance(prop, dict):
                     _update_mapped_json_schema_refs(prop, name_mapping)
 
-    # Handle single-subschema keywords: arrays, additionalProperties, propertyNames and negation
-    for keyword in ['items', 'additionalProperties', 'propertyNames', 'not']:
+    # Handle single-subschema keywords, including conditionals and array containment.
+    for keyword in ['items', 'additionalProperties', 'propertyNames', 'not', 'contains', 'if', 'then', 'else']:
         subschema = s.get(keyword)
         if isinstance(subschema, dict):
             _update_mapped_json_schema_refs(subschema, name_mapping)  # pyright: ignore[reportUnknownArgumentType]
 
-    # Handle prefixItems
-    if 'prefixItems' in s:
-        prefix_items: list[dict[str, Any]] = s['prefixItems']
-        for item in prefix_items:
-            _update_mapped_json_schema_refs(item, name_mapping)
-
-    # Handle unions and composition keywords
-    for keyword in ['anyOf', 'oneOf', 'allOf']:
-        if keyword in s:
-            keyword_items: list[dict[str, Any]] = s[keyword]
+    # Handle schema arrays, including the legacy tuple form of items.
+    for keyword in ['prefixItems', 'anyOf', 'oneOf', 'allOf', 'items']:
+        keyword_items: dict[str, Any] | list[dict[str, Any] | bool] | None = s.get(keyword)
+        if isinstance(keyword_items, list):
             for item in keyword_items:
-                _update_mapped_json_schema_refs(item, name_mapping)
+                if isinstance(item, dict):
+                    _update_mapped_json_schema_refs(item, name_mapping)
 
 
 def _unique_def_name(name: str, schema: dict[str, Any], all_defs: dict[str, dict[str, Any]]) -> str:

@@ -9,7 +9,16 @@ import pytest
 from pydantic import BaseModel, Field, WithJsonSchema
 
 from pydantic_ai import Agent, BinaryContent, ModelHTTPError, ToolCallPart
-from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import (
+    ModelConnectionError,
+    ModelOverloadedError,
+    ModelRateLimitError,
+    ModelServerError,
+    ModelTimeoutError,
+    ModelUnavailableError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.models import infer_model
 from pydantic_ai.models.decision import (
     ChoiceAnswer,
@@ -59,6 +68,19 @@ class Mood(BaseModel):
 
     frustration: Frustration = Field(description='How frustrated is the customer?')
 
+
+class Triage(BaseModel):
+    """Triage a support ticket."""
+
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+    area: Literal['billing', 'bug'] = Field(description='Which team owns it?')
+    frustration: Frustration = Field(description='How frustrated is the customer?')
+
+
+# A softmax over the logits `[0.2, -1.7, 3.3]` in float64, as a vLLM server sends it unrounded, and its expected
+# level computed as a float sum: neither is exact, so they are consistent only within float error.
+FLOAT64_PROBABILITIES = {'0': 0.042831101729633766, '1': 0.006406188745485539, '2': 0.9507627095248806}
+FLOAT64_SCORE = 1.9079316077952468
 
 Handler = Callable[[httpx2.Request], httpx2.Response]
 
@@ -515,8 +537,43 @@ async def test_connection_error(allow_model_requests: None):
         raise httpx2.ConnectError('Connection refused')
 
     agent = Agent(mock_model(handler), output_type=Ticket)
-    with pytest.raises(ModelAPIError, match='ConnectError: Connection refused'):
+    with pytest.raises(ModelConnectionError, match='ConnectError: Connection refused') as exc_info:
         await agent.run('Charged twice.')
+    assert exc_info.value.phase == 'connect'
+
+
+async def test_timeout_error(allow_model_requests: None):
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ReadTimeout('slow')
+
+    agent = Agent(mock_model(handler), output_type=Ticket)
+    with pytest.raises(ModelTimeoutError) as exc_info:
+        await agent.run('Charged twice.')
+    assert exc_info.value.phase == 'read'
+
+
+@pytest.mark.parametrize(
+    ('response', 'category'),
+    [
+        (httpx2.Response(429, json={'detail': 'slow down'}), ModelRateLimitError),
+        (httpx2.Response(503, text='overloaded, try again'), ModelOverloadedError),
+        (httpx2.Response(503, text='warming up'), ModelUnavailableError),
+        (httpx2.Response(502, text='embedder unreachable'), ModelServerError),
+    ],
+)
+async def test_http_error_category(
+    allow_model_requests: None,
+    response: httpx2.Response,
+    category: type[ModelRateLimitError | ModelUnavailableError | ModelServerError],
+):
+    """A rate limit or outage is raised in its error category, as for any other provider."""
+    agent = Agent(mock_model(lambda _: response), output_type=Ticket)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('Charged twice.')
+    # Exactly the category's HTTP error, so one classified too broadly (an overloaded 503 for a plain one) fails.
+    expected = ModelHTTPError.for_category(category, status_code=response.status_code, model_name='clm-latest')
+    assert type(exc_info.value) is type(expected)
+    assert exc_info.value.status_code == response.status_code
 
 
 async def test_server_error_falls_back(allow_model_requests: None):
@@ -626,6 +683,11 @@ async def test_response_answer_names_match_questions(answer_names: tuple[str, ..
         {'probabilities': {'0': 0.05, '1': 0.2, '2': 0.7}},
         {'probabilities': {'0': 0.0501, '1': 0.2001, '2': 0.7398}},
         {'legend': {'0': 'Calm', '1': 'Frustrated'}},
+        pytest.param({'score': 1.9069316077952468, 'probabilities': FLOAT64_PROBABILITIES}, id='float-score-off'),
+        pytest.param(
+            {'score': 1.9081316077952468, 'probabilities': FLOAT64_PROBABILITIES | {'2': 0.9508627095248806}},
+            id='float-probabilities-off',
+        ),
     ],
 )
 async def test_invalid_score_response(change: dict[str, object], allow_model_requests: None):
@@ -667,6 +729,52 @@ async def test_rounded_score_can_match_rounded_probabilities(
 
     result = await Agent(mock_model(handler), output_type=Mood).run('Slightly frustrating.')
     assert result.output == Mood(frustration=1)
+
+
+@pytest.mark.parametrize(
+    ('noul', 'choice', 'score', 'probabilities'),
+    [
+        pytest.param(
+            0.9125359795196295,
+            {'billing': 0.9426758241011313, 'bug': 0.057324175898868755},
+            FLOAT64_SCORE,
+            FLOAT64_PROBABILITIES,
+            id='float64',
+        ),
+        pytest.param(
+            0.9125359654426575,
+            {'billing': 0.9426758289337158, 'bug': 0.05732417851686478},
+            1.9079315662384033,
+            {'0': 0.04283110052347183, '1': 0.006406188942492008, '2': 0.9507626891136169},
+            id='float32-softmax',
+        ),
+    ],
+)
+async def test_unrounded_float_answers(
+    noul: float,
+    choice: dict[str, float],
+    score: float,
+    probabilities: dict[str, float],
+    allow_model_requests: None,
+):
+    """A vLLM server sends unrounded floats, whose sum and expected level are exact only within float error."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return answers(
+            urgent={'type': 'noul', 'noul': noul},
+            area={'type': 'choice', 'choice': 'billing', 'confidence': choice['billing'], 'probabilities': choice},
+            frustration={
+                'type': 'score',
+                'score': score,
+                'confidence': probabilities['2'],
+                'probabilities': probabilities,
+            },
+        )
+
+    result = await Agent(mock_model(handler), output_type=Triage).run('Charged twice, and nobody answers.')
+    assert result.output == Triage(urgent=True, area='billing', frustration=2)
+    assert result.response.provider_details is not None
+    assert result.response.provider_details['scores'] == {'frustration': score}
 
 
 @pytest.mark.parametrize(

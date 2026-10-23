@@ -2,6 +2,7 @@
 
 import asyncio
 import math
+from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
@@ -48,6 +49,7 @@ from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    QueuedInput,
     Renderer,
     SessionEndReason,
     SessionStart,
@@ -60,6 +62,7 @@ from pydantic_clai2.plugins import (
 from pydantic_clai2.plugins.loader import PluginError, SessionPlugins
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.plugins.process_plugins import LiveRuntime, handling
+from pydantic_clai2.runtime import image_codec
 from pydantic_clai2.runtime._session import (
     Session,
     StockAgent,
@@ -89,6 +92,7 @@ from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.input_history import input_history
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptRewind, PromptWakeup
+from pydantic_clai2.ui.prompt.prompt_queue import PromptInbox, QueuedPrompt, can_steer, find_queued, input_kind
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from pydantic_clai2.ui.prompt.terminal import Terminal
@@ -434,7 +438,7 @@ def create_shell(
         status=status,
         enabled=load_plugins,
         submit_prompt=lambda text: shell.submit_prompt(text),
-        send_input=lambda text: shell.send_input(text),
+        send_input=lambda text, images: shell.send_input(text, images=images),
         interrupt=lambda: shell.interrupts.cancel(exit_on_repeat=False),
         sessions=sessions,
         setting=context.setting,
@@ -443,7 +447,7 @@ def create_shell(
         running=lambda: shell.turning,
         default_model=partial(_default_model, store=store, models=models, fallback=agent.model),
         default_model_name=partial(_default_model_name, store=store, fallback=agent.model),
-        queued=lambda: shell.queued,
+        inputs=lambda: shell,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     updates.report = lambda: loader.fire if loader.handles(UpdateProgress) else None
@@ -587,6 +591,28 @@ class _ConversationFooter:
         await self.fire(event)
 
 
+class Inbox:
+    """Input waiting for a session's read loop, readable so the images its markers name are kept.
+
+    `SessionRuntime` now queues through `PromptInbox`, whose entries can be edited and removed;
+    this class stays so code that imports it keeps working.
+    """
+
+    def __init__(self) -> None:
+        self.texts = deque[str]()
+        self._arrived = asyncio.Event()
+
+    def put(self, text: str) -> None:
+        self.texts.append(text)
+        self._arrived.set()
+
+    async def get(self) -> str:
+        while not self.texts:
+            self._arrived.clear()
+            await self._arrived.wait()
+        return self.texts.popleft()
+
+
 @dataclass(kw_only=True)
 class SessionRuntime(Generic[DepsT, OutputT]):
     """One live session and its prompt loop; one turn is one `TurnStart`, one agent run, one `TurnEnd`.
@@ -625,7 +651,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
-    _inbox: asyncio.Queue[str] = field(default_factory=asyncio.Queue[str], init=False, repr=False)
+    _inbox: PromptInbox = field(default_factory=PromptInbox, init=False, repr=False)
     """Input `send_input` entered while no editor reads keys, as in a shell driven only by a plugin."""
     turning: bool = field(default=False, init=False)
     """Whether a turn runs: from its `TurnStart` until its run ends, before plugins hear `TurnEnd`."""
@@ -652,7 +678,37 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     @property
     def queued(self) -> int:
         """How many inputs wait for the running turn or command to end."""
-        return len(self.editor.queued_messages) if self.editor is not None else self._inbox.qsize()
+        return len(self._queued_prompts())
+
+    def _queued_prompts(self) -> list[QueuedPrompt]:
+        """What waits where input comes from now: the terminal's editor while it shows this session, else the inbox."""
+        return self.editor.queued_prompts() if self.editor is not None else self._inbox.entries
+
+    @property
+    def queue(self) -> list[QueuedInput]:
+        """The inputs waiting for the running turn or command to end, oldest first, as `host.live` lists them."""
+        return [QueuedInput(id=entry.id, text=entry.text) for entry in self._queued_prompts()]
+
+    def edit_queued(self, input_id: str, text: str) -> None:
+        """Rewrite a waiting input in place, as Enter on a recalled queued prompt does; blank text is refused."""
+        text = expand_bare_command(text.strip())
+        if not text:
+            raise ValueError('Type a prompt or a /command.')
+        entry = find_queued(self._queued_prompts(), input_id)
+        if self.editor is not None:
+            self.editor.rewrite(entry, text)  # which tells `host.live` through its `queue_changed`
+        else:
+            entry.text = text
+            self.live_session.changed()
+
+    def remove_queued(self, input_id: str) -> None:
+        """Drop a waiting input, as clearing a recalled queued prompt before Enter does."""
+        entry = find_queued(self._queued_prompts(), input_id)
+        if self.editor is not None:
+            self.editor.discard(entry)
+        else:
+            self._inbox.remove(entry)
+            self.live_session.changed()
 
     @property
     def idle(self) -> bool:
@@ -847,22 +903,37 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             raise ValueError(f'The cell failed:\n{cell.report()}')
         return cell.report() or '(no output)'
 
-    def send_input(self, text: str) -> None:
+    def send_input(self, text: str, *, images: Sequence[BinaryContent] = ()) -> None:
         """Enter `text` as Enter at the prompt does: trimmed, bare `clear` as `/clear`, blank ignored.
 
         A `during_turn` command opens over a running turn; other input queues in the editor, or, while no
         editor reads keys yet or at all, in the inbox the read loop takes it from. A line-mode prompt,
         used when CLAI's output is not a terminal, reads only its own input, so it takes none.
+
+        `images` are attached as pasted ones are, by markers in the text that the turn resolves.
         """
         if self.prompt is not None and self.editor is None:
             raise RuntimeError('This CLAI reads its prompts line by line, as its output is not a terminal.')
         text = expand_bare_command(text.strip())
+        if images:
+            if input_kind(text) != 'prompt':
+                raise ValueError('Images go with a prompt, not with a /command or ! line.')
+            if sum(len(image.data) for image in images) > image_codec.MAX_PENDING_BYTES:
+                raise ValueError('These images exceed the 32 MiB limit; send fewer at a time.')
+            try:
+                markers = self.images.attach(images)
+            except ValueError as exc:
+                # The sender may not see the images waiting here, such as a terminal draft's.
+                raise ValueError(
+                    "Images waiting in this session's prompt leave no room for these (32 MiB limit)."
+                ) from exc
+            text = f'{text} {markers}'.strip()
         if not text or self.run_now(text):
             return
         if self.editor is not None:
             self.editor.submit(text)
         else:
-            self._inbox.put_nowait(text)
+            self._inbox.put(QueuedPrompt(text))
         self.live_session.changed()
 
     def request_reload(self, args: list[str]) -> str:
@@ -934,26 +1005,41 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         The terminal hands its console output over itself.
         """
         self.terminal = terminal
-        self.images = terminal.images if terminal is not None else ImageInput()
+        previous, self.images = self.images, terminal.images if terminal is not None else ImageInput()
+        # Queued prompts, and the one rejected for retry, keep their images as the terminal moves.
+        self.images.pending.update(previous.pending)
+        if previous.retry_text:
+            # The terminal's goes with the session leaving it, and the one shown brings its own.
+            self.images.retry_text, previous.retry_text = previous.retry_text, ''
         self.interrupts.focus(signals=terminal is not None)
         if terminal is not None:
             self.process.live.focused = self.live_session.id
         self.bind(terminal.editor if terminal is not None else None)
+        # Both now hold every image; each keeps those its own texts use, so none counts twice against the limit.
+        self._retain_images()
         self.live_session.changed()
+
+    def _retain_images(self) -> None:
+        """Let go of images that neither the draft nor a queued prompt of this session uses."""
+        self.images.retain(
+            [self.editor.buffer.text, *self.editor.queued_messages]
+            if self.editor is not None
+            else [entry.text for entry in self._inbox.entries]
+        )
 
     def bind(self, editor: LivePrompt | None) -> None:
         """Read from `editor`, the open editor of the terminal showing this session; `None` stops that."""
         if self.editor is not None and editor is None:
             # Prompts queued for this session stay its own while the terminal shows another.
-            for text in self.editor.take_queued():
-                self._inbox.put_nowait(text)
+            for entry in self.editor.take_queued():
+                self._inbox.put(entry)
         self.editor = editor
         self.screen.editor = editor.suspended if editor is not None else None
         self.tasks.wake = editor.wake if editor is not None else None
         if editor is not None:
             # Input a plugin entered while the editor read for another session, or did not exist yet.
-            while not self._inbox.empty():
-                editor.submit(self._inbox.get_nowait())
+            for entry in self._inbox.take():
+                editor.submit(entry)
             if self.tasks.owner.reports(conversation_id=self.session.summary.id):
                 editor.wake()
         if self._reading is not None:
@@ -991,7 +1077,12 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                     self._reading = None
 
     def steer(self, text: str) -> bool:
-        """Enqueue steering in core and hand transcript feedback to the active turn."""
+        """Enqueue steering in core and hand transcript feedback to the active turn.
+
+        `False` when no run takes it, and for a `/command` (bare `clear` included) or `!` shell line, which never steer.
+        """
+        if not can_steer(expand_bare_command(text)):
+            return False
         try:
             resolved, images = self.images.resolve(text)
         except ValueError as exc:
@@ -1086,9 +1177,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def _read_loop(self) -> SessionEndReason:
         while True:
-            self.images.retain(
-                [self.editor.buffer.text, *self.editor.queued_messages] if self.editor is not None else []
-            )
+            self._retain_images()
             try:
                 self.show_model()
                 self.status.workspace = self.session.workspace
@@ -1145,8 +1234,14 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self.console.print('Choose a model first: /set model <Tab>', style=theme.color(theme.WARNING))
             return False
         try:
+            # Before waiting for the terminal: once the prompt left the queue, only this holds its images.
+            text, images = self.images.resolve(text)
+        except ValueError as exc:
+            self.console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
+            return False
+        try:
             async with self.forks.busy():
-                return await self._turn(text)
+                return await self._turn(text, images)
         finally:
             if self.editor is not None:
                 await self.editor.output.drain()
@@ -1203,14 +1298,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self.console.print()
         return completed
 
-    async def _turn(self, text: str | None) -> bool:
+    async def _turn(self, text: str | None, images: Sequence[BinaryContent] = ()) -> bool:
+        """Run a turn on `text` and its resolved `images`, or an automated one, as a task's report, on `None`."""
         automated = text is None
-        try:
-            text, images = self.images.resolve(text) if text is not None else ('', [])
-        except ValueError as exc:
-            self.console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
-            return False
-        start = TurnStart(text=text)
+        start = TurnStart(text=text or '')
         ended: TurnEnd | None = None
 
         async def run_turn() -> None:
@@ -1495,7 +1586,9 @@ async def _run_prompt(
         if tasks is not None:
             tasks.sink = None
         status.activity = 'ready'
-        status.cost = session_usage(session.messages).total.cost
+        total = session_usage(session.messages).total
+        status.cost = total.cost
+        status.cost_is_lower_bound = bool(total.unmeasured_requests)
         session.on_context_usage = None
         session.on_context_window = None
         await renderer.finish()

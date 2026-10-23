@@ -25,8 +25,9 @@ from pydantic_ai.realtime.codec import (
     RealtimeCodecEvent,
     ResponseDone,
     ToolCall,
+    ToolCallCancelled,
 )
-from pydantic_ai.realtime.lifecycle import InferredLifecycle, LifecycleEvent, RealtimeFrame
+from pydantic_ai.realtime.lifecycle import AnswersRevised, InferredLifecycle, LifecycleEvent, RealtimeFrame
 
 
 def lifecycle(frame: RealtimeFrame | Sequence[LifecycleEvent]) -> list[str]:
@@ -172,3 +173,67 @@ def test_words_after_a_second_commit_close_the_turn_the_first_commit_joined() ->
     assert lifecycle(tracker.frame_for([InputTranscript('Again')])) == snapshot(
         ['UserTurnClosed', 'UserTurnStarted', 'UserTurnEnded']
     )
+
+
+class _CutOffLifecycle(InferredLifecycle):
+    inputs_cut_off_replies = True
+
+
+def revisions(frame: RealtimeFrame | Sequence[LifecycleEvent]) -> list[AnswersRevised]:
+    return [event for event in frame if isinstance(event, AnswersRevised)]
+
+
+def test_an_input_that_cuts_a_reply_off_is_left_to_the_next() -> None:
+    """With nothing but typed turns going in, only an input can have cut the reply off: the later one did."""
+    tracker = _CutOffLifecycle(transcribes=False)
+    tracker.input_sent('Tell me a story.')
+    tracker.input_sent('What is 2 plus 2?')
+    tracker.take_pending()
+    tracker.frame_for([OutputTranscript('Once upon')])
+    assert revisions(tracker.frame_for([RealtimeResponseInterruptedEvent(), ResponseDone(interrupted=True)])) == [
+        AnswersRevised(response_id='pydantic_ai_response_1', released=(1,))
+    ]
+
+
+def test_a_reply_the_user_speaks_over_keeps_every_input_it_answers() -> None:
+    """The provider heard the user start speaking after the inputs went out: that cut the reply off, not an input."""
+    tracker = _CutOffLifecycle(transcribes=False)
+    tracker.input_sent('Tell me a story.')
+    tracker.input_sent('What is 2 plus 2?')
+    tracker.take_pending()
+    tracker.frame_for([OutputTranscript('Once upon')])
+    tracker.speech_heard()
+    assert revisions(tracker.frame_for([RealtimeResponseInterruptedEvent(), ResponseDone(interrupted=True)])) == []
+
+
+def test_a_cancellation_revises_only_the_response_whose_calls_it_names() -> None:
+    tracker = _CutOffLifecycle(transcribes=False)
+    tracker.input_sent('First.')
+    tracker.take_pending()
+    tracker.frame_for([ToolCall(tool_call_id='a', tool_name='lookup', args='{}')])
+    tracker.input_sent('Second.')
+    tracker.input_sent('Third.')
+    tracker.take_pending()
+    tracker.frame_for([ToolCall(tool_call_id='b', tool_name='lookup', args='{}')])
+    # A late cancellation of the first response's call says nothing about the second's inputs...
+    assert revisions(tracker.frame_for([ToolCallCancelled(['a'])])) == []
+    # ...and leaves the second response's own cancellation to revise it.
+    assert revisions(tracker.frame_for([ToolCallCancelled(['b'])])) == [
+        AnswersRevised(response_id='pydantic_ai_response_2', released=(2,))
+    ]
+
+
+def test_a_microphone_streaming_silence_is_no_sign_the_user_spoke() -> None:
+    """Audio going out says nothing: an always-on microphone streams silence through a typed turn too."""
+    tracker = _CutOffLifecycle(transcribes=False)
+    tracker.input_sent(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
+    tracker.input_sent('Tell me a story.')
+    tracker.input_sent(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
+    tracker.input_sent('What is 2 plus 2?')
+    tracker.input_sent(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
+    tracker.take_pending()
+    tracker.frame_for([OutputTranscript('Once upon')])
+    tracker.input_sent(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
+    assert revisions(tracker.frame_for([RealtimeResponseInterruptedEvent(), ResponseDone(interrupted=True)])) == [
+        AnswersRevised(response_id='pydantic_ai_response_1', released=(3,))
+    ]
