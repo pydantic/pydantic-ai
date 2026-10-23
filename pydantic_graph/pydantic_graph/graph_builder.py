@@ -485,13 +485,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
             self._get_next_node_run_id,
             self._get_next_task_id,
         )
-        self._iterator: (
-            AsyncGenerator[
-                EndMarker[OutputT] | ErrorMarker | Sequence[GraphTask],
-                EndMarker[OutputT] | ErrorMarker | Sequence[GraphTask],
-            ]
-            | None
-        ) = self._iterator_instance.iter_graph(self._first_task)
+        self._iterator = self._iterator_instance.iter_graph(self._first_task)
 
         self.__traceparent = traceparent
         self._async_exit_stack = AsyncExitStack()
@@ -508,12 +502,10 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         finally:
             # Iterator callbacks refer back to this run; release them after its tasks finish.
             self._iterator_instance = None
-            self._iterator = None
 
     @asynccontextmanager
-    async def _iterator_context(self):
+    async def _iterator_context(self) -> AsyncGenerator[None]:
         assert self._iterator_instance is not None
-        assert self._iterator is not None
         try:
             yield
         finally:
@@ -559,8 +551,6 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
             Exception: If a node raised an error and the caller has not recovered via
                 `override_next()`.
         """
-        if self._iterator is None:
-            raise StopAsyncIteration
         if self._next is None:
             self._next = await anext(self._iterator)
         else:
