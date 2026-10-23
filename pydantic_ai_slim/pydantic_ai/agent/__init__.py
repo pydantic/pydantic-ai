@@ -4453,11 +4453,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             session_settings: RealtimeModelSettings | None = resolved.model_settings
             # A model that only writes text (a perception model, say) defaults to it, rather than to speech.
             supports_audio_output = resolved.model_profile.get('supports_audio_output', True)
-            output_modality = (session_settings or {}).get(
-                'output_modality', 'audio' if supports_audio_output else 'text'
-            )
-            if output_modality == 'text' and 'output_modality' not in (session_settings or {}):
+            if not supports_audio_output and 'output_modality' not in (session_settings or {}):
                 session_settings = {**(session_settings or {}), 'output_modality': 'text'}
+            output_modality = (session_settings or {}).get('output_modality', 'audio')
             # Unlike a setting the provider merely ignores, this one changes what the caller gets back:
             # a model that can't do it either fails the handshake (Gemini) or answers with speech anyway
             # (xAI), so it is rejected here rather than after a connection is open.
