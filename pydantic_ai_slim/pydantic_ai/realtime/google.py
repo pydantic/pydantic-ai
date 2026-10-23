@@ -642,6 +642,7 @@ async def _seed_request_parts(
             # System prompts are seeded through session instructions, and tool-availability news
             # from a prior standard run is stale here: the session advertises its own tools.
             # Instruction deltas likewise belong to the standard run; the session resolves current instructions.
+            # An effort change from a standard run has no channel here, so the session keeps the effort it opened with.
             continue
         elif isinstance(part, UserPromptPart):
             parts.extend(
