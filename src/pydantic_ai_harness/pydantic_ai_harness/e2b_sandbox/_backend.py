@@ -115,6 +115,14 @@ _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_CHARS = 64 * 1024
 
 
+def _require_asyncio() -> None:
+    """Refuse an operation off asyncio before it reaches the E2B SDK, which needs a running asyncio loop."""
+    if not running_on_asyncio():
+        # Its HTTP and RPC calls run under `asyncio.wait_for`, which raises 'no running event loop'
+        # on Trio; E2B's own error wrapping can even report that as a sandbox timeout.
+        raise UserError('E2B needs the asyncio event loop: the E2B SDK runs every request on asyncio.')
+
+
 def _path_error(error: Exception, path: str) -> OSError | None:
     """The builtin path error an untyped envd failure describes, or `None` if it is not one."""
     message = str(error).lower()
@@ -209,6 +217,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     starting), a separate command signals the process group when `setsid` is available.
     Custom templates without `setsid` fall back to stopping the command leader only.
 
+    The E2B SDK runs every request on asyncio, so under Trio every operation raises
+    `UserError` before it reaches E2B.
+
     Args:
         sandbox: A live `e2b.AsyncSandbox` you already have. Whoever created it owns killing it.
         ref: Identity of an existing sandbox to attach to on first use.
@@ -290,6 +301,12 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             return task.result()
         return await self._acquire()
 
+    async def _sandbox_for_operation(self) -> e2b.AsyncSandbox:
+        """`get_sandbox()` for the backend's own operations, which all make E2B requests."""
+        # Also for a sandbox the caller passed in: `get_sandbox()` returns that one on Trio too.
+        _require_asyncio()
+        return await self.get_sandbox()
+
     async def _acquire_detached(self) -> e2b.AsyncSandbox:
         try:
             return await self._acquire()
@@ -299,6 +316,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     async def _acquire(self) -> e2b.AsyncSandbox:
         async with self._lock:
             if (sandbox := self._sandbox) is None:
+                # Checked here, not in `get_sandbox`: a sandbox the caller passed in is returned as is.
+                _require_asyncio()
                 ref = self._ref
                 sandbox = await self._attach(ref.id) if ref is not None else await self._create()
                 if ref is None:
@@ -376,7 +395,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         return error
 
     async def read_bytes(self, path: str) -> bytes:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not read {path!r}', path):
             # envd reports FIFOs as files and its read blocks indefinitely without a writer.
             # Probe via the shell before asking envd to open the path (also follows links).
@@ -386,7 +405,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             return bytes(await sandbox.files.read(path, 'bytes', user=self._user))
 
     async def write_bytes(self, path: str, data: bytes) -> None:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not write {path!r}', path):
             # The SDK bounds a buffered upload by one whole-request deadline, and 0 means none: keep
             # its 60 s for small files and allow a slow link's throughput for large ones.
@@ -394,12 +413,12 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             await sandbox.files.write(path, data, user=self._user, request_timeout=deadline)  # pyright: ignore[reportUnknownMemberType]
 
     async def stat(self, path: str) -> FileEntry:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not stat {path!r}', path):
             return await _file_entry(sandbox, await sandbox.files.get_info(path, user=self._user), self._user)
 
     async def list_dir(self, path: str) -> Sequence[FileEntry]:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not list {path!r}', path):
             # `depth=1` is E2B's non-recursive listing, as the protocol asks.
             entries = await sandbox.files.list(path, depth=1, user=self._user)
@@ -432,12 +451,12 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             return [entry for entry in resolved if entry is not None]
 
     async def make_dir(self, path: str) -> None:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not create directory {path!r}', path):
             await sandbox.files.make_dir(path, user=self._user)
 
     async def remove(self, path: str) -> None:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not remove {path!r}', path):
             # envd removes with `os.RemoveAll`, which succeeds on a missing path; the protocol
             # reports that as `FileNotFoundError`. envd's stat follows links, so a dangling
@@ -457,15 +476,15 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             await sandbox.files.remove(path, user=self._user)
 
     async def exists(self, path: str) -> bool:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not check {path!r}', path):
             return await sandbox.files.exists(path, user=self._user)
 
     async def _create(self) -> e2b.AsyncSandbox:
         """Provision a fresh E2B sandbox.
 
-        E2B may create the sandbox before its response arrives. The asyncio acquisition task
-        survives caller cancellation, and the Trio path shields this call; `_CREATE_TIMEOUT`
+        E2B may create the sandbox before its response arrives. The acquisition task survives
+        caller cancellation, and the shield keeps this call running too; `_CREATE_TIMEOUT`
         bounds the SDK request, though a response lost after remote creation cannot be recovered. A request E2B refuses
         (rejected credentials, an unknown template, a lifetime over the plan's limit) is
         `WorkspaceUnavailableError`: retrying it cannot succeed. Any other 4xx keeps the upstream error.
@@ -518,7 +537,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             result = await self.run(['pwd', '-P'], timeout=_INTERNAL_EXEC_TIMEOUT)
             printed = result.stdout.removesuffix('\n')
             if result.exit_code != 0 or not posixpath.isabs(printed):
-                sandbox = await self.get_sandbox()
+                sandbox = await self._sandbox_for_operation()
                 raise WorkspaceError(
                     f'Could not determine the working directory of E2B sandbox {sandbox.sandbox_id}: '
                     f'`pwd -P` exited {result.exit_code} and printed {result.stdout!r}.'
@@ -554,11 +573,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         line = shlex.join(command_argv(command, shell))
         if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
             raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
-        if not running_on_asyncio():
-            # E2B's command handle starts its output reader with `asyncio.create_task`.
-            raise UserError('E2B commands need the asyncio event loop: the E2B SDK runs them on asyncio tasks.')
         # Acquiring the sandbox has its own bound; the timeout is the command's alone.
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         handle: e2b.AsyncCommandHandle | None = None
         result: e2b.CommandResult | None = None
         # The token is allocated before the start RPC: a lost ACK must not make the
@@ -689,6 +705,7 @@ async def kill_sandbox(sandbox_id: str) -> None:
     A sandbox that is already gone returns quietly (E2B's kill answers `False`); rejected
     credentials raise `WorkspaceUnavailableError`, like any other operation.
     """
+    _require_asyncio()
     try:
         await e2b.AsyncSandbox.kill(sandbox_id)
     except e2b.AuthenticationException as error:
