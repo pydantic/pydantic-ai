@@ -166,8 +166,8 @@ Key parameters:
   `lambda out: redact_secrets(out.model_dump_json()).action == 'allow'` blocks on a match; to redact,
   return `GuardrailResult.replace(Model.model_validate_json(verdict.replacement))`.
 - `ToolGuardrail(guard=None, result_guard=None, tools=None, hidden=())`: `tools` restricts both
-  guards to those names; `hidden` drops tools from the model's tool list (no tokens,
-  never attempted). A `tools` name no step offered warns (`UserWarning`) after each successful
+  guards to those names; `hidden` drops tools from the model's tool list (no tokens; a call
+  to one is rejected as an unknown tool). A `tools` name no step offered warns (`UserWarning`) after each successful
   run, including a legitimately absent tool (an integration whose `auth` function returned `None`).
   There is no switch: name only tools that are present, or omit `tools` and test `call.name` in the guard.
 - `InputGuardrail.guard` / `OutputGuardrail.guard` accept a sequence (a list or tuple; sets,
@@ -195,7 +195,8 @@ Gotchas:
 - Hard-fail instead of graceful: raise `InputBlocked`/`OutputBlocked`/`ToolBlocked(tool_name, reason)`
   (all subclass `GuardrailError`) from the guard; any exception propagates as-is.
 - Input `replace` on a multimodal prompt raises `UserError` (it would drop attachments), also when
-  the model was sent a text copy and the history's original is the multimodal prompt.
+  the model was sent a text copy and the history's original is the multimodal prompt, and on a run
+  resuming from a request with several prompt parts, which the guard screens combined as `ctx.prompt`.
 - `InputGuardrail` screens and rewrites the user's prompt part only. Parts another capability adds to the
   request (`SystemReminders`, `Planning`, `Memory`) are left alone. If one sends the model a copy of the
   prompt part, a redaction also reaches the history's original; for a copy with changed text the guard

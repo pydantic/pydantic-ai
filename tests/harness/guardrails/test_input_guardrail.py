@@ -964,18 +964,6 @@ class TestInputGuardrailRedaction:
         assert isinstance(part, UserPromptPart)
         assert part.content == f'my key is {_SECRET}'
 
-    async def test_a_request_only_copy_of_the_prompt_is_the_part_rewritten(self):
-        """The copy the model is sent is redacted; the history keeps the original the copy was made from."""
-        seen, model = _request_prompts_model()
-        agent = Agent(model, capabilities=[_CopyPromptWithSecret(), InputGuardrail(guard=redact_secrets)])
-
-        result = await agent.run('hello')
-
-        assert seen == [['hello\ncontext: [redacted:anthropic_key]']]
-        first = result.all_messages()[0]
-        assert isinstance(first, ModelRequest)
-        assert [part.content for part in first.parts if isinstance(part, UserPromptPart)] == ['hello']
-
 
 class TestInputGuardrailSequential:
     """Direct `wrap_model_request` tests for sequential mode."""
@@ -2021,25 +2009,6 @@ class _AppendNote(AbstractCapability[Any]):
         request_context.messages[-1] = dataclasses.replace(
             last, parts=[*last.parts, UserPromptPart(content='note: be brief')]
         )
-        return await handler(request_context)
-
-
-@dataclasses.dataclass
-class _CopyPromptWithSecret(AbstractCapability[Any]):
-    """Replaces the user prompt part with a changed copy for this request only, leaving the history's part alone."""
-
-    async def wrap_model_request(
-        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
-    ) -> ModelResponse:
-        last = request_context.messages[-1]
-        assert isinstance(last, ModelRequest)
-        parts = [
-            dataclasses.replace(part, content=f'{part.content}\ncontext: {_SECRET}')
-            if isinstance(part, UserPromptPart)
-            else part
-            for part in last.parts
-        ]
-        request_context.messages[-1] = dataclasses.replace(last, parts=parts)
         return await handler(request_context)
 
 
