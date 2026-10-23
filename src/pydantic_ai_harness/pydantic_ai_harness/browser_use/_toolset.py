@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 from collections.abc import Awaitable
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatch
-from typing import Literal, Protocol, overload
+from typing import Literal, Protocol
 from urllib.parse import urlsplit
 
 import anyio
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, JsonValue, ValidationError
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -22,6 +24,7 @@ from pydantic_ai_harness.browser_use._settings import BrowserAgentSettings
 try:
     from browser_use import Agent as _BrowserUseAgent, Tools
     from browser_use.browser import BrowserProfile, BrowserSession
+    from browser_use.browser.profile import DOMAIN_OPTIMIZATION_THRESHOLD
     from browser_use.llm.base import BaseChatModel
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
@@ -31,11 +34,18 @@ except ImportError as _import_error:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 _TOOL_NAME = 'browse_web'
-_LOCAL_FILE_PATTERNS = ['file://*']
+# browser-use matches a prohibited URL pattern case-sensitively against the raw URL, while
+# Chromium reads the scheme case-insensitively and drops leading spaces or control characters and
+# any tab or newline. `file://*` alone would let `FILE://localhost/...`, ` file://localhost/...`,
+# or `fi<TAB>le://localhost/...` through, so the patterns also refuse a URL that does not start
+# with a letter or that contains a tab or newline (each ends in `/*` so browser-use matches it
+# against the whole URL).
+_LOCAL_FILE_PATTERNS = ['[fF][iI][lL][eE]://*', '[!a-zA-Z]*/*', '*[\t\n\r]*/*']
 _LOCALHOST_PATTERNS = ['localhost', 'localhost.*', '*.localhost']
 _LOCALHOST_HOSTS = ('localhost', 'localhost.example', 'example.localhost')
 
 _HTTP_SCHEME_GLOB = 'http*'
+_AUTHORITY_END = re.compile(r'[/?#]')
 
 _FILE_SCHEME_ALLOWLIST_ERROR = (
     'An `allowed_domains` entry that permits only `file://` URLs is not supported; '
@@ -85,11 +95,25 @@ def _normalize_allowed_domain(domain: str) -> list[str]:
     (`????` matches `http` but not `https`), and widening to both would newly permit a
     scheme the caller never allowed. browser-use restricts bare `*.example.com` patterns
     to `http`/`https` itself, so those need no qualification.
+
+    The scheme and host are lowercased. browser-use compares a host-only entry
+    case-insensitively, but matches a scheme-qualified one with case-sensitive `fnmatch`
+    against the lowercased URL, so `Example.com` would otherwise block its own site.
     """
     if '://' in domain:
         scheme, rest = domain.split('://', maxsplit=1)
-        if fnmatch('file', scheme.lower()):
-            return [f'{matched}://{rest}' for matched in ('http', 'https') if fnmatch(matched, scheme.lower())]
+        authority, slash, path = rest.partition('/')
+        scheme = scheme.lower()
+        rest = f'{authority.lower()}{slash}{path}'
+        domain = f'{scheme}://{rest}'
+        if fnmatch('file', scheme):
+            # Each narrowed entry is normalized again, so it gets the path boundary below.
+            return [
+                entry
+                for matched in ('http', 'https')
+                if fnmatch(matched, scheme)
+                for entry in _normalize_allowed_domain(f'{matched}://{rest}')
+            ]
         parsed = urlsplit(domain)
         if (
             parsed.scheme in ('http', 'https')
@@ -101,29 +125,31 @@ def _normalize_allowed_domain(domain: str) -> list[str]:
         ):
             return [f'{domain}/*']
         return [domain]
+    domain = domain.lower()
     if domain.startswith('*.'):
         return [domain]
     return _restrict_to_http_schemes(domain)
 
 
-def _normalize_allowed_domains(allowed_domains: list[str]) -> list[str]:
-    """Normalize a capability-level allowlist, rejecting one that permits only `file://`."""
-    normalized = [entry for domain in allowed_domains for entry in _normalize_allowed_domain(domain)]
-    if allowed_domains and not normalized:
+def _normalize_allowed_domains(allowed_domains: list[str] | set[str]) -> list[str]:
+    """Normalize an allowlist into the pattern list browser-use matches entry by entry.
+
+    browser-use matches a set, and any list of `DOMAIN_OPTIMIZATION_THRESHOLD` or more
+    entries (which it converts to a set), by exact hostname only, so a normalized,
+    scheme-qualified entry would match nothing and block every URL. A set therefore
+    becomes a sorted list, and a list that would cross the threshold is rejected.
+    """
+    domains = sorted(allowed_domains) if isinstance(allowed_domains, set) else allowed_domains
+    normalized = list(dict.fromkeys(entry for domain in domains for entry in _normalize_allowed_domain(domain)))
+    if domains and not normalized:
         raise ValueError(_FILE_SCHEME_ALLOWLIST_ERROR)
+    if len(normalized) >= DOMAIN_OPTIMIZATION_THRESHOLD:
+        raise ValueError(
+            f'`allowed_domains` normalizes to {len(normalized)} entries, but browser-use matches an allowlist of '
+            f'{DOMAIN_OPTIMIZATION_THRESHOLD} or more entries by exact hostname only, which would block every URL. '
+            'Use fewer entries, for example `*.`-prefixed domain globs.'
+        )
     return normalized
-
-
-def _normalize_profile_allowed_domains(
-    allowed_domains: list[str] | set[str] | None,
-) -> list[str] | set[str] | None:
-    """Normalize a browser profile's allowed domains without losing set semantics."""
-    if allowed_domains is None:
-        return None
-    normalized: list[str] = [entry for domain in allowed_domains for entry in _normalize_allowed_domain(domain)]
-    if allowed_domains and not normalized:
-        raise ValueError(_FILE_SCHEME_ALLOWLIST_ERROR)
-    return set(normalized) if isinstance(allowed_domains, set) else normalized
 
 
 def _glob_hostname(pattern: str) -> str:
@@ -162,26 +188,75 @@ def _pattern_allows_localhost(pattern: str) -> bool:
     return any(fnmatch(host, hostname) for host in _LOCALHOST_HOSTS)
 
 
-@overload
-def _exclude_localhost_allowlist_entries(allowed_domains: list[str]) -> list[str]: ...  # pragma: no cover
-
-
-@overload
-def _exclude_localhost_allowlist_entries(allowed_domains: set[str]) -> set[str]: ...  # pragma: no cover
-
-
-@overload
-def _exclude_localhost_allowlist_entries(allowed_domains: None) -> None: ...  # pragma: no cover
-
-
-def _exclude_localhost_allowlist_entries(allowed_domains: list[str] | set[str] | None) -> list[str] | set[str] | None:
-    """Keep a profile allowlist from overriding localhost prohibitions."""
-    if allowed_domains is None:
-        return None
+def _exclude_localhost_allowlist_entries(allowed_domains: list[str]) -> list[str]:
+    """Keep an allowlist from overriding localhost prohibitions."""
     filtered = [domain for domain in allowed_domains if not _pattern_allows_localhost(domain)]
     if allowed_domains and not filtered:
         raise ValueError('An `allowed_domains` entry that permits only localhost requires `block_ip_addresses=False`.')
-    return set(filtered) if isinstance(allowed_domains, set) else filtered
+    return filtered
+
+
+def _secret_scope(pattern: str) -> str:
+    """The browser-use `sensitive_data` domain key matching the same sites as a normalized allowlist entry.
+
+    browser-use's secret matcher compares scheme and host only and rejects path globs, so
+    the path, query, fragment, and userinfo are dropped. A host-only `*.`-glob gets the `http`/`https` scheme glob the
+    navigation guard implies for it.
+    """
+    scheme, separator, rest = pattern.partition('://')
+    if not separator:
+        return f'{_HTTP_SCHEME_GLOB}://{pattern}'
+    return f'{scheme}://{_AUTHORITY_END.split(rest, maxsplit=1)[0].rpartition("@")[2]}'
+
+
+def _scope_flat_secrets(
+    sensitive_data: dict[str, str | dict[str, str]] | None,
+    allowed_domains: list[str] | set[str] | None,
+) -> dict[str, str | dict[str, str]] | None:
+    """Scope flat secrets to the allowlisted sites instead of every page.
+
+    browser-use substitutes a flat secret on any page, including `data:` URLs, which its
+    navigation guard admits whatever the allowlist says. Keying each flat secret by the
+    allowlist entries restricts substitution to the hosts the allowlist names. A
+    domain-scoped value the caller wrote for the same placeholder wins over the flat one.
+    """
+    if sensitive_data is None or not allowed_domains:
+        return sensitive_data
+    flat = {key: value for key, value in sensitive_data.items() if isinstance(value, str)}
+    if not flat:
+        return sensitive_data
+    scoped: dict[str, str | dict[str, str]] = {_secret_scope(pattern): dict(flat) for pattern in allowed_domains}
+    # Added after the allowlist scopes: browser-use merges every key matching a page in dict
+    # order, so the later, caller-written value wins over the flat one.
+    for key, value in sensitive_data.items():
+        if isinstance(value, dict):
+            existing = scoped.pop(key, None)
+            scoped[key] = {**existing, **value} if isinstance(existing, dict) else value
+    return scoped
+
+
+def _secret_placeholders(sensitive_data: dict[str, str | dict[str, str]] | None) -> dict[str, str]:
+    """Each secret value, and its JSON-escaped form, mapped to its placeholder for redacting tool output.
+
+    browser-use substitutes a placeholder in the parameters of every action, the final
+    `done` text included, so a value can come back in the result. Schema output escapes
+    characters such as `"`, hence the JSON-escaped form.
+    """
+    if sensitive_data is None:
+        return {}
+    secrets: list[tuple[str, str]] = []
+    for key, value in sensitive_data.items():
+        secrets.extend(value.items() if isinstance(value, dict) else [(key, value)])
+    placeholders: dict[str, str] = {}
+    for key, value in secrets:
+        if value:
+            placeholder = f'<secret>{key}</secret>'
+            # Mapped to itself so a placeholder already in the text is consumed whole,
+            # before a value it happens to contain can match inside it.
+            placeholders.setdefault(placeholder, placeholder)
+            placeholders.setdefault(value, placeholder)
+            placeholders.setdefault(json.dumps(value, ensure_ascii=False)[1:-1], placeholder)
+    return placeholders
 
 
 async def _kill(session: BrowserSession) -> bool:
@@ -291,8 +366,9 @@ class BrowserTask:
     sensitive_data: dict[str, str | dict[str, str]] | None = field(repr=False)
     """Secret placeholders for browser-use to substitute without showing the values to the model.
 
-    Kept out of `repr()`: a `BrowserTask` is what a factory receives, so it is the object most
-    likely to end up in a log line or a traceback."""
+    Flat values arrive keyed by each `allowed_domains` entry, so browser-use substitutes them
+    only on allowlisted pages. Kept out of `repr()`: a `BrowserTask` is what a factory receives,
+    so it is the object most likely to end up in a log line or a traceback."""
 
     extend_system_message: str | None
     """Extra instructions appended to the browser agent's own system prompt."""
@@ -331,6 +407,10 @@ class BrowserAgentFactory(Protocol):
     browser-use's signal handling off (`enable_signal_handler=False`) -- the
     sub-agent must not install its own SIGINT handling inside a host
     application.
+
+    With `sensitive_data` set, `request.settings.tools` arrives without
+    browser-use's `evaluate` action. A factory that builds its own tools or
+    agent must exclude it too; the capability cannot enforce that.
     """
 
     def __call__(self, request: BrowserTask) -> BrowserAgent:
@@ -345,15 +425,33 @@ def _safe_tools(settings: BrowserAgentSettings) -> Tools[None]:
     which imports pypdf 6.10.2 for PDFs. Re-evaluate this restriction when
     browser-use publishes a release with pypdf 6.14.2 or later:
     https://github.com/browser-use/browser-use/commit/5405febce2d8834737bc7cd9afee9ad4604ec447
+
+    browser-use substitutes secret placeholders into every action's parameters, and its
+    allowlist checks navigations, not requests a page script makes. With secrets configured,
+    the `evaluate` action could therefore send a substituted value to any origin, so it is
+    removed.
+    """
+    excluded = ['read_file', 'upload_file']
+    if settings.tools is None:
+        return Tools(exclude_actions=excluded, display_files_in_done_text=settings.display_files_in_done_text)
+    for action in excluded:
+        settings.tools.exclude_action(action)
+    return settings.tools
+
+
+def _without_evaluate(settings: BrowserAgentSettings) -> BrowserAgentSettings:
+    """`settings` with `evaluate` removed from its tools, for any factory to forward beside secrets.
+
+    Only `evaluate`: unlike the file actions, which a custom factory may re-enable with its own
+    controls, nothing a factory adds makes a page script safe beside substituted secrets.
     """
     if settings.tools is None:
-        return Tools(
-            exclude_actions=['read_file', 'upload_file'],
-            display_files_in_done_text=settings.display_files_in_done_text,
+        tools = Tools[None](
+            exclude_actions=['evaluate'], display_files_in_done_text=settings.display_files_in_done_text
         )
-    settings.tools.exclude_action('read_file')
-    settings.tools.exclude_action('upload_file')
-    return settings.tools
+        return replace(settings, tools=tools)
+    settings.tools.exclude_action('evaluate')
+    return settings
 
 
 def default_browser_agent(request: BrowserTask) -> BrowserAgent:
@@ -364,6 +462,9 @@ def default_browser_agent(request: BrowserTask) -> BrowserAgent:
     pass through unchanged.
     """
     settings = request.settings
+    if request.sensitive_data is not None:
+        # A no-op for a request `browse_web` built; it covers a `BrowserTask` built by hand.
+        settings = _without_evaluate(settings)
     # Explicit type arguments: `Agent`'s context and structured-output type
     # variables are unconstrained by this call, and neither is used here.
     # Signal handling stays off: the sub-agent must not install its own SIGINT
@@ -464,6 +565,12 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         self._use_vision: bool | Literal['auto'] = use_vision
         self._output_schema = output_schema
         self._sensitive_data = sensitive_data
+        self._secret_placeholders = _secret_placeholders(sensitive_data)
+        self._secret_pattern = (
+            re.compile('|'.join(re.escape(value) for value in sorted(self._secret_placeholders, key=len, reverse=True)))
+            if self._secret_placeholders
+            else None
+        )
         self._extend_system_message = extend_system_message
         # Resolve the settings' chat models once, so every factory (custom
         # ones included) receives a `BrowserTask` with ready-to-use models.
@@ -505,11 +612,6 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         if headless is None and self._browser_profile is None:
             headless = True
         browser_profile = self._browser_profile
-        # Normalization also runs in `BrowserUse.__post_init__`, which reports a bad
-        # allowlist at construction. Repeating it here covers a `BrowserUseToolset`
-        # built directly, which skips the capability entirely; the transform is
-        # idempotent, so the capability path is unaffected.
-        allowed_domains = None if self._allowed_domains is None else _normalize_allowed_domains(self._allowed_domains)
         if browser_profile is None:
             browser_profile = BrowserProfile(prohibited_domains=_LOCAL_FILE_PATTERNS)
         else:
@@ -518,27 +620,23 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
             browser_profile = browser_profile.model_copy(update={'prohibited_domains': prohibited_domains})
         # `BrowserSession` lets a non-`None` `allowed_domains` replace the profile's own
         # list, so the profile allowlist only reaches the navigation guard when the
-        # direct one is absent.
-        if allowed_domains is None and browser_profile.allowed_domains is not None:
-            browser_profile = browser_profile.model_copy(
-                update={'allowed_domains': _normalize_profile_allowed_domains(browser_profile.allowed_domains)}
-            )
+        # direct one is absent. Normalization also runs in `BrowserUse.__post_init__`,
+        # which reports a bad allowlist at construction; repeating it here covers a
+        # `BrowserUseToolset` built directly. The transform is idempotent.
+        allowed_domains = (
+            self._allowed_domains if self._allowed_domains is not None else browser_profile.allowed_domains
+        )
+        if allowed_domains is not None:
+            allowed_domains = _normalize_allowed_domains(allowed_domains)
         if self._sensitive_data is not None:
             browser_profile = browser_profile.model_copy(update={'cross_origin_iframes': False})
         if self._block_ip_addresses:
-            allowed_domains = _exclude_localhost_allowlist_entries(allowed_domains)
-            if allowed_domains is None:
-                profile_allowed_domains = _exclude_localhost_allowlist_entries(browser_profile.allowed_domains)
-            else:
-                profile_allowed_domains = browser_profile.allowed_domains
+            if allowed_domains is not None:
+                allowed_domains = _exclude_localhost_allowlist_entries(allowed_domains)
             prohibited_domains = list(browser_profile.prohibited_domains or ())
             prohibited_domains.extend(pattern for pattern in _LOCALHOST_PATTERNS if pattern not in prohibited_domains)
             browser_profile = browser_profile.model_copy(
-                update={
-                    'allowed_domains': profile_allowed_domains,
-                    'block_ip_addresses': True,
-                    'prohibited_domains': prohibited_domains,
-                }
+                update={'block_ip_addresses': True, 'prohibited_domains': prohibited_domains}
             )
         else:
             browser_profile = browser_profile.model_copy(update={'block_ip_addresses': False})
@@ -559,9 +657,11 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
                 browser_session=session,
                 use_vision=self._use_vision,
                 output_schema=self._output_schema,
-                sensitive_data=self._sensitive_data,
+                sensitive_data=_scope_flat_secrets(self._sensitive_data, session.browser_profile.allowed_domains),
                 extend_system_message=self._extend_system_message,
-                settings=self._settings,
+                # Here rather than only in `default_browser_agent`, so a custom factory that
+                # forwards `settings.tools` drops `evaluate` too.
+                settings=self._settings if self._sensitive_data is None else _without_evaluate(self._settings),
             )
         )
         if not self._browser_use_telemetry:
@@ -574,7 +674,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         """The tool result for a finished run: text, schema JSON, or a failure report."""
         result = history.final_result()
         if result is None:
-            step_errors = [error for error in history.errors() if error]
+            step_errors = [self._redact(error) for error in history.errors() if error]
             detail = '; '.join(step_errors) if step_errors else 'no further details'
             return f'The browser agent stopped without producing a result ({detail}).'
         answer = self._render_answer(result, history)
@@ -587,19 +687,38 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         return answer
 
     def _render_answer(self, result: str, history: BrowserAgentHistory) -> str:
-        """The answer itself: schema JSON when one is configured, otherwise the agent's own text."""
+        """The answer itself, redacted: schema JSON when one is configured, otherwise the agent's own text."""
         if self._output_schema is None:
-            return result
+            return self._redact(result)
         try:
             structured = history.structured_output
         except ValidationError as error:
+            # The error's text quotes the rejected input as a truncated `repr()`, which redaction
+            # cannot match, so with secrets configured only each failing location and message is kept.
+            detail = (
+                str(error)
+                if self._secret_pattern is None
+                else '; '.join(
+                    f'{".".join(str(part) for part in item["loc"])}: {item["msg"]}'
+                    for item in error.errors(include_input=False, include_url=False)
+                )
+            )
             raise ModelRetry(
-                f'The browser agent finished, but its result did not match the configured output schema: {error}'
+                self._redact(
+                    f'The browser agent finished, but its result did not match the configured output schema: {detail}'
+                )
             ) from error
         # A `None` here is unreachable with browser-use's own history, which parses whenever there
         # is a final result and a schema -- both already true. Only a custom factory's history can
         # land here, and its prose is a better answer than an invented failure.
-        return structured.model_dump_json() if structured is not None else result
+        if structured is None:
+            return self._redact(result)
+        if self._secret_pattern is None:
+            return structured.model_dump_json()
+        # Redacted value by value rather than as text, so the result stays valid JSON.
+        return json.dumps(
+            self._redact_json(structured.model_dump(mode='json')), ensure_ascii=False, separators=(',', ':')
+        )
 
     async def browse_web(self, ctx: RunContext[AgentDepsT], task: str) -> str:
         """Have an autonomous browser agent carry out a web task and return its result.
@@ -622,6 +741,28 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
             await self._retry_pending_cleanup()
             history = await self._run_in_shared_session(task, llm)
         return self._render_result(history)
+
+    def _redact_json(self, value: JsonValue) -> JsonValue:
+        """`value` with every secret in its strings replaced; any other leaf holding one becomes a redacted string."""
+        if isinstance(value, dict):
+            return {self._redact(key): self._redact_json(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._redact_json(item) for item in value]
+        if isinstance(value, str):
+            return self._redact(value)
+        text = json.dumps(value)
+        redacted = self._redact(text)
+        return value if redacted == text else redacted
+
+    def _redact(self, text: str) -> str:
+        """Replace each configured secret value in tool output with its placeholder.
+
+        One pass, longest match first, so a value that contains another is replaced whole,
+        and a placeholder already in the text is left as it is.
+        """
+        if self._secret_pattern is None:
+            return text
+        return self._secret_pattern.sub(lambda match: self._secret_placeholders[match.group()], text)
 
     async def _close_session(self, session: BrowserSession) -> None:
         """Close `session`, retaining its identity when cleanup needs another attempt."""

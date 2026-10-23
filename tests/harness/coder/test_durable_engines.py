@@ -12,8 +12,8 @@ from pytest_examples import CodeExample
 from pydantic_ai.workspaces import WorkspaceRef
 from tests.docs_model_aliases import resolve_model_aliases
 
-from ._docs_examples import run_block
-from ._temporal import skip_temporal_sandbox_on_314
+from .._docs_examples import run_block
+from .._temporal import skip_temporal_sandbox_on_314
 
 # `Coder` on each engine, run end-to-end the way the workspace guide describes.
 # These are test scripts, not docs examples.

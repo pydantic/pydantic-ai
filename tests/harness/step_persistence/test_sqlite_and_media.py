@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
@@ -586,6 +587,41 @@ class TestEndToEndMediaWithAgent:
         # On disk: one media blob, no inlined base64 in any snapshot json.
         blobs = list((tmp_path / 'runs' / 'media').glob('*.bin'))
         assert len(blobs) == 1
+
+    @pytest.mark.parametrize(
+        'tool_output',
+        [
+            pytest.param({'__harness_external_media__': True, 'status': 'ok'}, id='marker-key'),
+            pytest.param({'kind': 'binary', 'data': 'hello'}, id='binary-shaped-not-base64'),
+        ],
+    )
+    async def test_tool_output_shaped_like_walker_data_persists_and_resumes(
+        self, tmp_path: Path, tool_output: dict[str, object]
+    ) -> None:
+        """Tool output that looks like a marker or like `BinaryContent` saves with the snapshot and restores unchanged."""
+        store = SqliteStepStore(database=tmp_path / 'runs.db')
+        agent: Agent[None, str] = Agent(
+            TestModel(call_tools=['fetch']), capabilities=[StepPersistence(store=store, run_id='r1')]
+        )
+
+        @agent.tool_plain
+        def fetch() -> dict[str, object]:
+            """Fetch a remote JSON document."""
+            return tool_output
+
+        result = await agent.run('go')
+
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        returns = [
+            part.content
+            for message in snap.messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        assert returns == [tool_output]
+        assert len(snap.messages) == len(result.all_messages())
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ import json
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 from unittest.mock import MagicMock
 
 import pytest
@@ -27,14 +27,14 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.profiles import ModelProfile, merge_profile
-from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile, resolve_anthropic_effort
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.google import GoogleModelProfile, google_model_profile
-from pydantic_ai.profiles.grok import grok_model_profile
-from pydantic_ai.profiles.groq import groq_model_profile
+from pydantic_ai.profiles.grok import GrokModelProfile, grok_model_profile
+from pydantic_ai.profiles.groq import GROQ_GPT_OSS_REASONING_EFFORT_MAP, groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
-from pydantic_ai.settings import ModelSettings, ThinkingLevel
+from pydantic_ai.settings import ModelSettings, ThinkingEffort, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
 from ._inline_snapshot import snapshot
@@ -71,12 +71,18 @@ with try_import() as openai_imports:
         OpenAIResponsesModelSettings,
     )
     from pydantic_ai.models.openrouter import (
+        _OPENROUTER_EFFORT_MAP,
         OpenRouterModel,
         OpenRouterModelSettings,
         _openrouter_settings_to_openai_settings,
     )
-    from pydantic_ai.models.snowflake import SnowflakeModel, SnowflakeModelSettings
-    from pydantic_ai.models.zai import ZaiModel
+    from pydantic_ai.models.snowflake import (
+        _REASONING_EFFORT_MAP as _SNOWFLAKE_REASONING_EFFORT_MAP,
+        SnowflakeModel,
+        SnowflakeModelSettings,
+    )
+    from pydantic_ai.models.zai import ZaiModel, _zai_settings_to_openai_settings
+    from pydantic_ai.profiles.zai import _GLM_5_3_REASONING_EFFORT_MAPPING
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
@@ -100,8 +106,11 @@ with try_import() as bedrock_imports:
     from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
 
 with try_import() as xai_imports:
-    from pydantic_ai.models.xai import XaiModel, XaiModelSettings
+    from pydantic_ai.models.xai import XaiModel, XaiModelSettings, _map_reasoning_effort
     from pydantic_ai.providers.xai import XaiProvider
+
+with try_import() as mistral_imports:
+    from pydantic_ai.models.mistral import _MISTRAL_REASONING_EFFORT_MAP
 
 pytestmark = []
 
@@ -1980,6 +1989,361 @@ class TestPrepareRequestNoMutationDetailed:
 
 
 # ---------------------------------------------------------------------------
+# Every effort level through every provider mapping
+# ---------------------------------------------------------------------------
+
+_SKIP_WITHOUT_OPENAI = pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+_SKIP_WITHOUT_ANTHROPIC = pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+_SKIP_WITHOUT_GOOGLE = pytest.mark.skipif(not google_imports(), reason='google-genai not installed')
+_SKIP_WITHOUT_BEDROCK = pytest.mark.skipif(not bedrock_imports(), reason='boto3 not installed')
+
+
+@dataclass(frozen=True)
+class EffortMapping:
+    """How one provider maps each unified effort level, and the value it should produce for each."""
+
+    resolve: Callable[[ThinkingEffort], object]
+    expected: dict[str, object]
+
+
+EFFORT_MAPPINGS = [
+    pytest.param(
+        EffortMapping(
+            lambda level: OpenAIChatModel._translate_thinking(
+                FunctionModel(_echo), {}, ModelRequestParameters(thinking=level)
+            ),
+            {'minimal': 'minimal', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'xhigh', 'max': 'xhigh'},
+        ),
+        id='openai-chat',
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: OpenAIChatModel._translate_thinking(
+                FunctionModel(_echo, profile=OpenAIModelProfile(openai_chat_supports_max_reasoning_effort=True)),
+                {},
+                ModelRequestParameters(thinking=level),
+            ),
+            {'minimal': 'minimal', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'xhigh', 'max': 'max'},
+        ),
+        id='openai-chat-max',
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: OpenAIResponsesModel._translate_thinking(
+                FunctionModel(_echo), {}, ModelRequestParameters(thinking=level)
+            ),
+            {
+                'minimal': {'effort': 'minimal'},
+                'low': {'effort': 'low'},
+                'medium': {'effort': 'medium'},
+                'high': {'effort': 'high'},
+                'xhigh': {'effort': 'xhigh'},
+                'max': {'effort': 'xhigh'},
+            },
+        ),
+        id='openai-responses',
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: OpenAIResponsesModel._translate_thinking(
+                FunctionModel(_echo, profile=OpenAIModelProfile(openai_responses_supports_max_reasoning_effort=True)),
+                {},
+                ModelRequestParameters(thinking=level),
+            ),
+            {
+                'minimal': {'effort': 'minimal'},
+                'low': {'effort': 'low'},
+                'medium': {'effort': 'medium'},
+                'high': {'effort': 'high'},
+                'xhigh': {'effort': 'xhigh'},
+                'max': {'effort': 'max'},
+            },
+        ),
+        id='openai-responses-max',
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: resolve_anthropic_effort(level, supports_xhigh=True, supports_max=True),
+            {'minimal': 'low', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'xhigh', 'max': 'max'},
+        ),
+        id='anthropic-effort',
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: resolve_anthropic_effort(level, supports_xhigh=False, supports_max=True),
+            {'minimal': 'low', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'max', 'max': 'max'},
+        ),
+        id='anthropic-effort-without-xhigh',
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: resolve_anthropic_effort(level, supports_xhigh=False, supports_max=False),
+            {'minimal': 'low', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'high', 'max': 'high'},
+        ),
+        id='anthropic-effort-without-xhigh-or-max',
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: resolve_anthropic_effort(level, supports_xhigh=True, supports_max=False),
+            {'minimal': 'low', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'xhigh', 'max': 'xhigh'},
+        ),
+        id='anthropic-effort-without-max',
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: AnthropicModel._translate_thinking(
+                FunctionModel(_echo, profile=AnthropicModelProfile(supports_thinking=True)),
+                {},
+                ModelRequestParameters(thinking=level),
+            ),
+            {
+                'minimal': {'type': 'enabled', 'budget_tokens': 1024},
+                'low': {'type': 'enabled', 'budget_tokens': 2048},
+                'medium': {'type': 'enabled', 'budget_tokens': 10000},
+                'high': {'type': 'enabled', 'budget_tokens': 16384},
+                'xhigh': {'type': 'enabled', 'budget_tokens': 32768},
+                'max': {'type': 'enabled', 'budget_tokens': 32768},
+            },
+        ),
+        id='anthropic-budget',
+        marks=_SKIP_WITHOUT_ANTHROPIC,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: GoogleModel._translate_thinking(
+                FunctionModel(_echo, profile=GoogleModelProfile(supports_thinking=True)),
+                {},
+                ModelRequestParameters(thinking=level),
+            ),
+            {
+                'minimal': {'include_thoughts': True, 'thinking_level': 'MINIMAL'},
+                'low': {'include_thoughts': True, 'thinking_level': 'LOW'},
+                'medium': {'include_thoughts': True, 'thinking_level': 'MEDIUM'},
+                'high': {'include_thoughts': True, 'thinking_level': 'HIGH'},
+                'xhigh': {'include_thoughts': True, 'thinking_level': 'HIGH'},
+                'max': {'include_thoughts': True, 'thinking_level': 'HIGH'},
+            },
+        ),
+        id='google',
+        marks=_SKIP_WITHOUT_GOOGLE,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: GoogleModel._translate_thinking(
+                FunctionModel(
+                    _echo, profile=GoogleModelProfile(supports_thinking=True, google_supports_thinking_level=False)
+                ),
+                {},
+                ModelRequestParameters(thinking=level),
+            ),
+            {
+                'minimal': {'include_thoughts': True, 'thinking_budget': 128},
+                'low': {'include_thoughts': True, 'thinking_budget': 2048},
+                'medium': {'include_thoughts': True, 'thinking_budget': 8192},
+                'high': {'include_thoughts': True, 'thinking_budget': 24576},
+                'xhigh': {'include_thoughts': True, 'thinking_budget': 24576},
+                'max': {'include_thoughts': True, 'thinking_budget': 24576},
+            },
+        ),
+        id='google-budget',
+        marks=_SKIP_WITHOUT_GOOGLE,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: GROQ_GPT_OSS_REASONING_EFFORT_MAP[level],
+            {'minimal': 'low', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'high', 'max': 'high'},
+        ),
+        id='groq-gpt-oss',
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _MISTRAL_REASONING_EFFORT_MAP[level],
+            {'minimal': 'high', 'low': 'high', 'medium': 'high', 'high': 'high', 'xhigh': 'high', 'max': 'high'},
+        ),
+        id='mistral',
+        marks=pytest.mark.skipif(not mistral_imports(), reason='mistral not installed'),
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _SNOWFLAKE_REASONING_EFFORT_MAP[level],
+            {'minimal': 'low', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'high', 'max': 'high'},
+        ),
+        id='snowflake',
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _OPENROUTER_EFFORT_MAP[level],
+            {'minimal': 'low', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'high', 'max': 'max'},
+        ),
+        id='openrouter',
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _zai_settings_to_openai_settings(
+                {}, ModelRequestParameters(thinking=level), supports_thinking=False, supports_reasoning_effort=True
+            ).get('extra_body'),
+            {
+                level: {'thinking': {'type': 'enabled'}, 'reasoning_effort': level}
+                for level in ('minimal', 'low', 'medium', 'high', 'xhigh', 'max')
+            },
+        ),
+        id='zai-glm-5.2',
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _zai_settings_to_openai_settings(
+                {},
+                ModelRequestParameters(thinking=level),
+                supports_thinking=False,
+                supports_reasoning_effort=True,
+                reasoning_effort_mapping=_GLM_5_3_REASONING_EFFORT_MAPPING,
+            ).get('extra_body'),
+            {
+                'minimal': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'low'},
+                'low': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'low'},
+                'medium': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'high'},
+                'high': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'high'},
+                'xhigh': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'max'},
+                'max': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'max'},
+            },
+        ),
+        id='zai-glm-5.3',
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _map_reasoning_effort(
+                level, GrokModelProfile(grok_reasoning_efforts=frozenset({'low', 'medium', 'high'}))
+            ),
+            {'minimal': 'low', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'high', 'max': 'high'},
+        ),
+        id='xai',
+        marks=pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed'),
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _bedrock_model(
+                BedrockModelProfile(bedrock_thinking_variant='qwen', supports_thinking=True)
+            )._build_additional_model_request_fields(
+                BedrockModelSettings(), ModelRequestParameters(thinking=level), []
+            ),
+            {
+                'minimal': {'reasoning_config': 'low'},
+                'low': {'reasoning_config': 'low'},
+                'medium': {'reasoning_config': 'high'},
+                'high': {'reasoning_config': 'high'},
+                'xhigh': {'reasoning_config': 'high'},
+                'max': {'reasoning_config': 'high'},
+            },
+        ),
+        id='bedrock-qwen',
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _bedrock_model(
+                BedrockModelProfile(bedrock_thinking_variant='openai', supports_thinking=True)
+            )._build_additional_model_request_fields(
+                BedrockModelSettings(), ModelRequestParameters(thinking=level), []
+            ),
+            {
+                'minimal': {'reasoning_effort': 'minimal'},
+                'low': {'reasoning_effort': 'low'},
+                'medium': {'reasoning_effort': 'medium'},
+                'high': {'reasoning_effort': 'high'},
+                'xhigh': {'reasoning_effort': 'xhigh'},
+                'max': {'reasoning_effort': 'xhigh'},
+            },
+        ),
+        id='bedrock-openai',
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _bedrock_model(
+                BedrockModelProfile(bedrock_thinking_variant='openai_responses', supports_thinking=True)
+            )._build_additional_model_request_fields(
+                BedrockModelSettings(), ModelRequestParameters(thinking=level), []
+            ),
+            {
+                'minimal': {'reasoning': {'effort': 'low'}},
+                'low': {'reasoning': {'effort': 'low'}},
+                'medium': {'reasoning': {'effort': 'medium'}},
+                'high': {'reasoning': {'effort': 'high'}},
+                'xhigh': {'reasoning': {'effort': 'xhigh'}},
+                'max': {'reasoning': {'effort': 'xhigh'}},
+            },
+        ),
+        id='bedrock-openai-responses',
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _bedrock_model(
+                BedrockModelProfile(bedrock_thinking_variant='xai', supports_thinking=True)
+            )._build_additional_model_request_fields(
+                BedrockModelSettings(), ModelRequestParameters(thinking=level), []
+            ),
+            {
+                'minimal': {'reasoning': {'effort': 'low'}},
+                'low': {'reasoning': {'effort': 'low'}},
+                'medium': {'reasoning': {'effort': 'medium'}},
+                'high': {'reasoning': {'effort': 'high'}},
+                'xhigh': {'reasoning': {'effort': 'xhigh'}},
+                'max': {'reasoning': {'effort': 'xhigh'}},
+            },
+        ),
+        id='bedrock-xai',
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _bedrock_model(
+                merge_profile(
+                    BedrockModelProfile(
+                        bedrock_thinking_variant='anthropic',
+                        bedrock_supports_adaptive_thinking=True,
+                        bedrock_supports_effort=True,
+                        supports_thinking=True,
+                    ),
+                    AnthropicModelProfile(anthropic_supports_max_effort=False),
+                )
+            )._build_additional_model_request_fields(
+                BedrockModelSettings(), ModelRequestParameters(thinking=level), []
+            ),
+            {
+                'minimal': {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'low'}},
+                'low': {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'low'}},
+                'medium': {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'medium'}},
+                'high': {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'high'}},
+                'xhigh': {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'high'}},
+                'max': {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'high'}},
+            },
+        ),
+        id='bedrock-anthropic-without-max',
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+]
+
+
+@pytest.mark.parametrize('mapping', EFFORT_MAPPINGS)
+def test_every_effort_level_resolves(mapping: EffortMapping):
+    """Each provider's mapping of every unified effort level, `'max'` included.
+
+    Not a VCR test: a level-keyed mapping that misses a level still type-checks and only raises `KeyError`
+    once a request uses that level, so iterating `ThinkingEffort` here catches a mapping a new level skips.
+    """
+    assert {level: mapping.resolve(level) for level in get_args(ThinkingEffort)} == mapping.expected
+
+
+# ---------------------------------------------------------------------------
 # 5. Cross-scope precedence warnings
 # ---------------------------------------------------------------------------
 
@@ -1998,15 +2362,11 @@ class _CrossScopeCase:
     sent: Callable[[dict[str, Any]], object]
     """The part of a probed request that both the setting and `thinking` control."""
     overrides: bool
-    marks: tuple[pytest.MarkDecorator, ...]
+    marks: pytest.MarkDecorator
 
 
-_needs_openai = (pytest.mark.skipif(not openai_imports(), reason='openai not installed'),)
-_needs_anthropic = (pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),)
-_needs_google = (pytest.mark.skipif(not google_imports(), reason='google-genai not installed'),)
-_needs_groq = (pytest.mark.skipif(not groq_imports(), reason='groq not installed'),)
-_needs_bedrock = (pytest.mark.skipif(not bedrock_imports(), reason='boto3 not installed'),)
-_needs_xai = (pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed'),)
+_SKIP_WITHOUT_GROQ = pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+_SKIP_WITHOUT_XAI = pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
 
 
 def _bedrock_probe(model_name: str) -> Callable[[ModelSettings | None], Probe]:
@@ -2035,7 +2395,7 @@ _CROSS_SCOPE_CASES = [
         'low',
         lambda p: p['body'].get('reasoning_effort'),
         overrides=True,
-        marks=_needs_openai,
+        marks=_SKIP_WITHOUT_OPENAI,
     ),
     _CrossScopeCase(
         'openai-responses-reasoning-effort',
@@ -2048,7 +2408,7 @@ _CROSS_SCOPE_CASES = [
         'low',
         lambda p: p['body'].get('reasoning'),
         overrides=True,
-        marks=_needs_openai,
+        marks=_SKIP_WITHOUT_OPENAI,
     ),
     _CrossScopeCase(
         'anthropic-thinking',
@@ -2061,7 +2421,7 @@ _CROSS_SCOPE_CASES = [
         'low',
         lambda p: p['body'].get('thinking'),
         overrides=True,
-        marks=_needs_anthropic,
+        marks=_SKIP_WITHOUT_ANTHROPIC,
     ),
     _CrossScopeCase(
         # Only the effort is replaced: the thinking budget still follows `thinking`.
@@ -2075,7 +2435,7 @@ _CROSS_SCOPE_CASES = [
         'low',
         lambda p: p['body']['output_config']['effort'],
         overrides=True,
-        marks=_needs_anthropic,
+        marks=_SKIP_WITHOUT_ANTHROPIC,
     ),
     _CrossScopeCase(
         # Without effort support `thinking` maps to a budget alone, which an explicit effort leaves in place.
@@ -2089,7 +2449,7 @@ _CROSS_SCOPE_CASES = [
         'low',
         lambda p: p['body'].get('thinking'),
         overrides=False,
-        marks=_needs_anthropic,
+        marks=_SKIP_WITHOUT_ANTHROPIC,
     ),
     _CrossScopeCase(
         'google-thinking-config',
@@ -2102,7 +2462,7 @@ _CROSS_SCOPE_CASES = [
         'low',
         lambda p: p['body']['generationConfig'].get('thinkingConfig'),
         overrides=True,
-        marks=_needs_google,
+        marks=_SKIP_WITHOUT_GOOGLE,
     ),
     _CrossScopeCase(
         'groq-reasoning-format',
@@ -2113,7 +2473,7 @@ _CROSS_SCOPE_CASES = [
         'low',
         lambda p: p['body'].get('reasoning_format'),
         overrides=True,
-        marks=_needs_groq,
+        marks=_SKIP_WITHOUT_GROQ,
     ),
     _CrossScopeCase(
         # qwen3 disables reasoning through `reasoning_effort='none'`, which Groq lets win over any format.
@@ -2125,7 +2485,7 @@ _CROSS_SCOPE_CASES = [
         False,
         lambda p: p['body'].get('reasoning_effort'),
         overrides=False,
-        marks=_needs_groq,
+        marks=_SKIP_WITHOUT_GROQ,
     ),
     _CrossScopeCase(
         # Only the effort is replaced: the reasoning format still follows `thinking`.
@@ -2139,7 +2499,7 @@ _CROSS_SCOPE_CASES = [
         'low',
         lambda p: p['body'].get('reasoning_effort'),
         overrides=True,
-        marks=_needs_groq,
+        marks=_SKIP_WITHOUT_GROQ,
     ),
     _CrossScopeCase(
         # qwen3 has no graded effort, but an explicit `'none'` disables the reasoning `thinking` enables.
@@ -2151,7 +2511,7 @@ _CROSS_SCOPE_CASES = [
         'high',
         lambda p: p['body'].get('reasoning_effort'),
         overrides=True,
-        marks=_needs_groq,
+        marks=_SKIP_WITHOUT_GROQ,
     ),
     _CrossScopeCase(
         # Any other qwen3 effort keeps the reasoning `thinking` enables.
@@ -2163,7 +2523,7 @@ _CROSS_SCOPE_CASES = [
         'high',
         lambda p: p['body'].get('reasoning_effort') == 'none',
         overrides=False,
-        marks=_needs_groq,
+        marks=_SKIP_WITHOUT_GROQ,
     ),
     _CrossScopeCase(
         'bedrock-anthropic-thinking',
@@ -2174,7 +2534,7 @@ _CROSS_SCOPE_CASES = [
         'low',
         _bedrock_sent,
         overrides=True,
-        marks=_needs_bedrock,
+        marks=_SKIP_WITHOUT_BEDROCK,
     ),
     _CrossScopeCase(
         # Adaptive Claude takes the effort an effort-level `thinking` maps to from `output_config`.
@@ -2184,7 +2544,7 @@ _CROSS_SCOPE_CASES = [
         'high',
         lambda p: json.loads(p['body'])['additionalModelRequestFields']['output_config'],
         overrides=True,
-        marks=_needs_bedrock,
+        marks=_SKIP_WITHOUT_BEDROCK,
     ),
     _CrossScopeCase(
         # Budget-based Claude maps `thinking` to `thinking` alone, which an explicit `output_config` leaves in place.
@@ -2194,7 +2554,7 @@ _CROSS_SCOPE_CASES = [
         'high',
         lambda p: json.loads(p['body'])['additionalModelRequestFields']['thinking'],
         overrides=False,
-        marks=_needs_bedrock,
+        marks=_SKIP_WITHOUT_BEDROCK,
     ),
     _CrossScopeCase(
         'bedrock-openai-reasoning-effort',
@@ -2203,7 +2563,7 @@ _CROSS_SCOPE_CASES = [
         'low',
         _bedrock_sent,
         overrides=True,
-        marks=_needs_bedrock,
+        marks=_SKIP_WITHOUT_BEDROCK,
     ),
     _CrossScopeCase(
         'bedrock-qwen-reasoning-config',
@@ -2212,7 +2572,7 @@ _CROSS_SCOPE_CASES = [
         'low',
         _bedrock_sent,
         overrides=True,
-        marks=_needs_bedrock,
+        marks=_SKIP_WITHOUT_BEDROCK,
     ),
     _CrossScopeCase(
         'bedrock-xai-reasoning',
@@ -2221,7 +2581,7 @@ _CROSS_SCOPE_CASES = [
         'low',
         _bedrock_sent,
         overrides=True,
-        marks=_needs_bedrock,
+        marks=_SKIP_WITHOUT_BEDROCK,
     ),
     _CrossScopeCase(
         'openrouter-reasoning',
@@ -2234,7 +2594,7 @@ _CROSS_SCOPE_CASES = [
         'low',
         lambda p: p['body'].get('reasoning'),
         overrides=True,
-        marks=_needs_openai,
+        marks=_SKIP_WITHOUT_OPENAI,
     ),
     _CrossScopeCase(
         # Sent beside the unified mapping, which still goes out unchanged.
@@ -2248,7 +2608,7 @@ _CROSS_SCOPE_CASES = [
         'low',
         lambda p: p['body'].get('reasoning'),
         overrides=False,
-        marks=_needs_openai,
+        marks=_SKIP_WITHOUT_OPENAI,
     ),
     _CrossScopeCase(
         'xai-reasoning-effort',
@@ -2259,7 +2619,7 @@ _CROSS_SCOPE_CASES = [
         'low',
         lambda p: p.get('reasoning_effort'),
         overrides=True,
-        marks=_needs_xai,
+        marks=_SKIP_WITHOUT_XAI,
     ),
     _CrossScopeCase(
         # Cerebras reasons by default and sends no effort for an enabled `thinking`, so an explicit one wins.
@@ -2273,7 +2633,7 @@ _CROSS_SCOPE_CASES = [
         'high',
         lambda p: p['body'].get('reasoning_effort'),
         overrides=True,
-        marks=_needs_openai,
+        marks=_SKIP_WITHOUT_OPENAI,
     ),
     _CrossScopeCase(
         # `thinking=False` is sent as `reasoning_effort='none'`, replacing the explicit effort.
@@ -2287,7 +2647,7 @@ _CROSS_SCOPE_CASES = [
         False,
         lambda p: p['body'].get('reasoning_effort'),
         overrides=False,
-        marks=_needs_openai,
+        marks=_SKIP_WITHOUT_OPENAI,
     ),
     _CrossScopeCase(
         'snowflake-claude-reasoning',
@@ -2302,7 +2662,7 @@ _CROSS_SCOPE_CASES = [
         'low',
         lambda p: p['body'].get('reasoning'),
         overrides=True,
-        marks=_needs_openai,
+        marks=_SKIP_WITHOUT_OPENAI,
     ),
     _CrossScopeCase(
         'snowflake-openai-reasoning-effort',
@@ -2315,7 +2675,7 @@ _CROSS_SCOPE_CASES = [
         'low',
         lambda p: p['body'].get('reasoning_effort'),
         overrides=True,
-        marks=_needs_openai,
+        marks=_SKIP_WITHOUT_OPENAI,
     ),
     _CrossScopeCase(
         # Z.AI maps `thinking` to `extra_body.thinking` and never sends `openai_reasoning_effort`.
@@ -2327,7 +2687,7 @@ _CROSS_SCOPE_CASES = [
         'low',
         lambda p: (p['body'].get('thinking'), p['body'].get('reasoning_effort')),
         overrides=False,
-        marks=_needs_openai,
+        marks=_SKIP_WITHOUT_OPENAI,
     ),
 ]
 

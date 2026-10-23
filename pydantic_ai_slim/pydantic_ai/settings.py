@@ -14,7 +14,7 @@ else:
     # union member collapses onto the numeric one it already allows.
     Timeout = legacy_httpx.Timeout if legacy_httpx is not None else float
 
-ThinkingEffort: TypeAlias = Literal['minimal', 'low', 'medium', 'high', 'xhigh']
+ThinkingEffort: TypeAlias = Literal['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 """The string effort levels for thinking/reasoning configuration."""
 
 ThinkingLevel: TypeAlias = bool | ThinkingEffort
@@ -22,11 +22,11 @@ ThinkingLevel: TypeAlias = bool | ThinkingEffort
 
 - `True`: Enable thinking with the provider's default effort.
 - `False`: Disable thinking (silently ignored on always-on models).
-- `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`: Enable thinking at a specific effort level.
+- `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'`: Enable thinking at a specific effort level.
 
 Not all providers support all levels. When a level is not natively supported,
-it maps to the closest available value (e.g. `'xhigh'` -> `'high'` on providers
-that don't support it, `'minimal'` -> `'low'` on providers without a minimal level).
+it maps to the closest available value (e.g. `'xhigh'` and `'max'` -> `'high'` on providers
+that don't support them, `'minimal'` -> `'low'` on providers without a minimal level).
 """
 
 CacheRetention: TypeAlias = Literal['5m', '30m', '1h']
@@ -553,7 +553,7 @@ class ModelSettings(TypedDict, total=False):
 
     - `True`: Enable thinking with the provider's default effort level.
     - `False`: Disable thinking (silently ignored if the model always thinks).
-    - `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`: Enable thinking at a specific effort level.
+    - `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'`: Enable thinking at a specific effort level.
 
     When omitted, the model uses its default behavior (which may include thinking
     for reasoning models).
