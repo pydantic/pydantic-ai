@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -1037,6 +1038,7 @@ def test_config_thinking_maps_to_thinking_level() -> None:
 
     assert thinking_config('high') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.HIGH)
     assert thinking_config('xhigh') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.HIGH)
+    assert thinking_config('max') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.HIGH)
     assert thinking_config('minimal') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.MINIMAL)
     assert thinking_config(True) == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.MEDIUM)
     assert thinking_config(False) == genai_types.ThinkingConfig(thinking_budget=0)
@@ -2194,6 +2196,38 @@ async def test_connect_continues_after_empty_server_turn() -> None:
 
     assert events[:2] == [OutputTranscript(text='hi', is_final=True), ResponseDone(interrupted=False)]
     assert isinstance(events[-1], RealtimeSessionErrorEvent)
+
+
+async def test_connect_sends_seeded_system_prompts() -> None:
+    """The standing system prompt opens `system_instruction`; a later one is seeded in place as `<system>` text."""
+    session = _RecordingSession([[_turn('hi')]])
+    captured: dict[str, Any] = {}
+    history = [
+        ModelRequest(parts=[SystemPromptPart(content='Standing prompt.'), UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[SystemPromptPart(content='Mid-conversation note.'), UserPromptPart(content='more')]),
+        ModelResponse(parts=[TextPart(content='sure')]),
+    ]
+    model = _model(session, captured)
+    async with model.connect(
+        messages=[*history, ModelRequest(parts=[])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            instruction_parts=[InstructionPart(content='Agent instructions.')]
+        ),
+    ) as conn:
+        _ = [e async for e in conn]
+
+    assert captured['config'].system_instruction == 'Standing prompt.\n\nAgent instructions.'
+    turns = session.client_content[0]['turns']
+    assert [turn.model_dump(exclude_none=True) for turn in turns] == snapshot(
+        [
+            {'parts': [{'text': 'hi'}], 'role': 'user'},
+            {'parts': [{'text': 'hello'}], 'role': 'model'},
+            {'parts': [{'text': '<system>Mid-conversation note.</system>'}, {'text': 'more'}], 'role': 'user'},
+            {'parts': [{'text': 'sure'}], 'role': 'model'},
+        ]
+    )
 
 
 async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3637,8 +3671,9 @@ async def test_connect_reconnect_retries_a_redial_that_exceeds_handshake_timeout
         ('gemini-3.8-live-extended-thinking', {'thinking': False}, 'LOW'),
         ('gemini-3.8-live-extended-thinking', {'thinking': True}, 'MEDIUM'),
         ('gemini-3.8-live-extended-thinking', {'thinking': 'high'}, 'HIGH'),
-        # `xhigh` has no Gemini equivalent and lands on the top level.
+        # `xhigh` and `max` have no Gemini equivalent and land on the top level.
         ('gemini-3.8-live-extended-thinking', {'thinking': 'xhigh'}, 'HIGH'),
+        ('gemini-3.8-live-extended-thinking', {'thinking': 'max'}, 'HIGH'),
         # An optional-thinking model is unaffected by any of the above.
         ('gemini-2.5-flash-native-audio-latest', None, None),
         ('gemini-2.5-flash-native-audio-latest', {'thinking': True}, 'MEDIUM'),
