@@ -266,6 +266,16 @@ class PluginCatalog(Protocol):
         ...
 
 
+@dataclass(frozen=True, kw_only=True)
+class QueuedInput:
+    """One input waiting for a live session's running turn or command to end, as its prompt shows it queued."""
+
+    id: str
+    """Stable while it waits, also when the terminal starts or stops showing the session."""
+    text: str
+    """The prompt or `/command`, as it will run."""
+
+
 SendInput = Callable[[str, Sequence[BinaryContent]], None]
 """How a host enters input at its session's prompt: the text, and the images attached to it."""
 
@@ -328,6 +338,29 @@ class LiveSession(Protocol):
     @property
     def queued(self) -> int:
         """How many inputs wait for the session's running turn or command to end."""
+        ...
+
+    @property
+    def queue(self) -> list[QueuedInput]:
+        """The inputs waiting for the session's running turn or command to end, oldest first, the order they run in."""
+        ...
+
+    def edit_queued(self, input_id: str, text: str, /) -> None:
+        """Replace a waiting input's text, keeping its place, as editing a recalled one at the prompt does.
+
+        Raises `LookupError` once it has run or was removed, and `ValueError` for blank text.
+        """
+        ...
+
+    def remove_queued(self, input_id: str, /) -> None:
+        """Drop a waiting input; raises `LookupError` once it has run or was removed."""
+        ...
+
+    def steer(self, text: str, /) -> bool:
+        """Send `text` to the running turn now, as Alt+Enter at the prompt does; its model reads it at its next request.
+
+        Returns `False` when nothing takes it: no turn runs, or it is a `/command` or `!` shell line, which never steer.
+        """
         ...
 
     @property

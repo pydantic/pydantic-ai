@@ -18,14 +18,18 @@ failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] answer the call w
 [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] carrying `outcome='retried'`, matching a
 standard agent run. Other tool exceptions end the exchange the call was part of: the model never gets the result, so
 [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] stops waiting for its
-answer. GPT-Live is the exception: its backend can't move on without a result for every call, so the
-model gets the failure history records ([details](openai.md#gpt-live-provider-specific-quirks)).
+answer. Gemini Live and GPT-Live are the exception: the model gets the failure history records,
+`{"error":"The tool raised an unhandled error."}`, as the call's result and answers it, and
+`wait_for_reply()` waits for that answer
+([Gemini](gemini.md#provider-specific-quirks), [GPT-Live](openai.md#gpt-live-provider-specific-quirks)).
 While the event stream is being iterated, the exception is raised from `async for`, and the
 session goes on receiving: a consumer that catches it and iterates again keeps a working session,
 and a reply asked for afterwards is answered as usual. Otherwise the session stops receiving, the
 audio and transcript views end, and the exception is raised when the session closes. If the receive
 side has already ended, an outbound session method raises the failure instead; it is delivered only
-once.
+once. Where the model never gets the result, the exchange the call was part of still ends with a
+[`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent], after the exception
+(see [the turn boundary](events.md#the-turn-boundary)).
 The failed call is recorded with `outcome='failed'`, so the settled history can be passed to
 [`Agent.run(message_history=...)`][pydantic_ai.agent.AbstractAgent.run].
 The general
@@ -273,13 +277,15 @@ if __name__ == '__main__':
 
 The default `priority='asap'` delivers after any active response finishes;
 `priority='when_idle'` waits until the model is idle, after all `'asap'` items. Neither priority
-interrupts assistant speech. Text parts and system parts are joined into one user turn, with system
+interrupts assistant speech. Text (a `str` or [`TextContent`][pydantic_ai.messages.TextContent]) and system parts are joined into one user turn, with system
 parts wrapped in `<system>…</system>` to distinguish them from the person speaking. A system part
 marks where the text came from, not that it should be handled silently: the model still gets a turn
 and may reply, call a tool, or move on. To add context without prompting a turn, use
 [`send(..., respond=False)`](turns.md#text-turns) instead. Delivered turns become ordinary
 [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]s in history, as in
-[injecting messages mid-run](../message-history.md#injecting-messages-mid-run).
+[injecting messages mid-run](../message-history.md#injecting-messages-mid-run). A message of user
+prompt parts that holds `TextContent` is recorded as those parts, so their metadata, which isn't sent
+to the model, stays in history for the code that recognizes it, such as a background task's report.
 
 `enqueue()` does not replace `send()`: it waits for the response in flight to finish, while
 [`send()`][pydantic_ai.realtime.RealtimeSession.send] delivers immediately, even while a tool call or

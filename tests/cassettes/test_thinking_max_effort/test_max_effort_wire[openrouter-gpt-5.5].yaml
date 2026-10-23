@@ -1,0 +1,95 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "167"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: openai/gpt-5.5
+        stream: false
+        messages:
+        - role: user
+          content: What is 2+2? Reply with just the number.
+        reasoning:
+          effort: max
+          enabled: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1792607931-N9iwNvyaP6NPxQ2J4rMA
+        object: chat.completion
+        created: 1792607931
+        model: openai/gpt-5.5
+        provider: OpenAI
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: completed
+          message:
+            role: assistant
+            content: "4"
+            refusal: null
+            reasoning: null
+            reasoning_details:
+            - type: reasoning.encrypted
+              data: >-
+                gAAAAABq2Qa9REBbjb-nVmeYuzq9UI2mM6Kc8TAqQE-I2SPyu5bjF8cjhDsmLt2T9UAcCeDBfbm4Z4N_JZ3o2cD0aE4T3nK3ZtJXjDOPp09V0CvF5bFLY1ZDXyWo0Gx4L2iADeBDhR2lNJjyPL8HtiIFxAXHMpkNVjYGxIoUxyCRQshitIc2n-u6GPAL6LIMGBzCzsLRXbAJg4MToJxIMvmmaRzbh749j68vxa5Y9ErqZz8DbPTNf0s9LeJVN15vK1-mr33XE9ythMkP18kPQRXoG_kRYzC0-hFAlQozhrO28MxnuWqhtbXqJ8j7cijNJSSK7xOLO3IL1K-Yx7aZLee0m72XuO5Ch_NsXZCcPZVSLN-zP-l_Uqspr6r208w_SRvn_VepgICNPXP1TMuCbspeeP68iDHYn_tkdeCqPbTzkpbVLl5yXjSwlxBozNED_e2C5iGXttBUB-LLKU3HSi9LiF4nbx22quelzYFPc27doeU8RlELxOx7an7YRafK6jyZp_kPv5oNZgVf2aWFepAq2bSy6Jx42ceoC0haqt8L1o1NiPHU45rLFe9vO_D_wi1w5iCYcbK2ie0_5aPG7iTUwgFu2frBNSV3XMuUdVbOF5RoaKYM-z4P-CHZMwl9nW0D7sFLjncNjCWk1Fi-kPAR2-bPbvn-4lj_aETZ2A968G0NCKrfr5tw9NJ0VjIy6Ku8wr6aMizFotV06MPUImLJJI89MXv03g3JDc1AIMts42oDpk7DKTEM9eqqXUecK0R-RWS3t70ImCMccxSDKuh6h2NKmRa3xk0MANuRXvy-qbchu1hyUCvlY9sEkw7jgsQVBIgKqz3VQ0Qo2xcBAkcV6Ha155u2pSxWilBYZzNeDf2tSzAlDVlYBBVcYTncLiY5whMVxzl7uZlw3-DvXVCj8MutoPUM-M9D5qvDxpYf0ZlTQbhTavJLNBsBt1WKFIUW5fmMgGkLeBqEEV3178hr-6ywuvAXJvVqQK-KpQrR8tbh-UjD2MV2Jz81-EmJ7L66QnvVO2PvzQpw_O1PpFm7vTz_o2ijrFv1AAQlC-DO42DzoB2iNBioRhqOlxsqaT-XLYp5_lC0unTCcl-TwYtsD3QuryPyVDjUZA-ijcH9JGXW2LW-N_Ax56X3l7EJaRafo1de9F9jn2KP-dKbV6jFPomKVk7McRG7G0qI1T6QUgyIH2C-7ophg5u_MinMKBf_bK6SdJbVRl4Q0CE4VwHges9fDPLHwobq61lx8M7jtVlo1v1bSKa67w_Yymmxivi_LYJAtG1vh7gXayZNF_dY9W_uXPw_w8S4FpXiURosJe67UqRPPSl4X7ef-X59tiNCqHgk6-3gR4hktdk-b9UlTaf5IpWgHFC_-3znw3avlCpLPICQEeIsqDy1cvFR-bp9e6uLmu6FI1DDWN0_7n61WJ_NwYia1Kw3ZtLVhiCV2yMqvZhXVsB9XrQMiLC1vcMzA5FulsrdzFmBQHbk3-_lNkMwXqyaL-BnrNzYxdKWNQFkDaRVhKJLD_WuumNLlpyjRGrC4MZ-VBouWyQi8fUkD_5ORdIDguYDrbGAMdWKlAreWI6q3kARisRhcz-84U9jw3NyjMW4tt9LIbBW5tWdAJ-LfH5MUhucuxDCYMWcnlhuimRhIgptjU4M9JmmhwA4N_TNZEbtESvGrOY6Co1Occ6Hfsxg9eney-Dz_OjHFTVaIfxiaKq0HRKdLeQIbCgFydVJ8Zg9nXqGFs5oPyX3I88zgP9o5g==.eyJlbmRwb2ludF9zbHVnIjoib3BlbmFpL2dwdC01LjUtMjAyNjA0MjN8b3BlbmFpIn0
+              format: openai-responses-v1
+              id: rs_0819a1ca57f270b3016ad906bccea487d1ad77bbfb94f9803a
+              index: 0
+        usage:
+          prompt_tokens: 19
+          completion_tokens: 20
+          total_tokens: 39
+          cost: 0.000695
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.000695
+            upstream_inference_prompt_cost: 0.000095
+            upstream_inference_completions_cost: 0.0006
+          completion_tokens_details:
+            reasoning_tokens: 13
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-21T18:38:53.479518+00:00
