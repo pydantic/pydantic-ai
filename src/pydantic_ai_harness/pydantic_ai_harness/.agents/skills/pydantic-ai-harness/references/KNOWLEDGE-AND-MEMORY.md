@@ -179,8 +179,10 @@ and callable namespaces need Python. Keep the default `id='memory'` for durable 
 ## ConversationSearch
 
 Adds one tool, `search_conversation_history(query, run_id=None)`, that BM25-ranks history a
-persistence capability already stored. It persists nothing itself. Pair it with `StepPersistence`
-on the same store instance via `SnapshotHistorySource`.
+persistence capability already stored. It persists no history itself. Pair it with `StepPersistence`
+on the same store instance via `SnapshotHistorySource`. Over a `SqliteStepStore` it keeps an FTS5
+index (`conversation_search_*` tables) in the same database file, refreshed on each search; it
+scans instead when SQLite lacks FTS5 or the index cannot be used, with the same answers either way.
 
 ```python
 from pydantic_ai import Agent
@@ -223,8 +225,10 @@ Gotchas:
   populate
   `conversation_id` on its `RunRecord`s.
 - Recovery of compaction-dropped messages depends on pre-compaction snapshots still being
-  retained (`max_snapshots_per_run` can prune them). The corpus is rebuilt on every call, so cost
-  grows with in-scope history.
+  retained (`max_snapshots_per_run` can prune them). Without the full-text index (non-SQLite
+  stores, custom sources, subclasses) the corpus is rebuilt on every call, so cost grows with
+  in-scope history; with it, a search re-renders only runs whose `complete` snapshots changed,
+  though every run record is still listed to apply the scope.
 - History a run inherits through `message_history` is indexed under the run that first
   persisted it; a request a later run adds an instruction change to is indexed again with that
   change, so its other parts can match twice. Excerpts are clipped to 500 characters; when the matched term lies past the cutoff,
