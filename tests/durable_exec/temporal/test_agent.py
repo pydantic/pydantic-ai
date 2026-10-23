@@ -4544,8 +4544,9 @@ async def test_sub_agent_self_cancel_in_activity_is_a_failed_tool_return(client:
     """A sub-agent that cancels itself inside a tool activity fails that tool call, as it does in-process.
 
     The cancellation crosses the activity boundary as a result, so the activity succeeds once
-    rather than being retried under the default retry policy until the workflow fails, and the
-    workflow-side tool-execute hook sees the sub-agent's run state, as it does in-process.
+    rather than being retried under the default retry policy until the workflow fails. The
+    workflow-side tool-execute hook sees the `RunCancelled`, with its message only: run state does
+    not cross the activity boundary.
     """
     _sub_agent_delegations.clear()
     async with Worker(
@@ -4563,7 +4564,7 @@ async def test_sub_agent_self_cancel_in_activity_is_a_failed_tool_return(client:
         )
 
     assert tool_returns == snapshot(['failed: The sub-agent run was cancelled: The agent run was cancelled.'])
-    assert hook_errors == snapshot(['RunCancelled: run_id=True, messages=2, requests=1'])
+    assert hook_errors == snapshot(['RunCancelled: run_id=False, messages=0, requests=0'])
     assert len(_sub_agent_delegations) == 1
 
 

@@ -4424,8 +4424,8 @@ async def test_prefect_task_wrapped_tool_rejects_cancel() -> None:
 async def test_prefect_task_wrapped_sub_agent_self_cancel_is_a_failed_tool_return() -> None:
     """A sub-agent that cancels itself inside a task-wrapped tool fails that tool call, as it does in-process.
 
-    The tool-execute hook around the task also sees the sub-agent's run state on the exception, as it
-    does in-process.
+    The tool-execute hook around the task sees the `RunCancelled`, with its message only: run state
+    does not cross the durable boundary.
     """
     sub_agent = Agent(TestModel(), name='prefect_self_cancelling_sub_agent')
 
@@ -4472,7 +4472,7 @@ async def test_prefect_task_wrapped_sub_agent_self_cancel_is_a_failed_tool_retur
         ]
 
     assert await run_agent() == snapshot(['failed: The sub-agent run was cancelled: The agent run was cancelled.'])
-    assert hook_errors == snapshot(['RunCancelled: run_id=True, messages=2, requests=1'])
+    assert hook_errors == snapshot(['RunCancelled: run_id=False, messages=0, requests=0'])
 
 
 async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest.MonkeyPatch) -> None:
