@@ -76,6 +76,9 @@ _OPENING = (
     "ToolSearch), its `<system-reminder>` blocks and the other context it added are Claude Code's, and its "
     "sub-agents' reports appear as `<task_output>` blocks."
 )
+_SELF = 'self'
+"""The name CLAI's sub-agents runs its `general-purpose` agent, itself, by."""
+
 _STOPPED = 'Stopped in Claude Code before it reported. Its history is saved: resume it to continue.'
 """The output of a sub-agent that never finished in Claude Code."""
 _CLOSING = (
@@ -128,16 +131,17 @@ def messages(path: Path, conversation_id: str) -> list[ModelMessage]:
     """
     agents = _agents(path, conversation_id)
     lines = [
-        f'- Claude Code agent {agent_id} is task {task.id} ({task.agent_name}: {task.prompt})'
+        f'- Claude Code agent {agent_id} is task {task.id} ({_agent_type(task)}: {task.prompt})'
         for agent_id, task in agents.items()
     ]
     closing = _CLOSING + (
-        "\n\nClaude Code's sub-agents are now tasks, which you can inspect or resume by task ID:\n" + '\n'.join(lines)
+        "\n\nClaude Code's sub-agents were imported as tasks, by task ID. One whose report is not above stopped "
+        'before it reported:\n' + '\n'.join(lines)
         if lines
         else ''
     )
     opening = _OPENING.format(subject='This conversation', session_id=path.stem)
-    return _transcript(list(records(path)), agents, opening=opening, closing=closing)
+    return _framed(_history(list(records(path)), agents), opening=opening, closing=closing)
 
 
 def tasks(path: Path, conversation_id: str) -> list[DelegationTask]:
@@ -150,7 +154,8 @@ def tasks(path: Path, conversation_id: str) -> list[DelegationTask]:
     for agent_id, task in agents.items():
         entries = list(records(_agent_path(path, agent_id)))
         opening = _OPENING.format(subject=f'This sub-agent conversation ({agent_id})', session_id=path.stem)
-        history = _transcript(entries, agents, opening=opening, closing=_CLOSING, main=False)
+        history = _history(entries, agents, main=False)
+        output = _output(history)
         times = [timestamp(entry.get('timestamp')) for entry in entries if entry.get('timestamp')]
         prompt = next(
             (
@@ -160,16 +165,15 @@ def tasks(path: Path, conversation_id: str) -> list[DelegationTask]:
             ),
             task.prompt,
         )
-        output = _output(history)
         if output is None:
-            # Claude Code stopped it before it reported, when the session ended or was imported mid-run. Undelivered,
-            # so CLAI reports the stop to the parent, which can resume it.
-            task = replace(task, outcome='cancelled', delivered=False)
+            # Claude Code stopped it before it reported, when the session ended or was imported mid-run. Still
+            # delivered, so opening the session starts no turn of its own; the closing note tells the parent.
+            task = replace(task, outcome='cancelled')
         found.append(
             replace(
                 task,
                 prompt=prompt or task.prompt,
-                messages=history,
+                messages=_framed(history, opening=opening, closing=_CLOSING),
                 output=_STOPPED if output is None else output,
                 started_at=times[0].timestamp() if times else task.started_at,
                 finished_at=times[-1].timestamp() if times else None,
@@ -181,7 +185,7 @@ def tasks(path: Path, conversation_id: str) -> list[DelegationTask]:
 def _name(path: Path) -> str:
     """The name the user gave the session, else the one Claude Code generated, from the end of the transcript."""
     custom = generated = ''
-    for entry in tail_records(path):
+    for entry in tail_records(path, containing=b'-title"'):
         if entry.get('type') == 'custom-title':
             custom = text(entry.get('customTitle')) or custom
         elif entry.get('type') == 'ai-title':
@@ -218,23 +222,28 @@ def _agents(path: Path, conversation_id: str) -> dict[str, DelegationTask]:
             meta = obj(json.loads(meta_path.read_text(encoding='utf-8')))
         except (OSError, ValueError):
             meta = {}
-        agent_name = text(meta.get('agentType')) or 'general-purpose'
+        agent_type = text(meta.get('agentType')) or 'general-purpose'
         parent = text(meta.get('parentAgentId'))
         agents[agent_id] = DelegationTask(
             id=_task_id(path.stem, agent_id),
             run_id=uuid5(_TASK_NAMESPACE, f'{path.stem}:{agent_id}:run').hex,
-            agent_name=agent_name,
+            # CLAI runs `general-purpose` as itself, under the name its tasks are saved and resumed by.
+            agent_name=_SELF if agent_type == 'general-purpose' else agent_type,
             prompt=text(meta.get('description')),
             conversation_id=conversation_id,
             parent_id=_task_id(path.stem, parent) if parent else None,
             background=True,
-            # CLAI runs `general-purpose` as itself; Claude Code's other agent types have no CLAI counterpart.
-            resumable=agent_name == 'general-purpose',
+            # Claude Code's other agent types have no CLAI counterpart to resume them with.
+            resumable=agent_type == 'general-purpose',
             status='finished',
             outcome='ok',
             delivered=True,
         )
     return agents
+
+
+def _agent_type(task: DelegationTask) -> str:
+    return 'general-purpose' if task.agent_name == _SELF else task.agent_name
 
 
 def _output(history: list[ModelMessage]) -> str | None:
@@ -243,20 +252,13 @@ def _output(history: list[ModelMessage]) -> str | None:
     for part in reversed(responses[-1].parts if responses else []):
         if isinstance(part, ToolCallPart) and part.tool_name == 'SubagentHandback':
             return text(part.args_as_dict().get('message'))
-    # Only the closing note may follow a final answer; anything else is work it had yet to answer.
-    if responses and not responses[-1].tool_calls and history.index(responses[-1]) >= len(history) - 2:
+    # A final answer ends the history; anything after it is work the sub-agent had yet to answer.
+    if responses and history[-1] is responses[-1] and not responses[-1].tool_calls:
         return '\n\n'.join(part.content for part in responses[-1].parts if isinstance(part, TextPart))
     return None
 
 
-def _transcript(
-    entries: list[JsonObject],
-    agents: dict[str, DelegationTask],
-    *,
-    opening: str,
-    closing: str,
-    main: bool = True,
-) -> list[ModelMessage]:
+def _history(entries: list[JsonObject], agents: dict[str, DelegationTask], *, main: bool = True) -> list[ModelMessage]:
     history = HistoryBuilder()
     reports: dict[str, int] = {}
     for entry in _conversation(entries, main=main):
@@ -272,7 +274,12 @@ def _transcript(
             _assistant(history, message, at=at)
         elif kind == 'attachment':
             _attachment(history, entry, at=at)
-    built = history.build()
+    return history.build()
+
+
+def _framed(history: list[ModelMessage], *, opening: str, closing: str) -> list[ModelMessage]:
+    """`history` between the notes on the change of harness, or nothing when there is no history."""
+    built = list(history)
     if not built:
         return []
     first = built[0]

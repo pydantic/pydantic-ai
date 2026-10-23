@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID, uuid5
 
+import anyio
 from anyio.to_thread import run_sync
 
 from pydantic_ai.messages import ModelMessage
@@ -231,6 +232,9 @@ async def save_import(
     await store.save(summary=summary, messages=messages)
     tasks = await run_sync(imported.tasks) if delegations is not None else []
     if delegations is not None:
+        if tasks and delegations.directory is not None:
+            # An owner that has not opened yet has not made its directory either.
+            await anyio.Path(delegations.directory).mkdir(parents=True, exist_ok=True)
         for task in tasks:
             # Resuming a task gives it a new run ID; until then, it is the copy an earlier import saved.
             if (saved_task := delegations.records.get(task.id)) is None or saved_task.run_id == task.run_id:

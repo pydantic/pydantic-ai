@@ -3,7 +3,6 @@
 import json
 import os
 from collections.abc import Sequence
-from dataclasses import replace
 from io import StringIO
 from pathlib import Path
 
@@ -34,7 +33,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-from pydantic_ai_harness.subagents import DelegationTasks, is_task_report
+from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks, is_task_report
 from pydantic_clai2 import chat
 from pydantic_clai2._app import create_stock_agent
 from pydantic_clai2.cli import _cli, headless
@@ -434,7 +433,7 @@ async def test_claude_code_import_keeps_what_the_model_saw(tmp_path: Path) -> No
         and isinstance(report.content[0], TextContent)
     )
     assert report.content[0].content == (
-        f'<task_output task_id="{task_id}" agent_name="general-purpose">\nLooks good\n- one nit\n</task_output>'
+        f'<task_output task_id="{task_id}" agent_name="self">\nLooks good\n- one nit\n</task_output>'
     )
     assert context(unknown)[0] == 'meta'
     assert isinstance(done, ModelResponse) and done.parts == [TextPart('Done')]
@@ -451,7 +450,8 @@ async def test_claude_code_import_keeps_what_the_model_saw(tmp_path: Path) -> No
 async def test_claude_code_sub_agents_become_tasks(tmp_path: Path) -> None:
     path = claude_agent_session(tmp_path)
     review, child = claude_code_sessions.tasks(path, 'conversation')
-    assert (review.agent_name, review.prompt, review.output) == ('general-purpose', 'Review the diff', 'Looks good')
+    # CLAI runs `general-purpose` as itself, by the name a resume checks.
+    assert (review.agent_name, review.prompt, review.output) == ('self', 'Review the diff', 'Looks good')
     assert (review.conversation_id, review.status, review.outcome, review.background) == (
         'conversation',
         'finished',
@@ -461,8 +461,8 @@ async def test_claude_code_sub_agents_become_tasks(tmp_path: Path) -> None:
     # Already reported in the parent's history, so never delivered again; resumable as CLAI's own agent.
     assert review.delivered and review.resumable
     assert context(review.messages[0].parts[0])[1].startswith('This sub-agent conversation (abc) was imported')
-    # Stopped before it reported: the parent hears of it once, and can resume it.
-    assert (child.prompt, child.outcome, child.delivered, child.resumable) == ('Look deeper', 'cancelled', False, True)
+    # Stopped before it reported: resumable, and delivered, so opening the session starts no turn by itself.
+    assert (child.prompt, child.outcome, child.delivered, child.resumable) == ('Look deeper', 'cancelled', True, True)
     assert child.output.startswith('Stopped in Claude Code before it reported.')
     assert parts(child.messages) == [('ModelRequest', ['UserPromptPart', 'UserPromptPart', 'UserPromptPart'])]
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
@@ -470,19 +470,47 @@ async def test_claude_code_sub_agents_become_tasks(tmp_path: Path) -> None:
         conversation_id = await save_import(store, find_import('claude', CLAUDE_ID), delegations=owner)
         assert owner.records[review.id].conversation_id == conversation_id
         assert (tmp_path / 'tasks' / f'{review.id}.json').is_file()
-        assert [task.id for task in owner.reports(conversation_id=conversation_id)] == [child.id]
-        # A task CLAI has since resumed is its own.
-        owner.records[review.id] = resumed = replace(owner.records[review.id], run_id='f' * 32, output='Resumed')
+        assert owner.reports(conversation_id=conversation_id) == []
+
+        async def run(task: DelegationTask) -> str:
+            assert task.messages[-1].parts[-1] == review.messages[-1].parts[-1]
+            return 'Resumed'
+
+        # The model resumes it as CLAI's own task; from then on, it is CLAI's.
+        await owner.delegate(
+            agent_name='self',
+            prompt='Go on',
+            conversation_id=conversation_id,
+            model=None,
+            background=False,
+            resume=review.id,
+            run=run,
+        )
+        resumed = owner.records[review.id]
+        assert (resumed.output, resumed.generation) == ('Resumed', 2)
         await save_import(store, find_import('claude', CLAUDE_ID), delegations=owner)
         assert owner.records[review.id] is resumed
     async with DelegationTasks(directory=tmp_path / 'tasks').opened() as reopened:
         assert set(reopened.records) == {review.id, child.id}
 
 
+async def test_resume_by_id_saves_sub_agents_before_the_task_owner_opens(tmp_path: Path) -> None:
+    service, _ = sessions_service(tmp_path)
+    # The process's owner, as `--resume-claude` imports before the shell opens it.
+    service.tasks = DelegationTasks(directory=tmp_path / 'tasks')
+    path = claude_agent_session(tmp_path)
+    await service.command(['claude', CLAUDE_ID])
+    async with service.tasks.opened() as owner:
+        assert {task.id for task in owner.records.values()} == {
+            task.id for task in claude_code_sessions.tasks(path, service.session.summary.id)
+        }
+
+
 def test_tail_records_skip_the_cut_line(tmp_path: Path) -> None:
     path = write_jsonl(tmp_path / 'lines.jsonl', [{'n': 'x' * 20}, {'n': 1}, 'not json', '[1]'])
     assert tail_records(path, size=25) == [{'n': 1}]
     assert tail_records(path) == [{'n': 'x' * 20}, {'n': 1}]
+    assert tail_records(path, containing=b'1') == [{'n': 1}]
 
 
 def test_claude_code_headers_and_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

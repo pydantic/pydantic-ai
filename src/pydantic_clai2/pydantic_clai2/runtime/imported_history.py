@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from itertools import islice
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, TypeGuard, cast
 
 from pydantic_ai.messages import (
     ModelMessage,
@@ -34,6 +34,7 @@ from pydantic_ai.messages import (
     repair_messages,
 )
 from pydantic_ai.usage import RequestUsage
+from pydantic_ai_harness.subagents import is_task_report
 
 JsonObject = dict[str, object]
 
@@ -74,14 +75,19 @@ def records(path: Path, *, limit: int | None = None) -> Iterator[JsonObject]:
                 yield cast(JsonObject, value)
 
 
-def tail_records(path: Path, *, size: int = TAIL_BYTES) -> list[JsonObject]:
-    """The JSON objects in the last `size` bytes of the file, skipping the line the cut lands in."""
+def tail_records(path: Path, *, containing: bytes = b'', size: int = TAIL_BYTES) -> list[JsonObject]:
+    """The JSON objects in the last `size` bytes of the file, skipping the line the cut lands in.
+
+    Only lines `containing` the given bytes are parsed, so a caller after a few entries skips large payloads.
+    """
     with path.open('rb') as file:
         start = max(file.seek(0, os.SEEK_END) - size, 0)
         file.seek(start)
         lines = file.read().split(b'\n')
     objects: list[JsonObject] = []
     for line in lines[1:] if start else lines:
+        if containing not in line:
+            continue
         try:
             value: object = json.loads(line)
         except ValueError:
@@ -135,6 +141,11 @@ def imported_context(
     """
     metadata = {'origin': IMPORTED_CONTEXT_ORIGIN, 'source': source, 'kind': kind}
     return UserPromptPart([TextContent(content, metadata=metadata), *files], timestamp=at)
+
+
+def is_typed_prompt(part: ModelRequestPart) -> TypeGuard[UserPromptPart]:
+    """Whether `part` is a prompt the user typed, not a task's report or context another agent's harness added."""
+    return isinstance(part, UserPromptPart) and not is_task_report(part) and not is_imported_context(part)
 
 
 def is_imported_context(part: ModelRequestPart) -> bool:
