@@ -40,7 +40,7 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.subagents import ModelOption, SubAgent, SubAgents, SubAgentToolset
 
-from .._deferred_tools import deferring_agent
+from .._deferred_tools import deferring_agent, pending_agent
 
 
 @dataclass
@@ -550,6 +550,34 @@ class TestDelegation:
             for message in result.all_messages()
             for part in message.parts
         )
+
+    async def test_pending_model_response_returns_steering(self) -> None:
+        # Like `DeferredToolRequests`: the parent cannot check on the child's request later.
+        background, model = pending_agent('background')
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('background'),
+            capabilities=[SubAgents(agents=[SubAgent(background)])],
+        )
+        result = await parent.run('go')
+        # Nobody will check on the request later, so it's cancelled.
+        assert model.cancelled == ['job-1']
+        assert result.output == 'all done'
+        assert _delegate_returns(result) == snapshot(
+            [
+                "Sub-agent 'background' ended with `PendingModelResponse` because it needs the result of a model "
+                'request the provider is still processing, which a delegating agent cannot provide. Do the task '
+                'another way, or without this sub-agent.'
+            ]
+        )
+
+    async def test_a_failing_cancel_of_a_pending_request_still_returns_steering(self) -> None:
+        background, model = pending_agent('background', fail_cancel=True)
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('background'), capabilities=[SubAgents(agents=[SubAgent(background)])]
+        )
+        result = await parent.run('go')
+        assert model.cancelled == ['job-1']
+        assert _delegate_returns(result)[0].startswith("Sub-agent 'background' ended with `PendingModelResponse`")
 
     async def test_deferred_tool_calls_resolved_by_the_sub_agent_return_its_output(self) -> None:
         def approve_all(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:

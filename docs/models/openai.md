@@ -570,8 +570,25 @@ When the response comes back still pending (`'queued'` or `'in_progress'`), Pyda
 
 Because the request is queued server-side, the time to the first token is higher than for a synchronous request. While a background response is still pending, Pydantic AI polls for completion at a fixed interval.
 
+To end the run instead of waiting, add [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] to the agent's `output_type`: the run then ends with a `PendingModelResponse` as soon as the background response is queued (when streaming, the response streams until it's finished, unless the stream drops before then), and running the agent again with the run's message history checks on the same background response. See [Ending a run while it waits](../batch.md#ending-a-run-while-it-waits).
+
 !!! note
-    If a run is suspended mid-request (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) and persisted in message history, passing that history back resumes the same background response rather than starting a new one. Resuming after the provider's retention window raises [`SuspendedResponseExpired`][pydantic_ai.exceptions.SuspendedResponseExpired]. Abandoning or cancelling the run cancels the server-side background job.
+    A message history that ends in a pending response (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) resumes the same background response rather than starting a new one. Resuming after the provider's retention window raises [`SuspendedResponseExpired`][pydantic_ai.exceptions.SuspendedResponseExpired]. Abandoning or cancelling a run that's waiting cancels the server-side background job.
+
+## Batch API
+
+`OpenAIResponsesModel` supports [batch processing](../batch.md) through OpenAI's
+[Batch API](https://platform.openai.com/docs/guides/batch), which charges 50% of the standard price. A batch
+targets one model and holds up to 50,000 requests, in an input file of up to 200 MB. The input file is deleted
+once every request in the batch has run; otherwise OpenAI deletes it after 30 days. Like requests on their own,
+batched responses are stored unless you set `openai_store=False`, so they can be continued with
+`openai_previous_response_id`.
+
+The Batch API is only available on OpenAI's own API: not with `OpenAIChatModel`, Azure OpenAI, or other providers
+that implement the Responses API. Through the [Pydantic AI Gateway](../gateway.md), it requires your own OpenAI key.
+Batch requests can't use background mode, which would fail the whole batch, and per-request `timeout` and
+`extra_headers` are unsupported: configure them on the client instead. A streamed run gets the batch result's events
+all at once when it arrives.
 
 ## Chat Completions API
 
