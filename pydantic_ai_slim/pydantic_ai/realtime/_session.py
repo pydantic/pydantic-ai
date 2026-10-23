@@ -884,6 +884,7 @@ class RealtimeSession:
             speech_spans_tool_calls=connection._speech_spans_tool_calls,  # pyright: ignore[reportPrivateUsage]
             tracks_tool_rounds=connection._prunes_tool_calls,  # pyright: ignore[reportPrivateUsage]
             input_transcription_enabled=connection.input_transcription_enabled,
+            output_always_transcribed=connection._transcribes_all_output,  # pyright: ignore[reportPrivateUsage]
             retain_input_audio=self._retain_input,
             retain_output_audio=self._retain_output,
             retain_audio_max_seconds=retain_audio_max_seconds,
