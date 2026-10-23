@@ -106,11 +106,13 @@ pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
 # Property tests run a small derandomized batch by default, so a run is reproducible, fits the per-test budget in
-# `cost_guards`, and covers the same branches on every xdist worker. `HYPOTHESIS_PROFILE=explore` runs a long
-# randomized batch to hunt for new failures. Tests that pass their own `settings` keep them.
-hypothesis_settings.register_profile('default', derandomize=True, database=None, deadline=None, max_examples=50)
+# `cost_guards`, and covers the same branches on every xdist worker. Hypothesis's built-in `ci` profile is that,
+# with no deadline or example database; an explicit parent keeps the profile the same whether or not Hypothesis
+# loaded `ci` itself. `HYPOTHESIS_PROFILE=explore` runs a long randomized batch to hunt for new failures. Tests that
+# pass their own `settings` keep them.
+hypothesis_settings.register_profile('default', hypothesis_settings.get_profile('ci'), max_examples=50)
 hypothesis_settings.register_profile(
-    'explore', hypothesis_settings.get_profile('default'), derandomize=False, max_examples=1000, print_blob=True
+    'explore', hypothesis_settings.get_profile('default'), derandomize=False, max_examples=1000
 )
 hypothesis_settings.load_profile(os.environ.get('HYPOTHESIS_PROFILE', 'default'))
 

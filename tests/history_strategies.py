@@ -5,15 +5,30 @@ after its response, from a run's first request on its own to several tool rounds
 the same conversations are then damaged the ways stored, hand-built and UI-returned histories get damaged,
 each kind of damage named by a `Damage` so a test can leave it out with `without`.
 
-The domain is deliberately narrower than what the message types accept:
+The domain is narrower than what the message types accept. Each narrowing leaves out an input that providers
+and users never produce, or one whose shape needs its own strategy, left for a follow-up:
 
 - Text only, with no `BinaryContent` or URLs, so drawing and mapping a history does no I/O.
-- Values are ones a JSON round trip preserves: no NaN or infinities, no tuples.
-- Tool call ids follow the formats providers emit, and are never `''`: a provider that sends no id gets a
-  generated `pyd_ai_` one, and an empty id is replaced by a random one when it is mapped, which no
-  property about the mapped body can hold.
-- Retries use the current parts: a `ToolReturnPart` with `outcome='retried'` for one that answers a
-  call, a `RetryFeedbackPart` for one that doesn't. The deprecated `RetryPromptPart` would warn.
+- Values are ones a JSON round trip preserves (no NaN or infinities, no tuples), as a stored history has to.
+- Text in a well-formed history is never blank. Empty and whitespace-only text comes only from the `empty_*`
+  damages, so a failure it causes is tied to a damage a test can name.
+- Tool call ids follow the formats providers emit, and are never `''`. A provider that sends none gets a
+  generated `pyd_ai_` id, and an empty id is replaced by a random one at mapping, which no property about
+  the body can hold. No provider is known to send one.
+- Tool names match `[a-zA-Z][a-zA-Z0-9_-]{0,63}`, what providers accept.
+- Retries use the current parts: a `ToolReturnPart` with `outcome='retried'` for one that answers a call, a
+  `RetryFeedbackPart` for one that doesn't. The deprecated `RetryPromptPart` warns, and doesn't round-trip.
+- `RetryFeedbackPart.content` is a string. Its `list[ErrorDetails]` form carries pydantic-core's error shape
+  (`loc` tuples, any `input`), which needs its own strategy.
+- `ToolReturnPart` list content is never `[]`: no checker reads a result's content, so an empty one adds nothing.
+- Thinking signatures are base64, as every provider sends them (Google decodes them), and signed thinking
+  names one of the mapped models' providers, so it is sent back to the provider that made it.
+- A response has a `model_name` only with a `provider_name`: it came from a provider, or was built by hand,
+  which is what `repair_messages` tells apart when it merges responses.
+- Parts have no `id` or `provider_details`, and responses no `provider_response_id`: their shapes are
+  provider-specific, and drawing them needs a strategy per provider.
+- Damage that adds a message puts it after a request, never between a call's response and the request
+  answering it: the agent loop never puts one there, and repair pairs results with calls by order.
 """
 
 from __future__ import annotations as _annotations
@@ -21,7 +36,7 @@ from __future__ import annotations as _annotations
 import base64
 import string
 from dataclasses import replace
-from typing import Literal, assert_never
+from typing import Literal, assert_never, get_args
 
 import pydantic_core
 from hypothesis import strategies as st
@@ -55,7 +70,8 @@ TOOL_CALL_IDS = st.one_of(
 )
 """OpenAI, Anthropic, Pydantic AI's own (for providers that send none), Mistral, and a UUID."""
 
-_TEXT = st.text(min_size=1)
+_TEXT = st.text(min_size=1).filter(str.strip)
+_BLANK = st.text(' \t\n', max_size=3)
 
 _JSON_VALUES: st.SearchStrategy[JsonValue] = st.recursive(
     st.none() | st.booleans() | st.integers() | st.floats(allow_nan=False, allow_infinity=False) | st.text(),
@@ -65,7 +81,7 @@ _JSON_VALUES: st.SearchStrategy[JsonValue] = st.recursive(
 _JSON_OBJECTS = st.dictionaries(st.text(), _JSON_VALUES, max_size=3)
 _TOOL_ARGS = _JSON_OBJECTS | _JSON_OBJECTS.map(lambda args: pydantic_core.to_json(args).decode())
 
-_TOOL_NAMES = st.from_regex(r'[a-z][a-z0-9_]{0,15}', fullmatch=True)
+_TOOL_NAMES = st.from_regex(r'[a-zA-Z][a-zA-Z0-9_-]{0,63}', fullmatch=True)
 
 _PROVIDER_NAMES = st.sampled_from(
     ['openai', 'anthropic', 'google', 'bedrock', 'groq', 'mistral', 'cohere', 'huggingface']
@@ -183,16 +199,7 @@ Damage = Literal[
     'empty_system_prompt',
     'empty_response_text',
 ]
-_DAMAGE: list[Damage] = [
-    'orphan_return',
-    'dangling_call',
-    'repeated_call_id',
-    'thinking_only_response',
-    'consecutive_request',
-    'empty_prompt',
-    'empty_system_prompt',
-    'empty_response_text',
-]
+_DAMAGE: list[Damage] = list(get_args(Damage))
 _NEEDS_A_RESPONSE: frozenset[Damage] = frozenset({'dangling_call', 'repeated_call_id', 'empty_response_text'})
 
 
@@ -242,25 +249,25 @@ def _damaged_histories(draw: st.DrawFn, without: frozenset[Damage]) -> list[Mode
                 history[response_index] = replace(response, parts=[*response.parts, *repeats])
                 answered_by = history[response_index + 1] if response_index + 1 < len(history) else None
                 if isinstance(answered_by, ModelRequest) and draw(st.booleans()):
-                    # Both calls answered, as `end_strategy='graceful'` can record (#9815).
-                    extra_return = ToolReturnPart(repeats[0].tool_name, draw(_TEXT), call_id)
-                    history[response_index + 1] = replace(answered_by, parts=[extra_return, *answered_by.parts])
+                    # Every call with the id answered, as `end_strategy='graceful'` can record (#9815).
+                    extra_returns = [ToolReturnPart(repeat.tool_name, draw(_TEXT), call_id) for repeat in repeats]
+                    history[response_index + 1] = replace(answered_by, parts=[*extra_returns, *answered_by.parts])
             case 'thinking_only_response':
                 # A response with nothing but thinking, as an interrupted stream or a `no_output` retry leaves.
                 history.insert(request_index + 1, ModelResponse(parts=[draw(st.builds(ThinkingPart, _TEXT))]))
             case 'consecutive_request':
                 history.insert(request_index + 1, ModelRequest(parts=[draw(_USER_PROMPTS)]))
             case 'empty_prompt':
-                # A prompt with no text, as `agent.run('')` records.
+                # A prompt with no text, or only whitespace, as `agent.run('')` records.
                 kept = [part for part in request.parts if not isinstance(part, UserPromptPart)]
-                history[request_index] = replace(request, parts=[*kept, UserPromptPart('')])
+                history[request_index] = replace(request, parts=[*kept, UserPromptPart(draw(_BLANK))])
             case 'empty_system_prompt':
-                # A system prompt that rendered to nothing.
-                history[request_index] = replace(request, parts=[*request.parts, SystemPromptPart('')])
+                # A system prompt that rendered to nothing, or to whitespace.
+                history[request_index] = replace(request, parts=[*request.parts, SystemPromptPart(draw(_BLANK))])
             case 'empty_response_text':
                 response_index = draw(st.sampled_from(list(responses)))
                 response = responses[response_index]
-                history[response_index] = replace(response, parts=[*response.parts, TextPart('')])
+                history[response_index] = replace(response, parts=[*response.parts, TextPart(draw(_BLANK))])
             case _:
                 assert_never(damage)
     return history

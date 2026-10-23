@@ -301,3 +301,16 @@ def test_empty_message():
 def test_empty_text():
     wire = anthropic_wire([{'role': 'user', 'content': [{'type': 'text', 'text': ''}]}])
     assert empty_text_violations(wire) == ['wire.empty_text']
+
+
+def test_whitespace_only_text():
+    wire = bedrock_wire([{'role': 'user', 'content': [{'text': ' \n'}]}])
+    assert empty_text_violations(wire) == ['wire.empty_text']
+
+
+def test_whitespace_only_text_passes_in_an_assistant_turn():
+    """Anthropic and Bedrock take a whitespace-only text block in an assistant turn, but not an empty one."""
+    assert empty_text_violations(bedrock_wire([{'role': 'assistant', 'content': [{'text': ' '}]}])) == []
+    assert empty_text_violations(bedrock_wire([{'role': 'assistant', 'content': [{'text': ''}]}])) == [
+        'wire.empty_text'
+    ]

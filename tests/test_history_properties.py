@@ -17,10 +17,10 @@ draws it out of that property's histories, and a strict expected failure on a ha
 from __future__ import annotations as _annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from functools import cache
-from typing import Literal
+from typing import Literal, assert_never
 
 import pydantic_core
 import pytest
@@ -44,6 +44,7 @@ from pydantic_ai.models import Model, ModelRequestParameters
 
 from .conftest import try_import
 from .history_invariants import (
+    WireBlock,
     WireMessage,
     anthropic_wire,
     bedrock_wire,
@@ -246,13 +247,11 @@ class MapperCase:
     id: str
     body: Callable[[list[ModelMessage]], Coroutine[object, object, Body]]
     wire: Callable[[JsonValue], list[WireMessage]]
+    baseline: list[WireMessage]
+    """What `wire` reads off the body `_BASELINE` maps to: if a provider SDK renames a field, the checkers stop
+    seeing calls or text, and this tells."""
     results_follow_their_call: bool = False
     """Whether a tool result must answer a call of the message right before its own."""
-    rejects_duplicate_call_ids: bool = False
-    """Whether the API rejects a call id sent twice, as each case that sets it did when probed on 2026-10-23 (UTC).
-
-    OpenAI Responses and Groq accepted one; the Hugging Face probe failed for an unrelated reason.
-    """
     rejects_empty_text: bool = False
     """Whether the API rejects a text block with no text, which the adapter's own handling of empty text shows."""
     marks: tuple[pytest.MarkDecorator, ...] = ()
@@ -262,26 +261,51 @@ def _needs(imports_successful: Callable[[], bool], package: str) -> tuple[pytest
     return (pytest.mark.skipif(not imports_successful(), reason=f'{package} not installed'),)
 
 
+_BASELINE: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart('Look it up')]),
+    ModelResponse(parts=[TextPart('Looking'), ToolCallPart('lookup', {'q': 'a'}, 'call_1')]),
+    ModelRequest(parts=[ToolReturnPart('lookup', 'a', 'call_1')]),
+    ModelResponse(parts=[TextPart('Found it')]),
+]
+
+
+def _baseline_turns(*, assistant: str, results: str, call_id: str = 'call_1') -> list[WireMessage]:
+    """`_BASELINE` as a body of role-tagged messages projects to, with the roles and call id the provider uses."""
+    return [
+        WireMessage('user', [WireBlock('text', 'Look it up')]),
+        WireMessage(assistant, [WireBlock('text', 'Looking'), WireBlock('call', call_id)]),
+        WireMessage(results, [WireBlock('result', call_id)]),
+        WireMessage(assistant, [WireBlock('text', 'Found it')]),
+    ]
+
+
 MAPPER_CASES = [
     MapperCase(
         'openai-chat',
         _openai_chat_body,
         chat_completions_wire,
-        rejects_duplicate_call_ids=True,
+        _baseline_turns(assistant='assistant', results='tool'),
         marks=_needs(openai_imports_successful, 'openai'),
     ),
     MapperCase(
         'openai-responses',
         _openai_responses_body,
         openai_responses_wire,
+        [
+            WireMessage('user', [WireBlock('text', 'Look it up')]),
+            WireMessage('assistant', [WireBlock('text', 'Looking')]),
+            WireMessage('function_call', [WireBlock('call', 'call_1')]),
+            WireMessage('function_call_output', [WireBlock('result', 'call_1')]),
+            WireMessage('assistant', [WireBlock('text', 'Found it')]),
+        ],
         marks=_needs(openai_imports_successful, 'openai'),
     ),
     MapperCase(
         'anthropic',
         _anthropic_body,
         anthropic_wire,
+        _baseline_turns(assistant='assistant', results='user'),
         results_follow_their_call=True,
-        rejects_duplicate_call_ids=True,
         rejects_empty_text=True,
         marks=_needs(anthropic_imports_successful, 'anthropic'),
     ),
@@ -289,37 +313,45 @@ MAPPER_CASES = [
         'google',
         _google_body,
         google_wire,
-        rejects_duplicate_call_ids=True,
+        _baseline_turns(assistant='model', results='user'),
         marks=_needs(google_imports_successful, 'google-genai'),
     ),
     MapperCase(
         'bedrock',
         _bedrock_body,
         bedrock_wire,
+        _baseline_turns(assistant='assistant', results='user'),
         results_follow_their_call=True,
-        rejects_duplicate_call_ids=True,
         rejects_empty_text=True,
         marks=_needs(bedrock_imports_successful, 'boto3'),
     ),
-    MapperCase('groq', _groq_body, chat_completions_wire, marks=_needs(groq_imports_successful, 'groq')),
+    MapperCase(
+        'groq',
+        _groq_body,
+        chat_completions_wire,
+        _baseline_turns(assistant='assistant', results='tool'),
+        marks=_needs(groq_imports_successful, 'groq'),
+    ),
     MapperCase(
         'mistral',
         _mistral_body,
         chat_completions_wire,
-        rejects_duplicate_call_ids=True,
+        # Mistral takes only 9-character alphanumeric ids, so its profile rewrites `call_1` to a stable hash.
+        _baseline_turns(assistant='assistant', results='tool', call_id='RksXkbv4v'),
         marks=_needs(mistral_imports_successful, 'mistralai'),
     ),
     MapperCase(
         'cohere',
         _cohere_body,
         chat_completions_wire,
-        rejects_duplicate_call_ids=True,
+        _baseline_turns(assistant='assistant', results='tool'),
         marks=_needs(cohere_imports_successful, 'cohere'),
     ),
     MapperCase(
         'huggingface',
         _huggingface_body,
         chat_completions_wire,
+        _baseline_turns(assistant='assistant', results='tool'),
         marks=_needs(huggingface_imports_successful, 'huggingface-hub'),
     ),
 ]
@@ -329,123 +361,9 @@ def _params(cases: list[MapperCase]) -> list[ParameterSet]:
     return [pytest.param(case, id=case.id, marks=case.marks) for case in cases]
 
 
-def _pinned(rejections: dict[str, str]) -> list[ParameterSet]:
-    """One strict expected failure per case named in `rejections`, the reason quoting how its API rejected the body."""
-    cases = {case.id: case for case in MAPPER_CASES}
-    return [
-        pytest.param(
-            cases[case_id], id=case_id, marks=(*cases[case_id].marks, pytest.mark.xfail(strict=True, reason=reason))
-        )
-        for case_id, reason in rejections.items()
-    ]
-
-
-# --- known findings, pinned ------------------------------------------------------------------------
-#
-# Each known finding is a property that fails on main for drawn histories. It is pinned here by a strict
-# expected failure on a hand-built reproducer, which starts passing once the finding is fixed: then delete
-# the pinned test and its `KNOWN_FINDINGS` entry. The reasons quote the API's response to the reproducer.
-
-_PROBED = 'probed 2026-10-23 (UTC)'
-_ON_BEDROCK = (
-    'us.anthropic.claude-sonnet-4-6 on Bedrock '
-    '(the suite maps with us.anthropic.claude-sonnet-5, which the probe account cannot call)'
-)
-
-_REPEATED_CALL_ID: list[ModelMessage] = [
-    ModelRequest(parts=[UserPromptPart('Look both up')]),
-    ModelResponse(parts=[ToolCallPart('lookup', {'q': 'a'}, 'call_0'), ToolCallPart('lookup', {'q': 'b'}, 'call_0')]),
-    ModelRequest(parts=[ToolReturnPart('lookup', 'a', 'call_0'), ToolReturnPart('lookup', 'b', 'call_0')]),
-]
-
-
-@pytest.mark.parametrize(
-    'case',
-    _pinned(
-        {
-            # The misspelling is the API's own, quoted verbatim.
-            'openai-chat': f"F1: gpt-5.5 rejected it, {_PROBED}: 400 \"Invalid parameter: messages with role 'tool' "
-            'must be a response to a preceeding message '  # codespell:ignore preceeding
-            "with 'tool_calls'.\" (the same body with distinct ids was accepted)",
-            'anthropic': f'F1: claude-sonnet-5-5 rejected it, {_PROBED}: 400 '
-            '"messages.1.content.1: `tool_use` ids must be unique"',
-            'google': f'F1: gemini-3.5-flash rejected it, {_PROBED}: 400 "Request contains an invalid argument." '
-            '(the same body with distinct ids was accepted)',
-            'bedrock': f'F1: {_ON_BEDROCK} rejected it, {_PROBED}: 400 ValidationException "The toolUse blocks at '
-            'messages.2.content contain duplicate Ids: call_0"',
-            'mistral': f'F1: mistral-large-latest rejected it, {_PROBED}: 400 '
-            '"Duplicate tool call id in assistant message"',
-            'cohere': f'F1: command-r7b-12-2024 rejected it, {_PROBED}: 400 "invalid tool call provided in '
-            "messages[1].tool_calls[1]: cannot have duplicate tool ids 'call_0'\"",
-        }
-    ),
-)
-async def test_f1_a_call_id_repeated_in_one_response_is_sent_repeated(case: MapperCase):
-    """A call id repeated within one response, as `end_strategy='graceful'` records across the batches it splits at
-    an output call (#9815) and as a model numbering its calls per response sends."""
-    assert duplicate_call_id_violations(case.wire((await case.body(_REPEATED_CALL_ID)).messages)) == []
-
-
-@pytest.mark.parametrize(
-    'case',
-    _pinned(
-        {
-            'anthropic': f'F3: claude-sonnet-5-5 rejected it, {_PROBED}: 400 '
-            '"messages.3: system text blocks must contain non-whitespace text"'
-        }
-    ),
-)
-async def test_f3_an_empty_mid_conversation_system_prompt_is_sent_as_empty_text(case: MapperCase):
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('Hi')]),
-        ModelResponse(parts=[TextPart('Hello')]),
-        ModelRequest(parts=[UserPromptPart('Again'), SystemPromptPart('')]),
-    ]
-    assert empty_text_violations(case.wire((await case.body(history)).messages)) == []
-
-
-@pytest.mark.skipif(not bedrock_imports_successful(), reason='boto3 not installed')
-@pytest.mark.parametrize(
-    'history',
-    [
-        pytest.param(
-            [ModelRequest(parts=[UserPromptPart('')])],
-            id='empty-prompt',
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=f'F4: {_ON_BEDROCK} rejected it, {_PROBED}: 400 ValidationException "The text field in the '
-                'ContentBlock object at messages.0.content.0 is blank. Add text to the text field, and try again."',
-            ),
-        ),
-        pytest.param(
-            [
-                ModelRequest(parts=[UserPromptPart('Hi')]),
-                ModelResponse(parts=[TextPart('Hello'), TextPart('')]),
-                ModelRequest(parts=[UserPromptPart('Again')]),
-            ],
-            id='empty-response-text',
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=f'F4: {_ON_BEDROCK} rejected it, {_PROBED}: 400 ValidationException "The model returned the '
-                'following errors: messages: text content blocks must be non-empty"',
-            ),
-        ),
-    ],
-)
-async def test_f4_empty_text_is_sent_as_an_empty_text_block(history: list[ModelMessage]):
-    assert empty_text_violations(bedrock_wire((await _bedrock_body(history)).messages)) == []
-
-
-@pytest.mark.parametrize(
-    'case',
-    _pinned(
-        {'anthropic': f'F5: claude-sonnet-5-5 rejected it, {_PROBED}: 400 "messages: at least one message is required"'}
-    ),
-)
-async def test_f5_a_lone_empty_prompt_is_sent_as_no_messages(case: MapperCase):
-    """A run's first request with an empty prompt, as `agent.run('')` makes."""
-    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('')])]
-    assert empty_message_violations(case.wire((await case.body(history)).messages)) == []
+@pytest.mark.parametrize('case', _params(MAPPER_CASES))
+async def test_projection_reads_the_mapped_body(case: MapperCase):
+    assert case.wire((await case.body(_BASELINE)).messages) == case.baseline
 
 
 CheckedProperty = Literal[
@@ -453,53 +371,201 @@ CheckedProperty = Literal[
 ]
 
 
+async def _violations(checked: CheckedProperty, case: MapperCase, history: list[ModelMessage]) -> list[str]:
+    """What the `checked` property finds wrong with the body `case` maps `history` to."""
+    body = await case.body(history)
+    wire = case.wire(body.messages)
+    match checked:
+        case 'call_ids_are_unique':
+            return duplicate_call_id_violations(wire)
+        case 'results_answer_calls':
+            return call_pairing_violations(wire, results_follow_their_call=case.results_follow_their_call)
+        case 'messages_are_not_empty':
+            return empty_message_violations(wire)
+        case 'text_is_not_empty':
+            return empty_text_violations(wire)
+        case 'deterministic':
+            stored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
+            return body_changes(body, await case.body(history)) + body_changes(body, await case.body(stored))
+        case _:
+            assert_never(checked)
+
+
+# --- known findings ------------------------------------------------------------------------------------
+#
+# A known finding is a property that fails on main for drawn histories. Its entry leaves the damage that draws it
+# out of that property on the providers it fails on, and `test_known_finding_is_still_present` pins it there with
+# a hand-built reproducer, as a strict expected failure that starts passing once the finding is fixed: then delete
+# the entry. Each pin quotes how the probed API rejected the reproducer, probed 2026-10-23 (UTC). Bedrock was
+# probed on us.anthropic.claude-sonnet-4-6, as the probe account can't call the us.anthropic.claude-sonnet-5 the
+# suite maps with.
+
+
+@dataclass(frozen=True)
+class Pin:
+    """A hand-built reproducer of a known finding, on one provider."""
+
+    case_id: str
+    history: list[ModelMessage]
+    rejection: str
+    """The probed model and its error, verbatim."""
+    label: str = ''
+    """Tells apart two reproducers on one provider."""
+
+
 @dataclass(frozen=True)
 class KnownFinding:
-    """A property that fails on main: the damage that draws it, left out of the property where it fails, and its pin."""
-
     id: str
     fails: CheckedProperty
     damage: frozenset[Damage]
-    providers: frozenset[str]
-    pinned_by: Callable[..., Awaitable[None]]
+    """The damage that draws the finding, left out of `fails` on the providers it is pinned on."""
+    tracked_by: str
+    pins: tuple[Pin, ...]
 
+    @property
+    def providers(self) -> frozenset[str]:
+        return frozenset(pin.case_id for pin in self.pins)
+
+
+_REPEATED_CALL_ID: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart('Look both up')]),
+    ModelResponse(parts=[ToolCallPart('lookup', {'q': 'a'}, 'call_0'), ToolCallPart('lookup', {'q': 'b'}, 'call_0')]),
+    ModelRequest(parts=[ToolReturnPart('lookup', 'a', 'call_0'), ToolReturnPart('lookup', 'b', 'call_0')]),
+]
+
+_WHITESPACE_PROMPT: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart('Hi')]),
+    ModelResponse(parts=[TextPart('Hello')]),
+    ModelRequest(parts=[UserPromptPart(' ')]),
+]
+
+REPEATED_CALL_ID_REJECTIONS = {
+    'openai-chat': "gpt-5.5: 400 \"Invalid parameter: messages with role 'tool' must be a response to a "
+    'preceeding message '  # codespell:ignore preceeding
+    "with 'tool_calls'.\" (the same body with distinct ids was accepted)",
+    'anthropic': 'claude-sonnet-5-5: 400 "messages.1.content.1: `tool_use` ids must be unique"',
+    'google': 'gemini-3.5-flash: 400 "Request contains an invalid argument." '
+    '(the same body with distinct ids was accepted)',
+    'bedrock': 'us.anthropic.claude-sonnet-4-6: 400 ValidationException '
+    '"The toolUse blocks at messages.2.content contain duplicate Ids: call_0"',
+    'mistral': 'mistral-large-latest: 400 "Duplicate tool call id in assistant message"',
+    'cohere': 'command-r7b-12-2024: 400 "invalid tool call provided in messages[1].tool_calls[1]: '
+    "cannot have duplicate tool ids 'call_0'\"",
+}
+"""The APIs that rejected a call id repeated in one response, and how. OpenAI Responses (gpt-5.5) and Groq
+(openai/gpt-oss-120b) accepted it; the Hugging Face probe failed on an unrelated bug. The misspelling in OpenAI's
+error is its own."""
 
 KNOWN_FINDINGS = [
     KnownFinding(
         'F1',
         'call_ids_are_unique',
         frozenset({'repeated_call_id'}),
-        frozenset(case.id for case in MAPPER_CASES if case.rejects_duplicate_call_ids),
-        test_f1_a_call_id_repeated_in_one_response_is_sent_repeated,
+        'https://github.com/pydantic/pydantic-ai/issues/11120',
+        tuple(Pin(case_id, _REPEATED_CALL_ID, rejection) for case_id, rejection in REPEATED_CALL_ID_REJECTIONS.items()),
     ),
     KnownFinding(
         'F3',
         'text_is_not_empty',
         frozenset({'empty_system_prompt'}),
-        frozenset({'anthropic'}),
-        test_f3_an_empty_mid_conversation_system_prompt_is_sent_as_empty_text,
+        'https://github.com/pydantic/pydantic-ai/issues/11121',
+        (
+            Pin(
+                'anthropic',
+                [
+                    ModelRequest(parts=[UserPromptPart('Hi')]),
+                    ModelResponse(parts=[TextPart('Hello')]),
+                    ModelRequest(parts=[UserPromptPart('Again'), SystemPromptPart('')]),
+                ],
+                'claude-sonnet-5-5: 400 "messages.3: system text blocks must contain non-whitespace text"',
+            ),
+        ),
     ),
     KnownFinding(
         'F4',
         'text_is_not_empty',
         frozenset({'empty_prompt', 'empty_response_text'}),
-        frozenset({'bedrock'}),
-        test_f4_empty_text_is_sent_as_an_empty_text_block,
+        'https://github.com/pydantic/pydantic-ai/issues/11122',
+        (
+            Pin(
+                'bedrock',
+                [ModelRequest(parts=[UserPromptPart('')])],
+                'us.anthropic.claude-sonnet-4-6: 400 ValidationException "The text field in the ContentBlock object '
+                'at messages.0.content.0 is blank. Add text to the text field, and try again."',
+                label='empty-prompt',
+            ),
+            Pin(
+                'bedrock',
+                [
+                    ModelRequest(parts=[UserPromptPart('Hi')]),
+                    ModelResponse(parts=[TextPart('Hello'), TextPart('')]),
+                    ModelRequest(parts=[UserPromptPart('Again')]),
+                ],
+                'us.anthropic.claude-sonnet-4-6: 400 ValidationException "The model returned the following errors: '
+                'messages: text content blocks must be non-empty"',
+                label='empty-response-text',
+            ),
+            Pin(
+                'bedrock',
+                _WHITESPACE_PROMPT,
+                'us.anthropic.claude-sonnet-4-6: 400 ValidationException "The model returned the following errors: '
+                'messages: text content blocks must contain non-whitespace text"',
+                label='whitespace-prompt',
+            ),
+        ),
     ),
     KnownFinding(
         'F5',
         'messages_are_not_empty',
         frozenset({'empty_prompt'}),
-        frozenset({'anthropic'}),
-        test_f5_a_lone_empty_prompt_is_sent_as_no_messages,
+        'https://github.com/pydantic/pydantic-ai/issues/11123',
+        (
+            Pin(
+                'anthropic',
+                [ModelRequest(parts=[UserPromptPart('')])],
+                'claude-sonnet-5-5: 400 "messages: at least one message is required"',
+            ),
+        ),
+    ),
+    KnownFinding(
+        'F6',
+        'text_is_not_empty',
+        frozenset({'empty_prompt'}),
+        'https://github.com/pydantic/pydantic-ai/issues/11124',
+        (
+            Pin(
+                'anthropic',
+                _WHITESPACE_PROMPT,
+                'claude-sonnet-5-5: 400 "messages: text content blocks must contain non-whitespace text"',
+            ),
+        ),
     ),
 ]
 
 
-def _drawn(case: MapperCase, checked: CheckedProperty) -> st.SearchStrategy[list[ModelMessage]]:
-    """Damaged histories, without the damage of a known finding of `checked` on `case`."""
-    known = [finding.damage for finding in KNOWN_FINDINGS if finding.fails == checked and case.id in finding.providers]
-    return histories(well_formed=False, without=frozenset[Damage]().union(*known))
+@pytest.mark.parametrize(
+    'finding,pin',
+    [
+        pytest.param(
+            finding,
+            pin,
+            id='-'.join(filter(None, [finding.id, pin.case_id, pin.label])),
+            marks=(
+                *next(case.marks for case in MAPPER_CASES if case.id == pin.case_id),
+                pytest.mark.xfail(
+                    strict=True,
+                    raises=AssertionError,
+                    reason=f'{finding.id} ({finding.tracked_by}): {pin.rejection}',
+                ),
+            ),
+        )
+        for finding in KNOWN_FINDINGS
+        for pin in finding.pins
+    ],
+)
+async def test_known_finding_is_still_present(finding: KnownFinding, pin: Pin):
+    case = next(case for case in MAPPER_CASES if case.id == pin.case_id)
+    assert await _violations(finding.fails, case, pin.history) == []
 
 
 # --- properties --------------------------------------------------------------------------------------
@@ -509,17 +575,19 @@ def _drawn(case: MapperCase, checked: CheckedProperty) -> st.SearchStrategy[list
 # async test breaks the anyio test runner for every later example.
 
 
-def _map(case: MapperCase, history: list[ModelMessage]) -> Body:
+def _check(checked: CheckedProperty, case: MapperCase, data: st.DataObject) -> list[str]:
+    """Draw a damaged history, less the damage of each known finding of `checked` on `case`, and check its body."""
+    known = [finding.damage for finding in KNOWN_FINDINGS if finding.fails == checked and case.id in finding.providers]
+    history = data.draw(histories(well_formed=False, without=frozenset[Damage]().union(*known)))
     with asyncio.Runner() as runner:
-        return runner.run(case.body(history))
+        return runner.run(_violations(checked, case, history))
 
 
-@pytest.mark.parametrize('case', _params([case for case in MAPPER_CASES if case.rejects_duplicate_call_ids]))
+@pytest.mark.parametrize('case', _params([case for case in MAPPER_CASES if case.id in REPEATED_CALL_ID_REJECTIONS]))
 @given(data=st.data())
 def test_mapped_call_ids_are_unique(case: MapperCase, data: st.DataObject):
-    """P2: no call id is sent twice."""
-    history = data.draw(_drawn(case, 'call_ids_are_unique'))
-    assert duplicate_call_id_violations(case.wire(_map(case, history).messages)) == []
+    """P2: no call id is sent twice, on the APIs that reject one sent twice."""
+    assert _check('call_ids_are_unique', case, data) == []
 
 
 @pytest.mark.parametrize('case', _params(MAPPER_CASES))
@@ -527,33 +595,25 @@ def test_mapped_call_ids_are_unique(case: MapperCase, data: st.DataObject):
 def test_mapped_results_answer_calls(case: MapperCase, data: st.DataObject):
     """P2: every result answers an earlier call (where required, one of the message right before), and every call
     is answered."""
-    history = data.draw(_drawn(case, 'results_answer_calls'))
-    wire = case.wire(_map(case, history).messages)
-    assert call_pairing_violations(wire, results_follow_their_call=case.results_follow_their_call) == []
+    assert _check('results_answer_calls', case, data) == []
 
 
 @pytest.mark.parametrize('case', _params(MAPPER_CASES))
 @given(data=st.data())
 def test_mapped_messages_are_not_empty(case: MapperCase, data: st.DataObject):
     """P4: the body has a message, and every message has content."""
-    history = data.draw(_drawn(case, 'messages_are_not_empty'))
-    assert empty_message_violations(case.wire(_map(case, history).messages)) == []
+    assert _check('messages_are_not_empty', case, data) == []
 
 
 @pytest.mark.parametrize('case', _params([case for case in MAPPER_CASES if case.rejects_empty_text]))
 @given(data=st.data())
 def test_mapped_text_is_not_empty(case: MapperCase, data: st.DataObject):
-    """P4: no text block is empty, where the API rejects one."""
-    history = data.draw(_drawn(case, 'text_is_not_empty'))
-    assert empty_text_violations(case.wire(_map(case, history).messages)) == []
+    """P4: no text block is empty or whitespace-only, where the API rejects one."""
+    assert _check('text_is_not_empty', case, data) == []
 
 
 @pytest.mark.parametrize('case', _params(MAPPER_CASES))
 @given(data=st.data())
 def test_mapping_is_deterministic(case: MapperCase, data: st.DataObject):
     """P5: mapping a history again, or after a JSON round trip, gives the same body."""
-    history = data.draw(_drawn(case, 'deterministic'))
-    body = _map(case, history)
-    assert body_changes(body, _map(case, history)) == []
-    stored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
-    assert body_changes(body, _map(case, stored)) == []
+    assert _check('deterministic', case, data) == []

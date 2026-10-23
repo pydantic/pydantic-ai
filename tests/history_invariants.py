@@ -25,7 +25,7 @@ Body checkers, over a body's messages projected to `WireMessage`s by the functio
 - `wire.unanswered_call`: a call no later result answers;
 - `wire.empty_body`: a body with no messages;
 - `wire.empty_message`: a message with no blocks;
-- `wire.empty_text`: a text block with no text;
+- `wire.empty_text`: a text block with no text, or one outside an assistant turn with only whitespace;
 - `wire.body_changed`: two mappings that should agree, such as mapping the same history twice, don't.
 """
 
@@ -298,16 +298,23 @@ def empty_message_violations(messages: Sequence[WireMessage]) -> list[str]:
     return ['wire.empty_message' for message in messages if not message.blocks]
 
 
+_ASSISTANT_ROLES = frozenset({'assistant', 'model'})
+
+
 def empty_text_violations(messages: Sequence[WireMessage]) -> list[str]:
-    """`wire.empty_text`: no text block is empty."""
+    """`wire.empty_text`: no text block is empty, and none outside an assistant turn is whitespace-only.
+
+    Anthropic and Bedrock reject both, but take a whitespace-only text block in an assistant turn (probed on
+    2026-10-23 with claude-sonnet-5-5 and, on Bedrock, us.anthropic.claude-sonnet-4-6).
+    """
     return [
         'wire.empty_text'
         for message in messages
         for block in message.blocks
-        if block.kind == 'text' and not block.value
+        if block.kind == 'text' and not (block.value if message.role in _ASSISTANT_ROLES else block.value.strip())
     ]
 
 
 def body_changes(first: object, second: object) -> list[str]:
-    """`wire.body_changed`: two mappings that should give the same request body did."""
+    """`wire.body_changed`: two mappings that should give the same request body didn't."""
     return ['wire.body_changed'] if first != second else []
