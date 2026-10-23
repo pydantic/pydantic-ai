@@ -8,9 +8,9 @@ every provider. The model's text is never changed.
 
 ## Turning citations on
 
-Models cite the results of search tools, such as [web search](native-tools.md#web-search-tool),
+Most models cite the results of search tools, such as [web search](native-tools.md#web-search-tool),
 [web fetch](native-tools.md#web-fetch-tool) and [file search](native-tools.md#file-search-tool), without being asked.
-Some providers only cite the documents you send when you ask. Add the [`Citations`][pydantic_ai.capabilities.Citations]
+Some providers only cite the documents you send, or on xAI any source, when you ask. Add the [`Citations`][pydantic_ai.capabilities.Citations]
 capability to ask them:
 
 ```python {title="document_citations.py"}
@@ -131,10 +131,11 @@ Citations are attached to text, so they only come back when your agent's output 
 [structured output](output.md), including an output type that combines `str` with a structured type, such as
 `[str, Answer]`, the answer comes back as tool call arguments, which can't carry citations.
 
-On Anthropic, the model writes its citation markup into anything that isn't text, such as
-`summary='<cite index="1-1">Items may be returned within 30 days.</cite>'`. So with `Citations()`:
+On Anthropic, and on Bedrock with Anthropic models, the model writes its citation markup into anything that isn't
+text, such as `summary='<cite index="1-1">Items may be returned within 30 days.</cite>'`. So with
+`Citations()`:
 
-- **Structured output:** Anthropic isn't asked for citations, so your fields stay clean and you get no document
+- **Structured output:** the model isn't asked for citations, so your fields stay clean and you get no document
   citations. (Anthropic rejects citations with `NativeOutput`.)
 - **A tool call forced with [`tool_choice`](tools-advanced.md#dynamic-tool-choice-via-capabilities), in a request
   with a document or Web Fetch:** raises a `UserError` before that request is sent, because the markup reaches the
@@ -142,6 +143,9 @@ On Anthropic, the model writes its citation markup into anything that isn't text
 - **Tools the model chooses to call:** citations stay on, but smaller models often write the markup into the tool's
   arguments, about half the time in our tests when the arguments summarise a document. Check arguments that end up
   in front of people, such as an email body, or leave `Citations()` off for those agents.
+
+On xAI, the model answers in text instead of calling the output tool when citations are on, so with structured output
+`Citations()` doesn't ask for them either. Tools work as usual.
 
 If you need citations, use text output.
 
@@ -155,8 +159,10 @@ fields.
 
 ## Good to know
 
-- When streaming, citations can arrive after their text: at the end of each text part on Anthropic and OpenAI
-  Responses, and at the end of the response on Google and OpenAI Chat. Read citations from the final response.
+- When streaming, citations can arrive after their text: at the end of each text part on Anthropic, Bedrock and
+  OpenAI Responses, and at the end of the response on Google and OpenAI Chat. Read citations from the final response.
+  On xAI they go on the last text part at the end of the response, so a streamed answer followed by a tool call gets
+  none.
 - The [AG-UI adapter](ui/ag-ui.md) doesn't send citations to the frontend.
 - Citation URLs, titles and excerpts come from the sources themselves, and excerpts can include text from your own
   documents. Check them before you log them or show them to users.
@@ -168,6 +174,9 @@ fields.
 | Provider | Citations | How to turn them on | Notes |
 | --- | --- | --- | --- |
 | [Anthropic](https://platform.claude.com/docs/en/build-with-claude/citations) | Web search, web fetch and documents | Web search: always. Web fetch and documents, including documents returned by tools: `Citations()`. [`WebFetchTool(enable_citations=True)`][pydantic_ai.native_tools.WebFetchTool.enable_citations] turns them on for web fetch only | Anchors cover whole text parts. A fetched PDF is a document source. Citations of search results you provide yourself aren't included |
+| [Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_CitationsContentBlock.html) | Documents, on Anthropic models | `Citations()`, for text and PDF documents, including documents returned by tools | Other models on Bedrock don't support citations, so they ignore the setting. Anchors cover whole text parts. A document's title is the name Pydantic AI gives it, such as `Document 1`. Documents read from S3 aren't cited, as Bedrock doesn't allow it. With citations on, a text document must be UTF-8, or Pydantic AI raises a `UserError` |
 | [Google Gemini API](https://ai.google.dev/gemini-api/docs/google-search) | Google Search, file search and web fetch | Turn on the tool | Google Search URLs are Google redirect links, and titles are often just the site's domain |
 | [Google Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/grounding/overview) | Google Search | Turn on the tool | Same as the Gemini API |
 | [OpenAI Chat and Responses](https://platform.openai.com/docs/guides/tools-web-search) | Web pages, and files on Responses | Turn on web search, or file search for files | Other annotation types, such as `container_file_citation`, are only available with [`openai_include_raw_annotations`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_include_raw_annotations] |
+| [OpenRouter](https://openrouter.ai/docs/guides/features/server-tools/web-search) | Web pages | Turn on web search. Perplexity Sonar models always search, and OpenRouter rejects them with the web search tool | OpenRouter doesn't say where in the text a citation belongs, so citations have no anchor |
+| [xAI](https://docs.x.ai/developers/tools/citations) | Web, X and collection citations | `Citations()`, with a search tool such as web search or X search | Turning citations on changes the answer: the model writes Markdown markers such as `[[1]](https://x.com/...)` into it, and the anchor covers the marker. Collection citations are document sources |
