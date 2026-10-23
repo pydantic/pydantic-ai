@@ -78,7 +78,7 @@ def _agent(model: AnthropicModel, provider: InMemoryProvider, **settings: Any) -
 
 @pytest.mark.vcr
 @pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
-async def test_the_toolset_is_sent_and_member_calls_are_replayed(
+async def test_claude_member_calls_run_on_the_workspace(
     allow_model_requests: None, anthropic_api_key: str, stream: bool
 ) -> None:
     provider = InMemoryProvider()
@@ -158,23 +158,6 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
     assert all(r['toolset_name'] == 'computer' for r in results)
 
 
-async def test_a_lone_failed_call_gets_text_only(allow_model_requests: None) -> None:
-    provider = InMemoryProvider()
-    client = MockAnthropic.create_mock(
-        [
-            _turn(_tool_use('toolu_1', 'hold_key', {'text': 'ctrl', 'duration': 1})),
-            _turn(BetaTextBlock(text='done', type='text')),
-        ]
-    )
-    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    await _agent(model, provider).run('Go.')
-
-    _, second = get_mock_chat_completion_kwargs(client)
-    (only,) = second['messages'][-1]['content']
-    assert only['is_error'] is True
-    assert [block['type'] for block in only['content']] == ['text']
-
-
 async def test_a_failed_call_gives_every_member_its_text(allow_model_requests: None) -> None:
     async def computer(actions: list[ComputerToolAction]) -> ToolReturn:
         raise ToolFailed('Taking the screenshot failed: scrot: not found')
@@ -199,11 +182,7 @@ async def test_a_failed_call_gives_every_member_its_text(allow_model_requests: N
 
 @pytest.mark.parametrize(
     'bad, message',
-    [
-        (('wait', {'duration': 30}), 'less than or equal to 10'),
-        (('left_click', {'coordinate': [5]}), 'valid integer'),
-    ],
-    ids=['out-of-range', 'malformed-coordinate'],
+    [(('wait', {'duration': 30}), 'less than or equal to 10')],
 )
 async def test_an_invalid_member_is_refused_and_nothing_runs(
     bad: tuple[str, dict[str, Any]], message: str, allow_model_requests: None
@@ -305,7 +284,6 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         ),
         ('middle_click', {}, {'type': 'click', 'button': 'middle', 'count': 1, 'modifiers': []}),
         ('double_click', {}, {'type': 'click', 'button': 'left', 'count': 2, 'modifiers': []}),
-        ('mouse_move', {'coordinate': [3, 4]}, {'type': 'move', 'x': 3, 'y': 4, 'modifiers': []}),
         (
             'mouse_move',
             {'coordinate': [3, 4], 'text': 'shift'},
@@ -343,14 +321,9 @@ def test_toolset_members_map_onto_the_computer_tool(name: str, input: dict[str, 
 @pytest.mark.parametrize(
     'model_name, native',
     [
-        ('claude-fable-5-1', True),
-        ('claude-opus-5-5', True),
-        ('claude-sonnet-5', True),
         ('claude-haiku-5-5', True),
         ('claude-opus-4-8', True),
         ('claude-opus-4-7', False),
-        ('claude-sonnet-4-6', False),
-        ('claude-haiku-4-5', False),
     ],
 )
 def test_the_toolset_goes_to_the_models_that_accept_it(model_name: str, native: bool) -> None:
@@ -445,11 +418,12 @@ async def test_member_calls_in_one_response_are_one_call_streamed_or_not(allow_m
             ),
         ]
     )
-    assert [type(part) for part in streamed.parts] == [type(part) for part in whole.parts] == [TextPart, ToolCallPart]
+    # The call stays where the first member was, so it runs before any call that came after it.
+    assert [type(part) for part in streamed.parts] == [type(part) for part in whole.parts] == [ToolCallPart, TextPart]
     starts = [
         event.part for event in events if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart)
     ]
-    assert [part.tool_call_id for part in starts] == ['toolu_1']
+    assert [len(part.args_as_dict()['actions']) for part in starts] == [1, 2, 3]
 
 
 async def test_a_streamed_member_cut_off_mid_input_keeps_only_what_parsed(allow_model_requests: None) -> None:

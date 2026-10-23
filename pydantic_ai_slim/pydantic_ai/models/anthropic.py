@@ -2026,6 +2026,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         }
         computer_def = computer_tool(model_request_parameters)
         computer_blocks: list[dict[str, Any]] = []
+        computer_index = 0
         for item in response.content:
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
@@ -2073,6 +2074,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
                 if _is_computer_member(item, computer_def):
+                    if not computer_blocks:
+                        computer_index = len(items)
                     computer_blocks.append(_computer_block(item))
                     continue
                 items.append(
@@ -2085,8 +2088,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         if computer_def is not None and computer_blocks:
             # A response's member calls are one batch, run in order and stopped at the first failure, so they
-            # become one `computer` call, whatever other blocks sit between them.
-            items.append(_computer_call_part(computer_blocks, computer_def.name, self.system))
+            # become one `computer` call where the first of them was, whatever other blocks sit between them.
+            items.insert(computer_index, _computer_call_part(computer_blocks, computer_def.name, self.system))
 
         finish_reason: FinishReason | None = None
         provider_details: dict[str, Any] | None = None
@@ -3864,7 +3867,8 @@ class AnthropicStreamedResponse(StreamedResponse):
         with _map_api_errors(self._model_name, self._model_id_namespace):
             current_block: BetaContentBlock | None = None
             ignored_server_tool_use_indices: set[int] = set()
-            # A response's computer toolset calls are one batch: they stream as one `computer` call, emitted at the end.
+            # A response's computer toolset calls are one batch: they stream as one `computer` call where the first
+            # of them was, updated as each one completes.
             computer_def = computer_tool(self.model_request_parameters)
             computer_group: list[dict[str, Any]] = []
             computer_input: list[str] = []
@@ -4103,11 +4107,15 @@ class AnthropicStreamedResponse(StreamedResponse):
                         )
 
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
-                    if _is_computer_member(current_block, computer_def):
+                    if computer_def is not None and _is_computer_member(current_block, computer_def):
                         block = _computer_block(current_block)
                         # A member cut off mid-input (`max_tokens`) keeps what parsed; validation refuses what's missing.
                         block['input'] = pydantic_core.from_json(''.join(computer_input) or '{}', allow_partial=True)
                         computer_group.append(block)
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=computer_group[0]['id'],
+                            part=_computer_call_part(computer_group, computer_def.name, self.provider_name),
+                        )
                     elif event.index in ignored_server_tool_use_indices:
                         ignored_server_tool_use_indices.remove(event.index)
                     elif isinstance(current_block, BetaMCPToolUseBlock):
@@ -4135,11 +4143,6 @@ class AnthropicStreamedResponse(StreamedResponse):
                     current_block = None
                 elif isinstance(event, BetaRawMessageStopEvent):  # pragma: no branch
                     current_block = None
-            if computer_def is not None and computer_group:
-                yield self._parts_manager.handle_part(
-                    vendor_part_id=computer_group[0]['id'],
-                    part=_computer_call_part(computer_group, computer_def.name, self.provider_name),
-                )
 
     async def close_stream(self) -> None:
         await self._response.source.close()
