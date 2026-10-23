@@ -1149,6 +1149,15 @@ def _keep_default_output_mode(
 # runs the whole chain inside one durable unit.
 
 
+def _pending_snapshot(
+    request_context: ModelRequestContext, response: _messages.ModelResponse
+) -> tuple[ModelRequestContext, _messages.ModelResponse] | None:
+    """The pending `response` a request returned, as it was before hooks could change it in place, if it's pending."""
+    if response.state != 'suspended':
+        return None
+    return request_context, replace(response, provider_details=deepcopy(response.provider_details))
+
+
 async def _settle_pending(
     pending: tuple[ModelRequestContext, _messages.ModelResponse] | None, accepted: _messages.ModelResponse | None
 ) -> None:
@@ -1667,6 +1676,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         # that cancelled path `finish` is never reached today (no metrics of any
                         # kind are recorded), so this is symmetry rather than an observable fix.
                         time_to_first_chunk = sr.time_to_first_chunk(request_start)
+                    # Before the wrapper is exited, so a pending response is still settled if exiting it fails.
+                    _pending = _pending_snapshot(req_ctx, sr.get())
             except BaseException:
                 if stream_error is not None:
                     # The consumer stopped the stream, so the graph task cancelled this one. Record what the
@@ -1682,8 +1693,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # Streaming core errors surface in the consumer task, which cancels this wrap task;
             # `on_model_request_error` cannot recover an error after streaming has begun.
             response = sr.get()
-            if response.state == 'suspended':
-                _pending = req_ctx, response
             _handler_response = response
             _handler_usage_recorded = True
             self._record_response_usage(ctx, response, request_context=req_ctx)
@@ -1942,8 +1951,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         on_progress=on_progress,
                         return_pending=ctx.deps.output_schema.allows_pending_model_response,
                     )
-                if response.state == 'suspended':
-                    _pending = req_ctx, response
+                    # Before the wrapper is exited, so a pending response is still settled if exiting it fails.
+                    _pending = _pending_snapshot(req_ctx, response)
                 _handler_response = response
                 _handler_usage_recorded = True
                 self._record_response_usage(ctx, response, request_context=req_ctx)

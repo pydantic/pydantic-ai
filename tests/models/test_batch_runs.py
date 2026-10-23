@@ -55,6 +55,7 @@ from pydantic_ai.models.batch import Batch, BatchRequest, BatchResult, EncodedBa
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import UsageLimits
 
@@ -886,7 +887,7 @@ async def test_a_run_waiting_in_process_still_cancels_its_batch_when_cancelled()
 class _RejectPendingOnce(AbstractCapability[object]):
     """Rejects the first pending response it sees, the way a response handler or a fallback would."""
 
-    reject: Literal['retry', 'replace', 'raise']
+    reject: Literal['retry', 'replace', 'mutate', 'raise']
     rejected: int = 0
 
     async def after_model_request(
@@ -899,13 +900,18 @@ class _RejectPendingOnce(AbstractCapability[object]):
             raise ModelRetry('Not this one.')
         if self.reject == 'replace':
             return ModelResponse(parts=[TextPart('replaced')])
+        if self.reject == 'mutate':
+            response.parts = [TextPart('replaced')]
+            response.state = 'complete'
+            response.provider_details = None
+            return response
         raise RuntimeError('rejected')
 
 
 @pytest.mark.parametrize('stream', [False, True], ids=['run', 'run_stream'])
-@pytest.mark.parametrize('reject', ['retry', 'replace', 'raise'])
+@pytest.mark.parametrize('reject', ['retry', 'replace', 'mutate', 'raise'])
 async def test_a_pending_response_a_hook_rejects_is_withdrawn_from_its_batch(
-    reject: Literal['retry', 'replace', 'raise'], stream: bool
+    reject: Literal['retry', 'replace', 'mutate', 'raise'], stream: bool
 ) -> None:
     """Nothing collects a request whose pending response a hook rejected, so its batch is cancelled."""
     wrapped = SlowBatchTestModel(pending_checks=10**6)
@@ -934,6 +940,35 @@ async def test_a_pending_response_a_hook_rejects_is_withdrawn_from_its_batch(
     else:
         assert output == 'replaced'
         assert len(wrapped.created) == 1
+    assert wrapped.canceled == [wrapped.created[0].id]
+
+
+class _FailingExit(WrapperModel):
+    async def __aexit__(self, *args: object) -> bool | None:
+        await super().__aexit__(*args)  # pyright: ignore[reportArgumentType]
+        raise RuntimeError('teardown failed')
+
+
+@dataclass
+class _WrapWithFailingExit(AbstractCapability[object]):
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        return _FailingExit(model)
+
+
+@pytest.mark.parametrize('stream', [False, True], ids=['run', 'run_stream'])
+async def test_a_pending_response_is_withdrawn_when_exiting_a_wrapper_around_it_fails(stream: bool) -> None:
+    wrapped = SlowBatchTestModel(pending_checks=10**6)
+    agent = Agent(
+        wrapped,
+        output_type=[str, PendingModelResponse],
+        capabilities=[_WrapWithFailingExit(), BatchModelRequests(**FAST_BATCH_SETTINGS)],
+    )
+    with pytest.raises(RuntimeError, match='teardown failed'):
+        if stream:
+            async with agent.run_stream('Hello') as result:
+                await result.get_output()
+        else:
+            await agent.run('Hello')
     assert wrapped.canceled == [wrapped.created[0].id]
 
 
