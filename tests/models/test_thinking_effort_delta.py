@@ -247,6 +247,24 @@ async def test_anthropic_effort_change_is_a_system_entry(allow_model_requests: N
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_anthropic_without_the_opening_effort_sends_the_current_one(allow_model_requests: None):
+    """A history processor that dropped the window's opening part leaves the current effort as the request-level one."""
+    mock_client = MockAnthropic.create_mock(_anthropic_text('Shelf 40, bin 7.'))
+    model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Where is item 12?'), ThinkingEffortDeltaPart(effort='medium')]),
+        ModelResponse(parts=[TextPart('Shelf 12, bin 1.')]),
+        ModelRequest(parts=[UserPromptPart('And item 40?')]),
+    ]
+
+    await Agent(model).run(message_history=history, model_settings=AnthropicModelSettings(thinking='xhigh'))
+
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert request['output_config'] == {'effort': 'xhigh'}
+    assert request['messages'][-1] == {'role': 'system', 'content': [], 'output_config': {'effort': 'xhigh'}}
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 async def test_anthropic_effort_change_is_counted(allow_model_requests: None):
     mock_client = MockAnthropic.create_mock(_anthropic_text('unused'))
     model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(anthropic_client=mock_client))
