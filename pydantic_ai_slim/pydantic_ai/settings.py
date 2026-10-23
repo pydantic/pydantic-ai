@@ -559,7 +559,9 @@ class ModelSettings(TypedDict, total=False):
     for reasoning models).
 
     Provider-specific thinking settings (e.g., `anthropic_thinking`,
-    `openai_reasoning_effort`) take precedence over this unified field.
+    `openai_reasoning_effort`) take precedence over this unified field. When one comes from a broader
+    scope than this field, such as the model's `settings` while this is set for a run, a `UserWarning`
+    names both.
 
     Listed below are the model classes that translate this field onto the request. A class whose models
     always reason and take no thinking parameter is not listed at all (Cohere); where only some of a

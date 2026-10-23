@@ -67,7 +67,7 @@ With durable execution such as Temporal, read the token from the run's deps, not
 
 ## Multiple connections
 
-The capability's `id` defaults to `linear`, so `defer_loading=True` works without one. `None` and `''` also mean `linear`. To use two Linear accounts in one agent, give each `Linear` its own `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same. Two with the same `id` but different settings raise when the agent is built.
+The capability's `id` defaults to `linear`, so `defer_loading=True` works without one. With `None` or `''` it still connects under `linear`, but that `Linear` is not combined with others. To use two Linear accounts in one agent, give each `Linear` its own `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same. Two with the same `id` but different settings raise when the agent is built.
 
 ## Provider settings
 

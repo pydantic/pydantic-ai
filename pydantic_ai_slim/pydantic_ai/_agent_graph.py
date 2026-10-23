@@ -2134,7 +2134,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # This pass folds a `ModelRequest` that `prepare_messages` inserted into the request ahead of
             # it, behind that request's `CachePoint`, so an inserted message isn't guaranteed to reach the
             # wire as a turn of its own. A rewrite that needs its own turn belongs in the adapter, where
-            # the rendered position is known (see the carried reasoning in `AnthropicModel._map_message`).
+            # the rendered position is known (see the carried reasoning in
+            # `AnthropicModel._append_model_response_turns`).
             messages = (
                 _clean_message_history(prepared, repair_last_response=True) if prepared is not messages else prepared
             )
