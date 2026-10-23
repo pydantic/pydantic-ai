@@ -235,7 +235,7 @@ try:
     )
     from anthropic.types.model_param import ModelParam
 
-    from ._bedrock_count_tokens import BEDROCK_ANTHROPIC_VERSION
+    from ._bedrock_count_tokens import BEDROCK_ANTHROPIC_VERSION, count_tokens_via_bedrock
     from ._cache_control import (
         ANTHROPIC_CACHEABLE_PARAM_TYPES,
         add_cache_control_param,
@@ -1614,8 +1614,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 else model_settings.get('extra_body')
             )
             if isinstance(client, AsyncAnthropicBedrock):
-                from ._bedrock_count_tokens import count_tokens_via_bedrock
-
                 return await count_tokens_via_bedrock(
                     client,
                     self._model_name,
