@@ -276,8 +276,10 @@ def test_every_spelling_complexipy_honors_needs_a_reason(repo: Path, capsys: pyt
     assert 'give the ignore a reason' in out
 
 
-def test_an_ignore_with_a_reason_passes_and_is_reported(repo: Path, capsys: pytest.CaptureFixture[str]):
-    marker = '  # complexipy: ignore (one branch per value)'
+@pytest.mark.parametrize(
+    'marker', ['  # complexipy: ignore (one branch per value)', '  # complexipy: ignore(one branch per value)']
+)
+def test_an_ignore_with_a_reason_passes_and_is_reported(repo: Path, capsys: pytest.CaptureFixture[str], marker: str):
     _write(repo, 'pkg/debt.py', _ifs('debt', 6, marker=marker) + '\n\n' + _ifs('small', 2))
     _stage(repo)
 

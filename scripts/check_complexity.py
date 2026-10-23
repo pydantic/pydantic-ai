@@ -35,7 +35,7 @@ GUIDE = 'agent_docs/complexity.md'
 # complexipy drops a function on either marker, in any case and with any text after it. Only a `(reason)`
 # directly after the marker counts as a reason.
 _IGNORE = re.compile(
-    r'#\s*(?:complexipy\s*:\s*ignore|noqa\s*:\s*complexipy)\S*\s*(?:\((?P<reason>[^)]*)\))?', re.IGNORECASE
+    r'#\s*(?:complexipy\s*:\s*ignore|noqa\s*:\s*complexipy)[^\s(]*\s*(?:\((?P<reason>[^)]*)\))?', re.IGNORECASE
 )
 
 _Failure = Literal['new', 'crossed', 'worsened']
