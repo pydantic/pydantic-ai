@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import TypeVar
+from typing import Any, TypeVar, cast
 
 import httpx
 import pytest
@@ -12,10 +12,19 @@ from fastmcp.client.transports import StreamableHttpTransport
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, AgentRunResult
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.messages import ModelRequest
+from pydantic_ai.messages import (
+    DeferredToolRequests,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
@@ -232,11 +241,22 @@ def fake_linear() -> FastMCP:
     """A stand-in for Linear's server, so the documented examples run offline."""
     server = FastMCP('linear-fake')
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    @server.tool()
     def list_issues() -> str:
-        return 'issues'  # pragma: no cover
+        return 'issues'
 
     return server
+
+
+def calls_list_issues(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Calls `list_issues` once when the run offers it, then answers."""
+    if len(messages) == 1 and any(tool.name == 'list_issues' for tool in info.function_tools):
+        return ModelResponse(parts=[ToolCallPart('list_issues', {})])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+def tool_returns(result: AgentRunResult[object]) -> list[object]:
+    return [part.content for part in result.new_messages()[-2].parts if isinstance(part, ToolReturnPart)]
 
 
 class TestDocs:
@@ -245,19 +265,38 @@ class TestDocs:
     )
     def test_documented_examples_run(self, page: str, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv('LINEAR_ACCESS_TOKEN', 'docs-token')
-        urls: list[str] = []
+        connections: list[tuple[str, str | None]] = []
 
         # Takes the arguments `Linear` passes `MCPToolset`, and connects to `fake_linear()` instead.
         def offline(
             client: str, *, id: str | None, include_instructions: bool, auth: str | None = None
         ) -> MCPToolset[object]:
-            urls.append(client)
+            connections.append((client, auth))
             return MCPToolset(fake_linear(), id=id, include_instructions=include_instructions)
 
         monkeypatch.setattr('pydantic_ai_harness.linear._capability.MCPToolset', offline)
+        model = FunctionModel(calls_list_issues)
         quickstart, per_user, approval = python_blocks(page)
-        _, runs = run_block(quickstart)
-        assert (len(runs), urls) == (1, ['https://mcp.linear.app/mcp/readonly'])
-        assert isinstance(run_block(per_user)[0]['agent'], Agent)
-        assert isinstance(run_block(approval)[0]['agent'], Agent)
-        assert urls[-1] == 'https://mcp.linear.app/mcp'
+
+        namespace, runs = run_block(quickstart)
+        assert len(runs) == 1
+        agent = cast(Agent[None, str], namespace['agent'])
+        assert tool_returns(agent.run_sync('List my open issues', model=model)) == ['issues']
+        assert connections == [('https://mcp.linear.app/mcp/readonly', 'docs-token')]
+
+        namespace, _ = run_block(per_user)
+        agent = cast(Agent[Any, str], namespace['agent'])
+        deps_type = cast(Callable[[str | None], object], namespace['Deps'])
+        assert tool_returns(agent.run_sync('List my open issues', deps=deps_type('user-token'), model=model)) == [
+            'issues'
+        ]
+        assert connections[-1] == ('https://mcp.linear.app/mcp', 'user-token')
+        assert agent.run_sync('List my open issues', deps=deps_type(None), model=model).output == 'done'
+        assert len(connections) == 2
+
+        namespace, _ = run_block(approval)
+        agent = cast(Agent[None, str | DeferredToolRequests], namespace['agent'])
+        output = agent.run_sync('List my open issues', model=model).output
+        assert isinstance(output, DeferredToolRequests)
+        assert [call.tool_name for call in output.approvals] == ['list_issues']
+        assert connections[-1] == ('https://mcp.linear.app/mcp', 'docs-token')
