@@ -8,7 +8,7 @@ from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 import pytest
@@ -803,9 +803,21 @@ async def test_consumed_background_report_does_not_start_another_turn(
     assert shell.session.messages == []
 
 
+def task_texts(request: ModelMessage) -> list[str]:
+    """The task reports and questions a request carries."""
+    assert isinstance(request, ModelRequest)
+    return [
+        item.content
+        for part in request.parts
+        if is_task_report(part)
+        for item in part.content
+        if isinstance(item, TextContent)
+    ]
+
+
 @pytest.mark.parametrize('timing', ['idle', 'active'])
 async def test_a_background_task_question_reaches_the_parent_which_answers_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, timing: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, timing: Literal['idle', 'active']
 ) -> None:
     """The question shows once, whether it comes during a turn or wakes the idle parent, as a report does."""
     release, idle, continued, asked = (asyncio.Event() for _ in range(4))
@@ -832,17 +844,6 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
     # The task panel's rows and the main run's stream both render through it.
     monkeypatch.setattr('pydantic_clai2.runtime.tasks.task_row', counted)
     monkeypatch.setattr('pydantic_clai2.runtime.session_runtime.task_row', counted)
-
-    def task_texts(request: ModelMessage) -> list[str]:
-        """The task reports and questions the request carries."""
-        assert isinstance(request, ModelRequest)
-        return [
-            item.content
-            for part in request.parts
-            if is_task_report(part)
-            for item in part.content
-            if isinstance(item, TextContent)
-        ]
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         first, last = messages[0], messages[-1]
@@ -1003,16 +1004,6 @@ async def test_a_question_asked_after_a_turns_last_read_starts_the_next_turn(
                 ending.set()
                 await queued.wait()
             return result
-
-    def task_texts(request: ModelMessage) -> list[str]:
-        assert isinstance(request, ModelRequest)
-        return [
-            item.content
-            for part in request.parts
-            if is_task_report(part)
-            for item in part.content
-            if isinstance(item, TextContent)
-        ]
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         first, last = messages[0], messages[-1]
