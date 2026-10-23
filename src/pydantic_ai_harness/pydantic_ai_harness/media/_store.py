@@ -12,6 +12,7 @@ import inspect
 import json
 import re
 import sqlite3
+import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +23,9 @@ import anyio.to_thread
 
 _URI_SCHEME = 'media+sha256://'
 _HEX_RE = re.compile(r'^[0-9a-f]{64}$')
+
+_BUSY_TIMEOUT_SECONDS = 30.0
+"""How long a connection `SqliteMediaStore` opens waits for another writer, as `SqliteStepStore`'s do."""
 
 # Sentinel: empty, shareable, immutable. Used as the default `context` on every
 # `MediaStore` method. Pulled into a module constant so a default-bound empty
@@ -48,11 +52,11 @@ class MediaContext:
       key strategies that want a recognisable extension, and for resolvers
       that need to set `Content-Disposition` on presigned URLs.
     - `metadata` -- free-form `dict[str, str]` of user-supplied tags.
-      Persisted by all four concrete stores (`SqliteMediaStore` as a JSON
-      column, `S3MediaStore` as signed `x-amz-meta-*` headers,
-      `DiskMediaStore` as a sidecar JSON file, `MongoMediaStore` as a JSON
-      string on the manifest document). Read back via
-      `MediaStore.get_metadata(uri)`.
+      Persisted by every concrete store (`SqliteMediaStore` and
+      `PostgresMediaStore` as a JSON column, `S3MediaStore` as signed
+      `x-amz-meta-*` headers, `DiskMediaStore` as a sidecar JSON file,
+      `MongoMediaStore` as a JSON string on the manifest document). Read back
+      via `MediaStore.get_metadata(uri)`.
     """
 
     media_type: str | None = None
@@ -94,7 +98,7 @@ def default_key_strategy(uri: str, context: MediaContext) -> str:
     return f'{parse_media_uri(uri)}.bin'
 
 
-async def _resolve_public_url(
+async def resolve_public_url(
     resolver: PublicUrlResolver | None,
     uri: str,
     context: MediaContext,
@@ -168,6 +172,14 @@ class MediaStore(Protocol):
     extensibility. New context fields don't break existing call sites or
     user-supplied callables.
 
+    `get` and `get_metadata` raise `FileNotFoundError` for a URI that was
+    never stored. `get_metadata` returns the metadata of the first `put` on
+    `SqliteMediaStore`, `PostgresMediaStore`, and `MongoMediaStore`. On
+    `DiskMediaStore` a later `put` that passes metadata replaces it; on
+    `S3MediaStore` every `put` replaces it, and one without metadata clears it.
+    On those two, that holds for puts that resolve to the same key, which a
+    custom `key_strategy` may not.
+
     `public_url(uri)` returns a URL the model can fetch directly, or `None`
     if the store can't or hasn't been configured to produce one. The forthcoming
     `MediaExternalizer` capability uses this to rewrite `BinaryContent` parts
@@ -210,8 +222,9 @@ class DiskMediaStore:
 
     **Metadata persistence**: `context.metadata` is written to a sidecar
     JSON file (`<resolved>.meta.json`) alongside the blob and read back
-    via `get_metadata(uri)`. Sidecars are written atomically (tmp +
-    rename) and are missing only when no metadata was supplied.
+    via `get_metadata(uri)`. A later `put` with metadata replaces the
+    sidecar. Blobs and sidecars are written atomically through a uniquely
+    named temporary file, so concurrent `put`s of the same bytes are safe.
     """
 
     def __init__(
@@ -226,6 +239,10 @@ class DiskMediaStore:
         self._public_url_resolver = public_url
 
     def _path_for(self, uri: str, context: MediaContext) -> Path:
+        # Validate before the strategy runs: a custom strategy may splice the
+        # URI into a path without parsing it, and a URI read back from a
+        # snapshot is not guaranteed to be one this store wrote.
+        parse_media_uri(uri)
         relative = self._key_strategy(uri, context)
         candidate = Path(relative)
         # `Path('/root') / '/abs'` discards `/root` and returns `/abs` -- an absolute
@@ -242,14 +259,9 @@ class DiskMediaStore:
         path = self._path_for(uri, context)
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
-            tmp = path.with_suffix(path.suffix + '.tmp')
-            tmp.write_bytes(data)
-            tmp.replace(path)
+            _write_atomically(path, data)
         if context.metadata:
-            meta_path = path.with_name(path.name + '.meta.json')
-            meta_tmp = meta_path.with_suffix('.json.tmp')
-            meta_tmp.write_text(json.dumps(dict(context.metadata)))
-            meta_tmp.replace(meta_path)
+            _write_atomically(path.with_name(path.name + '.meta.json'), json.dumps(dict(context.metadata)).encode())
         return uri
 
     async def get(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bytes:
@@ -268,30 +280,42 @@ class DiskMediaStore:
         return self._path_for(uri, context).exists()
 
     async def public_url(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> str | None:
-        return await _resolve_public_url(self._public_url_resolver, uri, context)
+        return await resolve_public_url(self._public_url_resolver, uri, context)
 
     async def get_metadata(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> Mapping[str, str]:
         return await anyio.to_thread.run_sync(self._sync_get_metadata, uri, context)
 
     def _sync_get_metadata(self, uri: str, context: MediaContext) -> Mapping[str, str]:
         path = self._path_for(uri, context)
+        if not path.exists():
+            raise FileNotFoundError(f'media not found: {uri}')
         meta_path = path.with_name(path.name + '.meta.json')
         if not meta_path.exists():
             return _EMPTY_METADATA
-        return _coerce_metadata_mapping(json.loads(meta_path.read_text()))
+        return coerce_metadata_mapping(json.loads(meta_path.read_text()))
+
+
+def _write_atomically(path: Path, data: bytes) -> None:
+    """Write `data` to `path` through a temporary file no concurrent writer shares."""
+    tmp = path.with_name(f'{path.name}.{uuid.uuid4().hex}.tmp')
+    try:
+        tmp.write_bytes(data)
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _is_object_dict(raw: object) -> TypeGuard[dict[object, object]]:
     return isinstance(raw, dict)
 
 
-def _coerce_metadata_mapping(raw: object) -> Mapping[str, str]:
+def coerce_metadata_mapping(raw: object) -> Mapping[str, str]:
     if not _is_object_dict(raw):
         raise ValueError(f'metadata payload must be a JSON object, got {type(raw).__name__}')
     out: dict[str, str] = {}
     for key, value in raw.items():
         if not isinstance(key, str) or not isinstance(value, str):
-            raise ValueError(f'metadata entries must be str→str, got {key!r}: {value!r}')
+            raise ValueError(f'metadata entries must map str to str, got {key!r}: {value!r}')
         out[key] = value
     return out
 
@@ -302,7 +326,8 @@ class SqliteMediaStore:
     Pass either a path to a SQLite file (created on demand) or an existing
     `sqlite3.Connection`. When a connection is passed the caller owns its
     lifecycle; when a path is passed each call opens a short-lived connection
-    inside the worker thread (safe across event-loop threads).
+    inside the worker thread (safe across event-loop threads), which waits up
+    to 30 seconds for another writer before raising `database is locked`.
 
     A caller-owned connection **must** be created with
     `check_same_thread=False`. Store methods dispatch SQL onto worker threads
@@ -324,9 +349,15 @@ class SqliteMediaStore:
     ```
 
     `INSERT OR IGNORE` makes writes idempotent -- the second `put` with the
-    same content is a no-op, not an overwrite. `metadata` is stored as
-    canonical JSON of `context.metadata` (empty mapping → `'{}'`) and
-    read back via `get_metadata(uri)`.
+    same content is a no-op, not an overwrite. `metadata` is stored as JSON
+    of `context.metadata` (an empty mapping is stored as `'{}'`) and read
+    back via `get_metadata(uri)`.
+
+    On a caller-owned connection, `put` commits its insert when the caller
+    had no transaction open, and otherwise leaves the commit to the caller
+    (a Python 3.12+ `autocommit=False` connection always has one open).
+    Creating the table on the store's first call commits nothing either: inside
+    a caller transaction, the table lands when the caller commits.
 
     There is no `key_strategy=` parameter: SqliteMediaStore is
     content-addressed and the digest IS the primary key -- any user-chosen
@@ -363,15 +394,20 @@ class SqliteMediaStore:
             'size_bytes INTEGER NOT NULL, '
             'metadata TEXT)'
         )
-        conn.commit()
-        self._schema_ready = True
+        # Never commit here: on a caller-owned connection that would commit the
+        # caller's own pending work. Inside a caller transaction the table lands
+        # only if the caller commits, so check for it again on the next call.
+        if not conn.in_transaction:
+            self._schema_ready = True
 
     def _open(self) -> sqlite3.Connection:
         if self._connection is not None:
             return self._connection
         assert self._database is not None
         self._database.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self._database, isolation_level=None, check_same_thread=False)
+        conn = sqlite3.connect(
+            self._database, isolation_level=None, check_same_thread=False, timeout=_BUSY_TIMEOUT_SECONDS
+        )
         conn.execute('PRAGMA journal_mode=WAL').close()
         return conn
 
@@ -389,11 +425,17 @@ class SqliteMediaStore:
         conn = self._open()
         try:
             self._ensure_schema(conn)
+            in_caller_transaction = conn.in_transaction
             conn.execute(
                 f'INSERT OR IGNORE INTO {self._table} '
                 '(sha256, media_type, bytes, size_bytes, metadata) VALUES (?, ?, ?, ?, ?)',
                 (digest, context.media_type, data, len(data), metadata_json),
             )
+            # Python's default `isolation_level` opens an implicit transaction for
+            # the INSERT; without this commit a caller-owned connection would hold
+            # the write lock and lose the row on close.
+            if not in_caller_transaction:
+                conn.commit()
         finally:
             self._maybe_close(conn)
         return uri
@@ -427,7 +469,7 @@ class SqliteMediaStore:
         return row is not None
 
     async def public_url(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> str | None:
-        return await _resolve_public_url(self._public_url_resolver, uri, context)
+        return await resolve_public_url(self._public_url_resolver, uri, context)
 
     async def get_metadata(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> Mapping[str, str]:
         digest = parse_media_uri(uri)
@@ -442,4 +484,4 @@ class SqliteMediaStore:
             self._maybe_close(conn)
         if row is None:
             raise FileNotFoundError(f'media not found: {digest}')
-        return _coerce_metadata_mapping(json.loads(row[0]))
+        return coerce_metadata_mapping(json.loads(row[0]))
