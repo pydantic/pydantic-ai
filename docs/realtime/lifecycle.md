@@ -5,7 +5,7 @@ description: "Manage a Pydantic AI realtime session's connection: reconnect afte
 # Connection lifecycle
 
 A realtime model uses one persistent provider connection. Your backend owns that session and the
-media bridge to the user (see [Connecting a frontend](deployment.md)); a reconnect policy can
+media bridge to the user (see [Deployment](deployment.md)); a reconnect policy can
 recover dropped connections and provider session limits without changing the application event
 loop.
 
