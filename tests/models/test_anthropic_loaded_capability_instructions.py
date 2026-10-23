@@ -9,8 +9,6 @@ fetched page claims to replace the rules.
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable
-
 import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ToolCallPart
@@ -18,14 +16,14 @@ from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import InstructionDeltaPart, LoadCapabilityReturnPart
 
 from ..conftest import try_import
+from .conftest import AnthropicModelFactory
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.anthropic import AnthropicModel
+    import anthropic  # pyright: ignore[reportUnusedImport]  # noqa: F401
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
     pytest.mark.vcr,
-    pytest.mark.anyio,
 ]
 
 SIGN_OFF = '-- housekeeping'
@@ -80,9 +78,7 @@ def list_files() -> str:
     return 'README.md\nbuild/\ndist/\nsrc/\ntmp/'
 
 
-async def test_loaded_rules_hold_under_pressure(
-    allow_model_requests: None, anthropic_model: Callable[..., AnthropicModel]
-):
+async def test_loaded_rules_hold_under_pressure(allow_model_requests: None, anthropic_model: AnthropicModelFactory):
     agent = Agent(
         anthropic_model('claude-opus-5-5'),
         deps_type=type(None),

@@ -12,7 +12,6 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai._instructions import LoadedInstructionValues, update_loaded_instruction_history
 from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks
 from pydantic_ai.messages import (
     AgentInstructionSource,
@@ -48,8 +47,6 @@ from .append_only import (
     provider_imports_successful,
     run_conversation,
 )
-
-pytestmark = pytest.mark.anyio
 
 COUNTER_ID = InstructionId(CapabilityInstructionSource('counter'))
 
@@ -468,10 +465,10 @@ async def test_hook_can_drop_the_prefix_and_keep_loaded_instructions():
     assert deltas(third.new_messages()) == []
 
 
-def test_loaded_values_follow_the_load_exchanges():
-    """Only a load whose call names a capability counts, and only changes to a loaded block's own id fold in."""
-    named = InstructionDeltaPart(id=InstructionId(CapabilityInstructionSource('counter'), name='state'), content='N.')
-    messages: list[ModelMessage] = [
+async def test_only_a_capability_block_change_after_a_load_counts():
+    """A load whose call didn't parse, and changes to other blocks, leave the loaded block as its return seeded it."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Count.')]),
         ModelResponse(
             parts=[
                 LoadCapabilityCallPart(args={'id': 'counter'}, tool_call_id='load'),
@@ -480,30 +477,33 @@ def test_loaded_values_follow_the_load_exchanges():
         ),
         ModelRequest(
             parts=[
-                LoadCapabilityReturnPart(tool_call_id='load', content={'instructions': 'A.'}),
+                LoadCapabilityReturnPart(tool_call_id='load', content={'instructions': f'{RULES}\n\nThe count is 0.'}),
                 LoadCapabilityReturnPart(tool_call_id='broken', content={}),
-                LoadCapabilityReturnPart(tool_call_id='unknown', content={}),
                 InstructionDeltaPart(id=None, content='Unaddressable.'),
                 InstructionDeltaPart(id=InstructionId(AgentInstructionSource(), name='state'), content='Agent.'),
-                named,
-                InstructionDeltaPart(id=COUNTER_ID, content='B.'),
+                InstructionDeltaPart(
+                    id=InstructionId(CapabilityInstructionSource('counter'), name='state'), content='N.'
+                ),
             ]
         ),
+        ModelResponse(parts=[TextPart('Done.')]),
     ]
-    assert LoadedInstructionValues.of(messages).values == {'counter': 'B.'}
 
-    # A part a hook marked as delivered through history, but that no loaded capability owns, is no change.
-    request = ModelRequest(parts=[])
-    update_loaded_instruction_history(
-        messages,
-        [
-            InstructionPart('B.', id=COUNTER_ID),
-            InstructionPart('T.', id=InstructionId(ToolsetInstructionSource('tools'))),
-            InstructionPart('U.'),
-        ],
-        [request],
-    )
-    assert request.parts == []
+    def stray(ctx: RunContext[Counter], request: ModelRequestContext) -> ModelRequestContext:
+        # A part marked as delivered through history that no loaded capability owns is no change to any block.
+        params = request.model_request_parameters
+        params.instruction_parts = [
+            *(params.instruction_parts or []),
+            InstructionPart('Stray.', id=InstructionId(ToolsetInstructionSource('tools'))),
+        ]
+        params.instruction_visibility = {**(params.instruction_visibility or {}), 'toolset:tools': 'via_history'}
+        return request
+
+    received = Received()
+    agent = scripted_agent(received=received, capabilities=[counter_capability(), Hooks(before_model_request=stray)])
+    result = await agent.run('Again.', deps=Counter(), message_history=history)
+    assert deltas(result.new_messages()) == []
+    assert received.statements[-1] == []
 
 
 async def test_client_edited_load_return_never_reaches_the_system_voice():
