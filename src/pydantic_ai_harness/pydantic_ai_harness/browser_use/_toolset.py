@@ -763,9 +763,23 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         return self._render_result(history)
 
     def _redact_json(self, value: JsonValue) -> JsonValue:
-        """`value` with every secret in its strings replaced; any other leaf holding one becomes a redacted string."""
+        """`value` with every secret in its strings replaced; any other leaf holding one becomes a redacted string.
+
+        Raises `ModelRetry` when two keys of one object redact to the same text, which a
+        placeholder shared by domain-scoped secrets allows, rather than dropping one of them.
+        """
         if isinstance(value, dict):
-            return {self._redact(key): self._redact_json(item) for key, item in value.items()}
+            redacted_object: dict[str, JsonValue] = {}
+            for key, item in value.items():
+                redacted_key = self._redact(key)
+                if redacted_key in redacted_object:
+                    raise ModelRetry(
+                        'The browser agent finished, but more than one key in its result redacts to '
+                        f'`{redacted_key}`, so redacting it would drop an entry. '
+                        'Ask for a result that is not keyed by secret values.'
+                    )
+                redacted_object[redacted_key] = self._redact_json(item)
+            return redacted_object
         if isinstance(value, list):
             return [self._redact_json(item) for item in value]
         if isinstance(value, str):

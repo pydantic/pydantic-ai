@@ -212,7 +212,9 @@ whenever `sensitive_data` is configured, BrowserUse:
   so a value the sub-agent writes into its answer does not reach the host
   model. Every occurrence is replaced, including inside other words, so a very
   short value can garble the result. Schema output stays valid JSON: a
-  non-string field holding a secret becomes its placeholder string.
+  non-string field holding a secret becomes its placeholder string, and an
+  object with two keys that redact alike raises `ModelRetry` instead of
+  dropping one.
 
 A domain-scoped secret is still substituted into a navigation made from its own
 domain, so add `allowed_domains` to bound where such a request can go.

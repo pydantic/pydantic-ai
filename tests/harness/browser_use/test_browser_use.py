@@ -114,6 +114,10 @@ class _Pins(BaseModel):
     active: bool
 
 
+class _Balances(BaseModel):
+    by_account: dict[str, int]
+
+
 class _Typed(BaseModel):
     """Action parameters browser-use fills secret placeholders into."""
 
@@ -1371,6 +1375,27 @@ class TestSensitiveDataSafety:
         result = await capability.get_toolset().browse_web(_ctx(), 'task')
 
         assert json.loads(result) == {'owner': 'me', 'pins': ['<secret>x_pin</secret>', 5678], 'active': True}
+
+    async def test_schema_keys_that_redact_to_the_same_placeholder_ask_for_a_retry(
+        self, kill_calls: list[BrowserSession]
+    ) -> None:
+        """Domain-scoped secrets can share a placeholder, so two keys can redact alike; neither is dropped silently."""
+        balances = _Balances(by_account={'one': 1, 'two': 2, 'other': 3})
+        history = _FakeHistory(result=balances.model_dump_json(), success=True, structured=balances)
+        capability = BrowserUse[None](
+            output_schema=_Balances,
+            sensitive_data={'https://a.example': {'x_account': 'one'}, 'https://b.example': {'x_account': 'two'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        with pytest.raises(ModelRetry) as caught:
+            await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert caught.value.message == (
+            'The browser agent finished, but more than one key in its result redacts to '
+            '`<secret>x_account</secret>`, so redacting it would drop an entry. '
+            'Ask for a result that is not keyed by secret values.'
+        )
 
     async def test_secret_values_are_redacted_from_schema_json(self, kill_calls: list[BrowserSession]) -> None:
         """JSON escapes a `"` in the value, so the escaped form is redacted too."""
