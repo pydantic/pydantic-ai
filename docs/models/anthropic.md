@@ -788,6 +788,12 @@ agent = Agent(
 
 The response's usage, and so its cost, stays the sum of the passes either way.
 
+## Computer use
+
+Computer use is provided by the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. On the
+Claude API, Claude Opus 4.8 and Claude 5 models get its `computer` tool as Anthropic's computer toolset; on Bedrock,
+Vertex and Foundry, and for other models, it is a function tool.
+
 ## Code Execution Tool Version
 
 By default, Pydantic AI chooses a compatible Anthropic code execution tool version for the selected model. You can override this with [`AnthropicModelSettings.anthropic_code_execution_tool_version`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_code_execution_tool_version] when you need a specific supported Anthropic tool version:

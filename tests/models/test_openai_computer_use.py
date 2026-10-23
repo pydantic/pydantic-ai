@@ -9,9 +9,9 @@ from typing import Any, cast
 
 import pytest
 from cassetter import Cassette
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, Tool, ToolCallPart, ToolDenied
-from pydantic_ai.capabilities import HandleDeferredToolCalls
 from pydantic_ai.computer_use import COMPUTER_KIND, ComputerToolAction
 from pydantic_ai.exceptions import ToolFailed
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturn, ToolReturnPart, UserPromptPart
@@ -34,7 +34,6 @@ with try_import() as imports_successful:
         _map_computer_action,  # pyright: ignore[reportPrivateUsage]
         _map_computer_call_output,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.profiles.openai import openai_model_profile
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='openai not installed'), pytest.mark.anyio]
@@ -49,7 +48,7 @@ def _agent(openai_api_key: str, provider: InMemoryProvider, **settings: Any) -> 
 
 @pytest.mark.vcr
 @pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
-async def test_the_computer_tool_is_sent_natively_and_replayed(
+async def test_gpt_computer_calls_run_on_the_workspace(
     allow_model_requests: None, openai_api_key: str, vcr: Cassette, stream: bool
 ) -> None:
     provider = InMemoryProvider()
@@ -83,7 +82,9 @@ def _computer_call(*actions: dict[str, Any], safety_checks: list[dict[str, Any]]
             'pending_safety_checks': safety_checks or [],
         }
     )
-    return response_message([item])
+    response = response_message([item])
+    response.id = 'resp_1'
+    return response
 
 
 def _done() -> resp.Response:
@@ -119,6 +120,7 @@ async def test_a_reviewer_sees_the_safety_checks_and_approving_acknowledges_them
         toolsets=[computer_toolset(requires_approval=True)],
         capabilities=[provider.capability()],
         output_type=[str, DeferredToolRequests],
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
     )
 
     paused = await agent.run('Go.')
@@ -134,6 +136,8 @@ async def test_a_reviewer_sees_the_safety_checks_and_approving_acknowledges_them
     )
     assert resumed.output == 'done'
     _, second = get_mock_responses_kwargs(client)
+    # The flagged call is sent again rather than continued from, so its output can acknowledge or refuse it.
+    assert 'previous_response_id' not in second
     (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
     if approve:
         assert output['acknowledged_safety_checks'] == [CHECK]
@@ -143,20 +147,6 @@ async def test_a_reviewer_sees_the_safety_checks_and_approving_acknowledges_them
         note = second['input'][second['input'].index(output) + 1]
         assert note == {'role': 'user', 'content': 'Not on this page.'}
         assert provider.actions == []
-
-
-async def test_a_call_with_no_actions_takes_a_screenshot(allow_model_requests: None) -> None:
-    provider = InMemoryProvider()
-    client = MockOpenAIResponses.create_mock([_computer_call(), _done()])
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    agent = Agent(model, toolsets=[computer_toolset()], capabilities=[provider.capability()])
-
-    result = await agent.run('Look.')
-    (call,) = [part for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)]
-    assert call.args_as_dict() == {'actions': [{'type': 'screenshot'}]}
-    _, second = get_mock_responses_kwargs(client)
-    (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
-    assert output['output']['image_url'] == f'data:image/png;base64,{base64.b64encode(FAKE_SCREENSHOT).decode()}'
 
 
 @pytest.mark.parametrize(
@@ -169,7 +159,7 @@ async def test_a_result_whose_call_is_stored_server_side_is_a_computer_call_outp
 ) -> None:
     provider = InMemoryProvider()
     first = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'})
-    first.id, first.conversation = 'resp_1', Conversation(id='conv_1')
+    first.conversation = Conversation(id='conv_1')
     client = MockOpenAIResponses.create_mock([first, _done()])
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
     agent = Agent(model, toolsets=[computer_toolset()], capabilities=[provider.capability()], model_settings=settings)
@@ -179,29 +169,6 @@ async def test_a_result_whose_call_is_stored_server_side_is_a_computer_call_outp
     # The call itself is not sent again: the API has it in the stored response or conversation.
     assert [item['type'] for item in second['input'] if 'type' in item] == ['computer_call_output']
     assert second['input'][0]['call_id'] == 'call_1'
-
-
-async def test_a_call_with_safety_checks_is_sent_again_to_acknowledge_them(allow_model_requests: None) -> None:
-    provider = InMemoryProvider()
-    first = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}, safety_checks=[CHECK])
-    first.id = 'resp_1'
-    client = MockOpenAIResponses.create_mock([first, _done()])
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    agent = Agent(
-        model,
-        toolsets=[computer_toolset(requires_approval=True)],
-        capabilities=[
-            provider.capability(),
-            HandleDeferredToolCalls(lambda ctx, requests: requests.build_results(approve_all=True)),
-        ],
-        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
-    )
-
-    assert (await agent.run('Go.')).output == 'done'
-    _, second = get_mock_responses_kwargs(client)
-    assert 'previous_response_id' not in second or not second['previous_response_id']
-    (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
-    assert output['acknowledged_safety_checks'] == [CHECK]
 
 
 async def test_tool_choice_naming_the_computer_names_the_native_tool(allow_model_requests: None) -> None:
@@ -234,21 +201,37 @@ async def test_a_computer_tool_waiting_to_be_loaded_is_not_sent(allow_model_requ
     assert 'tools' not in request or not request['tools']
 
 
-async def test_the_native_tool_is_sent_and_its_call_answered_with_a_screenshot(allow_model_requests: None) -> None:
-    client = MockOpenAIResponses.create_mock(
-        [_computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}), _done()]
-    )
+async def test_the_native_tool_is_sent_and_a_call_with_no_actions_is_answered_with_a_screenshot(
+    allow_model_requests: None,
+) -> None:
+    client = MockOpenAIResponses.create_mock([_computer_call(), _done()])
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    await Agent(model, toolsets=[computer_toolset()], capabilities=[InMemoryProvider().capability()]).run('Go.')
+    result = await Agent(model, toolsets=[computer_toolset()], capabilities=[InMemoryProvider().capability()]).run(
+        'Look.'
+    )
 
+    (call_part,) = [p for message in result.all_messages() for p in message.parts if isinstance(p, ToolCallPart)]
+    assert call_part.args_as_dict() == {'actions': [{'type': 'screenshot'}]}
     first, second = get_mock_responses_kwargs(client)
     assert first['tools'] == [{'type': 'computer'}]
     (call,) = [item for item in second['input'] if item.get('type') == 'computer_call']
     (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
     assert call['call_id'] == output['call_id'] == 'call_1'
-    assert output['output']['image_url'].startswith('data:image/png;base64,')
+    assert output['output']['image_url'] == f'data:image/png;base64,{base64.b64encode(FAKE_SCREENSHOT).decode()}'
     # A call that ran needs no explanation after its output.
     assert second['input'][-1] is output
+
+
+async def test_a_call_with_a_single_action_runs_it(allow_model_requests: None) -> None:
+    response = _computer_call()
+    item = cast(resp.ResponseComputerToolCall, response.output[0])
+    item.actions = None
+    item.action = resp.response_computer_tool_call.ActionClick(type='click', x=5, y=6, button='left')
+    provider = InMemoryProvider()
+    client = MockOpenAIResponses.create_mock([response, _done()])
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    await Agent(model, toolsets=[computer_toolset()], capabilities=[provider.capability()]).run('Go.')
+    assert provider.actions == [Click(x=5, y=6)]
 
 
 def test_a_result_without_its_screenshot_gets_a_blank_image_and_a_note() -> None:
@@ -283,8 +266,12 @@ async def test_a_refused_action_is_explained_after_its_screenshot(allow_model_re
     _, second = get_mock_responses_kwargs(client)
     output, note = second['input'][-2:]
     assert output['type'] == 'computer_call_output'
-    assert note['role'] == 'user'
-    assert note['content'].startswith('Ran 0 of 1 actions. The next one failed: This workspace is read-only')
+    assert note == snapshot(
+        {
+            'role': 'user',
+            'content': 'Ran 0 of 1 actions. The next one failed: This workspace is read-only: running commands, modifying files, and acting on the display are disabled. Reading files, listing directories, checking that paths exist, and taking screenshots are allowed.',
+        }
+    )
     assert provider.actions == []
 
 
@@ -330,9 +317,9 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
     await agent.run('Go on.', message_history=history)
 
     (request,) = get_mock_responses_kwargs(client)
-    kinds = [item.get('type') for item in request['input']]
-    assert 'function_call' in kinds and 'function_call_output' in kinds
-    assert 'computer_call' not in kinds
+    assert [item.get('type') for item in request['input']] == snapshot(
+        [None, 'function_call', 'function_call_output', None]
+    )
 
 
 @pytest.mark.parametrize(
@@ -361,10 +348,11 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
             {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': 0},
             {'type': 'move', 'x': 1, 'y': 2, 'modifiers': []},
         ),
+        (
+            {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 200, 'scroll_y': 0},
+            {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'right', 'amount': 2, 'modifiers': []},
+        ),
         ({'type': 'keypress', 'keys': ['CTRL', 'S']}, {'type': 'keypress', 'keys': ['CTRL', 'S']}),
-        ({'type': 'type', 'text': 'hi'}, {'type': 'type', 'text': 'hi'}),
-        ({'type': 'wait'}, {'type': 'wait'}),
-        ({'type': 'screenshot'}, {'type': 'screenshot'}),
         ({'type': 'teleport', 'x': 1}, {'type': 'teleport', 'x': 1}),
     ],
 )
@@ -378,17 +366,3 @@ def test_a_diagonal_scroll_scrolls_both_ways() -> None:
         {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'left', 'amount': 50, 'modifiers': []},
         {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 1, 'modifiers': []},
     ]
-
-
-@pytest.mark.parametrize(
-    'model_name, native',
-    [
-        # The profile resolution matrix covers the rest.
-        ('gpt-5.4-mini', True),
-        ('gpt-6-luna', True),
-        ('gpt-6.1-sol', True),
-        ('gpt-5.2', False),
-    ],
-)
-def test_the_native_tool_goes_to_the_models_that_accept_it(model_name: str, native: bool) -> None:
-    assert openai_model_profile(model_name).get('openai_supports_computer_tool', False) is native

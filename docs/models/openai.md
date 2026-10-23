@@ -346,7 +346,7 @@ Web search, Code interpreter, Image generation, and File search are natively sup
 
 Computer use is provided by the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability: on models
 that accept OpenAI's `computer` tool (GPT-5.4 and later, except GPT-5.4 nano), its `computer` tool is sent as that
-native tool, and other models get it as a function tool.
+native tool, and other models, or the same models through other providers, get it as a function tool.
 
 #### Referencing earlier responses
 

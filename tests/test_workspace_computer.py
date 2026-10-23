@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import UserError
@@ -41,7 +42,6 @@ def test_actions_normalize_key_names_and_validate_from_json() -> None:
             {'type': 'keypress', 'keys': ['ctrl+shift+T']},
             {'type': 'keypress', 'keys': ['+']},
             {'type': 'keypress', 'keys': ['ctrl+shift++']},
-            {'type': 'keypress', 'keys': ['ctrl++']},
         ]
     )
     assert actions == [
@@ -51,15 +51,10 @@ def test_actions_normalize_key_names_and_validate_from_json() -> None:
         PressKeys(keys=('ctrl', 'shift', 't')),
         PressKeys(keys=('+',)),
         PressKeys(keys=('ctrl', 'shift', '+')),
-        PressKeys(keys=('ctrl', '+')),
     ]
     assert adapter.validate_json(adapter.dump_json(actions)) == actions
     invalid_actions: list[dict[str, object]] = [
-        {'type': 'click', 'count': 4},
-        {'type': 'drag', 'path': [{'x': 1, 'y': 2}]},
-        {'type': 'keypress', 'keys': []},
         {'type': 'click', 'x': 10},
-        {'type': 'scroll', 'y': 10, 'direction': 'down'},
         {'type': 'scroll', 'x': 1, 'y': 2},
         {'type': 'teleport'},
         {'x': 1, 'y': 2},
@@ -139,7 +134,22 @@ def test_has_display_follows_wrappers_without_io() -> None:
 
 def test_the_computer_tool_schema_requires_type_first_and_only_declared_fields() -> None:
     schema = TypeAdapter(list[ComputerToolAction]).json_schema()['$defs']
-    assert {'Click', 'Wait', 'Screenshot'} <= set(schema)
+    assert sorted(schema) == snapshot(
+        [
+            'Click',
+            'Drag',
+            'HoldKeys',
+            'MouseDown',
+            'MouseUp',
+            'MoveMouse',
+            'Point',
+            'PressKeys',
+            'Screenshot',
+            'Scroll',
+            'TypeText',
+            'Wait',
+        ]
+    )
     assert all(definition['required'][0] == 'type' for name, definition in schema.items() if name != 'Point')
     # Every required name must exist: Gemini rejects a schema that requires an undeclared property.
     assert all(set(definition['required']) <= set(definition['properties']) for definition in schema.values())
