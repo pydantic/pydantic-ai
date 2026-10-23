@@ -4064,6 +4064,21 @@ async def test_proactive_audio_on_a_caller_client_says_how_to_fix_it(monkeypatch
     assert captured == {}
 
 
+async def test_proactive_audio_on_a_caller_client_is_refused_before_seeding(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Seeding can download media, so a session that can't open is refused before it does that work."""
+
+    async def seed_turns(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError('seeded a session that could never open')  # pragma: no cover
+
+    monkeypatch.setattr('pydantic_ai.realtime.google._seed_turns', seed_turns)
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=Client(api_key='k'))
+    )
+    with pytest.raises(UserError, match='needs a client on the `v1alpha` API version'):
+        async with _connect(model, 'hi', model_settings=GoogleRealtimeModelSettings(google_proactive_audio=True)):
+            pass  # pragma: no cover
+
+
 async def test_proactive_audio_on_vertex_keeps_the_client_version(monkeypatch: pytest.MonkeyPatch) -> None:
     """Vertex AI's version line has no `v1alpha`, so its Live connection keeps the client's version."""
     provider = gateway_provider('google', api_key='gw-key', base_url='https://gateway.pydantic.dev/proxy')
