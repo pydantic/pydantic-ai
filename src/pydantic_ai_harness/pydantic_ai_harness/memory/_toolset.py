@@ -17,7 +17,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import ModelRetry
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ToolFailed, UserError
-from pydantic_ai.messages import InstructionPart
+from pydantic_ai.messages import InstructionChangePolicy, InstructionPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import (
@@ -326,7 +326,9 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         if (scoped := self._read_in_place(ctx)) is not None and (found := file_reader(ctx, *scoped)) is not None:
             reader, directory = found
             text = f'Memory files are in `{directory}/` in the workspace; read them with `{reader}`.'
-            parts.append(InstructionPart(text, name='directory', on_change='append'))
+            # A deferred capability's instructions are delivered once, when it loads, so there's nothing to append.
+            on_change: InstructionChangePolicy = 'rewrite' if self._capability.defer_loading else 'append'
+            parts.append(InstructionPart(text, name='directory', on_change=on_change))
         return parts or None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
