@@ -296,6 +296,14 @@ The suite runs on every push across a matrix of Python versions and install shap
 
 When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module that takes longer to collect fails the session, with no escape hatch: check whether a heavy dependency is installed with `importlib.util.find_spec` for the skip condition, and import it in the tests that use it, after a `module`-scoped fixture has imported it once outside the per-test budget.
 
+## Property tests
+
+`tests/history_strategies.py` draws message histories with Hypothesis. `tests/history_invariants.py` holds the checkers: plain functions that return a stable code for each violation. `tests/test_history_properties.py` runs the properties, and `tests/test_history_invariants.py` holds the falsifiers.
+
+- Commit a falsifier with every checker code: a hand-built input that triggers exactly that code. A property that no committed input fails checks nothing.
+- When a property fails on main for an input in the drawn domain, keep the property and mark the test `xfail(strict=True)`, naming the input in the reason. Narrow the strategy only for an input that providers and users never produce, and say why in the strategy's docstring.
+- `tests/conftest.py` loads a derandomized profile of 50 examples, so a run is reproducible and fits the per-test budget. Hunt for new failures with `HYPOTHESIS_PROFILE=explore uv run pytest tests/test_history_properties.py`, which draws 1000 randomized examples per test.
+
 ## Directory Structure
 
 ```
