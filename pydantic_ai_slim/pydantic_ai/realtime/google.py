@@ -1919,7 +1919,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 # The replies asked again are owed by the new session, which tracks their turns like any other.
                 asked_again, self._asked_again = self._asked_again, []
                 if reconnected:
-                    self._uncovered_typed_turns = [_TypedTurn(input_index) for input_index in asked_again]
+                    self._uncovered_typed_turns = [
+                        _TypedTurn(input_index, sending=False) for input_index in asked_again
+                    ]
                     reconnect_frame: RealtimeFrame = [*lost, *self._lifecycle.take_pending()]
                     # The new session hasn't been answered for anything yet.
                     self._lost_tool_calls_answered = False

@@ -2021,6 +2021,38 @@ def _fake_client(session: _RecordingSession, captured: dict[str, Any] | None = N
     return cast('Client', _Client())
 
 
+def _redialing_client(
+    sessions: Sequence[_RecordingSession], configs: list[genai_types.LiveConnectConfig] | None = None
+) -> Client:
+    """A fake `google-genai` client whose `.aio.live.connect(...)` hands out `sessions` in order, then fails.
+
+    Each connect records its config in `configs`, if given; once the sessions run out, a connect raises
+    `ConnectionClosed`, as a failed re-dial does.
+    """
+    pending = iter(sessions)
+
+    class _Connect:
+        def __init__(self, session: _RecordingSession) -> None:
+            self._session = session
+
+        async def __aenter__(self) -> _RecordingSession:
+            return self._session
+
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
+
+    class _Live:
+        def connect(self, *, model: str, config: genai_types.LiveConnectConfig) -> _Connect:
+            if configs is not None:
+                configs.append(config)
+            try:
+                return _Connect(next(pending))
+            except StopIteration:
+                raise ConnectionClosed(None, None)
+
+    return cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+
+
 def _model(session: _RecordingSession, captured: dict[str, Any] | None = None, **kwargs: Any) -> GoogleRealtimeModel:
     """A `GoogleRealtimeModel` whose provider reuses a fake client backed by `session`."""
     return GoogleRealtimeModel(
@@ -2379,30 +2411,9 @@ async def test_connect_seeds_function_parts_as_initial_history_where_supported()
     # as the initial history: `history_config` on the first dial and `turn_complete` on the seed. A
     # re-dial leaves `history_config` off, or the server would wait for history that never comes and take
     # the next typed turn as history. The flag-off side is `test_connect_seed_projects_tool_calls_as_text`.
-    sessions = iter([_RecordingSession([]), _RecordingSession([[_turn('back')]])])
+    first, second = _RecordingSession([]), _RecordingSession([[_turn('back')]])
     configs: list[genai_types.LiveConnectConfig] = []
-    seeded: list[_RecordingSession] = []
-
-    class _Connect:
-        def __init__(self, session: _RecordingSession) -> None:
-            self._session = session
-
-        async def __aenter__(self) -> _RecordingSession:
-            seeded.append(self._session)
-            return self._session
-
-        async def __aexit__(self, *exc: object) -> bool:
-            return False
-
-    class _Live:
-        def connect(self, *, model: str, config: genai_types.LiveConnectConfig) -> _Connect:
-            configs.append(config)
-            try:
-                return _Connect(next(sessions))
-            except StopIteration:
-                raise ConnectionClosed(None, None)
-
-    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    client = _redialing_client([first, second], configs)
     model = GoogleRealtimeModel(
         'gemini-3.8-live',
         provider=GoogleProvider(client=client),
@@ -2438,7 +2449,7 @@ async def test_connect_seeds_function_parts_as_initial_history_where_supported()
         None,
         None,
     ]
-    [seed] = seeded[0].client_content
+    [seed] = first.client_content
     assert seed['turn_complete'] is True
     assert [
         (turn.role, [part.model_dump(exclude_none=True) for part in turn.parts]) for turn in seed['turns']
@@ -2477,7 +2488,7 @@ async def test_connect_seeds_function_parts_as_initial_history_where_supported()
         ]
     )
     # The resumed session isn't seeded again.
-    assert seeded[1].client_content == []
+    assert second.client_content == []
 
 
 async def test_connect_seeds_text_only_history_as_before_where_function_parts_are_supported() -> None:
@@ -3646,28 +3657,8 @@ async def test_connect_redial_without_a_handle_replays_the_conversation(model_na
         ]
     )
     first, second = _RecordingSession([first_messages] if first_messages else []), _RecordingSession([[_turn('back')]])
-    sessions = iter([first, second])
     configs: list[genai_types.LiveConnectConfig] = []
-
-    class _Connect:
-        def __init__(self, session: _RecordingSession) -> None:
-            self._session = session
-
-        async def __aenter__(self) -> _RecordingSession:
-            return self._session
-
-        async def __aexit__(self, *exc: object) -> bool:
-            return False
-
-    class _Live:
-        def connect(self, *, model: str, config: genai_types.LiveConnectConfig) -> _Connect:
-            configs.append(config)
-            try:
-                return _Connect(next(sessions))
-            except StopIteration:
-                raise ConnectionClosed(None, None)
-
-    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    client = _redialing_client([first, second], configs)
     model = GoogleRealtimeModel(
         model_name,
         provider=GoogleProvider(client=client),
@@ -3729,26 +3720,7 @@ async def test_connect_redial_without_a_handle_asks_again_for_a_lost_typed_turns
     # A typed turn whose reply the drop lost comes last in the replayed conversation. Its reply is asked for
     # again: the turn goes in as a turn of its own, after the rest of the conversation, which the model answers.
     first, second = _RecordingSession([]), _RecordingSession([[_turn('cobalt')]])
-    sessions = iter([first, second])
-
-    class _Connect:
-        def __init__(self, session: _RecordingSession) -> None:
-            self._session = session
-
-        async def __aenter__(self) -> _RecordingSession:
-            return self._session
-
-        async def __aexit__(self, *exc: object) -> bool:
-            return False
-
-    class _Live:
-        def connect(self, *, model: str, config: genai_types.LiveConnectConfig) -> _Connect:
-            try:
-                return _Connect(next(sessions))
-            except StopIteration:
-                raise ConnectionClosed(None, None)
-
-    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    client = _redialing_client([first, second])
     model = GoogleRealtimeModel(
         'gemini-2.5-flash-native-audio-latest',
         provider=GoogleProvider(client=client),

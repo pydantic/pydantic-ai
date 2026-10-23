@@ -105,9 +105,7 @@ Gemini uses native in-process session resumption, enabled automatically when a `
 policy is present (an explicit `google_enable_session_resumption=False` alongside a policy raises
 [`UserError`][pydantic_ai.exceptions.UserError] instead of silently losing the conversation); see
 the [Gemini resumption settings](gemini.md#session-resumption). Its handles live only in memory
-and cannot be persisted for another process. A drop before Gemini has issued a handle has nothing
-to resume from, so the new session is a fresh one, and Pydantic AI replays local message history
-into it as on the other providers.
+and cannot be persisted for another process.
 
 [`RealtimeSessionReconnectEvent.state_restored`][pydantic_ai.realtime.RealtimeSessionReconnectEvent.state_restored]
 reports whether the reconnect carried the conversation through without cutting a turn off.
@@ -116,13 +114,9 @@ How a reply the drop caught in flight is handled depends on the mechanism. Gemin
 `True` once the server has issued a resumption handle (shortly after connect) but closes the cut
 reply as an interrupted response (keeping any partial transcript in history) before the
 [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] and stays
-quiet until the next input. A drop before the first handle dials a fresh session instead, with the
-finalized turns of the session's [message history](history.md) replayed into it, so the model keeps
-the earlier turns, and handles a reply in flight the way local replay does (below): a typed turn whose
-reply hadn't started is asked again, so
-[`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] gets its answer from the new
-session, while a reply already streaming is closed as interrupted, running tools are cancelled, and
-`state_restored` is `False`. Gemini issues no handle while a tool call is running, so a resumed
+quiet until the next input. A drop before the first handle dials a fresh session instead, and
+Pydantic AI replays the session's [message history](history.md) into it, so a reply in flight is
+handled as with local replay (below). Gemini issues no handle while a tool call is running, so a resumed
 session never has a call still running at the drop, and never answers its result. Such a call is
 cancelled with an interrupted return, like a call Gemini cancels itself, the resumed session is told
 the call was interrupted, and `state_restored` is `False`. Gemini 2.5 also withholds handles while it
@@ -133,7 +127,7 @@ When its reply hadn't started and no spoken reply was in progress,
 A turn typed while the model was answering speech can't be told apart from that spoken reply, so
 `wait_for_reply()` may keep waiting for it, and the reconnect may report `state_restored=True`.
 
-Local replay (OpenAI, Azure OpenAI, xAI) restores only the finalized turns, so a reply in flight when the
+Local replay (OpenAI, Azure OpenAI, xAI, and Gemini without a resumption handle) restores only the finalized turns, so a reply in flight when the
 socket dropped cannot continue. The session settles it before emitting the event — the partial reply
 becomes an interrupted response, running tool calls get cancelled returns, and the turn ends so queued
 messages waiting for the boundary still flush — and `state_restored` is `False` to say the turn was

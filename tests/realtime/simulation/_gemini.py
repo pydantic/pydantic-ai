@@ -388,10 +388,10 @@ class GeminiServer:
             session.awaits_initial_history = False
             return
         if session.replayed_into and (replayed := self._replayed_turns(turns)) is not None:
-            # The client replays what it sent before; with `turn_complete`, it asks for the reply to the last of it
-            # again (the drop lost it), which the model now gives.
-            if turn_complete and replayed:
-                session.triggers.append(replayed[-1])
+            # The client replays what it sent before; with `turn_complete`, it asks again for the reply to those
+            # turns (the drop lost it), which the model now gives.
+            if turn_complete:
+                session.triggers.extend(replayed)
             return
         text = ''.join(part.text or '' for turn in turns for part in turn.parts or [])
         self.truth.add_input(text, 'text' if turn_complete else 'context', solicits=turn_complete)
