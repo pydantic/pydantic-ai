@@ -26,13 +26,11 @@ class Deps:
 
 @pytest.fixture
 def no_gc() -> Generator[None]:
-    enabled = gc.isenabled()
     gc.disable()
     try:
         yield
     finally:
-        if enabled:
-            gc.enable()
+        gc.enable()
 
 
 async def three_steps(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -185,9 +183,8 @@ async def test_interrupted_iteration_releases_dependencies(exit_kind: Literal['b
     run = None
     try:
         async with agent.iter('hello', deps=deps, infer_name=False) as run:
-            async for _ in run:
-                if contexts:
-                    break
+            while not contexts:
+                await anext(run)
             if exit_kind == 'error':
                 raise ValueError('consumer failed')
             if exit_kind == 'cancel':

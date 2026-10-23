@@ -26,7 +26,6 @@ async def test_graph_releases_dependencies(complete: bool) -> None:
 
     builder.add(builder.edge_from(builder.start_node).to(answer), builder.edge_from(answer).to(builder.end_node))
     graph = builder.build()
-    enabled = gc.isenabled()
     gc.disable()
     try:
         deps = Deps()
@@ -43,5 +42,4 @@ async def test_graph_releases_dependencies(complete: bool) -> None:
         del deps, run
         assert ref() is None
     finally:
-        if enabled:
-            gc.enable()
+        gc.enable()
