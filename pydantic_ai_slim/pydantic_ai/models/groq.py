@@ -323,6 +323,23 @@ class GroqModel(Model[AsyncGroq]):
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
 
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        overriding: list[str] = []
+        thinking = model_settings.get('thinking')
+        supports_reasoning_disable = self.profile.get('groq_supports_reasoning_disable', False)
+        # On qwen3, `thinking=False` disables reasoning through `reasoning_effort='none'`, which Groq lets win.
+        if model_settings.get('groq_reasoning_format') and not (thinking is False and supports_reasoning_disable):
+            overriding.append('groq_reasoning_format')
+        # As in `_completions_create`, an explicit effort replaces the one a graded family maps `thinking` to, and
+        # on qwen3 an explicit `'none'` disables the reasoning an enabling `thinking` asks for.
+        effort = model_settings.get('groq_reasoning_effort')
+        if effort is not None and (
+            self.profile.get('groq_supports_graded_reasoning_effort', False)
+            or (effort == 'none' and thinking is not False and supports_reasoning_disable)
+        ):
+            overriding.append('groq_reasoning_effort')
+        return tuple(overriding)
+
     def _translate_thinking(
         self,
         model_settings: GroqModelSettings,
