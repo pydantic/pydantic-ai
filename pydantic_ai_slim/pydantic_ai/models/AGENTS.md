@@ -79,7 +79,7 @@ on that model. Reading `declared_tool_defs` and `visibility_of()` opts the adapt
 
 Each rule's precedent, and the rules for tool-call IDs, replay data, thinking, empty content, tool-return media and cache markers, are in [Provider Adapters](../../../agent_docs/provider-adapters.md). Read it before you add a part type, a native tool kind or a capability gate to an adapter.
 
-- Map each part type in its own method, called from one exhaustive dispatch per message kind. A new part type adds one arm and one method, never a branch nested in the mapping loop.
+- Map each part type in its own method, called from one exhaustive dispatch per message kind. An arm of one statement stays inline. A new part type adds one arm, never a branch nested in the mapping loop.
 - Keep request-wide mapping state in a private dataclass that holds data only, unless a subclass overrides its methods.
 - Map each response wire item in one function, called from both `_process_response` and the stream.
 - Lower a part type most APIs can't render in `Model.prepare_messages`. An adapter that doesn't render it raises `_unprepared_part_error(part)` in one arm.
