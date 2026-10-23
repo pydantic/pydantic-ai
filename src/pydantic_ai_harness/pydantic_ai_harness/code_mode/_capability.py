@@ -35,7 +35,9 @@ from pydantic_ai_harness.code_mode._toolset import (
     CodeModeOS,
     CodeModeResourceLimits,
     CodeModeToolset,
+    MontyServer,
     as_os_handler,
+    executor_from_sandbox_url,
     in_durable_execution,
 )
 
@@ -168,15 +170,15 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     execution mode is sequential. See the Code Mode guide for the mechanics.
     """
 
-    monty_sandbox_url: str | None = field(default=None, repr=False)
-    """Run sandboxed code on remote Monty workers reached over this `ws://` or `wss://` URL.
+    executor: MontyServer[AgentDepsT] | None = field(default=None, repr=False)
+    """Run sandboxed code on this Monty server; unset, it runs on local Monty workers.
 
     Only execution moves: tool dispatch, mounts, `os_access`, and print capture stay host-side
     over the connection.
-
-    Use `wss://` unless the server is on a network you trust: the connection carries the tool calls
-    your agent executes, so anyone who can intercept it can choose what your tools run.
     """
+
+    monty_sandbox_url: str | None = field(default=None, repr=False)
+    """Deprecated: pass `executor=MontyServer(url)` instead."""
 
     repl_store: CodeModeReplStore[AgentDepsT] | None = None
     """Keep the `run_code` REPL across agent runs in this store.
@@ -229,6 +231,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         # Converted once here, so the per-run copies and the toolsets built from this do not warn again.
         self.os_access = as_os_handler(self.os_access)
+        self.executor = executor_from_sandbox_url('CodeMode', self.executor, self.monty_sandbox_url)
+        self.monty_sandbox_url = None
         if isinstance(self.speculate, str) and self.speculate != 'declared':
             raise UserError(
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "
@@ -278,7 +282,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 dynamic_catalog=self.dynamic_catalog,
                 os_access=self.os_access,
                 mount=self.mount,
-                monty_sandbox_url=self.monty_sandbox_url,
+                executor=self.executor,
                 repl_store=self.repl_store,
                 capability=self,
                 speculation=self._speculation,
@@ -292,7 +296,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             dynamic_catalog=self.dynamic_catalog,
             os_access=self.os_access,
             mount=self.mount,
-            monty_sandbox_url=self.monty_sandbox_url,
+            executor=self.executor,
             repl_store=self.repl_store,
             capability=self,
             speculation=self._speculation,

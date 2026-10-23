@@ -20,6 +20,7 @@ from pydantic_ai_harness.code_mode._toolset import (
     CodeModeResourceLimits,
     CodeModeReturnSchemaWarning,
     CodeModeToolset,
+    MontyServer,
 )
 
 __all__ = [
@@ -32,6 +33,7 @@ __all__ = [
     'CodeModeResourceLimits',
     'CodeModeReturnSchemaWarning',
     'CodeModeToolset',
+    'MontyServer',
     'RunCodeArgs',
     'RunCodeCallPart',
     'SpeculationStats',

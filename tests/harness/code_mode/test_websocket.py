@@ -3,19 +3,26 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Never
 
 import pytest
 import websockets
 from pydantic_monty import MountDir
+from websockets.asyncio.server import ServerConnection
+from websockets.http11 import Request, Response
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai_harness import CodeMode
+from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning
+from pydantic_ai_harness.code_mode import CodeModeToolset, MontyServer
 
 
 def _parts(messages: list[ModelMessage], part_type: type[Any]) -> list[Any]:
@@ -50,7 +57,7 @@ async def test_code_mode_runs_over_websocket(websocket_relay_url: str, tmp_path:
         ),
         capabilities=[
             CodeMode(
-                monty_sandbox_url=websocket_relay_url,
+                executor=MontyServer(websocket_relay_url),
                 mount=MountDir(virtual_path='/workspace', host_path=tmp_path),
             )
         ],
@@ -75,18 +82,41 @@ async def test_code_mode_runs_over_websocket(websocket_relay_url: str, tmp_path:
 
 
 @pytest.mark.parametrize('url', ['ws://monty-server:8000', 'wss://sandbox.example.com/monty'])
-async def test_websocket_sandbox_url_accepted(url: str) -> None:
+async def test_websocket_server_url_accepted(url: str) -> None:
     """Any `ws://` or `wss://` URL passes validation; workers dial lazily, not at enter."""
-    agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_sandbox_url=url)])
+    agent = Agent(_snippets_model(), capabilities=[CodeMode(executor=MontyServer(url))])
     result = await agent.run('no run_code call, so nothing dials')
     assert result.output == 'done'
 
 
-async def test_non_websocket_sandbox_url_rejected() -> None:
-    """A URL Monty's WebSocket client cannot dial fails when the run starts, not at every `run_code`."""
-    agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_sandbox_url='https://sandbox.example.com/monty')])
+def test_non_websocket_server_url_rejected() -> None:
+    """A URL Monty's WebSocket client cannot dial fails where the server is written, not at a later run."""
     with pytest.raises(UserError, match="not scheme 'https'"):
-        await agent.run('never dials')
+        MontyServer('https://sandbox.example.com/monty')
+
+
+def test_auth_and_authorization_header_rejected() -> None:
+    """The key goes in one place, so a conflicting `Authorization` header is refused."""
+    with pytest.raises(UserError, match='not both'):
+        MontyServer('wss://sandbox.example.com/monty', auth='k-123', headers={'authorization': 'Bearer other'})
+
+
+def test_deprecated_sandbox_url_becomes_executor() -> None:
+    """`monty_sandbox_url` still works, warns once, and turns into a `MontyServer`."""
+    with pytest.warns(HarnessDeprecationWarning, match='monty_sandbox_url'):
+        capability = CodeMode[None](monty_sandbox_url='wss://sandbox.example.com/monty')
+    assert capability.executor == MontyServer('wss://sandbox.example.com/monty')
+    assert capability.monty_sandbox_url is None
+
+    with pytest.warns(HarnessDeprecationWarning, match='CodeModeToolset'):
+        toolset = CodeModeToolset[None](FunctionToolset(), monty_sandbox_url='wss://sandbox.example.com/monty')
+    assert toolset.executor == MontyServer('wss://sandbox.example.com/monty')
+
+
+def test_deprecated_sandbox_url_and_executor_rejected() -> None:
+    """Passing both forms is ambiguous, so it raises rather than picking one."""
+    with pytest.raises(UserError, match='Pass `executor` only'):
+        CodeMode[None](executor=MontyServer('wss://a.example.com'), monty_sandbox_url='wss://b.example.com')
 
 
 @pytest.mark.parametrize(
@@ -99,39 +129,104 @@ async def test_remote_turn_deadline_follows_max_duration(
     """The transport's per-turn deadline leaves room for `max_duration_secs` to fire first."""
     seen: list[float | None] = []
 
-    def recording_pool(url: str, *, request_timeout: float | None) -> Never:
+    def recording_pool(url: str, *, request_timeout: float | None, connect_headers: Any) -> Never:
         seen.append(request_timeout)
         raise RuntimeError('not dialing')
 
     monkeypatch.setattr('pydantic_ai_harness._monty_exec.AsyncMontyWebsocket', recording_pool)
     agent = Agent(
         _snippets_model('1'),
-        capabilities=[CodeMode(monty_sandbox_url='wss://sandbox.example.com/monty', resource_limits=resource_limits)],
+        capabilities=[
+            CodeMode(executor=MontyServer('wss://sandbox.example.com/monty'), resource_limits=resource_limits)
+        ],
     )
     await agent.run('record the deadline')
     assert seen == [request_timeout]
 
 
-async def test_dial_failure_redacts_sandbox_url() -> None:
+async def test_dial_failure_redacts_server_url() -> None:
     """A failed dial's retry message must not leak the URL, which may carry credentials."""
     agent = Agent(
-        _snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox_url='ws://127.0.0.1:1/?token=hunter2')]
+        _snippets_model('1 + 1'),
+        capabilities=[CodeMode(executor=MontyServer('ws://127.0.0.1:1/?token=hunter2', auth='k-123'))],
     )
 
     result = await agent.run('dial a dead worker')
 
     (retry,) = _retries(result.all_messages())
     assert 'hunter2' not in str(retry.content)
-    assert '<monty_sandbox_url>' in str(retry.content)
+    assert '<MontyServer.url>' in str(retry.content)
 
 
-def test_repr_hides_sandbox_url() -> None:
-    """The URL may carry credentials, so neither the capability nor its toolset shows it in `repr`."""
-    capability = CodeMode[None](monty_sandbox_url='wss://alice:s3cr3t@sandbox.example.com/monty?api_key=k-123')
+def test_repr_hides_server_url_and_key() -> None:
+    """The URL and key are credentials, so neither the server, the capability, nor its toolset shows them."""
+    server = MontyServer[None]('wss://alice:s3cr3t@sandbox.example.com/monty', auth='k-123', headers={'X-Key': 'h-1'})
+    capability = CodeMode[None](executor=server)
     toolset = capability.get_wrapper_toolset(FunctionToolset[None]())
 
-    assert 'sandbox.example.com' not in repr(capability)
-    assert 'sandbox.example.com' not in repr(toolset)
+    for shown in (repr(server), repr(capability), repr(toolset)):
+        assert 'sandbox.example.com' not in shown
+        assert 'k-123' not in shown
+        assert 'h-1' not in shown
+
+
+@dataclass
+class _Deps:
+    monty_key: str
+
+
+@asynccontextmanager
+async def _refusing_server(seen: list[Request]) -> AsyncGenerator[str]:
+    """A WebSocket endpoint that records each upgrade request and refuses it with 401."""
+
+    def refuse(connection: ServerConnection, request: Request) -> Response:
+        seen.append(request)
+        return connection.respond(HTTPStatus.UNAUTHORIZED, 'unauthorized')
+
+    async def never_called(connection: ServerConnection) -> None:  # pragma: no cover
+        pass
+
+    async with websockets.serve(never_called, '127.0.0.1', 0, process_request=refuse) as server:
+        port: int = next(iter(server.sockets)).getsockname()[1]
+        yield f'ws://127.0.0.1:{port}/monty-ws/'
+
+
+async def test_refused_key_is_a_user_error() -> None:
+    """The key and headers reach the server, and a 401 is for the developer, not a retry for the model."""
+    seen: list[Request] = []
+    async with _refusing_server(seen) as url:
+        agent = Agent(
+            _snippets_model('1 + 1'),
+            deps_type=_Deps,
+            capabilities=[
+                CodeMode(executor=MontyServer(url, auth=lambda ctx: ctx.deps.monty_key, headers={'X-Proxy': 'p-1'}))
+            ],
+        )
+        with pytest.raises(UserError, match=r'refused the connection \(401\)') as raised:
+            await agent.run('dial with a bad key', deps=_Deps(monty_key='k-run'))
+
+    assert 'k-run' not in str(raised.value)
+    (request,) = seen
+    assert request.headers['Authorization'] == 'Bearer k-run'
+    assert request.headers['X-Proxy'] == 'p-1'
+
+
+async def test_async_auth_resolved_per_run() -> None:
+    """An async `auth` function is awaited at the start of each run, so each run sends its own key."""
+    seen: list[Request] = []
+
+    async def key_for(ctx: Any) -> str:
+        return ctx.deps.monty_key
+
+    async with _refusing_server(seen) as url:
+        agent = Agent(
+            _snippets_model('1 + 1'), deps_type=_Deps, capabilities=[CodeMode(executor=MontyServer(url, auth=key_for))]
+        )
+        for key in ('k-first', 'k-second'):
+            with pytest.raises(UserError):
+                await agent.run('dial', deps=_Deps(monty_key=key))
+
+    assert [request.headers['Authorization'] for request in seen] == ['Bearer k-first', 'Bearer k-second']
 
 
 @pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
@@ -153,7 +248,7 @@ async def test_disconnect_mid_snippet_reports_started_calls(websocket_relay_url:
         port: int = next(iter(server.sockets)).getsockname()[1]
         agent = Agent(
             _snippets_model('await drop_connection()'),
-            capabilities=[CodeMode(monty_sandbox_url=f'ws://127.0.0.1:{port}')],
+            capabilities=[CodeMode(executor=MontyServer(f'ws://127.0.0.1:{port}'))],
         )
 
         @agent.tool_plain
