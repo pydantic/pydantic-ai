@@ -9,9 +9,13 @@ definition can be matched against it instead.
 
 The walk is pure `ast` over the engine package roots in `ENGINES`; nothing is imported. "Core" is
 `pydantic_ai` outside `pydantic_ai.durable_exec`. Each engine site depends on a core definition in
-one of four ways:
+one of five ways:
 
-- `import`: the engine names a core class, function or variable, by import or as a module attribute.
+- `import`: the engine names a core class, function or variable, by import or as a module attribute,
+  and uses the name at runtime: a call, an attribute read, `isinstance`, a base class, a default, a
+  decorator.
+- `annotation_only`: the engine module names the definition only in annotation positions: parameter,
+  return and variable annotations, string annotations, and `if TYPE_CHECKING:` blocks.
 - `override`: an engine class redefines a member of a core class in its MRO.
 - `attribute_read`: an engine reads or assigns a core member, passes it as a constructor or
   `dataclasses.replace` keyword, or reflects over a core dataclass's fields. The member is resolved
@@ -30,7 +34,9 @@ every change.
 The manifest maps `core_file -> qualname -> {kinds, engines, sites}`. A change to a core definition
 matches an entry when the changed definition's qualname is the entry's qualname or nested under it:
 an entry for `Model` matches a change to `Model.request`; an entry for `RunContext.usage` matches
-only that field.
+only that field. A matched entry gates review only when `gates` holds for it: an engine that names a
+class only in a signature does not depend on it at runtime, so an entry whose only kind is
+`annotation_only` stays in the manifest but does not gate.
 
 Usage:
     uv run python scripts/durable_exec_contract.py          # exit 1 if the manifest is stale
@@ -43,7 +49,7 @@ import argparse
 import ast
 import json
 import sys
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -87,7 +93,7 @@ _TYPE_WRAPPERS = frozenset(
 )
 _TYPE_GUARDS = frozenset({'TypeGuard', 'TypeIs'})
 
-Kind = Literal['import', 'override', 'attribute_read', 'projected_field']
+Kind = Literal['import', 'annotation_only', 'override', 'attribute_read', 'projected_field']
 Manifest = dict[str, dict[str, dict[str, list[str]]]]
 FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
 
@@ -423,6 +429,25 @@ class _EngineWalker(ast.NodeVisitor):
         self.engine = engine
         self.entries = entries
         self.scopes = [_Scope('<module>')]
+        annotations: list[ast.AST] = []
+        for node in ast.walk(module.tree):
+            match node:
+                case ast.arg(annotation=ast.expr() as annotation) | ast.AnnAssign(annotation=annotation):
+                    annotations.append(annotation)
+                case (
+                    ast.FunctionDef(returns=ast.expr() as returns) | ast.AsyncFunctionDef(returns=ast.expr() as returns)
+                ):
+                    annotations.append(returns)
+                case ast.If(test=test, body=body) if _last_name(test) == 'TYPE_CHECKING':
+                    annotations.extend(body)
+                case _:
+                    pass
+        self.annotation_nodes = {id(inner) for annotation in annotations for inner in ast.walk(annotation)}
+        self.runtime_names = {
+            node.id
+            for node in ast.walk(module.tree)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and id(node) not in self.annotation_nodes
+        }
 
     # --- Recording ------------------------------------------------------------------------------------------------
 
@@ -432,13 +457,13 @@ class _EngineWalker(ast.NodeVisitor):
             location = site or self.scopes[-1].qualname
             self.entries.add(module.path, qualname, kind, self.engine, f'{self.module.path}::{location}')
 
-    def record_symbol(self, symbol: Symbol | None) -> None:
-        """An `import` dependency on a named core definition."""
+    def record_symbol(self, symbol: Symbol | None, kind: Literal['import', 'annotation_only']) -> None:
+        """An `import` or `annotation_only` dependency on a named core definition."""
         match symbol:
             case ClassInfo() if not symbol.member_level_only:
-                self.record(symbol, symbol.qualname, 'import')
+                self.record(symbol, symbol.qualname, kind)
             case Function():
-                self.record(symbol.module, symbol.name, 'import')
+                self.record(symbol.module, symbol.name, kind)
             case _:
                 pass
 
@@ -613,18 +638,20 @@ class _EngineWalker(ast.NodeVisitor):
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
             if alias.asname:
-                self.record_symbol(self.index.module(alias.name))
+                self.record_symbol(self.index.module(alias.name), 'import')
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         base = self.index.import_base(self.module, node)
         if (source := self.index.module(base)) is not None:
             for alias in node.names:
-                self.record_symbol(self.index.resolve(source, alias.name))
+                kind = 'import' if (alias.asname or alias.name) in self.runtime_names else 'annotation_only'
+                self.record_symbol(self.index.resolve(source, alias.name), kind)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         symbol = self.index.symbol(self.module, node.value)
         if isinstance(symbol, Module):
-            self.record_symbol(self.index.resolve(symbol, node.attr))
+            kind = 'annotation_only' if id(node) in self.annotation_nodes else 'import'
+            self.record_symbol(self.index.resolve(symbol, node.attr), kind)
         elif node.attr == '__dataclass_fields__':
             self.record_fields(node.value)
         else:
@@ -698,6 +725,11 @@ def build_manifest(root: Path = REPO_ROOT) -> Manifest:
         }
         for core_file, definitions in sorted(entries.manifest.items())
     }
+
+
+def gates(entry: Mapping[str, Sequence[str]]) -> bool:
+    """Whether a change that matches this manifest entry gates review: any of its kinds but `annotation_only`."""
+    return any(kind != 'annotation_only' for kind in entry['kinds'])
 
 
 def render_manifest(manifest: Manifest) -> str:

@@ -34,7 +34,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -96,7 +96,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -148,7 +148,7 @@
         "durable_exec"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::<module>"
@@ -230,7 +230,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_run_sync_workflow",
@@ -344,6 +344,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -415,7 +416,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::<module>"
@@ -426,7 +427,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::<module>"
@@ -1448,6 +1449,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -1536,7 +1538,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.override",
@@ -1587,6 +1589,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -1757,6 +1760,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -2078,7 +2082,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -2093,7 +2097,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -2108,7 +2112,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -2123,7 +2127,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -2143,7 +2147,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
@@ -2171,7 +2175,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -2186,7 +2190,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -2203,7 +2207,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -2431,7 +2435,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -2461,6 +2465,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -2816,7 +2821,7 @@
         "durable_exec"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>"
@@ -2831,7 +2836,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
@@ -3049,7 +3054,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -3140,6 +3145,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -3451,6 +3457,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -3564,7 +3571,7 @@
         "prefect"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_mcp_toolset.py::<module>",
@@ -3582,6 +3589,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -3608,6 +3616,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -3666,6 +3675,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -3703,6 +3713,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -3720,7 +3731,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::<module>",
@@ -3769,6 +3780,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -3792,6 +3804,7 @@
         "durable_exec"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -3804,7 +3817,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::<module>"
@@ -3841,7 +3854,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_run_sync_workflow",
@@ -3872,6 +3885,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -3976,6 +3990,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -4466,7 +4481,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::<module>",
@@ -4615,7 +4630,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
@@ -4652,7 +4667,7 @@
         "durable_exec"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>"
@@ -4964,7 +4979,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::<module>"
@@ -5014,6 +5029,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -5032,7 +5048,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -5047,7 +5063,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::<module>"
@@ -5075,7 +5091,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -5092,7 +5108,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -5107,7 +5123,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -5122,7 +5138,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -5139,7 +5155,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -5154,7 +5170,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -5171,7 +5187,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -5188,7 +5204,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -5206,7 +5222,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
@@ -5254,6 +5270,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -5277,6 +5294,7 @@
         "pgtask"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -5295,7 +5313,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -5321,7 +5339,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -5338,6 +5356,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -5411,7 +5430,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -5442,6 +5461,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -5511,6 +5531,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -5728,6 +5749,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -5847,6 +5869,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -6006,6 +6029,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -6169,7 +6193,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_event_stream.py::<module>"
@@ -6186,6 +6210,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -6237,6 +6262,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [
@@ -6274,7 +6300,7 @@
         "durable_exec"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::<module>"
@@ -6299,7 +6325,7 @@
         "temporal"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::<module>",
@@ -6335,7 +6361,7 @@
         "durable_exec"
       ],
       "kinds": [
-        "import"
+        "annotation_only"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::<module>"
@@ -6513,6 +6539,7 @@
         "temporal"
       ],
       "kinds": [
+        "annotation_only",
         "import"
       ],
       "sites": [

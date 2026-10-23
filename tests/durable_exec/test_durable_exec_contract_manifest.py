@@ -11,7 +11,7 @@ import importlib.util
 import json
 import sys
 import textwrap
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -29,6 +29,7 @@ class _ContractGenerator(Protocol):
     WRITE_COMMAND: str
     build_manifest: Callable[[Path], Manifest]
     render_manifest: Callable[[Manifest], str]
+    gates: Callable[[Mapping[str, Sequence[str]]], bool]
     main: Callable[..., int]
 
 
@@ -214,14 +215,14 @@ _FIXTURE: dict[str, str] = {
         import dataclasses
         import pydantic_ai.tools as tool_module
         from dataclasses import dataclass, fields, replace
-        from typing import Any, cast
+        from typing import TYPE_CHECKING, Any, cast
 
         import temporalio
         from temporalio import workflow
 
-        from pydantic_ai import RunContext, tools
+        from pydantic_ai import RunContext, profiles as profile_module, tools
         from pydantic_ai.cycle_a import Looped
-        from pydantic_ai.models import MODEL_NAMES, Diamond, Model, Settings, WrapperModel
+        from pydantic_ai.models import MODEL_NAMES, Diamond, Left, Model, Settings, WrapperModel
         from pydantic_ai.profiles import Profile, Response
         from ...tools import make_context
 
@@ -316,6 +317,17 @@ _FIXTURE: dict[str, str] = {
             from pydantic_ai._run_context import RunContext as LocalContext
 
             LocalContext.kind
+
+
+        if TYPE_CHECKING:
+            from pydantic_ai.models import Right
+
+            RightAlias = Right
+
+
+        def typed(model: Left, response: profile_module.Response) -> 'Left':
+            value: Left = model
+            return value
         """,
     'src/pydantic_ai_harness/pydantic_ai_harness/__init__.py': '',
     'src/pydantic_ai_harness/pydantic_ai_harness/_shared.py': 'class Shared:\n    value: int = 0\n',
@@ -375,7 +387,12 @@ def test_build_manifest_resolves_every_dependency_form(fixture_repo: Path):
                 ['temporal'],
                 ['ContextProjection.from_context', 'ContextProjection.usage', 'TemporalModel.stream', 'module_level'],
             ),
-            'models/__init__.py::Diamond': (['attribute_read', 'import'], ['temporal'], ['<module>', 'module_level']),
+            'models/__init__.py::Diamond': (
+                ['annotation_only', 'attribute_read'],
+                ['temporal'],
+                ['<module>', 'module_level'],
+            ),
+            'models/__init__.py::Left': (['annotation_only'], ['temporal'], ['<module>']),
             'models/__init__.py::MODEL_NAMES': (['import'], ['temporal'], ['<module>']),
             'models/__init__.py::Model': (['import'], ['render', 'temporal'], ['<module>', '<module>']),
             'models/__init__.py::Model.__init__': (['override'], ['temporal'], ['TemporalModel.__init__']),
@@ -394,6 +411,7 @@ def test_build_manifest_resolves_every_dependency_form(fixture_repo: Path):
                 ['render', 'temporal'],
                 ['TemporalModel.request', 'RenderModel.request'],
             ),
+            'models/__init__.py::Right': (['annotation_only'], ['temporal'], ['<module>']),
             'models/__init__.py::Settings': (['import'], ['temporal'], ['<module>']),
             'models/__init__.py::Settings.broken': (['attribute_read'], ['temporal'], ['module_level']),
             'models/__init__.py::Settings.timeout': (['attribute_read'], ['temporal'], ['module_level']),
@@ -410,10 +428,33 @@ def test_build_manifest_resolves_every_dependency_form(fixture_repo: Path):
             ),
             'profiles.py::Profile': (['import'], ['temporal'], ['<module>']),
             'profiles.py::Profile.supports_tools': (['attribute_read'], ['temporal'], ['TemporalModel.request']),
-            'profiles.py::Response': (['import'], ['temporal'], ['<module>']),
+            'profiles.py::Response': (['annotation_only', 'import'], ['temporal'], ['<module>', 'typed']),
             'profiles.py::Response.text': (['attribute_read'], ['temporal'], ['TemporalModel.stream']),
             'tools.py::is_run_context': (['import'], ['temporal'], ['module_level']),
             'tools.py::make_context': (['import'], ['temporal'], ['<module>', 'module_level']),
+        }
+    )
+
+
+def test_gates_ignores_annotation_only_entries(fixture_repo: Path):
+    """A definition the engines name only in annotations stays in the manifest but does not gate review."""
+    manifest = generator.build_manifest(fixture_repo)
+
+    kinds = {
+        f'{core_file.removeprefix("pydantic_ai_slim/pydantic_ai/")}::{qualname}': (
+            entry['kinds'],
+            generator.gates(entry),
+        )
+        for core_file, definitions in manifest.items()
+        for qualname, entry in definitions.items()
+        if 'annotation_only' in entry['kinds']
+    }
+    assert kinds == snapshot(
+        {
+            'models/__init__.py::Diamond': (['annotation_only', 'attribute_read'], True),
+            'models/__init__.py::Left': (['annotation_only'], False),
+            'models/__init__.py::Right': (['annotation_only'], False),
+            'profiles.py::Response': (['annotation_only', 'import'], True),
         }
     )
 

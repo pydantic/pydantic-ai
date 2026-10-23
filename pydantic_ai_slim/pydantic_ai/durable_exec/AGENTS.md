@@ -88,6 +88,9 @@ core change touches one of those definitions. Open each listed site and confirm 
 serialized field lists, overridden signatures, projection fields. Add a workflow-level test where
 the engine's runtime behavior depends on the change.
 
+An entry whose only kind is `annotation_only` is a definition the engines name only in annotations,
+such as a type in a mirrored signature. It stays in the manifest and does not gate review.
+
 `tests/durable_exec/test_durable_exec_contract_manifest.py` fails when the manifest is stale.
 Regenerate it with `uv run python scripts/durable_exec_contract.py --write` and commit the diff.
 Read the diff: a new entry is a new dependency an engine took on core.
