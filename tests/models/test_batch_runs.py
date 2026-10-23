@@ -47,7 +47,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse
-from pydantic_ai.models import Model, ModelRequestParameters, ModelSelectionContext
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models._batch_codec import BatchJobError
 from pydantic_ai.models._batch_model import BatchedModel, BatchPool
 from pydantic_ai.models._in_memory_batch import _State  # pyright: ignore[reportPrivateUsage]
@@ -55,9 +55,12 @@ from pydantic_ai.models.batch import Batch, BatchRequest, BatchResult, EncodedBa
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import UsageLimits
 
 from ..batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, UNRUN_MESSAGES, SlowBatchTestModel
+from ..continuation_utils import ScriptedContinuationModel, scripted_response
 
 Outcome = Literal['ran', 'expired', 'canceled', 'missing'] | int | ModelAPIError
 """How a scripted batch ends each of its requests: as they ran, unrun, missing, with an HTTP status, with an error, or
@@ -878,6 +881,142 @@ async def test_a_run_waiting_in_process_still_cancels_its_batch_when_cancelled()
     with pytest.raises(asyncio.CancelledError):
         await run
     assert wrapped.canceled == [wrapped.created[0].id]
+
+
+@dataclass
+class _RejectPendingOnce(AbstractCapability[object]):
+    """Rejects the first pending response it sees, the way a response handler or a fallback would."""
+
+    reject: Literal['retry', 'replace', 'mutate', 'strip', 'raise']
+    rejected: int = 0
+
+    async def after_model_request(
+        self, ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        if response.state != 'suspended' or self.rejected:
+            return response
+        self.rejected += 1
+        if self.reject == 'retry':
+            raise ModelRetry('Not this one.')
+        if self.reject == 'replace':
+            return ModelResponse(parts=[TextPart('replaced')])
+        if self.reject == 'mutate':
+            response.parts = [TextPart('replaced')]
+            response.state = 'complete'
+            response.provider_details = None
+            return response
+        if self.reject == 'strip':
+            # Still pending, but without what a later run would resume it from.
+            return replace(response, provider_details=None)
+        raise RuntimeError('rejected')
+
+
+@pytest.mark.parametrize('stream', [False, True], ids=['run', 'run_stream'])
+@pytest.mark.parametrize('reject', ['retry', 'replace', 'mutate', 'strip', 'raise'])
+async def test_a_pending_response_a_hook_rejects_is_withdrawn_from_its_batch(
+    reject: Literal['retry', 'replace', 'mutate', 'strip', 'raise'], stream: bool
+) -> None:
+    """Nothing collects a request whose pending response a hook rejected, so its batch is cancelled."""
+    wrapped = SlowBatchTestModel(pending_checks=10**6)
+    agent = Agent(
+        wrapped,
+        output_type=[str, PendingModelResponse],
+        capabilities=[_RejectPendingOnce(reject), BatchModelRequests(**FAST_BATCH_SETTINGS)],
+    )
+    output: object
+    try:
+        if stream:
+            async with agent.run_stream('Hello') as result:
+                output = await result.get_output()
+        else:
+            output = (await agent.run('Hello')).output
+    except RuntimeError as error:
+        output = error
+
+    if reject == 'raise':
+        assert isinstance(output, RuntimeError)
+        assert len(wrapped.created) == 1
+    elif reject == 'strip':
+        assert isinstance(output, PendingModelResponse)
+        assert len(wrapped.created) == 1
+    elif reject == 'retry':
+        # The retry is submitted in a new batch, which the run ends pending on and leaves running.
+        assert isinstance(output, PendingModelResponse)
+        assert len(wrapped.created) == 2
+    else:
+        assert output == 'replaced'
+        assert len(wrapped.created) == 1
+    assert wrapped.canceled == [wrapped.created[0].id]
+
+
+class _FailingExit(WrapperModel):
+    async def __aexit__(self, *args: object) -> bool | None:
+        await super().__aexit__(*args)  # pyright: ignore[reportArgumentType]
+        raise RuntimeError('teardown failed')
+
+
+@dataclass
+class _WrapWithFailingExit(AbstractCapability[object]):
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        return _FailingExit(model)
+
+
+@pytest.mark.parametrize('stream', [False, True], ids=['run', 'run_stream'])
+async def test_a_pending_response_is_withdrawn_when_exiting_a_wrapper_around_it_fails(stream: bool) -> None:
+    wrapped = SlowBatchTestModel(pending_checks=10**6)
+    agent = Agent(
+        wrapped,
+        output_type=[str, PendingModelResponse],
+        capabilities=[_WrapWithFailingExit(), BatchModelRequests(**FAST_BATCH_SETTINGS)],
+    )
+    with pytest.raises(RuntimeError, match='teardown failed'):
+        if stream:
+            # The stream fails before it's handed over, as the wrapper is exited before the run ends.
+            async with agent.run_stream('Hello'):
+                raise AssertionError('unreachable')  # pragma: no cover
+        else:
+            await agent.run('Hello')
+    assert wrapped.canceled == [wrapped.created[0].id]
+
+
+async def test_a_pending_response_a_hook_rejects_leaves_a_shared_batch_running_for_the_others() -> None:
+    wrapped = SlowBatchTestModel(pending_checks=2)
+    batching = BatchModelRequests(**FAST_POLLING, max_requests=2, max_wait=timedelta(seconds=5))
+    rejecting = Agent(
+        wrapped, output_type=[str, PendingModelResponse], capabilities=[_RejectPendingOnce('raise'), batching]
+    )
+    waiting = Agent(wrapped, capabilities=[batching])
+
+    rejected, waited = await asyncio.gather(rejecting.run('Hello'), waiting.run('Hello'), return_exceptions=True)
+
+    assert isinstance(rejected, RuntimeError)
+    assert not isinstance(waited, BaseException) and waited.output == 'success (no tool calls)'
+    assert len(wrapped.created) == 1
+    assert wrapped.canceled == []
+
+
+class _PolledScriptedModel(ScriptedContinuationModel):
+    """Polls its suspended responses, as OpenAI background mode does."""
+
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        return 0.0 if response.state == 'suspended' else None
+
+
+async def test_another_models_pending_response_a_hook_rejects_keeps_running() -> None:
+    """Only a batch request is withdrawn when a hook rejects its pending response; other jobs are left as before."""
+    model = _PolledScriptedModel(
+        responses=[
+            scripted_response(texts=[], state='suspended', provider_response_id=job, input_tokens=1, output_tokens=0)
+            for job in ('job1', 'job2')
+        ]
+    )
+    agent = Agent(model, output_type=[str, PendingModelResponse], capabilities=[_RejectPendingOnce('retry')])
+
+    result = await agent.run('Hello')
+
+    assert isinstance(result.output, PendingModelResponse)
+    assert result.output.response.provider_response_id == 'job2'
+    assert model.cancelled == []
 
 
 async def test_waiting_on_a_batch_is_not_limited_to_a_number_of_checks(monkeypatch: pytest.MonkeyPatch) -> None:

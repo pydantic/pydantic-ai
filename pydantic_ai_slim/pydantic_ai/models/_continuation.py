@@ -681,7 +681,6 @@ class _ContinuationStreamedResponse(StreamedResponse):
                     messages = self.base_messages
                 elif response.state == 'suspended':
                     if self.return_pending and requested and self.model.continuation_delay(response) is not None:
-                        self.model._release_suspended_response(response)  # pyright: ignore[reportPrivateUsage]
                         self._ended_pending = True
                         break
                     accumulate_count, replace_count = self._count_continuation(

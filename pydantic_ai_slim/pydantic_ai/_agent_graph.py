@@ -560,6 +560,11 @@ class _HandlerState:
     described_attempts: Sequence[_messages.ModelRequestAttempt] = ()
     """This step's failed attempts, whose usage was committed when they failed: a response carrying them
     in its `failed_attempts` only describes that usage, so it isn't counted again."""
+    pending: tuple[ModelRequestContext, _messages.ModelResponse] | None = None
+    """The pending response the current attempt returned, which the run ends with unless a hook rejects it.
+
+    A rejected attempt's pending response is withdrawn when it's rejected (see `_cancel_rejected_job`), so this only
+    ever holds the latest attempt's, which `_settle_pending` leaves for a later run or withdraws once the step ends."""
 
     def record(
         self,
@@ -1388,8 +1393,41 @@ def _keep_default_output_mode(
 # runs the whole chain inside one durable unit.
 
 
+def _pending_snapshot(
+    request_context: ModelRequestContext, response: _messages.ModelResponse
+) -> tuple[ModelRequestContext, _messages.ModelResponse] | None:
+    """The pending `response` a request returned, as it was before hooks could change it in place, if it's pending."""
+    if response.state != 'suspended':
+        return None
+    return request_context, replace(response, provider_details=deepcopy(response.provider_details))
+
+
+async def _settle_pending(
+    pending: tuple[ModelRequestContext, _messages.ModelResponse] | None, accepted: _messages.ModelResponse | None
+) -> None:
+    """Leave the pending response a request returned for a later run if the run ends with it, or withdraw it if not.
+
+    The run only ends with a [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] once every model request
+    hook has passed the response on, so that's when its request is left for a later run to collect. One a hook
+    rejected, by raising or by replacing it, is cancelled if the model says nothing else would collect it.
+    """
+    if pending is None:
+        return
+    request_context, response = pending
+    if (
+        accepted is not None
+        and accepted.state == 'suspended'
+        and accepted.provider_response_id == response.provider_response_id
+        # Still the job a later run continues: a hook may have kept the response but dropped what resumes it.
+        and request_context.model.continuation_delay(accepted) is not None
+    ):
+        request_context.model._release_suspended_response(response)  # pyright: ignore[reportPrivateUsage]
+    elif request_context.model._withdraws_rejected_suspended_response(response):  # pyright: ignore[reportPrivateUsage]
+        await _cancel_interrupted_job(request_context, response)
+
+
 async def _cancel_interrupted_job(request_context: ModelRequestContext, response: _messages.ModelResponse) -> None:
-    """Cancel the job of a suspended response a stream was interrupted on, through the model that sent it.
+    """Cancel the job of a suspended response a stream was interrupted on or a hook rejected, through its model.
 
     A capability's wrapper around that model was exited with the stream, so it's entered again for the cancellation,
     as for each call it serves, shielded as graph teardown may be under cancellation. Like the cancellation itself,
@@ -1571,7 +1609,6 @@ async def model_request(  # noqa: C901
                 messages = base_messages
             elif response.state == 'suspended':
                 if return_pending and requested and model.continuation_delay(response) is not None:
-                    model._release_suspended_response(response)  # pyright: ignore[reportPrivateUsage]
                     return response
                 job_id = response.provider_response_id
                 # A batch request waiting for its batch is waiting on a job rather than continuing a generation, even
@@ -1828,19 +1865,6 @@ def _record_carried_attempts(
         request_context._usage_response_ledger.attempts.extend(attempts)  # pyright: ignore[reportPrivateUsage]
 
 
-async def _cancel_rejected_job(
-    request_context: ModelRequestContext, outcome: Exception | _messages.ModelResponse
-) -> None:
-    """Cancel the provider-side job of a response a hook rejected while it was still suspended.
-
-    Nothing continues a rejected response, so its job would otherwise keep running, and billing, while the
-    request moves on, as `FallbackModel` cancels a pinned continuation it rejects. The attempt's wrapper was exited
-    with its request, so the cancellation enters it again, as for a stream interrupted on a suspended response.
-    """
-    if isinstance(outcome, _messages.ModelResponse) and outcome.state == 'suspended':
-        await _cancel_interrupted_job(request_context, outcome)
-
-
 async def _outside_attempts(awaitable: Awaitable[T]) -> T:
     """Await the once-per-step model request hooks, where a `RetryModelRequest` has no attempt to retry.
 
@@ -1969,6 +1993,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Set when the consumer stops the stream by raising, before the graph task cancels the handler.
         stream_error: BaseException | None = None
         _interrupted_response: _messages.ModelResponse | None = None
+        # The pending response the request returned, which the run ends with unless a hook rejects it.
+        _pending: tuple[ModelRequestContext, _messages.ModelResponse] | None = None
         time_to_first_chunk: float | None = None
         accounted_responses: list[_messages.ModelResponse] = []
         before_model_request_context: list[tuple[ContextVar[Any], Any]] = []
@@ -1977,7 +2003,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
             nonlocal _handler_called, _handler_response, _handler_request_context, _handler_usage_recorded
-            nonlocal _stream_cut_short, time_to_first_chunk, _interrupted_response
+            nonlocal _stream_cut_short, time_to_first_chunk, _interrupted_response, _pending
             if _handler_called:
                 raise exceptions.UserError('`wrap_model_request` may call its handler only once')
             _handler_called = True
@@ -2020,6 +2046,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         # that cancelled path `finish` is never reached today (no metrics of any
                         # kind are recorded), so this is symmetry rather than an observable fix.
                         time_to_first_chunk = sr.time_to_first_chunk(request_start)
+                    # Before the wrapper is exited, so a pending response is still settled if exiting it fails.
+                    _pending = _pending_snapshot(req_ctx, sr.get())
             except BaseException:
                 if stream_error is not None:
                     # The consumer stopped the stream, so the graph task cancelled this one. Record what the
@@ -2200,7 +2228,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             if not _stream_cut_short:
                                 raise
                             model_response = e.response
+                        self.last_request_context = wrap_request_context
+                        self._enforce_usage_limits(ctx, accounted_responses)
                     except exceptions.ModelRetry as e:
+                        await _settle_pending(_pending, None)
                         self._enforce_usage_limits(ctx, accounted_responses)
                         # `_handler_response` is unset only if the handler failed between stream
                         # teardown and `sr.get()` (e.g. a custom model's `get()` raising on a
@@ -2209,9 +2240,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         if _handler_response is not None:  # pragma: no branch
                             self._append_response(ctx, _handler_response, record_usage=not _handler_usage_recorded)
                         await self._build_retry_node(ctx, e)
+                    except BaseException:
+                        await _settle_pending(_pending, None)
+                        raise
                     else:
-                        self.last_request_context = wrap_request_context
-                        self._enforce_usage_limits(ctx, accounted_responses)
+                        await _settle_pending(_pending, model_response)
                         await self._finish_handling(ctx, model_response, record_usage=not _handler_usage_recorded)
                         assert self._result is not None
             finally:
@@ -2301,7 +2334,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 model_response = e.response
             except exceptions.ModelRetry:
                 raise  # Propagate to outer handler
+            self._enforce_usage_limits(ctx, state.accounted_responses)
         except exceptions.ModelRetry as e:
+            await _settle_pending(state.pending, None)
             self._enforce_usage_limits(ctx, state.accounted_responses)
             # `ModelRetry` from any model lifecycle hook retries the model request.
             # If the handler was called, preserve the response in history for context.
@@ -2310,8 +2345,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     ctx, state.response, record_usage=not state.usage_recorded, described=state.described_attempts
                 )
             return await self._build_retry_node(ctx, e)
+        except BaseException:
+            await _settle_pending(state.pending, None)
+            raise
 
-        self._enforce_usage_limits(ctx, state.accounted_responses)
+        await _settle_pending(state.pending, model_response)
         return await self._finish_handling(
             ctx, model_response, record_usage=not state.usage_recorded, described=state.described_attempts
         )
@@ -2394,6 +2432,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     on_progress=on_progress,
                     return_pending=ctx.deps.output_schema.allows_pending_model_response,
                 )
+                # Before the wrapper is exited, so a pending response is still settled if exiting it fails.
+                state.pending = _pending_snapshot(request_context, outcome)
             # Committed before the earlier attempts are attached, so their usage isn't counted twice.
             state.record(ctx, outcome, request_context)
             response = failed.log.attach(outcome)
@@ -2422,13 +2462,29 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
         except exceptions.RetryModelRequest:
             failed.record(request_context, outcome, start)
-            await _cancel_rejected_job(request_context, outcome)
+            await self._cancel_rejected_job(request_context, outcome, state)
             raise
         except exceptions.FallbackExceptionGroup as unrecovered:
             failed.record_exhausted(request_context, outcome, start, unrecovered)
-            await _cancel_rejected_job(request_context, outcome)
+            await self._cancel_rejected_job(request_context, outcome, state)
             self._raise_usage_limit_exceeded(ctx, unrecovered)
             raise
+
+    @staticmethod
+    async def _cancel_rejected_job(
+        request_context: ModelRequestContext, outcome: Exception | _messages.ModelResponse, state: _HandlerState
+    ) -> None:
+        """Cancel the provider-side job of a response a hook rejected while it was still suspended.
+
+        Nothing continues a rejected response, so its job would otherwise keep running, and billing, while the
+        request moves on, as `FallbackModel` cancels a pinned continuation it rejects. A pending batch request is
+        withdrawn the same way: its model cancels the batch only once nothing else waits on it. Either way it's done
+        here, once, so the step doesn't settle the response again when it ends. The attempt's wrapper was exited with
+        its request, so the cancellation enters it again, as for a stream interrupted on a suspended response.
+        """
+        state.pending = None
+        if isinstance(outcome, _messages.ModelResponse) and outcome.state == 'suspended':
+            await _cancel_interrupted_job(request_context, outcome)
 
     async def _prepare_request(
         self,

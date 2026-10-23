@@ -1692,3 +1692,44 @@ async def test_a_rejected_pending_response_has_its_job_cancelled():
     assert [(attempt.model_name, attempt.outcome) for attempt in result.response.failed_attempts or []] == [
         ('primary', 'rejected')
     ]
+
+
+async def test_a_rejected_pending_batch_request_is_withdrawn_once():
+    """A pending batch request a handler rejects is withdrawn once: its batch, which nothing else waits on, is cancelled
+    a single time, and the run goes on with the fallback's batch request."""
+    primary = SlowBatchTestModel(pending_checks=100, model_name='primary')
+    backup = SlowBatchTestModel(model_name='backup')
+    judged: list[str] = []
+
+    def reject_the_first(response: ModelResponse) -> bool:
+        judged.append(response.state)
+        return len(judged) == 1
+
+    def batched_agent() -> Agent[None, str | PendingModelResponse]:
+        return Agent(
+            primary,
+            output_type=[str, PendingModelResponse],
+            capabilities=[
+                ModelFallback(backup, fallback_on=reject_the_first),
+                BatchModelRequests(**FAST_BATCH_SETTINGS),
+            ],
+        )
+
+    pending = await batched_agent().run('Hello')
+    assert isinstance(pending.output, PendingModelResponse)
+    assert judged == ['suspended', 'suspended']
+    assert primary.canceled == [batch.id for batch in primary.created]
+    assert (len(primary.created), len(backup.created), backup.canceled) == (1, 1, [])
+    assert (pending.output.response.metadata or {}).get('__pydantic_ai__', {}).get('fallback_candidate') == (
+        'test:backup'
+    )
+
+    # The fallback's batch request was left for a later run, which collects it.
+    result = await batched_agent().run(message_history=pending.all_messages())
+    assert result.output == 'success (no tool calls)'
+    assert (len(primary.created), len(backup.created), primary.canceled, backup.canceled) == (
+        1,
+        1,
+        [primary.created[0].id],
+        [],
+    )

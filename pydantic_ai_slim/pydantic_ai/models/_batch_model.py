@@ -746,6 +746,11 @@ class BatchedModel(WrapperModel):
             return self.wrapped._release_suspended_response(response)
         self.pool.release(ticket['batch'], ticket['custom_id'])
 
+    def _withdraws_rejected_suspended_response(self, response: ModelResponse) -> bool:
+        # Nothing else collects a request whose pending response a hook rejected, so it's abandoned, which cancels its
+        # batch once no other request waits on it.
+        return _pending_ticket(response) is not None or self.wrapped._withdraws_rejected_suspended_response(response)
+
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         if (ticket := _pending_ticket(response)) is None:
             return await self.wrapped.cancel_suspended_response(response)

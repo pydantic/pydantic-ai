@@ -1168,6 +1168,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         return None
 
+    def _withdraws_rejected_suspended_response(self, response: ModelResponse) -> bool:
+        """Whether a suspended response a run would have ended with, but a hook rejected, is cancelled.
+
+        `False` by default, so the job keeps running as before; a model whose request only some run would ever
+        collect, like a batch request, returns `True`, so a rejected one stops holding its job.
+        """
+        return False
+
     def _with_serving_wrapper(self, wrap: Callable[[Model], Model]) -> Model:
         """This model with `wrap` applied to the model that sends its requests.
 

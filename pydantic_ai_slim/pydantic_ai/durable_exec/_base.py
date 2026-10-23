@@ -13,13 +13,14 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import replace
 from functools import partial
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol, Self, TypeVar, cast, runtime_checkable
 from weakref import ReferenceType, ref
 
+import anyio
 from opentelemetry.trace import get_current_span
 from pydantic_core import PydanticSerializationError
 
@@ -49,6 +50,7 @@ from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
+    StreamedResponse,
     infer_model,
 )
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -1807,24 +1809,61 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         return IdentityParameterTransport[ModelCompactMessagesParams]()
 
     async def _model_request_operation(self, params: ModelRequestParams) -> ModelResponse:
-        async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (model, _):
-            response = await model.request(params.messages, params.model_settings, params.model_request_parameters)
+        response: ModelResponse | None = None
+        try:
+            async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (model, _):
+                response = await model.request(params.messages, params.model_settings, params.model_request_parameters)
+        except BaseException:
+            await self._withdraw_unreturned_response(params, response)
+            raise
         self._stamp_response(response, params.messages)
         return response
 
     async def _model_request_stream_operation(self, params: ModelRequestParams) -> ModelResponse:
-        async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (model, durable_ctx):
-            async with model.request_stream(
-                params.messages, params.model_settings, params.model_request_parameters, durable_ctx
-            ) as streamed:
-                await consume_event_stream(
-                    run_context=durable_ctx,
-                    stream=streamed,
-                    handler=self._model_stream_event_handler(),
-                )
-        response = streamed.get()
+        response: ModelResponse | None = None
+        streamed: StreamedResponse | None = None
+        try:
+            async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (
+                model,
+                durable_ctx,
+            ):
+                async with model.request_stream(
+                    params.messages, params.model_settings, params.model_request_parameters, durable_ctx
+                ) as streamed:
+                    await consume_event_stream(
+                        run_context=durable_ctx,
+                        stream=streamed,
+                        handler=self._model_stream_event_handler(),
+                    )
+                    # Before the stream is closed, so the request is still withdrawn if closing it fails.
+                    response = streamed.get()
+                # Read again, for what closing the stream filled in.
+                response = streamed.get()
+        except BaseException:
+            if response is None and streamed is not None:
+                # The stream failed while it was consumed: its request may already have been submitted.
+                with suppress(Exception):
+                    response = streamed.get()
+            await self._withdraw_unreturned_response(params, response)
+            raise
         self._stamp_response(response, params.messages)
         return response
+
+    async def _withdraw_unreturned_response(self, params: ModelRequestParams, response: ModelResponse | None) -> None:
+        """Withdraw a pending batch request whose unit failed after the request returned it, once it was sent.
+
+        Exiting a capability's model wrapper can fail after the request returned, and the response then never reaches
+        the run to be left for a later one or withdrawn, as the core does with a pending response a hook rejected. Like
+        that withdrawal, it's best effort and shielded, so the unit's own error is the one raised.
+        """
+        if response is None or response.state != 'suspended':
+            return
+        with anyio.CancelScope(shield=True), suppress(Exception):
+            async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (model, _):
+                # Other models' suspended jobs are left running, as when the core can't settle them.
+                withdraws = model._withdraws_rejected_suspended_response(response)  # pyright: ignore[reportPrivateUsage]
+                if withdraws:  # pragma: no branch
+                    await model.cancel_suspended_response(response)
 
     async def _cancel_suspended_response_operation(self, params: ModelCancelSuspendedResponseParams) -> None:
         if params.run_context is None:
