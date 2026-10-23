@@ -2529,7 +2529,7 @@ def _map_responses_citations(
                     anchor=_marker_citation_anchor(start, end, text),
                 )
             )
-        else:
+        elif annotation.file_id or annotation.filename:  # a file citation naming no file has no source to show
             citations.append(
                 Citation(
                     sources=[DocumentCitationSource(document_id=annotation.file_id, title=annotation.filename)],

@@ -123,20 +123,27 @@ TextPart(
 )
 ```
 
-## Citations and structured output
+## Citations, tools and structured output
 
 Citations are attached to text, so they only come back when your agent's output is text. With
-[structured output](output.md), the default [tool output](output.md#tool-output) comes back as tool call arguments,
-which can't carry citations.
+[structured output](output.md), including an output type that combines `str` with a structured type, such as
+`[str, Answer]`, the answer comes back as tool call arguments, which can't carry citations.
 
-On Anthropic, asking for citations with structured output also makes the output worse: the model writes its citation
-markup into your fields, such as `summary='<cite index="1-1">Items may be returned within 30 days.</cite>'`, and
-`NativeOutput` is rejected. So `Citations()` only asks Anthropic for citations when your output is text. With
-structured output you get clean fields and no document citations. If you need the citations, use text output.
+On Anthropic, the model writes its citation markup into anything that isn't text, such as
+`summary='<cite index="1-1">Items may be returned within 30 days.</cite>'`. So with `Citations()`:
 
-Anthropic always cites [web search](native-tools.md#web-search-tool) results, so with web search the markup can still
-show up in structured output, even without `Citations()`. The same goes for
-[web fetch](native-tools.md#web-fetch-tool) when you set `enable_citations=True` on the tool.
+- **Structured output:** Anthropic isn't asked for citations, so your fields stay clean and you get no document
+  citations. (Anthropic rejects citations with `NativeOutput`.)
+- **A tool call forced with [`tool_choice`](tools-advanced.md#dynamic-tool-choice-via-capabilities):** raises a
+  `UserError`, because the markup reaches the tool's arguments every time.
+- **Tools the model chooses to call:** citations stay on, but some models still write the markup into the tool's
+  arguments now and then. Check arguments that end up in front of people, such as an email body.
+
+If you need citations, use text output.
+
+Anthropic always cites [web search](native-tools.md#web-search-tool) results, so with web search the markup can show
+up in structured output even without `Citations()`. The same goes for [web fetch](native-tools.md#web-fetch-tool)
+when you set `enable_citations=True` on the tool.
 
 On other providers, `Citations()` has no effect on structured output. With `NativeOutput` or `PromptedOutput` the
 output is JSON text, so web search citations can come back on it, with positions in the JSON text rather than in your
@@ -144,8 +151,9 @@ fields.
 
 ## Good to know
 
-- When streaming, citations can arrive after their text: at the end of each text part on Anthropic, and at the end of
-  the response on Google and OpenAI Chat. Read citations from the final response.
+- When streaming, citations can arrive after their text: at the end of each text part on Anthropic and OpenAI
+  Responses, and at the end of the response on Google and OpenAI Chat. Read citations from the final response.
+- The [AG-UI adapter](ui/ag-ui.md) doesn't send citations to the frontend.
 - Citation URLs, titles and excerpts come from outside sources, so treat them as untrusted. Excerpts can also contain
   private content from your documents, so choose whether to log them or show them to users.
 - Anything else the provider returned about a citation, such as Google's confidence scores, is kept as the provider

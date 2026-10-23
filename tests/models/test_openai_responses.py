@@ -187,6 +187,10 @@ _CONTAINER_FILE_ANNOTATION = {
             {'type': 'url_citation', 'url': 'https://example.com', 'title': 'Example', 'start_index': None},
             id='url-citation-without-range',
         ),
+        pytest.param(
+            {'type': 'file_citation', 'file_id': '', 'filename': '', 'index': 0},
+            id='file-citation-naming-no-file',
+        ),
     ],
 )
 def test_openai_unsupported_annotation_is_ignored(value: dict[str, Any]):
