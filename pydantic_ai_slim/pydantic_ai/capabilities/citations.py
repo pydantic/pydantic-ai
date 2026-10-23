@@ -10,10 +10,10 @@ from .abstract import AbstractCapability
 
 @dataclass
 class Citations(AbstractCapability[Any]):
-    """Asks for citations from providers that only return them when asked.
+    """Asks for citations from providers that only cite when asked.
 
-    Sets the [`citations`][pydantic_ai.settings.ModelSettings.citations] model setting. Providers that always return
-    citations, such as for web search, return them without it.
+    Sets the [`citations`][pydantic_ai.settings.ModelSettings.citations] model setting. Providers that always cite,
+    such as for web search, don't need it.
     """
 
     _: KW_ONLY
