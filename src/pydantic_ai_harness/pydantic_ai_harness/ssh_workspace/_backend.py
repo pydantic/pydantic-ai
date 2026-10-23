@@ -79,6 +79,12 @@ def _after_ready(stderr: str) -> str:
     return stderr.partition(_READY)[2]
 
 
+def _not_started(timeout: float) -> WorkspaceTimeoutError:
+    return WorkspaceTimeoutError(
+        f'command timed out after {timeout:g}s while connecting and was not started', stdout='', stderr=''
+    )
+
+
 class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
     """Run commands on a remote host with the system's OpenSSH `ssh` client.
 
@@ -182,9 +188,7 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         if timeout is not None:
             remaining = timeout - (anyio.current_time() - started)
             if remaining <= 0:
-                raise WorkspaceTimeoutError(
-                    f'command timed out after {timeout:g}s while connecting and was not started', stdout='', stderr=''
-                )
+                raise _not_started(timeout)
             timeout = remaining
         return await self._remote(directory, line, env=merged_env, timeout=timeout)
 
@@ -250,7 +254,10 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
                 # command line, which caps how long a command can be, within the time this attempt left.
                 self._script_on_stdin = False
                 if timeout is not None:
-                    timeout = max(timeout - (anyio.current_time() - started), 0.001)
+                    remaining = timeout - (anyio.current_time() - started)
+                    if remaining <= 0:
+                        raise _not_started(timeout)
+                    timeout = remaining
                 return await self._remote(directory, line, env=env, timeout=timeout)
             reason = before.strip() or f'`ssh` exited with code {result.exit_code}'
             raise WorkspaceUnavailableError(f'SSH workspace {self._ref.id} is unavailable: {reason}')

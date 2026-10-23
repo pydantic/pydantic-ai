@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import anyio
 import pytest
@@ -15,6 +16,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
+    CommandResult,
     ReadOnlyWorkspace,
     Workspace,
     WorkspaceOutputLimitError,
@@ -256,6 +258,31 @@ async def test_an_ssh_that_does_not_forward_its_input_gets_the_script_as_an_argu
     assert re.fullmatch(rf'/bin/sh -s {tag}', on_input)
     assert len(as_argument) == 3
     assert all(re.fullmatch(rf"/bin/sh -c '.*' {tag}", command, re.DOTALL) for command in as_argument)
+
+
+async def test_a_timeout_used_up_by_the_input_attempt_never_starts_the_command(
+    tools: FakeRemoteTools, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = SSHWorkspaceBackend('box', working_dir=str(tmp_path), ssh_args=['-n'])
+    runner = backend._runner  # pyright: ignore[reportPrivateUsage]
+    run = runner.run
+
+    async def slow_run(*args: Any, **kwargs: Any) -> CommandResult:
+        result = await run(*args, **kwargs)
+        await anyio.sleep(0.3)
+        return result
+
+    monkeypatch.setattr(runner, 'run', slow_run)
+
+    with pytest.raises(
+        WorkspaceTimeoutError, match=r'^command timed out after 0\.2s while connecting and was not started$'
+    ):
+        await backend.run(['touch', 'started'], timeout=0.2)
+    assert not (tmp_path / 'started').exists()
+    # No second connection was wasted on the command, and the next one goes straight to the argument form.
+    assert len(tools.ssh_commands) == 1
+    assert (await backend.run('printf ok', shell=True)).stdout == 'ok'
+    assert [command.startswith('/bin/sh -c ') for command in tools.ssh_commands] == [False, True, True]
 
 
 async def test_a_login_that_runs_nothing_and_exits_0_is_unavailable(tools: FakeRemoteTools) -> None:
