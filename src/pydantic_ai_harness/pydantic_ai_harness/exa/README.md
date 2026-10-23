@@ -82,10 +82,10 @@ rejects or a response it can't parse.
 
 Titles, excerpts, page text, and deep search answers come from third-party
 pages, so they can carry instructions aimed at the model. Each title, URL,
-author, date, and excerpt is rendered on one line, so a page can't fake
-another result's `Title:` or `URL:` line. The `text_summary` summary and the
-`deep_search` answer are Exa's own synthesized text and are passed through as
-returned.
+author, date, and excerpt is rendered on one line, so those fields can't fake
+another result's `Title:` or `URL:` line. Page text is passed through as
+returned, and the `text_summary` summary and the `deep_search` answer are
+Exa's own synthesized text, so any of them can still contain such lines.
 
 `include_domains` and `exclude_domains` don't restrict `get_page`: it reads any
 URL the model passes, including one a page told it to read, and the URL can
