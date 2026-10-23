@@ -102,8 +102,8 @@ agent = Agent(
 head kept), `text_summary=False` (`True` or a format string prepends a `Summary:` line),
 `include_deep_search=False`, `include_domains=[]` / `exclude_domains=[]` (mutually exclusive; they filter
 `web_search` and `deep_search`, not `get_page`),
-`guidance=None` (`''` = no instructions), `client=None` (`ExaClient`; default `exa_py.AsyncExa` from
-`EXA_API_KEY`).
+`guidance=None` (`''` = no instructions), `client=None` (`ExaClient`; default wraps `exa_py.AsyncExa` from
+`EXA_API_KEY`, rebuilt on a new asyncio event loop once the previous one has stopped).
 
 `ExaAgent` fields: `effort=None` (an `exa_py` `AgentEffort`, e.g. `'low'` or `'auto'`), `execution='inline'`
 (polls to completion inside the run) or `'external'`, `output_schema=None` (Pydantic model class, validated;
@@ -253,13 +253,16 @@ Gotchas:
   `BrowserAgentSettings(use_judge=False)`.
 - Flat `sensitive_data` values require explicit-hostname `allowed_domains` (globs rejected) and are
   substituted only on allowlisted pages; prefer the domain-scoped form `{'https://site': {'key': 'value'}}`.
-  Secret values are replaced with their placeholder in the `browse_web` result. Screenshots are not
-  redacted.
+  Secret values, and their JSON-escaped and `quote_plus`-encoded forms, are replaced with
+  their placeholder in the `browse_web` result. Screenshots are not redacted.
 - `session_scope='agent'` reuses one browser across calls (serialized); close with `aclose()` or
   `async with BrowserUse(...) as browser:`. Under `TemporalDurability`, `Agent(...)` raises
   `UserError` with either scope (its toolset has no stable id).
 - Default `'call'` scope launches one Chromium per concurrent call.
-- `file://` navigation is always prohibited. The default factory removes `read_file` and `upload_file`.
+- `file://` navigation is always prohibited. Without an allowlist, a `browser_profile.prohibited_domains`
+  that reaches 100 entries once the harness's `file://` rules (and, with `block_ip_addresses`, its
+  localhost rules) are added raises `ValueError`.
+  The default factory removes `read_file` and `upload_file`.
   With `sensitive_data` set, every factory's `settings.tools` drops `evaluate`; a factory that builds
   its own `Tools` must drop it too.
 - browser-use's per-run telemetry event (task, visited URLs, result) is off for the capability's

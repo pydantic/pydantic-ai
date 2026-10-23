@@ -166,13 +166,14 @@ Key parameters:
   `lambda out: redact_secrets(out.model_dump_json()).action == 'allow'` blocks on a match; to redact,
   return `GuardrailResult.replace(Model.model_validate_json(verdict.replacement))`.
 - `ToolGuardrail(guard=None, result_guard=None, tools=None, hidden=())`: `tools` restricts both
-  guards to those names; `hidden` drops tools from the model's tool list (no tokens,
-  never attempted). A `tools` name no step offered warns (`UserWarning`) after each successful
+  guards to those names; `hidden` drops tools from the model's tool list (no tokens; a call
+  to one is rejected as an unknown tool). A `tools` name no step offered warns (`UserWarning`) after each successful
   run, including a legitimately absent tool (an integration whose `auth` function returned `None`).
   There is no switch: name only tools that are present, or omit `tools` and test `call.name` in the guard.
 - `InputGuardrail.guard` / `OutputGuardrail.guard` accept a sequence (a list or tuple; sets,
   iterators, and empty sequences raise `UserError` at first use). `ToolGuardrail` guards are single
-  callables.
+  callables; for several tool checks, stack several `ToolGuardrail` capabilities: argument guards run
+  in list order, result guards in reverse.
 
 Detectors (`pydantic_ai_harness.guardrails.detectors`), plain functions returning `GuardrailResult`
 (`.action` is `'allow'`, `'block'`, or `'replace'`; `.replacement` holds the redacted text). To block
@@ -184,7 +185,8 @@ where a redactor would redact: `guard=lambda text: redact_secrets(text).action !
   `personal_data`; `blocked_keywords(keywords, case_sensitive=False, whole_words=False, message=None)`.
 - Adapters: `for_text(detector, on_other='raise')` for outputs that may not be `str`;
   `for_tool_result_text(detector, on_other='raise')` for `result_guard` (scans string results and
-  `ToolReturn` text).
+  `ToolReturn` text; adjacent text parts are scanned joined, so a secret split across them is caught,
+  and only a non-text part such as an image separates them, not a `CachePoint`).
 - `for_tool_result_text` raises `UserError` on a non-text result (a structured return, `AskUser`'s
   dict answer), failing the run. Scope it with `tools=[...]`, or pass `on_other='allow'` to let
   non-text results (including `ToolReturn.content`) through unscanned.
@@ -192,10 +194,15 @@ where a redactor would redact: `guard=lambda text: redact_secrets(text).action !
 Gotchas:
 - Hard-fail instead of graceful: raise `InputBlocked`/`OutputBlocked`/`ToolBlocked(tool_name, reason)`
   (all subclass `GuardrailError`) from the guard; any exception propagates as-is.
-- Input `replace` on a multimodal prompt raises `UserError` (it would drop attachments).
+- Input `replace` on a multimodal prompt raises `UserError` (it would drop attachments), also when
+  the model was sent a text copy and the history's original is the multimodal prompt, and on a run
+  resuming from a request with several prompt parts, which the guard screens combined as `ctx.prompt`.
 - `InputGuardrail` screens and rewrites the user's prompt part only. Parts another capability adds to the
-  request (`SystemReminders`, `Planning`, `Memory`) are left alone. A run resumed without a new prompt
-  screens the most recent prompt in the history again.
+  request (`SystemReminders`, `Planning`, `Memory`) are left alone. If one sends the model a copy of the
+  prompt part, a redaction also reaches the history's original; for a copy with changed text the guard
+  is called again on the original's own text: a redaction from it is written there and a `block`
+  blocks the run. A run resumed without a new prompt screens the most recent prompt in the history
+  again.
 - Redaction spans carry `guardrail.replacement` under `trace_include_content`, never the original value.
 - `email` also matches `git@github.com`; on code agents use `personal_data(only=['us_ssn', 'credit_card', 'iban'])`.
 - AWS *secret* keys are not in the defaults; add via `extra=`. Regex detectors do not catch prompt injection.
