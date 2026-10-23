@@ -1,0 +1,109 @@
+name: UI round trip
+
+# Runs `tests/ui_roundtrip` against the real JavaScript clients of the Vercel AI SDK and AG-UI,
+# pinned in `tests/ui_roundtrip/package-lock.json`. Those tests check that a conversation held by a
+# frontend comes back to the server as the history the server had, which no Python stand-in for
+# the clients can show. Node stays out of `ci.yml`, so this is its own job. It runs on every pull
+# request and every push to `main`: the histories under test come from the whole library, and the
+# tests import shared helpers and depend on the locked dependencies, while the suite only takes
+# seconds. It also runs nightly against `main`, and the scheduled run opens an issue when it fails.
+#
+# The `ci.yml` test jobs collect these tests too and skip them, since they have no `node_modules`;
+# `UI_ROUNDTRIP_REQUIRED` makes this job fail instead.
+
+on:
+  pull_request: {}
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-roundtrip-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  COLUMNS: 150
+  UV_PYTHON: 3.12
+  UV_FROZEN: "1"
+  UV_PYTHON_PREFERENCE: only-managed
+  # As in `ci.yml`: authenticates the Git fetches uv makes for Git-sourced dependencies.
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: url.https://x-access-token:${{ github.token }}@github.com/.insteadOf
+  GIT_CONFIG_VALUE_0: https://github.com/
+
+jobs:
+  ui-roundtrip:
+    name: UI round trip
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: true
+          cache-suffix: ui-roundtrip
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tests/ui_roundtrip/package-lock.json
+
+      # `--ignore-scripts`: no package's install hooks run, so the lockfile is the only thing that
+      # reaches the runner.
+      - name: install the JavaScript UI clients
+        working-directory: tests/ui_roundtrip
+        run: npm ci --ignore-scripts
+
+      - run: uv sync --only-dev
+
+      - name: run the round-trip tests
+        run: >-
+          uv run --package pydantic-ai-slim --extra ui --extra ag-ui --extra openai --extra anthropic
+          pytest tests/ui_roundtrip
+        env:
+          UI_ROUNDTRIP_REQUIRED: "1"
+
+  report:
+    needs: [ui-roundtrip]
+    # Only the scheduled run files an issue; other runs show their result on the PR or run page.
+    if: ${{ failure() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Open or update the nightly failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title='UI round trip nightly is failing'
+          # `--search` matches words rather than the phrase, so it narrows the listing and
+          # the exact title is compared here.
+          number="$(gh issue list --state open --search "${title} in:title" \
+            --json number,title --jq ".[] | select(.title == \"${title}\") | .number" | head -n 1)"
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "Failed again: ${RUN_URL}"
+            exit 0
+          fi
+
+          cat > "${RUNNER_TEMP}/nightly.md" <<EOF
+          The scheduled run of \`tests/ui_roundtrip\` failed on \`main\`: ${RUN_URL}
+
+          These tests send conversations through the real Vercel AI and AG-UI JavaScript clients and check that what the clients send back loads as the history the server had. Two pull requests that each passed can still break that round trip together once both are on \`main\`; so can a known gap that is now fixed, or that now differs from its recorded diff in \`tests/ui_roundtrip/known_gaps\`.
+
+          Close this issue once a nightly run passes.
+          EOF
+          gh issue create --title "${title}" --body-file "${RUNNER_TEMP}/nightly.md"
