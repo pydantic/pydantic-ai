@@ -141,13 +141,12 @@ def _plural(count: int, noun: str) -> str:
 class ComputerUse(AbstractCapability[AgentDepsT]):
     """Lets the agent see and control the display of its workspace with one `computer` tool.
 
-    The model sends a list of mouse and keyboard actions; they run in order on `ctx.workspace`, and the tool
+    The model sends a list of mouse and keyboard actions; they run in order on the workspace's display, and the tool
     returns a screenshot of the result. The workspace must have a display, such as a sandbox capability started
     with a desktop; see [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]. The model must accept
     images.
 
-    Under durable execution the tool runs in workflow code, so each action and screenshot is its own durable
-    workspace operation: a retry repeats only that operation, not the whole batch.
+    Under durable execution, each action and screenshot is retried on its own, not the whole batch.
     """
 
     _: KW_ONLY
@@ -246,8 +245,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """One display: the later configuration wins, but a restriction either states survives.
 
-        Approval is required if any asks for it, and the fewest kept screenshots apply. `replace` rebuilds the tool,
-        so it runs with the combined settings.
+        Approval is required if any asks for it, and the fewest kept screenshots apply.
         """
         combined = cast(list[ComputerUse[AgentDepsT]], list(capabilities))
         kept = [c.keep_screenshots for c in combined if c.keep_screenshots is not None]
@@ -288,11 +286,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        """Refuse a model that can't see screenshots, and send only the most recent `keep_screenshots` of them.
-
-        Checked for every request, since model selection can change the model within a run; the run's history keeps
-        every screenshot.
-        """
+        """Refuse a model that can't see screenshots, and send only the most recent `keep_screenshots` of them."""
         model = request_context.model
         if not _profile(model).get('supports_image_input', True):
             raise UserError(
