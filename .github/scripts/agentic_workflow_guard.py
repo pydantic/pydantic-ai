@@ -34,6 +34,9 @@ budget before anyone noticed, documented in #6766:
   table, not a reporting field, and AWF caps a run at 10,000 credits with nothing in
   frontmatter able to lift it. Pricing `MiniMax-M3` there made one ordinary request cost
   tens of thousands, so every agent job 403'd on its first call.
+- `daily_aic_guardrail` — gh-aw's daily AI-credits guardrail listed the artifacts of every
+  run from the past 24h on each activation, about 700 REST calls per CI Review activation,
+  and exhausted the repo's `GITHUB_TOKEN` rate limit to total credits that were always 0.
 - `compiler_version_compatibility` — the compiler version in every generated lock
   must not appear in gh-aw's live blocked-version policy.
 - `lock_regenerated` — `.github/workflows/AGENTS.md` requires a recompiled
@@ -64,6 +67,7 @@ from pathlib import Path
 from typing import Any, TypeGuard, cast
 
 import yaml
+from agent_provider_health import AGENT_START_HEALTH_STEPS
 
 WORKFLOWS_DIR = Path('.github/workflows')
 AGENTIC_GLOB = 'pydantic-ai-*.md'
@@ -114,6 +118,19 @@ SANDBOX_PATH = re.compile(rf'{re.escape(SANDBOX_PREFIX)}[^\s`\'"()\[\]<>]*')
 # the version may be quoted, and the capture must not swallow those quotes: a pin that
 # only differs from the compiled version by a pair of them is the same pin.
 AWF_INSTALL_VERSION = re.compile(r'install_awf_binary\.sh"?\s+"?([^"\s]+)')
+
+# The script gh-aw's daily AI-credits guardrail step runs. Match it rather than the step id,
+# which changes across releases: `daily-effective-workflow-guardrail` in v0.86.2,
+# `daily-ai-credits-workflow-guardrail` in v0.92.6.
+DAILY_AIC_GUARDRAIL_SCRIPT = 'check_daily_aic_workflow_guardrail.cjs'
+
+# The agent-start recheck fetches the controller through the contents API with no `ref`,
+# which serves the default branch, then runs `check` from the file it fetched. A workspace
+# copy can come from the PR head or its base branch.
+AGENT_START_HEALTH_CHECK = re.compile(
+    r'/contents/\.github/scripts/agent_provider_health\.py"(?:\s|\\)*>\s*(?P<path>"[^"]+")\s*'
+    r'python3\s+(?P=path)\s+check\b'
+)
 
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')
 EXPRESSION_BLOCK = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
@@ -644,6 +661,29 @@ def check_ai_credits_accounting(lock: Path) -> list[Violation]:
     ]
 
 
+def check_daily_aic_guardrail(lock: Path) -> list[Violation]:
+    """No lock may compile gh-aw's daily AI-credits guardrail.
+
+    With a threshold set, the guardrail spends hundreds of REST calls per activation on
+    the repo's `GITHUB_TOKEN` to total AI credits, which do not measure the Z.AI quota.
+    gh-aw drops it only for `max-daily-ai-credits: -1` in the workflow's own frontmatter.
+    An imported `-1` only skips the scan at run time and still compiles the guardrail
+    with its conclusion-job cache steps, so this reads the lock.
+    """
+    if DAILY_AIC_GUARDRAIL_SCRIPT not in lock.read_text(encoding='utf-8'):
+        return []
+    return [
+        Violation(
+            str(lock),
+            'daily-aic-guardrail',
+            "the lock compiles gh-aw's daily AI-credits guardrail. With a threshold set, every activation "
+            "lists each recent run's artifacts and exhausts the `GITHUB_TOKEN` rate limit. With `-1` only "
+            'in an import, that scan is skipped but its conclusion-job cache steps still run whenever the conclusion job runs. '
+            "Set `max-daily-ai-credits: -1` in the source's own frontmatter and recompile.",
+        )
+    ]
+
+
 def check_compiler_version_compatibility(locks: list[Path], compatibility: dict[str, Any]) -> list[Violation]:
     """Compiled gh-aw versions must not be revoked by the upstream runtime policy."""
     blocked_raw = compatibility.get('blockedVersions')
@@ -1055,6 +1095,57 @@ def check_provider_health_recovery_wiring(workflows_dir: Path = WORKFLOWS_DIR) -
     return violations
 
 
+def check_provider_health_agent_start(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Z.AI agent jobs must repeat the gate once they hold the agent slot, and stop before inference when blocked."""
+    violations: list[Violation] = []
+    for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
+        lock = source.with_suffix('.lock.yml')
+        if not _is_zai_workflow(parse_frontmatter(source)) or not lock.is_file():
+            continue
+        jobs = _as_mapping(_as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8'))).get('jobs'))
+        gate_steps = _as_mapping(jobs.get('provider_health')).get('steps')
+        agent_steps = _as_mapping(jobs.get('agent')).get('steps')
+        gate = [_as_mapping(step) for step in gate_steps] if _is_object_sequence(gate_steps) else []
+        steps = [_as_mapping(step) for step in agent_steps] if _is_object_sequence(agent_steps) else []
+        gate_env = next((step.get('env') for step in gate if step.get('id') == 'health'), None)
+        execution = next((i for i, step in enumerate(steps) if step.get('id') == 'agentic_execution'), 0)
+        recheck = next(
+            (
+                i
+                for i, step in enumerate(steps[:execution])
+                if AGENT_START_HEALTH_CHECK.search(str(step.get('run', '')))
+            ),
+            None,
+        )
+        stop_condition = f"steps.{steps[recheck].get('id')}.outputs.ready != 'true'" if recheck is not None else None
+        after_recheck = steps[recheck + 1 : execution] if recheck is not None else []
+        recheck_name, replace_name, stop_name = AGENT_START_HEALTH_STEPS
+        # The monitor recognizes these steps by name, so a renamed step reads as a setup failure.
+        named = (
+            recheck is not None
+            and steps[recheck].get('name') == recheck_name
+            and any(step.get('name') == replace_name for step in after_recheck)
+        )
+        stops = any(
+            step.get('name') == stop_name
+            and _normalized_condition(str(step.get('if', ''))) == _normalized_condition(str(stop_condition))
+            and str(step.get('run', '')).rstrip().endswith('exit 1')
+            and not step.get('continue-on-error')
+            for step in after_recheck
+        )
+        if recheck is None or gate_env is None or steps[recheck].get('env') != gate_env or not named or not stops:
+            violations.append(
+                Violation(
+                    str(lock),
+                    'provider-health-agent-start',
+                    'The agent job must rerun the default-branch provider-health check with the gate environment '
+                    'before engine execution, then fail before inference unless it reports ready. The steps must '
+                    'keep the names in `agent_provider_health.AGENT_START_HEALTH_STEPS`.',
+                )
+            )
+    return violations
+
+
 def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:  # noqa: C901
     """The serialized monitor only accepts completions from the enumerated Z.AI workflows."""
     monitor_path = workflows_dir / 'agent-provider-health.yml'
@@ -1381,6 +1472,7 @@ def run_checks(
         violations += check_compiled_runner_contract(lock)
         violations += check_awf_binary_version(lock)
         violations += check_ai_credits_accounting(lock)
+        violations += check_daily_aic_guardrail(lock)
     for source in sources:
         violations += check_safe_output_job_max(source)
         violations += check_timeout_declared(source)
@@ -1393,6 +1485,7 @@ def run_checks(
     violations += check_provider_health_wiring(workflows_dir)
     violations += check_provider_health_identity(workflows_dir)
     violations += check_provider_health_recovery_wiring(workflows_dir)
+    violations += check_provider_health_agent_start(workflows_dir)
     violations += check_provider_health_monitor(workflows_dir)
     violations += check_assigned_alert_metadata_gate(workflows_dir)
     if compatibility is not None:

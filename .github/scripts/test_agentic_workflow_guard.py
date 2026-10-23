@@ -18,6 +18,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent))
 
 import agentic_workflow_guard
+from agent_provider_health import AGENT_START_HEALTH_STEPS
 from agentic_workflow_guard import (
     Violation,
     changed_files,
@@ -27,12 +28,14 @@ from agentic_workflow_guard import (
     check_compiled_runner_contract,
     check_compiler_version_compatibility,
     check_compiler_versions,
+    check_daily_aic_guardrail,
     check_dangling_needs,
     check_job_timeout_env,
     check_lock_regenerated,
     check_logfire_wiring,
     check_prompt_paths,
     check_provider_engine_config,
+    check_provider_health_agent_start,
     check_provider_health_identity,
     check_provider_health_monitor,
     check_provider_health_recovery_wiring,
@@ -878,6 +881,98 @@ jobs:
     assert check_ai_credits_accounting(lock) == []
 
 
+# --- daily AI-credits guardrail (the artifact scan that drained `GITHUB_TOKEN`) -
+
+
+def test_daily_aic_guardrail_rejects_the_compiled_default(tmp_path: Path):
+    """The shape every lock carried before `max-daily-ai-credits: -1`, as gh-aw v0.86 compiles it."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  activation:
+    env:
+      GH_AW_MAX_DAILY_AI_CREDITS: ${{ vars.GH_AW_DEFAULT_MAX_DAILY_AI_CREDITS || '5000' }}
+    steps:
+      - name: Check daily workflow token guardrail
+        id: daily-effective-workflow-guardrail
+        if: ${{ env.GH_AW_MAX_DAILY_AI_CREDITS != '' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { main } = require('${{ runner.temp }}/gh-aw/actions/check_daily_aic_workflow_guardrail.cjs');
+            await main();
+""",
+    )
+
+    violations = check_daily_aic_guardrail(lock)
+
+    assert [v.check for v in violations] == ['daily-aic-guardrail']
+    assert '`max-daily-ai-credits: -1`' in violations[0].message
+
+
+def test_daily_aic_guardrail_rejects_the_renamed_step_after_a_compiler_upgrade(tmp_path: Path):
+    """gh-aw v0.92.6 compiles the step under a new id; it still runs the same guardrail script."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  activation:
+    steps:
+      - name: Check daily workflow token guardrail
+        id: daily-ai-credits-workflow-guardrail
+        if: ${{ env.GH_AW_MAX_DAILY_AI_CREDITS != '' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const path = require('path');
+            const actionsDir = path.join(process.env.RUNNER_TEMP, 'gh-aw', 'actions');
+            const { main } = require(path.join(actionsDir, 'check_daily_aic_workflow_guardrail.cjs'));
+            await main();
+""",
+    )
+
+    assert [v.check for v in check_daily_aic_guardrail(lock)] == ['daily-aic-guardrail']
+
+
+def test_daily_aic_guardrail_rejects_a_disable_set_only_in_an_import(tmp_path: Path):
+    """An imported `-1` drops the threshold env but still compiles the step."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  activation:
+    steps:
+      - name: Check daily workflow token guardrail
+        id: daily-effective-workflow-guardrail
+        if: ${{ env.GH_AW_MAX_DAILY_AI_CREDITS != '' }}
+        with:
+          script: |
+            const { main } = require('${{ runner.temp }}/gh-aw/actions/check_daily_aic_workflow_guardrail.cjs');
+""",
+    )
+
+    assert [v.check for v in check_daily_aic_guardrail(lock)] == ['daily-aic-guardrail']
+
+
+def test_daily_aic_guardrail_accepts_a_lock_without_the_step(tmp_path: Path):
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  activation:
+    steps:
+      - name: Check workflow lock file
+        id: check-lock-file
+        with:
+          script: |
+            const { main } = require('${{ runner.temp }}/gh-aw/actions/check_workflow_timestamp_api.cjs');
+""",
+    )
+
+    assert check_daily_aic_guardrail(lock) == []
+
+
 def test_compiler_version_compatibility_rejects_a_blocked_version(tmp_path: Path):
     lock = _write(tmp_path / 'w.lock.yml', '# gh-aw-metadata: {"compiler_version":"v0.83.4"}\njobs: {}\n')
 
@@ -1445,6 +1540,136 @@ Prompt
     violations = check_provider_health_recovery_wiring(workflows)
     assert [(violation.path, violation.check) for violation in violations] == [
         (str(ordinary), 'provider-health-recovery-input')
+    ]
+
+
+_GATE_ENV: dict[str, str] = {
+    'GITHUB_TOKEN': '${{ github.token }}',
+    'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}',
+    'GITHUB_WORKFLOW': '${{ github.workflow }}',
+    'PYDANTIC_AI_RUN_ATTEMPT': '${{ github.run_attempt }}',
+    'PYDANTIC_AI_TASK_KEY': '${{ github.workflow }}:${{ github.event_name }}',
+}
+_RECHECK_RUN = (
+    "gh api -H 'Accept: application/vnd.github.raw+json' "
+    '"repos/${GITHUB_REPOSITORY}/contents/.github/scripts/agent_provider_health.py" '
+    '> "$RUNNER_TEMP/provider-health/agent_provider_health.py"\n'
+    'python3 "$RUNNER_TEMP/provider-health/agent_provider_health.py" check '
+    '--output "$RUNNER_TEMP/provider-health/provider-health.json"\n'
+)
+# The `CI Review` agent job's step order before agent-start rechecks, trimmed.
+_SHIPPED_AGENT_STEPS: list[dict[str, object]] = [
+    {'name': 'Restore inline skills from activation artifact', 'run': 'bash restore_inline_skills.sh'},
+    {'name': 'Stage Pydantic AI gh-aw shim launcher', 'run': 'install -m 755 launcher /tmp/gh-aw/bin/'},
+    {'name': 'Execute Claude Code CLI', 'id': 'agentic_execution', 'run': 'awf -- claude_harness.cjs'},
+]
+
+
+def _agent_start_steps(
+    *,
+    run: str = _RECHECK_RUN,
+    env: dict[str, str] = _GATE_ENV,
+    stop_continues: bool = False,
+    stop_name: str = AGENT_START_HEALTH_STEPS[2],
+) -> list[dict[str, object]]:
+    stop: dict[str, object] = {
+        'name': stop_name,
+        'if': "steps.agent_start_health.outputs.ready != 'true'",
+        'run': 'echo "::error::blocked"\nexit 1\n',
+    }
+    if stop_continues:
+        stop['continue-on-error'] = True
+    return [
+        {'name': AGENT_START_HEALTH_STEPS[0], 'id': 'agent_start_health', 'env': env, 'run': run},
+        {'name': AGENT_START_HEALTH_STEPS[1], 'uses': 'actions/upload-artifact', 'continue-on-error': True},
+        stop,
+    ]
+
+
+def _write_agent_start_workflow(workflows: Path, agent_steps: list[dict[str, object]]) -> Path:
+    source = _write(
+        workflows / 'pydantic-ai-mini.md', '---\nname: Z.AI\nimports:\n  - shared/engine-zai.md\n---\nPrompt\n'
+    )
+    jobs: dict[str, object] = {
+        'provider_health': {'steps': [{'id': 'health', 'env': _GATE_ENV, 'run': 'python3 controller check'}]},
+        'agent': {'needs': ['activation', 'provider_health'], 'steps': agent_steps},
+    }
+    return _write(source.with_suffix('.lock.yml'), yaml.safe_dump({'jobs': jobs}, sort_keys=False))
+
+
+def test_provider_health_agent_start_catches_the_queued_ci_review_defect(tmp_path: Path):
+    """An agent job that waited for its slot ran on a gate decision from workflow start.
+
+    Run 38967083667 passed its gate at 2026-10-16 21:07Z and started inference at
+    03:13Z the next day, after provider incident #10572 had opened.
+    """
+    workflows = tmp_path / '.github' / 'workflows'
+    lock = _write_agent_start_workflow(workflows, _SHIPPED_AGENT_STEPS)
+
+    assert [(violation.path, violation.check) for violation in check_provider_health_agent_start(workflows)] == [
+        (str(lock), 'provider-health-agent-start')
+    ]
+
+    _write_agent_start_workflow(workflows, [_SHIPPED_AGENT_STEPS[0], *_agent_start_steps(), *_SHIPPED_AGENT_STEPS[1:]])
+    assert check_provider_health_agent_start(workflows) == []
+
+
+@pytest.mark.parametrize(
+    'agent_steps',
+    [
+        pytest.param([*_SHIPPED_AGENT_STEPS, *_agent_start_steps()], id='after-engine-execution'),
+        pytest.param(
+            [*_agent_start_steps(run='python3 .github/scripts/agent_provider_health.py check'), *_SHIPPED_AGENT_STEPS],
+            id='workspace-controller',
+        ),
+        pytest.param(
+            [
+                *_agent_start_steps(
+                    run=_RECHECK_RUN.replace(
+                        'python3 "$RUNNER_TEMP/provider-health/agent_provider_health.py"',
+                        'python3 .github/scripts/agent_provider_health.py',
+                        1,
+                    )
+                ),
+                *_SHIPPED_AGENT_STEPS,
+            ],
+            id='fetched-but-runs-workspace-controller',
+        ),
+        pytest.param(
+            [
+                *_agent_start_steps(
+                    run=_RECHECK_RUN.replace('agent_provider_health.py"', 'agent_provider_health.py?ref=v1"', 1)
+                ),
+                *_SHIPPED_AGENT_STEPS,
+            ],
+            id='pinned-controller-ref',
+        ),
+        pytest.param(
+            [
+                *_agent_start_steps(env={key: value for key, value in _GATE_ENV.items() if key != 'ZAI_API_KEY'}),
+                *_SHIPPED_AGENT_STEPS,
+            ],
+            id='env-differs-from-gate',
+        ),
+        pytest.param([*_agent_start_steps(stop_continues=True), *_SHIPPED_AGENT_STEPS], id='stop-continues'),
+        pytest.param([*_agent_start_steps()[:2], *_SHIPPED_AGENT_STEPS], id='no-stop'),
+        pytest.param(
+            [
+                *_agent_start_steps(stop_name='Stop before inference when provider health is blocked'),
+                *_SHIPPED_AGENT_STEPS,
+            ],
+            id='renamed-stop-step',
+        ),
+    ],
+)
+def test_provider_health_agent_start_rejects_a_recheck_that_cannot_stop_inference(
+    tmp_path: Path, agent_steps: list[dict[str, object]]
+):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write_agent_start_workflow(workflows, agent_steps)
+
+    assert [violation.check for violation in check_provider_health_agent_start(workflows)] == [
+        'provider-health-agent-start'
     ]
 
 

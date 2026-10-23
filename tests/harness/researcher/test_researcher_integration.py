@@ -215,6 +215,7 @@ Available sub-agents:
                     ),
                     ToolCallPart(
                         tool_name='read_tool_result',
+                        tool_kind='tool_output_limits.read_tool_result',
                         args=IsStr(
                             regex='\\{"handle":"01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0","offset":0,"limit":120\\}'
                         ),
@@ -239,6 +240,7 @@ Available sub-agents:
                 parts=[
                     ToolReturnPart(
                         tool_name='read_tool_result',
+                        tool_kind='tool_output_limits.read_tool_result',
                         content=IsStr(
                             regex="""\
 \\[handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0':\\ 331\\ matching\\ line\\(s\\);\\ showing\\ 120\\]\\
@@ -388,6 +390,7 @@ Available sub-agents:
                 parts=[
                     ToolCallPart(
                         tool_name='read_tool_result',
+                        tool_kind='tool_output_limits.read_tool_result',
                         args=IsStr(
                             regex='\\{"handle":"01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0","offset":120,"limit":140\\}'
                         ),
@@ -412,6 +415,7 @@ Available sub-agents:
                 parts=[
                     ToolReturnPart(
                         tool_name='read_tool_result',
+                        tool_kind='tool_output_limits.read_tool_result',
                         content=IsStr(
                             regex="""\
 \\[handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0':\\ 331\\ matching\\ line\\(s\\);\\ showing\\ 140\\]\\
@@ -581,6 +585,7 @@ Available sub-agents:
                 parts=[
                     ToolCallPart(
                         tool_name='read_tool_result',
+                        tool_kind='tool_output_limits.read_tool_result',
                         args=IsStr(
                             regex='\\{"handle":"01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0","offset":260,"limit":71\\}'
                         ),
@@ -605,6 +610,7 @@ Available sub-agents:
                 parts=[
                     ToolReturnPart(
                         tool_name='read_tool_result',
+                        tool_kind='tool_output_limits.read_tool_result',
                         content=IsStr(
                             regex="""\
 \\[handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0':\\ 331\\ matching\\ line\\(s\\);\\ showing\\ 71\\]\\
@@ -780,6 +786,7 @@ Available sub-agents:
                 parts=[
                     ToolCallPart(
                         tool_name='read_tool_result',
+                        tool_kind='tool_output_limits.read_tool_result',
                         args=IsStr(
                             regex='\\{"handle":"01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_dmEMWZ9DEj1LpBAv20CBRl4f\\.0","pattern":"Stable\\ ABI","limit":50\\}'
                         ),
@@ -804,6 +811,7 @@ Available sub-agents:
                 parts=[
                     ToolReturnPart(
                         tool_name='read_tool_result',
+                        tool_kind='tool_output_limits.read_tool_result',
                         content=IsStr(
                             regex="""\
 \\[handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_dmEMWZ9DEj1LpBAv20CBRl4f\\.0':\\ 1\\ matching\\ line\\(s\\);\\ showing\\ 1\\]\\

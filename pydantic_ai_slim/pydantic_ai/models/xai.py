@@ -14,12 +14,15 @@ from .._run_context import RunContext
 from ..capabilities.x_search import XSearch as XSearch  # re-export for backward compat
 from ..exceptions import (
     ModelAPIError,
+    ModelConnectionError,
     ModelContextWindowExceededError,
     ModelHTTPError,
     ModelOverloadedError,
     ModelRateLimitError,
     ModelServerError,
+    ModelTimeoutError,
     ModelUnavailableError,
+    TransportPhase,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -42,13 +45,11 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -60,9 +61,11 @@ from ..models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
 )
@@ -112,7 +115,10 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
 
 @contextmanager
 def _map_api_errors(model_name: str, *, in_stream: bool = False) -> Generator[None]:
-    """Turn a gRPC error into the framework's HTTP-shaped errors, mapping its status code to the HTTP equivalent.
+    """Turn a gRPC error into the framework's errors.
+
+    An error the server sent becomes an HTTP-shaped error, its status code mapped to the HTTP equivalent; the client's
+    own transport failures become a `ModelConnectionError` or `ModelTimeoutError` instead.
 
     `in_stream` marks an error that ended a stream after it had started sending responses.
     """
@@ -120,8 +126,12 @@ def _map_api_errors(model_name: str, *, in_stream: bool = False) -> Generator[No
         yield
     except grpc.RpcError as e:
         grpc_status = e.code()
-        status_code = _GRPC_STATUS_TO_HTTP.get(grpc_status)
         details = e.details() or str(e)
+        if (
+            transport_error := _grpc_transport_error(model_name, grpc_status, details, in_stream=in_stream)
+        ) is not None:
+            raise transport_error from e
+        status_code = _GRPC_STATUS_TO_HTTP.get(grpc_status)
         category = _GRPC_STATUS_CATEGORIES.get(grpc_status)
         if grpc_status == grpc.StatusCode.INVALID_ARGUMENT and 'maximum prompt length' in details.lower():
             category = ModelContextWindowExceededError
@@ -150,21 +160,53 @@ _GRPC_STATUS_CATEGORIES: dict[grpc.StatusCode, _model_errors.HTTPErrorCategory] 
     grpc.StatusCode.RESOURCE_EXHAUSTED: ModelRateLimitError,
     grpc.StatusCode.UNAVAILABLE: ModelUnavailableError,
     grpc.StatusCode.INTERNAL: ModelServerError,
+    # The client's own deadline is a `ModelTimeoutError` (see `_grpc_transport_error`), so this one is the server's.
+    grpc.StatusCode.DEADLINE_EXCEEDED: ModelServerError,
 }
-"""Error categories for gRPC status codes.
+"""Error categories for gRPC status codes sent by the server."""
 
-`DEADLINE_EXCEEDED` is left out: it can mean the client's own deadline or the server's, so it isn't classified as a
-timeout.
-"""
+# The gRPC client reports its own transport failures with the same status codes a server sends, `UNAVAILABLE` and
+# `DEADLINE_EXCEEDED`, so they're told apart by how grpc-core words them in `details`, as of grpcio 1.72 to 1.84.
+_GRPC_CONNECT_FAILURES = ('failed to connect to all addresses', 'DNS resolution failed', 'errors resolving ')
+"""No connection could be made, so the request wasn't sent: refused, reset or closed, a failed TLS handshake, or DNS."""
+_GRPC_CONNECTION_LOST = ('Stream removed', 'Socket closed', 'recvmsg:Connection reset by peer')
+"""The connection was closed or reset while the call was in progress."""
+_GRPC_CLIENT_DEADLINE = ('Deadline Exceeded', 'Stream removed (Deadline Exceeded)')
+"""The client's deadline, set by the `xai_sdk` client's `timeout`, passed."""
 
 
-XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest', 'grok-4.6', 'grok-build-0.1']
+def _grpc_transport_error(
+    model_name: str, grpc_status: grpc.StatusCode, details: str, *, in_stream: bool
+) -> ModelConnectionError | None:
+    """A `ModelConnectionError` or `ModelTimeoutError` for a gRPC error the client raised because the transport failed.
+
+    `None` for an error the server sent. A failure after the stream started sending responses happened while reading;
+    otherwise the phase isn't known, as gRPC doesn't say whether the request had been sent.
+    """
+    error_class: type[ModelConnectionError]
+    phase: TransportPhase | None
+    match grpc_status:
+        case grpc.StatusCode.UNAVAILABLE if details.startswith(_GRPC_CONNECT_FAILURES):
+            error_class, phase = ModelConnectionError, 'connect'
+        case grpc.StatusCode.UNAVAILABLE if details.startswith(_GRPC_CONNECTION_LOST):
+            error_class, phase = ModelConnectionError, 'read' if in_stream else None
+        case grpc.StatusCode.DEADLINE_EXCEEDED if details in _GRPC_CLIENT_DEADLINE:
+            error_class, phase = ModelTimeoutError, 'read' if in_stream else None
+        case _:
+            return None
+    return error_class(
+        model_name, details, phase=phase, body=details, provider_error_code=grpc_status.name, in_stream=in_stream
+    )
+
+
+XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest', 'grok-4.6', 'grok-4.7', 'grok-build-0.1']
 """Possible xAI model names.
 
 The ids in the local `Literal` are bridged because `xai_sdk`'s `ChatModel` doesn't list them at the
 floor the `xai` extra declares: `grok-build-0.1` arrived in 1.15.0, `grok-4.5`/`grok-4.5-latest` in
-1.17.1, and `grok-4.6` in 1.18.0. Drop each once the floor is bumped past the release that adds it
-to `ChatModel`. https://github.com/xai-org/xai-sdk-python/blob/main/CHANGELOG.md
+1.17.1, and `grok-4.6` in 1.18.0. `grok-4.7` is absent from the latest released `ChatModel` (1.20.0).
+Drop each bridge once the floor is bumped past the release that adds it to `ChatModel`.
+https://github.com/xai-org/xai-sdk-python/blob/main/CHANGELOG.md
 """
 
 # `provider_name` values accepted on history replay. Includes the current `'xai'` plus the pre-v2
@@ -184,11 +226,10 @@ def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) ->
         return 'none' if 'none' in supported_efforts else None
     if thinking is True:
         # `True` requests reasoning at the model's default level rather than a specific effort.
-        # Models that accept `'none'` (Grok 4.3) treat `reasoning_effort` as optional and apply their
-        # own default, so we omit it. Always-on models like grok-3-mini don't expose a default-omission
-        # path, so they fall back to `'medium'` (consistent with OpenAI), normalized to the nearest
-        # supported value by the `'medium'` handling below.
-        if 'none' in supported_efforts:
+        # Grok 4.3 accepts `'none'`; Grok 4.7's profile also records that its documented `high` default
+        # applies when `reasoning_effort` is omitted. Other always-on models fall back to `'medium'`
+        # (consistent with OpenAI), normalized to the nearest supported value below.
+        if 'none' in supported_efforts or profile.get('grok_default_effort_omitted', False):
             return None
         thinking = 'medium'
 
@@ -196,7 +237,7 @@ def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) ->
         return 'low'
     elif thinking == 'medium':
         return 'medium' if 'medium' in supported_efforts else 'high'
-    elif thinking in ('high', 'xhigh'):
+    elif thinking in ('high', 'xhigh', 'max'):
         return 'high'
     else:
         assert_never(thinking)
@@ -344,6 +385,9 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
 class XaiModel(Model[AsyncClient]):
     """A model that uses the xAI SDK to interact with xAI models."""
 
+    # The xAI SDK has no audio or video content.
+    _unsupported_file_inputs = frozenset({'audio', 'video'})
+
     unsupported_settings = frozenset(
         {'extra_body', 'extra_headers', 'logit_bias', 'max_retries', 'service_tier', 'timeout', 'top_k'}
     )
@@ -449,9 +493,9 @@ class XaiModel(Model[AsyncClient]):
     ) -> list[chat_types.chat_pb2.Message]:
         """Map ModelRequest parts to xAI messages."""
         xai_messages: list[chat_types.chat_pb2.Message] = []
-        tool_results: list[ToolReturnPart | RetryPromptPart] = []
+        tool_results: list[ToolReturnPart] = []
 
-        for part in parts:
+        for part in _sendable_request_parts(parts):
             if isinstance(part, SystemPromptPart):
                 xai_messages.append(system(part.content))
             elif isinstance(part, UserPromptPart):
@@ -459,15 +503,10 @@ class XaiModel(Model[AsyncClient]):
                     xai_messages.append(user_msg)
             elif isinstance(part, ToolReturnPart):
                 tool_results.append(part)
-            elif isinstance(part, RetryPromptPart):
-                if part.tool_name is None:
-                    xai_messages.append(user(part.model_response()))
-                else:
-                    tool_results.append(part)
             elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                 raise _unprojected_instruction_delta_error()
-            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                raise _unprepared_part_error(part)
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                 raise _unconverted_speech_part_error()
@@ -480,12 +519,9 @@ class XaiModel(Model[AsyncClient]):
             tool_results.sort(key=lambda p: order.get(p.tool_call_id, float('inf')))
             file_content: list[UserContent] = []
             for part in tool_results:
-                if isinstance(part, ToolReturnPart):
-                    text, files = part.model_response_str_and_user_content()
-                    xai_messages.append(tool_result(text, tool_call_id=part.tool_call_id))
-                    file_content.extend(files)
-                else:
-                    xai_messages.append(tool_result(part.model_response(), tool_call_id=part.tool_call_id))
+                text, files = part.model_response_str_and_user_content()
+                xai_messages.append(tool_result(text, tool_call_id=part.tool_call_id))
+                file_content.extend(files)
             if file_content and (
                 user_msg := await self._map_user_prompt(UserPromptPart(content=file_content))
             ):  # pragma: no branch

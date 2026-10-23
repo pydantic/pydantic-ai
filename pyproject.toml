@@ -233,6 +233,13 @@ certifi = "2026-10-20T02:25:00Z"
 # TODO(dsfaccini): Remove after 2026-10-23 22:19 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 pillow = "2026-10-16T22:19:00Z"
+# boxlite 0.10.7 is the `boxlite` floor: 0.10.6 has no wheels for Python 3.13 or 3.14.
+# TODO(adtyavrdhn): Remove after 2026-10-25 01:35 UTC.
+boxlite = "2026-10-18T01:35:01Z"
+# prefect 3.9.0 is the `prefect` floor: it is the first release that imports on a current FastAPI.
+# TODO(DouweM): Remove after 2026-10-28 03:46 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+prefect = "2026-10-21T03:46:00Z"
 
 [dependency-groups]
 dev = [
@@ -304,7 +311,6 @@ coverage = [
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@6c644106e03138abae01d8d60105d4a7ad4916a1",
 ]
 lint = [
-    "griffecli>=2.1.0,<3",
     "mypy>=1.11.2",
     "pyright>=1.1.414",
     "ruff>=0.14.14",
@@ -357,6 +363,7 @@ include = [
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
     ".github/scripts/test_ci_content_classifier.py",
+    ".github/scripts/test_ci_matrix.py",
     ".github/scripts/test_gh_aw_engine_pin_bump.py",
 ]
 
@@ -402,6 +409,7 @@ convention = "google"
 # these adds 100ms or more (measured with `python -X importtime` on top of what `tests/conftest.py` already imports);
 # import them inside the test or fixture that needs them. Enforced for `tests/` only, see `per-file-ignores`.
 banned-module-level-imports = [
+    "boxlite",
     "dbos",
     "e2b",
     "prefect",
@@ -444,6 +452,7 @@ quote-style = "single"
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
 ".github/scripts/test_ci_content_classifier.py" = ["D"]
+".github/scripts/test_ci_matrix.py" = ["D"]
 ".github/scripts/test_gh_aw_engine_pin_bump.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 "!src/pydantic_clai2/**/*.py" = ["BLE001"]
@@ -452,6 +461,7 @@ quote-style = "single"
 # workflow definitions; the cost is paid only where that dependency is what is being tested.
 "tests/durable_exec/**/*.py" = ["TID253"]
 "tests/**/*{temporal,dbos,prefect,durable}*.py" = ["TID253"]
+"tests/harness/boxlite_sandbox/*.py" = ["TID253"]
 "tests/harness/e2b_sandbox/*.py" = ["TID253"]
 "tests/harness/smol_sandbox/*.py" = ["TID253"]
 
@@ -506,12 +516,17 @@ strict = true
 anyio_mode = "auto"
 testpaths = ["tests", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
+# Print every thread's stack once a test has run this long, so a shard that hangs until its job times out shows
+# where it hung. The test keeps running.
+faulthandler_timeout = 120
 markers = [
     "modal_live: runs against a real Modal control plane; needs credentials",
     "e2b_live: runs against a real E2B sandbox; needs credentials",
     "sprites_live: runs against a real Sprites control plane; needs credentials",
     "daytona_live: runs against a real Daytona control plane; needs credentials",
     "smol_live: boots real smolvm VMs; needs a host that can run them",
+    "boxlite_live: boots real BoxLite VMs; needs a host that can run them",
+    "docker_live: starts real containers; needs a Docker daemon",
     "temporal: starts or connects to a local Temporal dev server",
     "subprocess(reason, conditional=False): launches a Python interpreter, which the cost guard otherwise fails; reason required. `conditional=True` skips the stale-marker check for a test that only launches one on some platforms or installs",
     "slow(reason): exempt from the per-test time budget (`PYTEST_TEST_BUDGET_SECONDS`); reason required",

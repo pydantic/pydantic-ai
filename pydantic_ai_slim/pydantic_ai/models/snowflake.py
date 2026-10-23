@@ -90,6 +90,7 @@ _REASONING_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high']] = {
     'medium': 'medium',
     'high': 'high',
     'xhigh': 'high',
+    'max': 'high',
 }
 
 

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import check_api_compatibility
 import pytest
-from check_api_compatibility import Finding, emit_annotation, load_waivers, parse_findings
+from check_api_compatibility import Finding, emit_annotation, load_waivers, parse_findings, run_griffe
 
 
 def test_fingerprint_identifies_the_exact_finding():
@@ -34,6 +35,44 @@ def test_parse_findings():
 def test_parse_findings_rejects_unknown_output():
     with pytest.raises(ValueError, match='Unexpected Griffe output'):
         parse_findings('pydantic_ai', 'not a finding')
+
+
+@pytest.mark.subprocess(reason='parses the output stream and exit code of a real `griffecli` process')
+def test_run_griffe_reports_real_griffe_findings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    module = tmp_path / 'fixture_pkg' / '__init__.py'
+    module.parent.mkdir()
+    module.write_text('def greet(name): ...\n', encoding='utf-8')
+    git = [
+        'git',
+        '-C',
+        str(tmp_path),
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@example.com',
+        '-c',
+        'commit.gpgsign=false',
+        '-c',
+        'tag.gpgSign=false',
+        '-c',
+        'core.hooksPath=/dev/null',
+    ]
+    subprocess.run([*git, 'init', '-q'], check=True)
+    subprocess.run([*git, 'add', '.'], check=True)
+    subprocess.run([*git, 'commit', '-q', '-m', 'release'], check=True)
+    subprocess.run([*git, 'tag', 'v1'], check=True)
+    monkeypatch.chdir(tmp_path)
+
+    assert run_griffe('fixture_pkg', '.', 'v1') == []
+
+    module.write_text('def greet(name, greeting): ...\n', encoding='utf-8')
+
+    assert run_griffe('fixture_pkg', '.', 'v1') == [
+        Finding('fixture_pkg', 'fixture_pkg/__init__.py', 1, 'greet(greeting): Parameter was added as required')
+    ]
+
+    with pytest.raises(SystemExit, match='griffecli check missing_pkg failed with exit code 1'):
+        run_griffe('missing_pkg', '.', 'v1')
 
 
 def test_load_waivers(tmp_path: Path):

@@ -133,7 +133,8 @@ class MontyRunState:
     call goes through `portal`, opened with the pool and closed after it.
     """
 
-    monty_sandbox_url: str | None = None
+    monty_sandbox_url: str | None = field(default=None, repr=False)
+    """May carry credentials, so it stays out of `repr`."""
     pool: AsyncMonty | AsyncMontyWebsocket | None = None
     session: AsyncMontySession | None = None
     portal: BlockingPortal | None = None
@@ -467,6 +468,6 @@ def _wrap_gathered(outcome: Any) -> ExternalReturnValue | ExternalException:
     """Wrap an `asyncio.gather(return_exceptions=True)` outcome for Monty."""
     if isinstance(outcome, Exception):
         return ExternalException(exception=outcome)
-    if isinstance(outcome, BaseException):  # pragma: no cover
+    if isinstance(outcome, BaseException):
         raise outcome
     return ExternalReturnValue(return_value=outcome)
