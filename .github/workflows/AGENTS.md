@@ -166,7 +166,8 @@ Two consequences of the trigger, both easy to get backwards:
 
 `pr-gates.yml` runs one job per gate, and each job's check is the gate. The logic lives in
 `.github/scripts/pr_gates.py`. The workflow runs on `pull_request` with a read-only token, so a
-PR that changes either runs its own copy.
+PR that changes either runs its own copy. `.github/CODEOWNERS` owns both, so that change needs a
+code owner's approval; keep them owned.
 
 | Check | Fails when |
 |---|---|
@@ -180,7 +181,8 @@ PR that changes either runs its own copy.
 dismisses it when a later push changes the diff. GitHub enforces both, so no workflow keeps the
 approval current.
 
-- A PR author cannot approve their own PR, so a code owner's change needs another owner.
+- A PR's author cannot approve it, so an owner's own PR needs another owner. An owner who pushes
+  to someone else's PR can still approve that push.
 - GitHub reads `CODEOWNERS` from the PR's base branch. A PR that edits it is judged by the
   current owners.
 

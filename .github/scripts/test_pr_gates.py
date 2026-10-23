@@ -97,7 +97,7 @@ def test_gh_cli_parses_github_responses(monkeypatch: pytest.MonkeyPatch):
     responses: dict[str, str | None] = {
         'repos/o/r/pulls/7': '{"changed_files": 2}',
         'repos/o/r/pulls/7/files?per_page=100': '[[{"filename": "a"}], [{"filename": "b", "previous_filename": "c"}]]',
-        'repos/o/r/compare/x...y': '{"status": "ahead", "merge_base_commit": {"sha": "m"}, "files": [{"filename": "uv.lock"}]}',
+        'repos/o/r/compare/x...y': '{"merge_base_commit": {"sha": "m"}}',
         'repos/o/r/issues/7/labels?per_page=100': '[[{"name": "compatibility impact"}]]',
         f'repos/o/r/contents/{ALLOWLIST}?ref=y': '{}',
         f'repos/o/r/contents/{ALLOWLIST}?ref=m': None,
@@ -148,7 +148,9 @@ def test_the_workflow_runs_every_gate_on_every_pr_event_and_skips_only_the_merge
 
     assert set(workflow.on) == {'pull_request', 'merge_group'}
     assert workflow.on['pull_request'].paths is None
-    assert {'synchronize', 'reopened', 'labeled', 'unlabeled', 'edited'} <= set(workflow.on['pull_request'].types)
+    assert {'opened', 'synchronize', 'reopened', 'labeled', 'unlabeled', 'edited'} <= set(
+        workflow.on['pull_request'].types
+    )
     for job in workflow.jobs.values():
         assert job.condition == "github.event_name == 'pull_request'"
         for step in job.steps:
