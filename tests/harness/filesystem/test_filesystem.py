@@ -7,6 +7,7 @@ import hashlib
 import os
 import posixpath
 import re
+import socket
 import stat
 from collections.abc import Sequence
 from dataclasses import replace
@@ -573,6 +574,40 @@ class TestRootDir:
 
 
 class TestAccessPatterns:
+    async def test_denied_and_read_only_patterns_ignore_case(self, tmp_path: Path) -> None:
+        # On a case-insensitive filesystem `PRIVATE/notes.txt` is `private/notes.txt`, and the workspace
+        # reports a path in the case it was written, so the patterns have to match either spelling.
+        # The access check comes before any I/O, so this holds on a case-sensitive filesystem too.
+        toolset = FileSystem[None](denied_patterns=['private']).get_toolset()
+        assert isinstance(toolset, FileSystemToolset)
+        ws = LocalWorkspaceBackend(tmp_path)
+        with pytest.raises(ModelRetry, match=r"'PRIVATE/notes\.txt' is denied by pattern 'private'"):
+            await toolset.read_file('PRIVATE/notes.txt', workspace=ws)
+        with pytest.raises(ModelRetry, match=r"'\.GIT/config' is protected \(matches '\*\*/\.git'\)"):
+            await toolset.write_file('.GIT/config', '[core]\n', workspace=ws)
+        with pytest.raises(ModelRetry, match=r"'apps/\.Env' is protected \(matches '\*\*/\.env'\)"):
+            await toolset.write_file('apps/.Env', 'X=1\n', workspace=ws)
+        # Folding turns `ß` into `ss`, which `?` no longer matches, so the original spelling still counts.
+        single = FileSystem[None](read_only_patterns=['private/?.txt']).get_toolset()
+        assert isinstance(single, FileSystemToolset)
+        with pytest.raises(ModelRetry, match=r"'private/ß\.txt' is protected \(matches 'private/\?\.txt'\)"):
+            await single.write_file('private/ß.txt', 'X=1\n', workspace=ws)
+
+    async def test_default_read_only_patterns_protect_a_git_file(self, tmp_path: Path) -> None:
+        # In a git worktree or submodule `.git` is a file naming the git directory; rewriting it
+        # would point git at a config the agent wrote.
+        (tmp_path / '.git').write_text('gitdir: ../repo/.git/worktrees/wt\n')
+        (tmp_path / 'sub' / '.git').mkdir(parents=True)
+        (tmp_path / '.github').mkdir()
+        toolset = FileSystem[None]().get_toolset()
+        assert isinstance(toolset, FileSystemToolset)
+        ws = LocalWorkspaceBackend(tmp_path)
+        with pytest.raises(ModelRetry, match=r"'\.git' is protected \(matches '\*\*/\.git'\)"):
+            await toolset.write_file('.git', 'gitdir: evil\n', workspace=ws)
+        with pytest.raises(ModelRetry, match=r"'sub/\.git/config' is protected"):
+            await toolset.write_file('sub/.git/config', '[core]\n', workspace=ws)
+        assert 'Wrote' in await toolset.write_file('.github/CODEOWNERS', '* @me\n', workspace=ws)
+
     async def test_denied_pattern_blocks(self, fs_root: Path) -> None:
         ts = FileSystemToolset(
             root_dir=fs_root,
@@ -828,6 +863,101 @@ class TestReadFile:
         toolset = _unhashed_toolset()
         result = await toolset.read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
         assert result == '[big.png | image/png | 5000008 bytes]\nToo large to view: the limit is 5000000 bytes.\n'
+
+    async def test_limit_is_capped_by_max_read_lines(self, tmp_path: Path) -> None:
+        (tmp_path / 'big.txt').write_text(''.join(f'line {number}\n' for number in range(50)))
+        toolset = FileSystemToolset(
+            allowed_patterns=[],
+            denied_patterns=[],
+            max_read_lines=10,
+            max_list_results=1000,
+            max_search_results=1000,
+            max_find_results=1000,
+            content_hashes=False,
+        )
+        result = await toolset.read_file('big.txt', limit=1000, workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, str)
+        assert result.splitlines()[-2:] == ['    10\tline 9', '... (40 more lines. Use offset=10 to continue reading.)']
+
+    async def test_lines_are_split_on_line_feeds_only(self, tmp_path: Path) -> None:
+        # `rg` and `grep` number lines by line feeds alone, so `read_file` must too, or a model
+        # paging by the line number a search reported lands on the wrong line.
+        (tmp_path / 'feed.c').write_text('a = 1;\n\x0c b = 2;\x1c\u2028c\nneedle = 3;\n', encoding='utf-8')
+        toolset = _unhashed_toolset()
+        ws = LocalWorkspaceBackend(tmp_path)
+        assert await toolset.read_file('feed.c', offset=2, workspace=ws) == '[feed.c | 3 lines]\n     3\tneedle = 3;\n'
+        walked = await toolset.search_files('needle', workspace=ReadOnlyWorkspace(Workspace(ws)))
+        assert walked == 'feed.c:3:needle = 3;'
+        assert 'lines: 3' in await toolset.file_info('feed.c', workspace=ws)
+
+    async def test_crlf_lines_match_without_their_carriage_return(self, tmp_path: Path) -> None:
+        (tmp_path / 'dos.txt').write_bytes(b'first\r\nneedle\r\n')
+        walked = await _unhashed_toolset().search_files(
+            'needle$', workspace=ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
+        )
+        assert walked == 'dos.txt:2:needle'
+
+    async def test_oversized_file_is_described_without_reading_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr('pydantic_ai_harness.filesystem._toolset._MAX_READ_FILE_BYTES', 10)
+        (tmp_path / 'huge.log').write_text('x' * 11)
+        (tmp_path / 'small.txt').write_text('x' * 10)
+        toolset = _unhashed_toolset()
+        unreadable = FailingWorkspace(tmp_path, {'read_bytes': AssertionError('the file was read')}, where='huge.log')
+        assert await toolset.read_file('huge.log', workspace=unreadable) == (
+            '[huge.log | 11 bytes]\nToo large to read: the limit is 10 bytes. Find the lines you need with a search '
+            'tool, or read a byte range with a shell tool if you have one.\n'
+        )
+        assert (await toolset.file_info('huge.log', workspace=unreadable)).splitlines() == [
+            'path: huge.log',
+            'type: file',
+            'size: 11 bytes',
+            'contents: not read (over 10 bytes)',
+        ]
+        assert (
+            await toolset.read_file('small.txt', workspace=unreadable) == '[small.txt | 1 lines]\n     1\txxxxxxxxxx\n'
+        )
+
+    async def test_oversized_file_without_a_reported_size_is_described(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Without a size from `stat`, the file has to be read to be measured, but it is still not shown.
+        monkeypatch.setattr('pydantic_ai_harness.filesystem._toolset._MAX_READ_FILE_BYTES', 10)
+        (tmp_path / 'huge.log').write_text('x' * 11)
+
+        class SizelessWorkspace(LocalWorkspaceBackend):
+            async def stat(self, path: str) -> FileEntry:
+                return replace(await super().stat(path), size=None)
+
+        assert await _unhashed_toolset().read_file('huge.log', workspace=SizelessWorkspace(tmp_path)) == (
+            '[huge.log | 11 bytes]\nToo large to read: the limit is 10 bytes. Find the lines you need with a search '
+            'tool, or read a byte range with a shell tool if you have one.\n'
+        )
+
+    @pytest.mark.skipif(not hasattr(os, 'mkfifo'), reason='needs FIFOs')
+    async def test_special_file_is_a_retry(self, tmp_path: Path) -> None:
+        os.mkfifo(tmp_path / 'pipe')
+        toolset = _unhashed_toolset()
+        ws = LocalWorkspaceBackend(tmp_path)
+        with pytest.raises(ModelRetry, match=r'^The path is not a regular file') as error:
+            await toolset.read_file('pipe', workspace=ws)
+        _assert_no_host_root(str(error.value), tmp_path)
+        with pytest.raises(ModelRetry, match=r'^The path is not a regular file'):
+            await toolset.write_file('pipe', 'x', workspace=ws)
+
+    @pytest.mark.skipif(not hasattr(socket, 'AF_UNIX') or os.name == 'nt', reason='needs Unix sockets')
+    async def test_socket_is_a_retry(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Opening a socket fails with an errno of its own before core checks the file type.
+        monkeypatch.chdir(tmp_path)  # A relative name keeps the socket path within the length limit.
+        with socket.socket(socket.AF_UNIX) as server:
+            server.bind('sock')
+            toolset = _unhashed_toolset()
+            ws = LocalWorkspaceBackend(tmp_path)
+            for read in (toolset.read_file, toolset.file_info):
+                with pytest.raises(ModelRetry, match=r'^The path is not a regular file') as error:
+                    await read('sock', workspace=ws)
+                _assert_no_host_root(str(error.value), tmp_path)
 
     async def test_read_traversal_blocked(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         with pytest.raises(ModelRetry):
@@ -1421,6 +1551,74 @@ class TestSearchFiles:
         assert await toolset.search_files('needle', path='large.txt', workspace=workspace) == (
             '[1 files skipped (too large or unreadable): large.txt]'
         )
+
+    @pytest.mark.parametrize(
+        ('pattern', 'refused'),
+        [
+            ('(a+)+$', True),
+            ('(a*)*b', True),
+            ('(?:x|a{2,})+', True),
+            ('((a+)b)*', True),
+            (r'(\w+\s?)*$', True),
+            ('(a+){1,30}$', True),
+            ('(.*a){12}$', True),
+            ('(a{2})+', True),
+            (r'(?:\d{1,3}\.){3}\d{1,3}', False),
+            (r'(?:\d{4}){2}', False),
+            ('(?:[A-Fa-f0-9]{2}){1,8}', False),
+            ('(a{1,2}){50}$', True),
+            (r'((\d{1,3}){3}){3}', True),
+            ('(a{2}|a){3}', True),
+            (r'(\d{1,3}){1000}', True),
+            (r'(?:a{1,2}){10}(?:a{1,2}){10}$', True),
+            (r'(a{1,2}){10}$', True),
+            (r'(?:\d{1,3}\.){3}(?:\d{1,3}\.){1}\d', False),
+            ('(a+){0,1}', False),
+            ('(a+){1}', False),
+            ('(a?)+', True),
+            ('(a?b?)+$', True),
+            ('^(a{0,1}){100}a{100}$', True),
+            ('^(?:(?:a?){2}){40}b$', True),
+            ('^(?:a{2}a?){40}$', True),
+            ('(?:a+?)+$', True),
+            ('(?:ab)?c(?:de)?', False),
+            ('(?P<word>foo|bar)+', False),
+            ('(?:foo|bar)+?x', False),
+            ('colou?r', False),
+            ('(ab)+c*', False),
+            ('(?x) needle # trailing )', False),
+            ('(?x)(a+) +$', True),
+            ('(?x)(a+) # one or more\n +$', True),
+            ('(?x: (a+) + )$', True),
+            ('(?x) ( a + )', False),
+            ('(?i-x: (a+) + )', False),
+            ('(?x:(a+) # c\n)+', True),
+            ('[(?x]#(a+)+$', True),
+            (r'\(?x#(a+)+$', True),
+            ('(?x:a)#(a+)+$', True),
+            ('(?#[ comment )(a+)+$', True),
+            (r'(?#\))needle', False),
+            (r'(a+(?#\))b)+$', True),
+            ('(a+)(?#c)+$', True),
+            ('(?x)(a+) (?#c) +$', True),
+            (r'\(a+\)+', False),
+            ('([+*])+', False),
+            ('([]+)])+', False),
+            ('([^]+])+', False),
+            (r'([\]+])+', False),
+        ],
+    )
+    async def test_nested_repetition_is_refused_when_searching_in_python(
+        self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend, pattern: str, refused: bool
+    ) -> None:
+        # Python's backtracking `re` can take exponential time on `(a+)+$` and has no timeout, and it
+        # runs on the event loop, so one model call would stall every run sharing it.
+        walked = ReadOnlyWorkspace(Workspace(ws))
+        if refused:
+            with pytest.raises(ModelRetry, match='repeats a group that itself repeats'):
+                await toolset.search_files(pattern, workspace=walked)
+        else:
+            assert 'repeats a group' not in await toolset.search_files(pattern, workspace=walked)
 
     async def test_search_basic(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         result = await toolset.search_files('Hello', workspace=ws)
@@ -2398,7 +2596,7 @@ class TestFileSystemCapability:
 
     def test_read_only_defaults(self) -> None:
         fs = FileSystem()
-        assert '**/.git/*' in fs.read_only_patterns
+        assert '**/.git' in fs.read_only_patterns
         assert '**/.env' in fs.read_only_patterns
 
     def test_protected_patterns_is_a_deprecated_alias(self) -> None:
@@ -2436,6 +2634,13 @@ class TestFileSystemCapability:
     def test_non_positive_max_find_results_rejected(self) -> None:
         with pytest.raises(ValueError, match='max_find_results must be a positive integer'):
             FileSystem(max_find_results=-1)
+
+    def test_boolean_limits_rejected(self) -> None:
+        # `bool` is an `int` subclass, so `True` would otherwise pass as a limit of 1.
+        with pytest.raises(ValueError, match='max_read_lines must be a positive integer, got True'):
+            FileSystem(max_read_lines=True)
+        with pytest.raises(ValueError, match='max_retries must be a non-negative integer, got False'):
+            FileSystem(max_retries=False)
 
     def test_non_integer_max_read_lines_rejected(self) -> None:
         # Runtime validation: dataclass annotations are advisory, so a string

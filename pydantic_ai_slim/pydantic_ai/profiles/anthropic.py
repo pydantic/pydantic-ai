@@ -86,7 +86,16 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """Whether the model supports the `xhigh` effort value in `output_config`. Default: `False`.
 
     Claude Opus 4.7, 4.8, and 5, Sonnet 5, Fable 5, Mythos 5, and Haiku 5.5 accept `xhigh`;
-    other Anthropic models use `max` instead.
+    on other models, unified `thinking='xhigh'` uses `max` instead, or `high` where `max` isn't supported either.
+    """
+
+    anthropic_supports_max_effort: bool
+    """Whether the model supports the `max` effort value in `output_config`. Default: `True`.
+
+    Disabled for Claude Opus 4.5, which accepts only `low`, `medium`, and `high`. When disabled, unified
+    `thinking='max'` falls back to the highest effort the model accepts (`high` on Claude Opus 4.5), and so
+    does `thinking='xhigh'` where it would otherwise map to `max`. Explicit `anthropic_effort='max'` settings
+    are still passed through unchanged.
     """
 
     anthropic_disallows_budget_thinking: bool
@@ -165,6 +174,7 @@ ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     'medium': 10000,
     'high': 16384,
     'xhigh': 32768,
+    'max': 32768,
 }
 """Maps unified thinking values to Anthropic budget_tokens for non-adaptive models."""
 
@@ -179,27 +189,34 @@ ANTHROPIC_THINKING_EFFORT_MAP: dict[ThinkingEffort, AnthropicEffort] = {
     'medium': 'medium',
     'high': 'high',
     'xhigh': 'max',
+    'max': 'max',
 }
 """Maps unified thinking effort levels to Anthropic `output_config.effort`.
 
 `xhigh` maps to `'max'` by default; callers that target a model with
 `anthropic_supports_xhigh_effort` should pass `supports_xhigh=True` to
 [`resolve_anthropic_effort`][pydantic_ai.profiles.anthropic.resolve_anthropic_effort]
-to preserve `xhigh` instead of downshifting.
+to preserve `xhigh` instead of upshifting, and `supports_max=False` for a model without
+`anthropic_supports_max_effort`, where `'max'` falls back to the highest level it accepts.
 """
 
 
-def resolve_anthropic_effort(level: ThinkingEffort, *, supports_xhigh: bool) -> AnthropicEffort:
+def resolve_anthropic_effort(
+    level: ThinkingEffort, *, supports_xhigh: bool, supports_max: bool = True
+) -> AnthropicEffort:
     """Resolve a unified thinking effort level to the Anthropic `output_config.effort` value.
 
     Shared between the direct Anthropic path and any provider that translates to the
     Anthropic `output_config` wire shape (e.g. Bedrock Converse for Anthropic models).
     Keeps `ANTHROPIC_THINKING_EFFORT_MAP` as the single source of truth for the
-    base mapping, while letting the `xhigh` passthrough decision live in one place.
+    base mapping, while letting the `xhigh` and `max` support decisions live in one place.
     """
     if level == 'xhigh' and supports_xhigh:
         return 'xhigh'
-    return ANTHROPIC_THINKING_EFFORT_MAP[level]
+    effort = ANTHROPIC_THINKING_EFFORT_MAP[level]
+    if effort == 'max' and not supports_max:
+        return 'xhigh' if supports_xhigh else 'high'
+    return effort
 
 
 def anthropic_model_profile(model_name: str) -> ModelProfile | None:
@@ -475,6 +492,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supports_effort=supports_effort,
         anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
         anthropic_supports_xhigh_effort=supports_xhigh_effort,
+        anthropic_supports_max_effort=not model_name.startswith('claude-opus-4-5'),
         anthropic_disallows_budget_thinking=disallows_budget_thinking,
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
         anthropic_disallows_top_effort_when_thinking_disabled=disallows_top_effort_when_thinking_disabled,

@@ -2,6 +2,24 @@
   "allowed_breakages": [
     {
       "against": "v2.59.0",
+      "fingerprint": "ca884de6c28ed4e97d48cd6c522936a934a38a929e25cb3440f903884b53d9c8",
+      "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `inputs=inputs`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "e728299e8b022b01f0a06b3eb8cf95974e2e124d4408d8933c3b0b1485596485",
+      "reason": "Adds `QueueChanged` to the web plugin's `ServerMessage` union; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "f7079c197a72ddfbdce33497a8729dae68f70b5456ebaa87d968ccd05ed8ae8a",
+      "reason": "Adds `QueueChanged` to the web plugin's `SessionMessage` union; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
+    },
+    {
+      "against": "v2.59.0",
       "fingerprint": "b881938683d7a5ced698e9551495f8a1098fce10d9c64642076231d15d211336",
       "reason": "Adds `RunInstructionSource` to the `InstructionSource` union; every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10789"
@@ -26,13 +44,73 @@
     },
     {
       "against": "v2.59.0",
+      "fingerprint": "01c743d24a50d95bf9e6e60708d8e18127f8162acb6c6eb7be934c07d4c76a31",
+      "reason": "Adds the 'max' effort level to unified thinking (#9993); existing values are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "d2843ec47262fc6f636d040aab3968f84f4a196040a6c4d80d1346117291581c",
+      "reason": "Adds the 'max' key for the new unified thinking effort level (#9993); existing keys are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "8d99eeaee298c23b0fd72e23c0a5412cbd02dcf80e141f40959631d764afd89e",
+      "reason": "Adds the 'max' key for the new unified thinking effort level (#9993); existing keys are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "7d58785ddbe7ca707bcc6ebf0914706ff6434552ecf3640b865ae4e1e3748080",
+      "reason": "Adds the 'max' key for the new unified thinking effort level (#9993); existing keys are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "30907d84b32362b61fa212732b1ad3fb8fda3160dcd968b37470a5f39863fd67",
+      "reason": "Adds the 'max' key for the new unified thinking effort level (#9993); existing keys are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
       "fingerprint": "679024394731649b9cd4c4300679de05df481ee1512142e772055756302b9541",
       "reason": "Adds the xAI Grok 4.6 and 4.7 Bedrock ids to `LatestBedrockModelNames`; every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8639"
     },
     {
       "against": "v2.59.0",
-      "fingerprint": "79a8374f01d4360a68a39a9adaed12657ba3b8e4388f5bd10a3f497695b7f0d3",
+      "fingerprint": "1b295e087b0c5d9ce099eef747012b54cb660fed111f5b9c051942f8c5ed9d9f",
+      "reason": "Adds `FileUnderstanding` to `CAPABILITY_TYPES`; every existing capability type is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8453"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "0965c41fe89ce3951f0e18c3bc9d6fda9d8260b859178440ae99e4d449bff350",
+      "reason": "Harness 0.x: `GitHub.description`'s default text changes so it no longer says the tools can make changes when `read_only=True`; code that reads or passes `description` keeps working.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10815"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "481effa0702c0a046ac7a6eebbd1a1689f975c12ab516e981a6a000c3f6e6f1f",
+      "reason": "Harness 0.x: the same `GitHub.description` default text change, reported on `GitHub.__init__`; calls that pass or omit `description` keep working.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10815"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "953e88def3e59bb46a780d71e7f68ec43d2091299deec34f7d0520f89f42a27f",
+      "reason": "False positive: only adds `repr=False` so the credential-bearing URL stays out of `repr`; the attribute's type, default, and constructor parameter are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "f5277165732c4c6ae79c0ff3e286f1fbccca262094e6dee75b26bfca7455c244",
+      "reason": "False positive: only adds `repr=False` so the credential-bearing URL stays out of `repr`; the attribute's type, default, and constructor parameter are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "aae5dac1ec2ff7cc58769d5d5b856c0b1549592e61f1816f6460f1f4bf9010a4",
       "reason": "Adds `ComputerUse` to `CAPABILITY_TYPES`; every existing entry is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11037"
     }

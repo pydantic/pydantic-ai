@@ -339,7 +339,7 @@ async def test_live_command_keeps_the_editor_working_and_cancellable(
     class Surface(PromptSurface):
         def paint(self, rows: tuple[str, ...]) -> None:
             plain = [Text.from_ansi(row).plain.rstrip() for row in rows]
-            busy = any(row.startswith(' Working ') for row in plain)
+            busy = any(row.startswith('─ Working ') for row in plain)
             if started.is_set() and busy:
                 working.set()
                 if 'keep me' in plain:
@@ -403,7 +403,7 @@ async def test_cancelling_a_command_discards_the_prompt_it_submitted(
 
     class Surface(PromptSurface):
         def paint(self, rows: tuple[str, ...]) -> None:
-            busy = any(Text.from_ansi(row).plain.startswith(' Working ') for row in rows)
+            busy = any(Text.from_ansi(row).plain.startswith('─ Working ') for row in rows)
             if busy:
                 working.set()
             elif working.is_set():
