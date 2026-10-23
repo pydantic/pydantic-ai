@@ -425,10 +425,17 @@ _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = get_args(_OPENAI_IMAGE_SIZE)
 
 
+class _ChatCompletionChoice(chat_completion.Choice):
+    finish_reason: str  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenAI-compatible providers can return arbitrary `finish_reason` values (e.g. `"guardrail_intervened"`)."""
+
+
 class _ChatCompletion(chat.ChatCompletion):
     """Relaxes validation on fields that OpenAI-compatible providers may return non-standard values for."""
 
     model_config = {'title': 'ChatCompletion'}
+
+    choices: list[_ChatCompletionChoice]  # type: ignore[reportIncompatibleVariableOverride]
 
     service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
     """OpenAI-compatible providers can return arbitrary `service_tier` values (e.g. `"standard"`, `"on_demand"`)."""
@@ -2065,14 +2072,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return self._MapModelResponseContext(self).map_assistant_message(message)
 
-    def _map_finish_reason(
-        self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
-    ) -> FinishReason | None:
+    def _map_finish_reason(self, key: str) -> FinishReason | None:
         """Hooks that maps a finish reason key to a [FinishReason][pydantic_ai.messages.FinishReason].
 
         This method may be overridden by subclasses of `OpenAIChatModel` to accommodate custom keys.
         """
-        return _CHAT_FINISH_REASON_MAP.get(key)
+        return _CHAT_FINISH_REASON_MAP[key] if key in _CHAT_FINISH_REASON_MAP else None
 
     async def _map_messages(  # noqa: C901
         self,

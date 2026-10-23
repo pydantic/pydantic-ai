@@ -457,6 +457,10 @@ agent = Agent(model)
 
 The model name is only normalized for the profile lookup; the name sent to the gateway stays unchanged. Pydantic AI merges the returned profile with [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE], and you can pass gateway-specific overrides as a final argument to [`merge_profile()`][pydantic_ai.profiles.merge_profile]. The model class doesn't change with the profile: `OpenAIChatModel` still sends a Chat Completions request, whichever model family the gateway routes it to.
 
+### Non-standard finish reasons
+
+When an OpenAI-compatible API returns a `finish_reason` outside the five that OpenAI defines, `OpenAIChatModel` keeps the response, gives it a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `None`, and keeps the raw value in [`provider_details['finish_reason']`][pydantic_ai.messages.ModelResponse.provider_details].
+
 ### Detect incomplete streamed responses
 
 Some OpenAI-compatible APIs can close a Chat Completions stream cleanly without a terminal
