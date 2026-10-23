@@ -70,7 +70,7 @@ class CoderSettings(BaseModel):
     sub_agents: bool = Field(default=True, description='Enable delegation to sub-agents.')
     task_control: bool = Field(
         default=True,
-        description=('With sub-agents, let the model run tasks in the background and steer, answer, or cancel them.'),
+        description='With sub-agents, let the model run tasks in the background and steer, answer, or cancel them.',
     )
     agent_folders: list[str] = Field(
         default_factory=list,

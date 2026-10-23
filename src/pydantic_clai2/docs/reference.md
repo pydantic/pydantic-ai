@@ -2781,8 +2781,8 @@ asyncio.run(main())
 The agent has the `coder`, `repo_context`, and `compaction` built-ins, configured as
 in `clai2`, except that `coder`'s `task_control` is off: pass
 `plugin_settings={'coder': {'task_control': True}}` to give the model the task tools
-and background delegation. The file and shell tools work in `workspace`, and `AGENTS.md` or `CLAUDE.md`
-is read from it. A capability you pass that supplies a workspace, such as a sandbox,
+and background delegation. The file and shell tools work in `workspace`, and
+`AGENTS.md` or `CLAUDE.md` is read from it. A capability you pass that supplies a workspace, such as a sandbox,
 takes its place, and a run's own `workspace=` replaces it for that run. Commands get
 this process's environment minus LLM provider API keys. Model names resolve as in
 `clai2`, the agent's own and any a run passes, so `openai-codex:` and `github-copilot:`
