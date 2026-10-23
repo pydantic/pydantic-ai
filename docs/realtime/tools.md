@@ -16,7 +16,9 @@ When a model calls a tool, the session emits
 result, and emits [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Parse
 failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] answer the call with a
 [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] carrying `outcome='retried'`, matching a
-standard agent run. When a tool raises any other exception, the model is told the call failed: the call's result is
+standard agent run, and [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] answers it with its own message as an
+`outcome='failed'` result ([details](../tools-advanced.md#tool-failed)). When a tool raises any other unhandled
+exception, the model is told the call failed: the call's result is
 `{"error":"The tool raised an unhandled error."}`, never the exception's message, and the model answers it, so
 [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] returns, and
 [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] arrives, once that answer ends.
@@ -31,10 +33,9 @@ another request: the model never gets it, so the exchange the call was part of e
 when the failure can't be sent.
 The failed call is recorded with `outcome='failed'`, so the settled history can be passed to
 [`Agent.run(message_history=...)`][pydantic_ai.agent.AbstractAgent.run].
-The general
-[`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error]
-capability hook also applies in realtime and can turn an exception into a replacement result or
-`ModelRetry`, giving the model something better to go on than the generic failure.
+To give the model something better to go on than the generic failure, raise `ToolFailed` from the tool, or use the
+general [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error] capability hook,
+which also applies in realtime and can turn an exception into a replacement result or `ModelRetry`.
 
 Tool return values reach the model exactly as in a
 [standard run](../tools-advanced.md#advanced-tool-returns): the model receives the string rendering
