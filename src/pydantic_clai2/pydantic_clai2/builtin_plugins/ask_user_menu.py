@@ -148,7 +148,7 @@ class QuestionMenu:
             for line_index, line in enumerate(_wrap(choice, width=width - 2)):
                 prefix = '> ' if index == self.cursor and line_index == 0 else '  '
                 row = truncate(prefix + line, width)
-                # Unhighlighted choices keep the terminal's own foreground, readable on light and dark backgrounds alike.
+                # Unhighlighted choices keep the terminal's foreground, readable on light and dark backgrounds alike.
                 lines.append(theme.sgr(theme.ACCENT) + row + '\x1b[0m' if index == self.cursor else row)
         visible = max(1, budget - 2 - len(question))
         start = min(focus, max(0, len(lines) - visible))
