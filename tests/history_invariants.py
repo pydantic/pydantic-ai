@@ -276,8 +276,9 @@ def duplicate_call_id_violations(messages: Sequence[WireMessage], *, across_mess
 def call_pairing_violations(messages: Sequence[WireMessage], *, results_follow_their_call: bool) -> list[str]:
     """`wire.orphan_result`, `wire.unanswered_call`: every result answers an earlier call, and every call is answered.
 
-    With `results_follow_their_call`, a result must answer a call of the message right before its own, as
-    Anthropic and Bedrock require.
+    With `results_follow_their_call`, a result must answer a call of the nearest earlier message that is not itself
+    made of results, as Anthropic, Bedrock and OpenAI Chat require: OpenAI Chat rejects a `tool` message that does not
+    follow an assistant message with `tool_calls`.
     """
     violations: list[str] = []
     calls: list[str] = []
@@ -298,7 +299,8 @@ def call_pairing_violations(messages: Sequence[WireMessage], *, results_follow_t
                 case _:
                     assert_never(block.kind)
         calls += message_calls
-        previous_calls = message_calls
+        if message_calls or all(block.kind != 'result' for block in message.blocks):
+            previous_calls = message_calls
     return violations + ['wire.unanswered_call' for call_id in dict.fromkeys(calls) if call_id not in answered]
 
 

@@ -284,7 +284,9 @@ class MapperCase:
     """What `wire` reads off the body `_BASELINE` maps to: if a provider SDK renames a field, the checkers stop
     seeing calls or text, and this tells."""
     results_follow_their_call: bool = False
-    """Whether a tool result must answer a call of the message right before its own."""
+    """Whether a tool result must answer a call of the nearest earlier message that is not made of results: Anthropic
+    and Bedrock document it; OpenAI Chat (gpt-5.5) rejected a `tool` message after an assistant turn without
+    `tool_calls`, probed 2026-10-23 (UTC)."""
     rejects_empty_text: bool = False
     """Whether the API rejects a text block with no text, which the adapter's own handling of empty text shows."""
     takes_system_alone: bool = False
@@ -329,6 +331,7 @@ MAPPER_CASES = [
         _openai_chat_body,
         chat_completions_wire,
         _baseline_turns(assistant='assistant', results='tool'),
+        results_follow_their_call=True,
         takes_empty_user_turns=True,
         marks=_needs(openai_imports_successful, 'openai'),
     ),

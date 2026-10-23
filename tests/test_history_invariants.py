@@ -303,6 +303,30 @@ def test_orphan_result_after_another_message():
     assert call_pairing_violations(wire, results_follow_their_call=True) == ['wire.orphan_result']
 
 
+def test_results_in_their_own_messages_follow_their_call():
+    """Chat Completions sends each result as its own `tool` message; the run answers the assistant message before it."""
+    wire = chat_completions_wire(
+        [
+            {'role': 'assistant', 'tool_calls': [{'id': 'call_0'}, {'id': 'call_1'}]},
+            {'role': 'tool', 'tool_call_id': 'call_0', 'content': 'a'},
+            {'role': 'tool', 'tool_call_id': 'call_1', 'content': 'b'},
+        ]
+    )
+    assert call_pairing_violations(wire, results_follow_their_call=True) == []
+
+
+def test_result_after_a_text_turn_does_not_follow_its_call():
+    wire = chat_completions_wire(
+        [
+            {'role': 'assistant', 'tool_calls': [{'id': 'call_0'}]},
+            {'role': 'user', 'content': 'meanwhile'},
+            {'role': 'tool', 'tool_call_id': 'call_0', 'content': 'a'},
+        ]
+    )
+    assert call_pairing_violations(wire, results_follow_their_call=False) == []
+    assert call_pairing_violations(wire, results_follow_their_call=True) == ['wire.orphan_result']
+
+
 def test_unanswered_call():
     wire = google_wire([{'role': 'model', 'parts': [{'function_call': {'id': 'call_1', 'name': 'lookup'}}]}])
     assert call_pairing_violations(wire, results_follow_their_call=False) == ['wire.unanswered_call']
