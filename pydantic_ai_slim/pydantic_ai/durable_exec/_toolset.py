@@ -31,6 +31,8 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.mcp import MCPToolset
 
+    from ._spec import DurabilityEngineSpec
+
 DurableConfig: TypeAlias = Mapping[str, Any]
 ToolConfig: TypeAlias = DurableConfig | Literal[False]
 Lifecycle: TypeAlias = Literal['enter-outside-durable', 'enter-always', 'enter-never', 'enter-in-durable-unit']
@@ -401,8 +403,8 @@ CallToolResult = Annotated[
 """The recorded result of a tool call operation, with control-flow signals (`ApprovalRequired`,
 `CallDeferred`, `ModelRetry`, `ToolFailed`, validation errors) carried as data.
 
-Engines that decode results themselves validate the journaled value against this type; its
-variants are internal and can change between minor releases.
+Pass it to your codec as the result type. Don't construct or match on its variants, which are
+private. Payloads journaled by earlier versions stay loadable.
 """
 
 
@@ -466,7 +468,7 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
 
 
 async def revalidate_function_call(
-    toolset: FunctionToolset[Any], params: ToolsetCallToolParams, *, engine_name: str
+    toolset: FunctionToolset[Any], params: ToolsetCallToolParams, *, engine_spec: DurabilityEngineSpec
 ) -> ToolsetCallToolParams:
     """Rebuild a function tool call whose arguments crossed a durable boundary as JSON.
 
@@ -481,7 +483,7 @@ async def revalidate_function_call(
         except KeyError as exc:
             raise UserError(
                 f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
-                f'Removing or renaming tools during an agent run is not supported with {engine_name}.'
+                f'Removing or renaming tools during an agent run is not supported with {engine_spec.engine_name}.'
             ) from exc
     args = tool.args_validator.validate_python(params.tool_args, context=unit_validation_context(params.ctx))
     return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)

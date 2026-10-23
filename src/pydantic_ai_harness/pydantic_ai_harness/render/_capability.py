@@ -270,7 +270,7 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
             runtime=self,
             agent_name=self.name,
             config=self._operation_config,
-            parameter_transports=RenderParameterTransports(self._codec),
+            parameter_transports=RenderParameterTransports(self._codec, engine_spec=self.engine_spec),
         )
         # Bind events first because the durable wrappers capture this operation.
         # The backend queues SDK registration until all core binding checks succeed.

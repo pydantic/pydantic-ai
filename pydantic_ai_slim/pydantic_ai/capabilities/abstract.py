@@ -583,7 +583,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return a replay-stable `run_id` for a run started without one, or `None` to generate a UUID7.
 
         Durable execution capabilities override this so a replayed or recovered run gets the same
-        `run_id` it had the first time. The first capability that returns a value wins.
+        `run_id` it had the first time. When several capabilities return one, the one listed last wins.
         """
         return None
 

@@ -255,9 +255,11 @@ def operation_run_context(params: object) -> RunContext[Any] | None:
 async def prepare_function_call_params(
     toolset: FunctionToolset[ToolDepsT],
     params: ToolsetCallToolParams,
+    *,
+    engine_spec: DurabilityEngineSpec,
 ) -> ToolsetCallToolParams:
     """Restore typed function arguments after the Render JSON round trip."""
-    params = await revalidate_function_call(toolset, params, engine_name='Render Workflows')
+    params = await revalidate_function_call(toolset, params, engine_spec=engine_spec)
     assert params.tool is not None
     from ._protocol import current_effect_recorder
 

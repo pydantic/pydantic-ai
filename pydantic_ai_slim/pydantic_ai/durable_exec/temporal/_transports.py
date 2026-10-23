@@ -43,6 +43,7 @@ from pydantic_ai.toolsets.function import FunctionToolsetTool
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._operation_backend import TemporalParameterTransport
+from ._spec import TEMPORAL_ENGINE_SPEC
 from ._toolset import CallToolParams, GetToolsParams
 
 if TYPE_CHECKING:
@@ -539,7 +540,7 @@ class TemporalParameterTransports(ParameterTransports):
     async def prepare_function_call(
         self, toolset: FunctionToolset[Any], params: ToolsetCallToolParams
     ) -> ToolsetCallToolParams:
-        return await revalidate_function_call(toolset, params, engine_name='Temporal')
+        return await revalidate_function_call(toolset, params, engine_spec=TEMPORAL_ENGINE_SPEC)
 
     def mcp_call(self, toolset: AbstractToolset[Any]) -> _MCPCallTransport:
         return _MCPCallTransport(self._durability, toolset)

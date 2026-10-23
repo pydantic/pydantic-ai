@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
-from pydantic_ai.durable_exec import ParameterTransports
+from pydantic_ai.durable_exec import DurabilityEngineSpec, ParameterTransports
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, InstructionPart, ModelMessage, ModelResponse
 from pydantic_ai.models import ModelRequestParameters
@@ -408,8 +408,9 @@ class RenderWorkspaceCallTransport(Generic[AgentDepsT], RenderJsonTransport[Work
 class RenderParameterTransports(ParameterTransports):
     """Carry every operation's parameters into a Render child task as a JSON object."""
 
-    def __init__(self, codec: Callable[[], RenderRunContextCodec[Any]]) -> None:
+    def __init__(self, codec: Callable[[], RenderRunContextCodec[Any]], *, engine_spec: DurabilityEngineSpec) -> None:
         self._codec = codec
+        self._engine_spec = engine_spec
 
     def model_request(self, result_type: object) -> RenderModelRequestTransport[Any]:
         return RenderModelRequestTransport(self._codec(), result_type=result_type)
@@ -435,7 +436,7 @@ class RenderParameterTransports(ParameterTransports):
     async def prepare_function_call(
         self, toolset: FunctionToolset[Any], params: ToolsetCallToolParams
     ) -> ToolsetCallToolParams:
-        return await prepare_function_call_params(toolset, params)
+        return await prepare_function_call_params(toolset, params, engine_spec=self._engine_spec)
 
     def mcp_call(self, toolset: AbstractToolset[Any]) -> RenderMCPCallTransport[Any]:
         return RenderMCPCallTransport(self._codec(), toolset)

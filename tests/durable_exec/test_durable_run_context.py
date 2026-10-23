@@ -133,14 +133,14 @@ async def test_revalidate_function_call_rebuilds_the_tool_and_validated_argument
     ctx = DurableRunContext.restore(payloads[0], deps=None, agent=agent, engine_spec=SPEC)
 
     params = await revalidate_function_call(
-        toolset, ToolsetCallToolParams('add', tool_args={'a': '1', 'b': 2}, ctx=ctx, tool=None), engine_name='Example'
+        toolset, ToolsetCallToolParams('add', tool_args={'a': '1', 'b': 2}, ctx=ctx, tool=None), engine_spec=SPEC
     )
     assert params.tool is not None
     assert params.tool_args == {'a': 1, 'b': 2}
 
     with pytest.raises(UserError, match=r"Tool 'gone' not found in toolset .* not supported with Example"):
         await revalidate_function_call(
-            toolset, ToolsetCallToolParams('gone', tool_args={}, ctx=ctx, tool=None), engine_name='Example'
+            toolset, ToolsetCallToolParams('gone', tool_args={}, ctx=ctx, tool=None), engine_spec=SPEC
         )
 
 

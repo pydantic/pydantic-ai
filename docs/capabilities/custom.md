@@ -477,7 +477,7 @@ Dynamic selection is not currently supported by durable execution capabilities. 
 | [`get_run_clock()`][pydantic_ai.capabilities.AbstractCapability.get_run_clock] | `Callable[[], datetime] | None` | A replay-safe clock for the run's [deadline](../timeouts.md#bounding-a-whole-run) |
 | [`get_run_start_time()`][pydantic_ai.capabilities.AbstractCapability.get_run_start_time] | `datetime | None` | A replay-stable start time to count `timeout=` from |
 
-The last four exist for [durable execution](../durable_execution/overview.md) engines, whose runs replay and must get the same identity and deadline each time. The first capability that returns a value wins.
+The last four exist for [durable execution](../durable_execution/overview.md) engines, whose runs replay and must get the same identity and deadline each time. When several capabilities return a value, the one listed last wins.
 
 ## Binding to an agent
 
