@@ -4480,7 +4480,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     '`message_history`.'
                 )
 
-            output_modality = (resolved.model_settings or {}).get('output_modality', 'audio')
+            session_settings: RealtimeModelSettings | None = resolved.model_settings
+            # A model that only writes text (a perception model, say) defaults to it, rather than to speech.
+            supports_audio_output = resolved.model_profile.get('supports_audio_output', True)
+            if not supports_audio_output and 'output_modality' not in (session_settings or {}):
+                session_settings = {**(session_settings or {}), 'output_modality': 'text'}
+            output_modality = (session_settings or {}).get('output_modality', 'audio')
             # Unlike a setting the provider merely ignores, this one changes what the caller gets back:
             # a model that can't do it either fails the handshake (Gemini) or answers with speech anyway
             # (xAI), so it is rejected here rather than after a connection is open.
@@ -4490,18 +4495,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     'it only generates audio. Read the spoken answer from the transcript on the '
                     '`SpeechPart` instead.'
                 )
+            if output_modality == 'audio' and not supports_audio_output:
+                raise exceptions.UserError(
+                    f"The {resolved.model.model_name!r} realtime model does not support `output_modality='audio'`; "
+                    "it only generates text. Leave `output_modality` unset, or set it to `'text'`."
+                )
 
             connection_manager = (
                 resolved.model.connect(
                     messages=resolved.request_messages,
-                    model_settings=resolved.model_settings,
+                    model_settings=session_settings,
                     model_request_parameters=resolved.model_request_parameters,
                 )
                 if provider_session is None
                 else resolved.model.connect_webrtc(
                     provider_session,
                     messages=resolved.request_messages,
-                    model_settings=resolved.model_settings,
+                    model_settings=session_settings,
                     model_request_parameters=resolved.model_request_parameters,
                 )
             )
@@ -4541,7 +4551,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     # Surfaced on the session span so the session's configured native tools and realtime
                     # settings are inspectable, respecting `include_model_request_parameters`.
                     model_request_parameters=resolved.model_request_parameters,
-                    model_settings=resolved.model_settings,
+                    model_settings=session_settings,
                     wrap_event_stream=resolved.wrap_event_stream,
                 )
                 lifecycle.session = session
