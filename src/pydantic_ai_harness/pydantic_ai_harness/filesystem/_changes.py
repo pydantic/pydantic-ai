@@ -28,8 +28,12 @@ _MAX_DIFF_LINE_PAIRS = 65536
 """Bound the quadratic line-matching work before entering `difflib`."""
 
 
-def _lines(text: str) -> list[str]:
-    """Split on newlines only, keeping each one, so a final line without one stays distinguishable."""
+def split_lines(text: str) -> list[str]:
+    """Split on line feeds only, keeping each one, so a final line without one stays distinguishable.
+
+    `str.splitlines` also splits on form feeds and other separators that `rg` and `grep` do not, which
+    would number lines differently from them.
+    """
     lines = text.split('\n')
     last = lines.pop()
     return [f'{line}\n' for line in lines] + ([last] if last else [])
@@ -49,7 +53,7 @@ def _quoted(name: str) -> str:
 def _diff_lines(old: str, new: str, *, path: str) -> Iterator[str]:
     """The diff lines without terminators, marking a final line that has none the way `git diff` does."""
     fromfile, tofile = _quoted(f'a/{path}'), _quoted(f'b/{path}')
-    lines = difflib.unified_diff(_lines(old), _lines(new), fromfile=fromfile, tofile=tofile, lineterm='')
+    lines = difflib.unified_diff(split_lines(old), split_lines(new), fromfile=fromfile, tofile=tofile, lineterm='')
     for index, line in enumerate(lines):
         if line.endswith('\n'):
             yield line[:-1]

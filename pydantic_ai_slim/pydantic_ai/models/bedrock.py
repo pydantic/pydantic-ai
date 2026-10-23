@@ -1272,6 +1272,10 @@ class BedrockConverseModel(Model[BaseClient]):
         elif variant == 'openai' and 'reasoning_effort' not in existing:
             if thinking is not False:  # Bedrock doesn't accept reasoning_effort='none'
                 existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
+        elif variant == 'openai_responses' and 'reasoning' not in existing:
+            # GPT-5.6 and GPT-6 reject `effort='minimal'`, so it maps to the closest level they accept.
+            effort = 'low' if thinking == 'minimal' else OPENAI_REASONING_EFFORT_MAP[thinking]
+            existing['reasoning'] = {'effort': effort}
         elif variant == 'qwen' and 'reasoning_config' not in existing:
             if thinking is not False:
                 # Qwen only supports low/high; map others to closest
@@ -2343,10 +2347,12 @@ def _thinking_rejects_tool_forcing(
 ) -> bool:
     """Whether this request's thinking rejects the forced tool choice Tool Output relies on.
 
-    Extended thinking and thinking on the non-Anthropic variants do, except xAI Grok, which always reasons: Converse
-    accepts a forced `toolChoice` with Grok 4.6 while it reasons, and Grok 4.7 is assumed to match.
+    Extended thinking and thinking on the non-Anthropic variants do, except two. xAI Grok always reasons, and Converse
+    accepts a forced `toolChoice` with Grok 4.6 while it reasons (Grok 4.7 is assumed to match). OpenAI GPT-5.6 and
+    GPT-6 accept output tools while they think, offered without a forced `toolChoice` as their profile doesn't enable
+    forcing.
     """
-    return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') != 'xai'
+    return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') not in ('xai', 'openai_responses')
 
 
 def _support_tool_forcing(
