@@ -913,7 +913,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     """
 
     _id: str | None
-    _id_explicit: bool
+    _id_explicit: bool = True
     _server_info: mcp_types.Implementation | None
     _server_capabilities: ServerCapabilities | None
     _instructions: str | None
