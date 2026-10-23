@@ -32,9 +32,10 @@ other way, such as a `with ... as` target, a tuple-unpacked loop variable or a m
 variable, has no class, so a member read through it records nothing. An access on a typed name that
 the walk cannot resolve to a member, such as `getattr(obj, name)` or `obj.__dict__[name]`, falls back
 to the class, unless the class has a base outside the walked packages (`BaseModel`, `Exception`),
-which may define the member: those accesses record nothing. The classes in `MEMBER_LEVEL_ONLY` never
-get a class-level entry: nearly every change to core touches them, so a class-level entry would match
-every change.
+which may define the member: those accesses record nothing. Reflection over a whole instance is read
+only through `fields()` and `__dataclass_fields__`; `vars(obj)` and iterating `obj.__dict__` record
+nothing. The classes in `MEMBER_LEVEL_ONLY` never get a class-level entry: nearly every change to
+core touches them, so a class-level entry would match every change.
 
 The manifest maps `core_file -> qualname -> {kinds, engines, sites}`. A change to a core definition
 matches an entry when the changed definition's qualname is the entry's qualname or nested under it:
@@ -52,6 +53,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import importlib.util
 import json
 import sys
 from collections.abc import Iterator, Mapping, Sequence
@@ -98,6 +100,8 @@ Kind = Literal['import', 'annotation_only', 'override', 'attribute_read', 'proje
 Manifest = dict[str, dict[str, dict[str, list[str]]]]
 _EntrySets = dict[str, dict[str, dict[str, set[str]]]]
 FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
+ImportTarget = tuple[str, str | None]
+"""The module an import binds a name to, and the name in it, or `None` for the module itself."""
 
 
 @dataclass(eq=False)
@@ -123,7 +127,7 @@ class Module:
     is_package: bool
     tree: ast.Module
     definitions: dict[str, ast.stmt] = field(default_factory=dict[str, ast.stmt])
-    imports: dict[str, tuple[str, str | None]] = field(default_factory=dict[str, tuple[str, str | None]])
+    imports: dict[str, ImportTarget] = field(default_factory=dict[str, ImportTarget])
 
 
 @dataclass(eq=False)
@@ -149,6 +153,8 @@ class ModuleValue:
     returns: ast.expr | None
     value: ast.expr | None = None
     """A variable's assigned value, which an annotation naming the variable as a type alias stands for."""
+    annotation: ast.expr | None = None
+    """A variable's annotation, which is what reading the variable yields."""
 
 
 Symbol = Module | ClassInfo | ModuleValue
@@ -205,7 +211,7 @@ class Index:
 
     def import_targets(
         self, module: Module, statement: ast.Import | ast.ImportFrom
-    ) -> Iterator[tuple[str, tuple[str, str | None]]]:
+    ) -> Iterator[tuple[str, ImportTarget]]:
         """Each name an import statement binds, with the module and name it binds to."""
         if isinstance(statement, ast.ImportFrom):
             base = self.import_base(module, statement)
@@ -221,9 +227,8 @@ class Index:
         """The absolute module a `from ... import` statement imports from."""
         if not statement.level:
             return statement.module or ''
-        package = module.name.split('.') if module.is_package else module.name.split('.')[:-1]
-        package = package[: len(package) - statement.level + 1]
-        return '.'.join([*package, *([statement.module] if statement.module else [])])
+        package = module.name if module.is_package else module.name.rpartition('.')[0]
+        return importlib.util.resolve_name('.' * statement.level + (statement.module or ''), package)
 
     def class_info(self, module: Module, node: ast.ClassDef, qualname: str) -> ClassInfo:
         if (info := self._classes.get(id(node))) is None:
@@ -244,7 +249,9 @@ class Index:
                 return self.class_info(module, statement, name)
             case ast.FunctionDef() | ast.AsyncFunctionDef():
                 return ModuleValue(module, name, statement.returns)
-            case ast.Assign(value=value) | ast.AnnAssign(value=value):
+            case ast.AnnAssign(annotation=annotation, value=value):
+                return ModuleValue(module, name, None, value, annotation)
+            case ast.Assign(value=value):
                 return ModuleValue(module, name, None, value)
             case _:
                 pass
@@ -505,6 +512,21 @@ class _EngineWalker(ast.NodeVisitor):
         if not found and not (name.startswith('__') and name.endswith('__')):
             self.record_classes(classes)
 
+    def record_named(self, owner: ast.expr, name: ast.expr) -> None:
+        """A reflective access of the member `name` names on `owner`, at class level when the name is not a literal."""
+        if isinstance(name, ast.Constant) and isinstance(name.value, str):
+            self.record_member(owner, name.value)
+        else:
+            self.record_classes(self.types(owner))
+
+    def record_keywords(self, owner: ast.expr, keywords: list[ast.keyword]) -> None:
+        """Keyword arguments naming members of `owner`, at class level for a `**` mapping."""
+        for keyword in keywords:
+            if keyword.arg is not None:
+                self.record_member(owner, keyword.arg)
+            else:
+                self.record_classes(self.types(owner))
+
     def record_classes(self, classes: frozenset[ClassInfo]) -> None:
         """The class-level fallback for an access the walk cannot resolve to a member."""
         for info in classes:
@@ -571,11 +593,15 @@ class _EngineWalker(ast.NodeVisitor):
     def element_types(self, iterable: ast.expr, annotated: Mapping[str, ast.expr | None]) -> frozenset[ClassInfo]:
         """The classes the items of `iterable` are instances of, from the annotation of what it reads or calls."""
         match iterable:
-            case ast.Name(id=name):
-                return self.index.element_classes(self.module, annotated.get(name))
-            case ast.Attribute(value=value, attr=attr) | ast.Call(func=ast.Attribute(value=value, attr=attr)) if (
-                not isinstance(self.index.symbol(self.module, value), Module)
+            case ast.Name(id=name) if name in annotated:
+                return self.index.element_classes(self.module, annotated[name])
+            case ast.Name() | ast.Attribute() | ast.Call() if isinstance(
+                symbol := self.index.symbol(self.module, iterable.func if isinstance(iterable, ast.Call) else iterable),
+                ModuleValue,
             ):
+                annotation = symbol.returns if isinstance(iterable, ast.Call) else symbol.annotation
+                return self.index.element_classes(symbol.module, annotation)
+            case ast.Attribute(value=value, attr=attr) | ast.Call(func=ast.Attribute(value=value, attr=attr)):
                 result: frozenset[ClassInfo] = frozenset()
                 for info in self.types(value):
                     if (found := self.index.lookup(info, attr)) is not None:
@@ -583,12 +609,6 @@ class _EngineWalker(ast.NodeVisitor):
                         annotation = member.returns if isinstance(iterable, ast.Call) else member.annotation
                         result |= self.index.element_classes(definer.module, annotation)
                 return result
-            case ast.Call(func=func):
-                match self.index.symbol(self.module, func):
-                    case ModuleValue(module=module, returns=returns):
-                        return self.index.element_classes(module, returns)
-                    case _:
-                        return frozenset()
             case _:
                 return frozenset()
 
@@ -673,7 +693,11 @@ class _EngineWalker(ast.NodeVisitor):
                 continue
             self.bind(scope, argument.arg, self.index.annotation_classes(self.module, argument.annotation))
         self.scopes.append(scope)
-        self.bind_locals(scope, node, {argument.arg: argument.annotation for argument in arguments})
+        annotated = {argument.arg: argument.annotation for argument in arguments}
+        if (vararg := node.args.vararg) is not None and vararg.annotation is not None:
+            # `*items: T` makes `items` a tuple of `T`.
+            annotated[vararg.arg] = ast.Subscript(value=ast.Name(id='tuple'), slice=vararg.annotation)
+        self.bind_locals(scope, node, annotated)
         for argument in [*arguments, node.args.vararg, node.args.kwarg]:
             if argument is not None and argument.annotation is not None:
                 self.visit(argument.annotation)
@@ -743,41 +767,36 @@ class _EngineWalker(ast.NodeVisitor):
 
     def visit_Subscript(self, node: ast.Subscript) -> None:
         match node:
-            case ast.Subscript(value=ast.Attribute(value=owner, attr='__dict__'), slice=ast.Constant(value=str(name))):
-                self.record_member(owner, name)
-            case ast.Subscript(value=ast.Attribute(value=owner, attr='__dict__')):
-                self.record_classes(self.types(owner))
+            case ast.Subscript(value=ast.Attribute(value=owner, attr='__dict__'), slice=name):
+                self.record_named(owner, name)
             case _:
                 pass
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
         match node:
-            case ast.Call(func=ast.Name(id='getattr' | 'setattr' | 'hasattr' | 'delattr'), args=[owner, name, *_]):
-                if isinstance(name, ast.Constant) and isinstance(name.value, str):
-                    self.record_member(owner, name.value)
-                else:
-                    self.record_classes(self.types(owner))
-            case ast.Call(
-                func=ast.Attribute(
-                    value=ast.Attribute(value=owner, attr='__dict__'), attr='get' | 'setdefault' | 'pop'
-                ),
-                args=[name, *_],
+            case (
+                ast.Call(func=ast.Name(id='getattr' | 'setattr' | 'hasattr' | 'delattr'), args=[owner, name, *_])
+                | ast.Call(
+                    func=ast.Attribute(
+                        value=ast.Name(id='object'), attr='__getattribute__' | '__setattr__' | '__delattr__'
+                    ),
+                    args=[owner, name, *_],
+                )
+                | ast.Call(
+                    func=ast.Attribute(
+                        value=ast.Attribute(value=owner, attr='__dict__'), attr='get' | 'setdefault' | 'pop'
+                    ),
+                    args=[name, *_],
+                )
             ):
-                if isinstance(name, ast.Constant) and isinstance(name.value, str):
-                    self.record_member(owner, name.value)
-                else:
-                    self.record_classes(self.types(owner))
+                self.record_named(owner, name)
             case ast.Call(func=func, args=[owner]) if _last_name(func) == 'fields':
                 self.record_fields(owner)
             case ast.Call(func=func, args=[owner, *_], keywords=keywords) if _last_name(func) == 'replace':
-                for keyword in keywords:
-                    if keyword.arg is not None:
-                        self.record_member(owner, keyword.arg)
+                self.record_keywords(owner, keywords)
             case ast.Call(func=func, keywords=keywords) if isinstance(self.index.symbol(self.module, func), ClassInfo):
-                for keyword in keywords:
-                    if keyword.arg is not None:
-                        self.record_member(func, keyword.arg)
+                self.record_keywords(func, keywords)
             case _:
                 pass
         self.generic_visit(node)

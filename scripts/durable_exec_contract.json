@@ -1406,6 +1406,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validation_context",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::live_validation_context",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_replace_run_context",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::TemporalRunContext.__init__",
@@ -3094,6 +3095,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/__init__.py::<module>"
       ]
     },
+    "AgentRunError.message": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::wrap_tool_call_result"
+      ]
+    },
     "ApprovalRequired": {
       "engines": [
         "durable_exec",
@@ -3294,6 +3306,39 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::<module>"
+      ]
+    },
+    "RunCancelled": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>"
+      ]
+    },
+    "RunCancelled.metadata": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::wrap_tool_call_result"
+      ]
+    },
+    "RunTimedOut": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>"
       ]
     },
     "SkipModelRequest": {

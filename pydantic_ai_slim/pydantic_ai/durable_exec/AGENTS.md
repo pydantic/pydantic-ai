@@ -98,11 +98,11 @@ Regenerate it with `uv run python scripts/durable_exec_contract.py --write` and 
 Read the diff: a new entry is a new dependency an engine took on core.
 
 `tests/durable_exec/test_workflow_side_determinism.py` fails when a module that runs on Temporal's
-workflow loop directly calls a clock, a random source, a sleep, a thread or I/O that its `_DENYLIST`
-names. It does not see calls made through another name, a clock read through a function a dataclass
-default factory names (`default_factory=now_utc`), or a branch on state that differs on replay; cover
-those with a workflow-level test. Prefer the replay-safe alternative the durability capability
-supplies. For a delay, await `_agent_graph_sleep`, which Temporal and DBOS route through
-`set_agent_graph_sleep`. When the call is safe, end its line with
+workflow loop directly calls a clock, a random source, a sleep, a thread, a task-completion wait or
+I/O that its `_DENYLIST` names. It does not see calls made through another name, a clock read
+through a function a dataclass default factory names (`default_factory=now_utc`), or a branch on
+state that differs on replay; cover those with a workflow-level test. Prefer the replay-safe
+alternative the durability capability supplies. For a delay, await `_agent_graph_sleep`, which
+Temporal and DBOS route through `set_agent_graph_sleep`. When the call is safe, end its line with
 `# workflow-nondeterminism-ok: <reason>` and name why replay cannot diverge. The test docstring lists
 the workflow-side modules and how they were derived.

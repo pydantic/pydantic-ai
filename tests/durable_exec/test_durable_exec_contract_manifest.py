@@ -8,6 +8,7 @@ they are not VCR tests.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import re
@@ -22,7 +23,7 @@ from inline_snapshot import snapshot
 
 REPO_ROOT = Path(__file__).parents[2]
 CORE = 'pydantic_ai_slim/pydantic_ai'
-_DURABILITY_SUBCLASS = re.compile(r'^class \w+\((?:\w+\.)?BaseDurabilityCapability\b', re.MULTILINE)
+_DURABILITY_BASE = re.compile(r'(?:\w+\.)*BaseDurabilityCapability(?:\[.*\])?')
 
 Manifest = dict[str, dict[str, dict[str, list[str]]]]
 
@@ -60,7 +61,7 @@ def test_manifest_is_current():
 
 
 def test_engines_cover_every_durability_capability():
-    """Every `durable_exec` subpackage and every module defining a `BaseDurabilityCapability` subclass is walked."""
+    """Every `durable_exec` subpackage and every module with a class based on `BaseDurabilityCapability` is walked."""
     walked = {path for pattern in generator.ENGINES.values() for path in REPO_ROOT.glob(pattern)}
     durable_exec = REPO_ROOT / CORE / 'durable_exec'
     subpackages = {
@@ -73,7 +74,11 @@ def test_engines_cover_every_durability_capability():
         path
         for root in (CORE, 'src/pydantic_ai_harness/pydantic_ai_harness')
         for path in (REPO_ROOT / root).rglob('*.py')
-        if _DURABILITY_SUBCLASS.search(path.read_text(encoding='utf-8'))
+        if 'BaseDurabilityCapability' in (source := path.read_text(encoding='utf-8'))
+        and any(
+            isinstance(node, ast.ClassDef) and any(_DURABILITY_BASE.fullmatch(ast.unparse(base)) for base in node.bases)
+            for node in ast.walk(ast.parse(source))
+        )
     }
     assert capabilities
     assert sorted(str(path.relative_to(REPO_ROOT)) for path in (subpackages | capabilities) - walked) == []
@@ -151,6 +156,9 @@ def fixture_repo(tmp_path: Path) -> Path:
         'pydantic_ai_slim/pydantic_ai/profiles.py': """
             class Profile:
                 supports_tools: bool = True
+
+
+            KNOWN: 'list[Profile]' = []
 
 
             class Response:
@@ -268,7 +276,7 @@ def fixture_repo(tmp_path: Path) -> Path:
             from pydantic_ai import RunContext, profiles as profile_module, tools
             from pydantic_ai.cycle_a import Looped
             from pydantic_ai.models import MODEL_NAMES, Diamond, Left, Model, ModelAlias, Pending, Settings, Sides, WrapperModel
-            from pydantic_ai.profiles import Profile, Response
+            from pydantic_ai.profiles import KNOWN, Profile, Response
             from ...tools import make_context
 
 
@@ -416,6 +424,27 @@ def fixture_repo(tmp_path: Path) -> Path:
                     from_module.missing
 
 
+            def spread(model: Model, options: dict[str, object]) -> None:
+                replace(model, **options)
+                Profile(**options)
+                object.__getattribute__(model, 'label')
+
+
+            def through_an_imported_variable() -> None:
+                for listed in KNOWN:
+                    listed.supports_tools
+
+
+            def through_a_module_variable() -> None:
+                for known in profile_module.KNOWN:
+                    known.supports_tools
+
+
+            def through_varargs(*profiles: Profile) -> None:
+                for each in profiles:
+                    each.supports_tools
+
+
             def through_a_method(model: Model) -> None:
                 for called in model.history():
                     called.text
@@ -517,7 +546,7 @@ def test_build_manifest_resolves_every_dependency_form(fixture_repo: Path):
             'models/__init__.py::Model': (
                 ['attribute_read', 'import'],
                 ['render', 'temporal'],
-                ['<module>', 'iterate', 'reflective', '<module>'],
+                ['<module>', 'iterate', 'reflective', 'spread', '<module>'],
             ),
             'models/__init__.py::Model.__init__': (['override'], ['temporal'], ['TemporalModel.__init__']),
             'models/__init__.py::Model.default': (['attribute_read'], ['temporal'], ['reflective']),
@@ -525,7 +554,15 @@ def test_build_manifest_resolves_every_dependency_form(fixture_repo: Path):
             'models/__init__.py::Model.label': (
                 ['attribute_read'],
                 ['temporal'],
-                ['<module>', 'TemporalModel.stream', 'iterate', 'module_level', 'module_level.nested', 'reflective'],
+                [
+                    '<module>',
+                    'TemporalModel.stream',
+                    'iterate',
+                    'module_level',
+                    'module_level.nested',
+                    'reflective',
+                    'spread',
+                ],
             ),
             'models/__init__.py::Model.profile': (
                 ['attribute_read'],
@@ -563,11 +600,18 @@ def test_build_manifest_resolves_every_dependency_form(fixture_repo: Path):
                 ['temporal'],
                 ['TemporalModel.wrapped', 'module_level'],
             ),
-            'profiles.py::Profile': (['import'], ['temporal'], ['<module>']),
+            'profiles.py::KNOWN': (['import'], ['temporal'], ['<module>', 'through_a_module_variable']),
+            'profiles.py::Profile': (['attribute_read', 'import'], ['temporal'], ['<module>', 'spread']),
             'profiles.py::Profile.supports_tools': (
                 ['attribute_read'],
                 ['temporal'],
-                ['TemporalModel.request', 'iterate'],
+                [
+                    'TemporalModel.request',
+                    'iterate',
+                    'through_a_module_variable',
+                    'through_an_imported_variable',
+                    'through_varargs',
+                ],
             ),
             'profiles.py::Response': (['annotation_only', 'import'], ['temporal'], ['<module>', 'typed']),
             'profiles.py::Response.text': (
