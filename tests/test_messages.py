@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 import warnings
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import fields, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -24,15 +24,19 @@ from pydantic_ai import (
     BinaryAudio,
     BinaryContent,
     BinaryImage,
+    Citation,
+    ContentCitationAnchor,
     DeferredToolRequests,
     DeferredToolRequestsEvent,
     DeferredToolResults,
     DeferredToolResultsEvent,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     ImageUrl,
     InstructionPart,
     InstrumentationSettings,
+    MarkerCitationAnchor,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -48,6 +52,7 @@ from pydantic_ai import (
     SpeechPartDelta,
     TextContent,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
     ToolApproved,
@@ -61,6 +66,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
@@ -868,6 +874,98 @@ def test_builtin_tool_call_part_has_content(args: dict[str, object] | str | None
 def test_builtin_tool_call_part_has_content_empty(args: dict[str, object] | str | None):
     part = NativeToolCallPart(tool_name='web_search', args=args)
     assert not part.has_content()
+
+
+def test_citation_message_history_round_trip() -> None:
+    """Citations survive a dump and load of message history, and dump to the documented wire format."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'Paris is the capital of France. [1]',
+                    citations=[
+                        Citation(
+                            sources=[
+                                WebCitationSource(
+                                    url='https://example.com/paris',
+                                    title='Paris',
+                                    excerpts=["Paris is France's capital city."],
+                                )
+                            ],
+                            anchor=MarkerCitationAnchor(start=32, end=35),
+                        ),
+                        Citation(
+                            sources=[
+                                DocumentCitationSource(
+                                    document_id='file-123',
+                                    title='report.pdf',
+                                    excerpts=['The report identifies Paris as the capital.'],
+                                )
+                            ]
+                        ),
+                    ],
+                )
+            ]
+        )
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_python(messages)
+
+    assert ModelMessagesTypeAdapter.validate_python(serialized) == messages
+    assert serialized[0]['parts'][0]['citations'] == snapshot(
+        [
+            {
+                'sources': [
+                    {
+                        'kind': 'web',
+                        'url': 'https://example.com/paris',
+                        'title': 'Paris',
+                        'excerpts': ["Paris is France's capital city."],
+                    }
+                ],
+                'anchor': {'start': 32, 'end': 35, 'kind': 'marker'},
+            },
+            {
+                'sources': [
+                    {
+                        'kind': 'document',
+                        'document_id': 'file-123',
+                        'title': 'report.pdf',
+                        'excerpts': ['The report identifies Paris as the capital.'],
+                    }
+                ],
+                'anchor': None,
+            },
+        ]
+    )
+
+
+def test_text_part_delta_replaces_citations() -> None:
+    """A citations delta replaces the part's citations, as it replaces their raw entries in `provider_details`."""
+    first = Citation(sources=[WebCitationSource(url='https://example.com/paris')])
+    second = Citation(sources=[DocumentCitationSource(document_id='file-123', title='report.pdf')])
+    part = TextPart('Answer', citations=[first], provider_details={'citations': ['first']})
+
+    delta = TextPartDelta(content_delta='', citations_delta=[second], provider_details={'citations': ['second']})
+
+    part = delta.apply(part)
+
+    assert part == TextPart('Answer', citations=[second], provider_details={'citations': ['second']})
+
+
+@pytest.mark.parametrize(
+    'build, match',
+    [
+        pytest.param(lambda: ContentCitationAnchor(start=-1, end=0), '0 <= start < end', id='negative-start'),
+        pytest.param(lambda: MarkerCitationAnchor(start=2, end=1), '0 <= start < end', id='end-before-start'),
+        pytest.param(lambda: ContentCitationAnchor(start=1, end=1), '0 <= start < end', id='empty-range'),
+        pytest.param(lambda: Citation(sources=[]), 'at least one source', id='no-sources'),
+        pytest.param(lambda: DocumentCitationSource(), 'at least one source field', id='empty-document-source'),
+    ],
+)
+def test_citation_invariants(build: Callable[[], object], match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        build()
 
 
 def test_file_part_serialization_roundtrip():

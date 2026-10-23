@@ -434,7 +434,8 @@ The two-question split and concurrent per-step requests come from [fast-jev-comp
 
 `SlidingWindowCompaction` keeps the last `keep_messages` down to a tail; pass `keep_tokens` instead to retain
 a minimum amount of original message text rather than a message count. By default `preserve_first_user_message=True` keeps the first user
-turn even when it falls outside the window, so the agent does not lose the original task.
+turn even when it falls outside the window, so the agent does not lose the original task. `keep_messages=0` still keeps
+the newest message, the request being answered.
 
 `ClearToolResults` keeps the last `keep_pairs` intact. A retried return, which asks the model to make
 the call again, is never cleared and doesn't count toward `keep_pairs`. Set `clear_tool_inputs=True` to also blank the
@@ -544,6 +545,7 @@ anchor rather than regenerating it from scratch. This changes the summary-call p
 releases; set `incremental=False` to retain the prior regeneration behavior. `preserve_first_user_message=True` keeps the original task turn even
 when it falls outside the window. Pass `keep_tokens` to retain a minimum amount of original message text
 instead of using `keep_messages`.
+`keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.
 
 The summary is a `CompactionPart` in a `ModelRequest` of its own, after the original system prompts,
 which stay exactly as they were, and the original first user turn when `preserve_first_user_message`
@@ -563,7 +565,7 @@ with `Summary of previous conversation:`, keeps working: that summary anchors th
 replaced by it.
 
 Both prompt surfaces of the summary request are fields: `summary_prompt` is the user-turn template (it
-must contain a `{messages}` placeholder), and `instructions` sets the internal agent's static instructions,
+must contain a `{messages}` placeholder and no other replacement field; any other prompt emits a `HarnessDeprecationWarning` and will raise `ValueError` in a future release), and `instructions` sets the internal agent's static instructions,
 which Pydantic AI sends in the request's system prompt. Override `instructions` when the summarizer
 endpoint requires a fixed leading instruction.
 
@@ -632,8 +634,7 @@ from pydantic_ai.messages import ToolCallPart
 def my_file_key(call: ToolCallPart) -> str | None:
     if call.tool_name != 'read_file':
         return None
-    args = call.args
-    return args.get('path') if isinstance(args, dict) else None
+    return call.args_as_dict().get('path')
 ```
 
 ## Tracing

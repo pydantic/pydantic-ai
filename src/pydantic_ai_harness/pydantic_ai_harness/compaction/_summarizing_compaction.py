@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import copy
 import html
 import re
+import warnings
 from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import UTC, datetime
+from string import Formatter
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
 
 from pydantic_ai._utils import is_str_dict
@@ -31,7 +34,9 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import TextOutput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts
 from pydantic_ai_harness._usage import reserved_usage_limits
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -50,10 +55,11 @@ from pydantic_ai_harness.compaction._shared import (
     exceeds,
     find_safe_cutoff,
     find_token_cutoff,
+    harness_data_origin,
+    is_harness_data,
     is_realtime_model,
     record_compaction_reclaim,
     resolve_token_trigger,
-    tool_return_text,
     validate_token_trigger,
 )
 from pydantic_ai_harness.compaction._summary import (
@@ -138,14 +144,6 @@ Continuing a history merges adjacent requests and keeps only the framework's own
 so the request-level marker is lost there; the copy's `TextContent` items carry the same marker as
 their `metadata`, the way pins do, so a retained copy is still recognized inside a merged request.
 """
-
-# Interim, deliberately generic rule: a harness capability that tags the content it adds on the user channel
-# with an `origin` under this prefix is covered by this one check, without per-capability code. Today that is
-# `BackgroundTools` results and `TrajectoryJudge` feedback. `Memory` marks its snapshot with a bare string
-# instead, so it isn't recognized yet: a known gap. The rule is temporary: once core provenance
-# (`CapabilityPart`) lands, recognize that instead of this metadata convention.
-_HARNESS_ORIGIN_PREFIX = 'pydantic-ai-harness.'
-"""The prefix of the `origin` metadata harness capabilities put on content they add on the user channel."""
 
 
 def _model_name(model: str | AbstractModel | None) -> str | None:
@@ -243,7 +241,7 @@ def format_transcript(
         if isinstance(msg, ModelRequest):
             kept = _is_kept_user_message(msg)
             for part in msg.parts:
-                if isinstance(part, UserPromptPart) and (origin := _harness_data_origin(part)) is not None:
+                if isinstance(part, UserPromptPart) and (origin := harness_data_origin(part)) is not None:
                     elements.append(_harness_data_element(origin, user_prompt_text(part), tool_return_max_chars))
                 elif kept or (isinstance(part, UserPromptPart) and _is_kept_user_part(part)):
                     # The rest of a kept turn is carried forward as-is, so it isn't summarized too. Harness data an
@@ -313,30 +311,6 @@ def _message_element(
     return f'<message role="{role}"{name_attr}>\n{body}\n</message>'
 
 
-def _harness_data_origin(part: UserPromptPart) -> str | None:
-    """The `origin` of user-channel content a harness capability added, or `None` for anything else.
-
-    A part counts when its first item is a `TextContent` whose metadata names a harness origin: that tag
-    marks the whole part, as a `BackgroundTools` result marks the files and text that follow it. A part
-    that only mentions such content later, after what the user wrote, is never relabeled.
-    """
-    # TODO: switch to the core provenance field once it exists.
-    match part.content:
-        case [TextContent(metadata=metadata), *_] if (
-            is_str_dict(metadata)
-            and isinstance(origin := metadata.get('origin'), str)
-            and origin.startswith(_HARNESS_ORIGIN_PREFIX)
-        ):
-            return origin
-        case _:
-            return None
-
-
-def is_harness_data(part: ModelRequestPart) -> bool:
-    """Whether *part* is user-channel content a harness capability added."""
-    return isinstance(part, UserPromptPart) and _harness_data_origin(part) is not None
-
-
 def _harness_data_element(origin: str, content: str, max_chars: int | None) -> str:
     """Harness-added content as a `<harness_data>` element labeled with its *origin*, never as a user message."""
     body = _neutralize_transcript_tags(content)
@@ -347,15 +321,7 @@ def _harness_data_element(origin: str, content: str, max_chars: int | None) -> s
 
 def user_prompt_text(part: UserPromptPart) -> str:
     """Extract text content from a user prompt part."""
-    if isinstance(part.content, str):
-        return part.content
-    texts: list[str] = []
-    for item in part.content:
-        if isinstance(item, str):
-            texts.append(item)
-        elif isinstance(item, TextContent):
-            texts.append(item.content)
-    return ' '.join(texts) if texts else ''
+    return ' '.join(user_prompt_texts(part))
 
 
 def _extract_system_prompts(messages: list[ModelMessage]) -> list[SystemPromptPart]:
@@ -555,6 +521,18 @@ async def drain_summary_events(
         pass
 
 
+def _is_valid_summary_prompt(prompt: str) -> bool:
+    """Whether `prompt` renders with only a `{messages}` replacement field, and has one."""
+    try:
+        fields = {name for _, name, _, _ in Formatter().parse(prompt) if name is not None}
+        # A trial render with a non-empty transcript catches what parsing alone accepts, such as an
+        # unknown conversion or a nested format spec.
+        prompt.format(messages='transcript')
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+        return False
+    return fields == {'messages'}
+
+
 @dataclass
 class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     """LLM-powered conversation compaction.
@@ -648,7 +626,10 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     registry cannot resolve."""
 
     keep_messages: int = 20
-    """Number of tail messages to preserve after compaction (message-count trigger)."""
+    """Number of tail messages to preserve after compaction (message-count trigger).
+
+    The newest message is always kept, so `0` keeps one.
+    """
 
     keep_tokens: int | None = None
     """Minimum original message-content tokens to retain in an unchanged recent suffix.
@@ -660,7 +641,8 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     summary_prompt: str = _DEFAULT_SUMMARY_PROMPT
     """Prompt template for generating summaries.
 
-    Must contain a `{messages}` placeholder.
+    Must contain a `{messages}` placeholder and no other replacement field. Write a literal
+    brace as `{{` or `}}`.
     """
 
     instructions: str = field(default=_DEFAULT_INSTRUCTIONS, kw_only=True)
@@ -742,6 +724,15 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             raise ValueError('keep_user_messages_max_chars must be positive.')
         if self.tool_return_max_chars is not None and self.tool_return_max_chars < 1:
             raise ValueError('tool_return_max_chars must be positive.')
+        if not _is_valid_summary_prompt(self.summary_prompt):
+            # Such a prompt used to be accepted here, and either fails at the first compaction or
+            # sends no transcript, so warn now rather than break code that constructs one.
+            warnings.warn(
+                '`summary_prompt` must contain a `{messages}` placeholder and no other replacement field; '
+                'write a literal brace as `{{` or `}}`. This will raise `ValueError` in a future release.',
+                HarnessDeprecationWarning,
+                stacklevel=3,
+            )
 
     def with_focus(self, focus: str) -> SummarizingCompaction[AgentDepsT]:
         """Return a copy whose summary prompt prioritizes `focus`.
@@ -751,7 +742,11 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         model-supplied focus are escaped to survive it.
         """
         escaped = focus.replace('{', '{{').replace('}', '}}')
-        return replace(self, summary_prompt=f'{self.summary_prompt}\n\nGive particular weight to: {escaped}')
+        focused = copy.copy(self)
+        # Not `replace`, which reruns `__post_init__` and would repeat an invalid prompt's warning from
+        # inside `dataclasses`; appending escaped text cannot change whether the prompt is valid.
+        focused.summary_prompt = f'{self.summary_prompt}\n\nGive particular weight to: {escaped}'
+        return focused
 
     async def compact(
         self,

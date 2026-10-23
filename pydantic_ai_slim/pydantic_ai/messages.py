@@ -621,6 +621,8 @@ class TextContent:
     `ModelMessagesTypeAdapter` preserves this field, but as application-only data it is not
     guaranteed to survive a round-trip through the UI adapters; see
     [Storing and loading messages](../message-history.md#storing-and-loading-messages-to-json).
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] drops it from user prompts, since
+    a client that could set it could pass its text off as content the application added.
     """
 
     kind: Literal['text-content'] = 'text-content'
@@ -3259,6 +3261,130 @@ class ModelRequest:
 
 
 @dataclass(repr=False)
+class WebCitationSource:
+    """A web page a citation points to."""
+
+    url: str
+    """The page's URL."""
+
+    _: KW_ONLY
+
+    title: str | None = None
+    """The page's title, if the provider gave one."""
+
+    excerpts: list[str] = field(default_factory=list[str])
+    """Passages from the source that back the cited text.
+
+    Depending on the provider, this is the exact cited text or a longer retrieved chunk. It can include text from your
+    own documents, so choose whether to log it or show it to users.
+    """
+
+    kind: Literal['web'] = 'web'
+    """Source type identifier, used as a discriminator for deserialization."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class DocumentCitationSource:
+    """Any other source a citation points to, such as a document you sent or a file in the provider's file store."""
+
+    _: KW_ONLY
+
+    document_id: str | None = None
+    """The provider's ID for the file or document, if it has one. It's not a local path."""
+
+    title: str | None = None
+    """The document's title or filename, if the provider gave one."""
+
+    excerpts: list[str] = field(default_factory=list[str])
+    """Passages from the source that back the cited text.
+
+    Depending on the provider, this is the exact cited text or a longer retrieved chunk. It can include text from your
+    own documents, so choose whether to log it or show it to users.
+    """
+
+    kind: Literal['document'] = 'document'
+    """Source type identifier, used as a discriminator for deserialization."""
+
+    def __post_init__(self) -> None:
+        if not any((self.document_id, self.title, self.excerpts)):
+            raise ValueError('A document citation source must have at least one source field')
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+CitationSource: TypeAlias = Annotated[WebCitationSource | DocumentCitationSource, pydantic.Discriminator('kind')]
+"""Where a citation's information came from."""
+
+
+def _validate_citation_anchor(start: int, end: int) -> None:
+    if start < 0 or end <= start:
+        raise ValueError('Citation anchor must satisfy 0 <= start < end')
+
+
+@dataclass(repr=False, kw_only=True)
+class ContentCitationAnchor:
+    """The text the citation's sources support, as positions in the part's `content`."""
+
+    start: int
+    """The position of the first character, counting from 0."""
+
+    end: int
+    """The position after the last character, so `content[start:end]` is the range."""
+
+    kind: Literal['content'] = 'content'
+    """Anchor type identifier, used as a discriminator for deserialization."""
+
+    def __post_init__(self) -> None:
+        _validate_citation_anchor(self.start, self.end)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class MarkerCitationAnchor:
+    """A marker the model wrote, such as `[1]` or a link, as positions in the part's `content`."""
+
+    start: int
+    """The position of the first character, counting from 0."""
+
+    end: int
+    """The position after the last character, so `content[start:end]` is the range."""
+
+    kind: Literal['marker'] = 'marker'
+    """Anchor type identifier, used as a discriminator for deserialization."""
+
+    def __post_init__(self) -> None:
+        _validate_citation_anchor(self.start, self.end)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+CitationAnchor: TypeAlias = Annotated[ContentCitationAnchor | MarkerCitationAnchor, pydantic.Discriminator('kind')]
+"""Which part of [`TextPart.content`][pydantic_ai.messages.TextPart.content] a citation is about."""
+
+
+@dataclass(repr=False)
+class Citation:
+    """Links part of a model's answer to the sources that back it."""
+
+    sources: list[CitationSource]
+    """Where the information came from."""
+
+    _: KW_ONLY
+
+    anchor: CitationAnchor | None = None
+    """Which part of the text the citation is about, or `None` when the provider didn't say."""
+
+    def __post_init__(self) -> None:
+        if not self.sources:
+            raise ValueError('A citation must have at least one source')
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class TextPart:
     """A plain text response from a model."""
 
@@ -3284,6 +3410,13 @@ class TextPart:
 
     This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
     When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    citations: list[Citation] | None = None
+    """The citations for this text, if any.
+
+    Anything else the provider returned about them, such as page numbers or confidence scores, is in
+    `provider_details['citations']`.
     """
 
     part_kind: Literal['text'] = 'text'
@@ -5034,6 +5167,11 @@ def sanitize_messages(
       `False` that aren't in `allowed_file_url_force_download`, resetting them to `False`. Both
       `True` and `'allow-local'` are reset by default. Applies to file URLs in user content and
       those nested in tool return parts.
+    - [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] on the text items of a
+      [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], resetting it to `None` and keeping the
+      text. Metadata is never sent to the model, but application code and capabilities read it to
+      recognize content they added themselves, such as a background task's report, so a client that
+      can set it could make its own text pass as theirs.
     - [`UploadedFile`][pydantic_ai.messages.UploadedFile] items unless `allow_uploaded_files=True`.
       Like a non-HTTP `FileUrl`, an `UploadedFile` references an object the model provider fetches
       using the server-side IAM role. Applies to uploaded files in user content and those nested in
@@ -5104,6 +5242,7 @@ def sanitize_messages(
     disallowed_url_schemes: set[str] = set()
     reset_force_download_values: set[ForceDownloadMode] = set()
     dropped_uploaded_file_providers: set[str] = set()
+    stripped_text_metadata: list[TextContent] = []
     dangling_tool_call_names: list[str] = []
 
     sanitized: list[ModelMessage] = []
@@ -5118,6 +5257,7 @@ def sanitize_messages(
                 disallowed_schemes=disallowed_url_schemes,
                 reset_force_download_values=reset_force_download_values,
                 dropped_uploaded_file_providers=dropped_uploaded_file_providers,
+                stripped_text_metadata=stripped_text_metadata,
             )
             stripped_system_prompt = stripped_system_prompt or request_stripped_system_prompt
             if new_request_parts:
@@ -5195,6 +5335,16 @@ def sanitize_messages(
             f'or service account, so it should only be accepted from trusted clients. To keep uploaded files '
             f'from the client, set `allow_uploaded_files=True`, or pass them on trusted server-side '
             f'`message_history` directly to `Agent.run`.',
+            UserWarning,
+            stacklevel=2,
+        )
+
+    if stripped_text_metadata:
+        warnings.warn(
+            f'`TextContent.metadata` was dropped from {len(stripped_text_metadata)} client-submitted user prompt '
+            f'item(s). Metadata is never sent to the model, but application code and capabilities read it to '
+            f'recognize content they added themselves, so it is not accepted from untrusted clients. Pass '
+            f'history that carries your own metadata as trusted server-side `message_history` instead.',
             UserWarning,
             stacklevel=2,
         )
@@ -5284,12 +5434,14 @@ def _sanitize_request_parts(
     disallowed_schemes: set[str],
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
+    stripped_text_metadata: list[TextContent],
 ) -> tuple[list[ModelRequestPart], bool]:
     """Sanitize the parts of an untrusted [`ModelRequest`][pydantic_ai.messages.ModelRequest].
 
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
     updated in place with any non-allowlisted file URL schemes, `force_download` values, and dropped
-    uploaded file providers encountered.
+    uploaded file providers encountered, and `stripped_text_metadata` with the user prompt
+    [`TextContent`][pydantic_ai.messages.TextContent] items whose metadata was dropped.
     Returns the kept parts and whether any part carrying the system voice
     ([`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or an instruction part) was
     stripped. Retry feedback is kept, in a form that can't carry client-written system text; see
@@ -5313,7 +5465,7 @@ def _sanitize_request_parts(
                 reset_force_download_values,
                 dropped_uploaded_file_providers,
             )
-            new_parts.append(replace(part, content=filtered_content))
+            new_parts.append(replace(part, content=_without_text_metadata(filtered_content, stripped_text_metadata)))
         elif isinstance(part, ToolReturnPart):
             new_parts.append(
                 _sanitize_tool_return_part(
@@ -5364,6 +5516,20 @@ def _filter_user_content(
             continue
         filtered.append(item)
     return filtered
+
+
+def _without_text_metadata(content: list[UserContent], stripped: list[TextContent]) -> list[UserContent]:
+    """Drop the metadata of untrusted user prompt [`TextContent`][pydantic_ai.messages.TextContent], keeping its text.
+
+    `stripped` is updated in place with the original items whose metadata was dropped.
+    """
+    kept: list[UserContent] = []
+    for item in content:
+        if isinstance(item, TextContent) and item.metadata is not None:
+            stripped.append(item)
+            item = replace(item, metadata=None)
+        kept.append(item)
+    return kept
 
 
 def _sanitize_file_url(
@@ -5538,7 +5704,7 @@ def _sanitize_response_parts(
 
 @dataclass(repr=False)
 class TextPartDelta:
-    """A partial update (delta) for a `TextPart` to append new text content."""
+    """A partial update (delta) for a `TextPart` that appends text, citations, or both."""
 
     content_delta: str
     """The incremental text content to add to the existing `TextPart` content."""
@@ -5559,6 +5725,14 @@ class TextPartDelta:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
+    citations_delta: list[Citation] | None = None
+    """All of the part's citations, replacing any it has.
+
+    They come in one delta, without text, once the part's text is complete, and the delta also sets
+    `provider_details['citations']`. Providers that return citations at the end of the response, such as Google, send
+    it then, which can be after the part's [`PartEndEvent`][pydantic_ai.messages.PartEndEvent].
+    """
+
     part_delta_kind: Literal['text'] = 'text'
     """Part delta type identifier, used as a discriminator."""
 
@@ -5576,11 +5750,13 @@ class TextPartDelta:
         """
         if not isinstance(part, TextPart):
             raise ValueError('Cannot apply TextPartDeltas to non-TextParts')  # pragma: no cover
+        citations = part.citations if self.citations_delta is None else self.citations_delta
         return replace(
             part,
             content=part.content + self.content_delta,
             provider_name=self.provider_name or part.provider_name,
             provider_details={**(part.provider_details or {}), **(self.provider_details or {})} or None,
+            citations=citations,
         )
 
     __repr__ = _utils.dataclasses_no_defaults_repr

@@ -91,7 +91,13 @@ from ..models._speech import assistant_speech_text
 from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..tools import ToolDefinition
-from ._utils import seed_pcm_audio, seed_retry_feedback_text, seed_speech_content, seed_user_content
+from ._utils import (
+    seed_pcm_audio,
+    seed_retry_feedback_text,
+    seed_speech_content,
+    seed_user_content,
+    wrap_seeded_system_prompts,
+)
 from .codec import (
     AudioDelta,
     InputRejected,
@@ -560,8 +566,9 @@ async def seed_items(
     Text, transcripts, images, retained user audio, thinking, and function-tool rounds are replayed in
     part order. Thinking becomes tag-wrapped assistant text; its signature and `provider_details` are
     provider-session-bound and are not replayed. Native-tool parts are metadata about how an answer was
-    produced and are skipped while the answer itself is retained. `SystemPromptPart`s are routed through
-    the session `instructions` field, and `CachePoint`s are ignored.
+    produced and are skipped while the answer itself is retained. The standing system prompt the
+    history opens with is routed through the session `instructions` field, a later `SystemPromptPart` is
+    seeded as `<system>`-tagged user text, and `CachePoint`s are ignored.
 
     Retained user audio is decoded by the new session's configured input-audio format. Assistant audio
     cannot be inserted by the API, so assistant speech requires a transcript. Any other content that
@@ -573,7 +580,7 @@ async def seed_items(
     supports_images = profile.get('supports_seeding_images', False)
     supports_audio = profile.get('supports_seeding_audio', False)
 
-    for message in messages:
+    for message in wrap_seeded_system_prompts(messages):
         if isinstance(message, ModelRequest):
             items.extend(
                 await _seed_request_items(

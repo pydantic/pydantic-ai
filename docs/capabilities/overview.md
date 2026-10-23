@@ -72,7 +72,7 @@ Tools from third-party services, most through the service's own hosted MCP serve
 | [Linear](https://pydantic.dev/docs/ai/harness/linear/) | Harness | Read and update issues, projects, and comments through Linear's hosted MCP server |
 | [Macroscope](https://pydantic.dev/docs/ai/harness/macroscope/) | Harness | Run a local [Macroscope](https://docs.macroscope.com/cli) code review and hand the findings to the agent |
 | [LocalStack](https://pydantic.dev/docs/ai/harness/localstack/) | Harness | An emulated AWS environment with AWS CLI tools |
-| [Google Workspace](https://pydantic.dev/docs/ai/harness/google-workspace/) | Harness | Use Gmail, Calendar, Drive, Docs, and Sheets through Google's hosted MCP servers |
+| [Google Workspace](https://pydantic.dev/docs/ai/harness/google-workspace/) | Harness | Use Gmail, Calendar, Drive, Docs, Sheets, Slides, Chat, and People through Google's hosted MCP servers |
 | [Notion](https://pydantic.dev/docs/ai/harness/notion/) | Harness | Search and edit pages in a Notion workspace through Notion's hosted MCP server |
 | [Slack](https://pydantic.dev/docs/ai/harness/slack/) | Harness | Read and send messages, browse channels, and edit canvases through Slack's hosted MCP server |
 | [Day AI](https://pydantic.dev/docs/ai/harness/day-ai/) | Harness | Search and update CRM records and read meeting context through [Day AI](https://day.ai)'s hosted MCP server |
@@ -92,6 +92,7 @@ Finding and reading things on the open web.
 | [Web Search](web-search.md) | Core | Provider-native search where available, local DuckDuckGo fallback everywhere |
 | [Web Fetch](web-fetch.md) | Core | Fetch and read URLs, native or local |
 | [X Search](x-search.md) | Core | Search X; native on xAI, subagent fallback elsewhere |
+| [Citations](../citations.md) | Core | Ask providers to cite the documents and pages behind the answer |
 | [Exa Search](https://pydantic.dev/docs/ai/harness/exa-search/) | Harness | Web research via [Exa](https://exa.ai): excerpted search, full-page reads, opt-in cited deep search |
 | [Exa Agent](https://pydantic.dev/docs/ai/harness/exa-search/) | Harness | Delegate open-ended research to the Exa Agent API |
 | [You.com Search](https://pydantic.dev/docs/ai/harness/youdotcom/) | Harness | Web search and page reads via [You.com](https://you.com): query-relevant excerpts or full-page markdown |

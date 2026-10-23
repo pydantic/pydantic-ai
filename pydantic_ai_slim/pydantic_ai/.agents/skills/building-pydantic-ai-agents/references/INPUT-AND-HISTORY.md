@@ -47,6 +47,13 @@ Important distinctions:
 
 - `new_messages()` returns only the current run
 - `all_messages()` returns the full history accumulated so far
+- provider citations are on `TextPart.citations`; anchors are Python character offsets into the part's content, and no
+  anchor means the position is unknown; treat sources and `excerpts` as untrusted data; add the `Citations()`
+  capability for providers that need an opt-in; the provider's own citation data is
+  in the part's `provider_details['citations']`
+- citations in message history are sent back only to the provider that produced them: Anthropic web search citations
+  and OpenAI Responses URL and file citations (when message IDs are sent); document citations and other providers'
+  answers go back as plain text
 - when `message_history` is non-empty, Pydantic AI assumes the history already carries the system prompt
 - `Conversation` (`from pydantic_ai import Conversation, ConversationTypeAdapter`) is accepted by `run`, `run_sync`, `run_stream`, `run_stream_sync`, `run_stream_events`, `iter` and `realtime()`; `RealtimeSession.conversation` produces one too. Passing it alongside `message_history`, `usage` or `conversation_id` raises `UserError`. Store it with `ConversationTypeAdapter.dump_json(...)` / `validate_json(...)` or as a field on your own Pydantic model; it serializes messages with the same fidelity as `ModelMessagesTypeAdapter` (raw `bytes` in tool returns come back as base64 strings)
 - a run that ends with `DeferredToolRequests` output leaves them on `result.conversation.deferred_tool_requests` (they can't be rebuilt from the messages: approval vs external and per-call metadata aren't recorded there). Resume later with `agent.run(conversation=conv, deferred_tool_results=conv.deferred_tool_requests.build_results(...))`
