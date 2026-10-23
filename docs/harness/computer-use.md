@@ -19,24 +19,22 @@ returns a screenshot of the screen afterwards.
 pip/uv-add pydantic-ai-harness
 ```
 
-```python {title="computer_use.py" test="skip" lint="skip"}
+```python {title="computer_use.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness import ComputerUse, DockerSandbox
 
-agent = Agent(
-    '{{ anthropic:medium }}',
-    capabilities=[my_desktop_sandbox, ComputerUse()],  # (1)!
-)
+agent = Agent('{{ anthropic:medium }}', capabilities=[DockerSandbox(desktop=True), ComputerUse()])
 
 
 async def main():
-    result = await agent.run('Open the text editor and write a haiku about sandboxes.')
+    result = await agent.run('Open Firefox and find the current Python release on python.org.')
     print(result.output)
 ```
 
-1. Any capability whose workspace has a display, such as
-   [`DockerSandbox(desktop=True)`](../harness/docker-sandbox.md#give-the-agent-a-desktop). To give your own sandbox
-   one, see [Controlling a display](../workspace.md#controlling-a-display).
+Any capability whose workspace has a display works, such as
+[`DockerSandbox(desktop=True)`](docker-sandbox.md#give-the-agent-a-desktop). To give your own sandbox one, implement
+[`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]; see
+[Controlling a display](../workspace.md#controlling-a-display).
 
 The agent keeps the rest of the workspace, so it can mix desktop steps with commands and file tools on the same
 machine.

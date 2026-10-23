@@ -50,9 +50,10 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
-    X11Computer,
 )
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
+
+from ._x11 import X11Computer
 
 __all__ = ('DESKTOP_DOCKERFILE', 'DockerSandboxBackend', 'remove_container')
 
@@ -277,7 +278,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     [`DockerSandbox.destroy`][pydantic_ai_harness.docker_sandbox.DockerSandbox.destroy] with its ref.
 
     With `desktop=True` the container has a 1280x800 display, started on first use and driven with
-    [`X11Computer`][pydantic_ai.workspaces.X11Computer], so the image needs Xvfb, `xdotool`, `scrot` and `setsid`.
+    `xdotool` and `scrot`, so the image needs Xvfb, `xdotool`, `scrot` and `setsid`.
 
     Args:
         image: The image for a new container. Pass it or `ref`, not both; with `desktop=True`, leave both out to
@@ -294,7 +295,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
             can't change the container's name, workspace label or entrypoint. A `--pids-limit` here replaces the
             default of 2048.
         executable: The container CLI to run, such as `'podman'`.
-        desktop: Whether the container has a display for [`ComputerUse`][pydantic_ai.capabilities.ComputerUse].
+        desktop: Whether the container has a display for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse].
     """
 
     def __init__(

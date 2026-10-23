@@ -24,22 +24,20 @@ pip install pydantic-ai-harness
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness import ComputerUse, DockerSandbox
 
-agent = Agent(
-    'anthropic:claude-sonnet-5-5',
-    capabilities=[my_desktop_sandbox, ComputerUse()],  # (1)!
-)
+agent = Agent('anthropic:claude-sonnet-5-5', capabilities=[DockerSandbox(desktop=True), ComputerUse()])
 
 
 async def main():
-    result = await agent.run('Open the text editor and write a haiku about sandboxes.')
+    result = await agent.run('Open Firefox and find the current Python release on python.org.')
     print(result.output)
 ```
 
-1. Any capability whose workspace has a display: its backend implements
-   [`SupportsDisplay`](https://pydantic.dev/docs/ai/api/pydantic-ai/workspaces/#pydantic_ai.workspaces.SupportsDisplay). See
-   [Controlling a display](https://pydantic.dev/docs/ai/core-concepts/workspace/#controlling-a-display) to give a sandbox one.
+Any capability whose workspace has a display works, such as
+[`DockerSandbox(desktop=True)`](../docker_sandbox/#give-the-agent-a-desktop). To give your own sandbox one, implement
+[`SupportsDisplay`](https://pydantic.dev/docs/ai/api/pydantic-ai/workspaces/#pydantic_ai.workspaces.SupportsDisplay); see
+[Controlling a display](https://pydantic.dev/docs/ai/core-concepts/workspace/#controlling-a-display).
 
 The agent keeps the rest of the workspace, so it can mix desktop steps with commands and file tools on the same
 machine.

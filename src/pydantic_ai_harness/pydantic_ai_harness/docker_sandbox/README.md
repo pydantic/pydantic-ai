@@ -167,11 +167,11 @@ The `finally` removes the container even when setup or the run fails. To keep it
 
 ## Give the agent a desktop
 
-Pass `desktop=True` for a container with a graphical display, which [`ComputerUse`](https://pydantic.dev/docs/ai/capabilities/computer-use/) lets the agent see and control:
+Pass `desktop=True` for a container with a graphical display, which [`ComputerUse`](../computer_use/) lets the agent see and control:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import ComputerUse
+from pydantic_ai_harness import ComputerUse
 from pydantic_ai_harness.docker_sandbox import DockerSandbox
 
 agent = Agent('anthropic:claude-sonnet-5-5', capabilities=[DockerSandbox(desktop=True), ComputerUse()])
@@ -244,7 +244,7 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM s
 | `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `True`; `False` runs it with `--network none`. |
 | `docker_args` | Extra `docker run` arguments for a new container, such as mounts, `--memory` or `--user`; a `--pids-limit` here replaces the default of 2048. Default: `()`. |
 | `executable` | The container CLI to run, such as `'podman'`, looked up on `PATH` when the capability is created. Default: `'docker'`. |
-| `desktop` | Give the container a 1280x800 graphical display for [`ComputerUse`](https://pydantic.dev/docs/ai/capabilities/computer-use/). Without an `image`, builds the desktop image on first use. Default: `False`. |
+| `desktop` | Give the container a 1280x800 graphical display for [`ComputerUse`](../computer_use/). Without an `image`, builds the desktop image on first use. Default: `False`. |
 
 ## Platforms
 
