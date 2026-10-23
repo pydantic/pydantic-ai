@@ -1325,12 +1325,12 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                     'role': 'assistant',
                     'tool_calls': [
                         {
-                            'function': {'name': 'get_photo', 'parameters': None, 'description': None},
+                            'function': {'arguments': '{}', 'name': 'get_photo', 'description': None},
                             'id': 'photo1',
                             'type': 'function',
                         },
                         {
-                            'function': {'name': 'get_photo', 'parameters': None, 'description': None},
+                            'function': {'arguments': '{}', 'name': 'get_photo', 'description': None},
                             'id': 'photo2',
                             'type': 'function',
                         },

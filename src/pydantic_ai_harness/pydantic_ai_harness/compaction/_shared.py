@@ -37,10 +37,10 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
-    is_multi_modal_content,
 )
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -119,7 +119,7 @@ def _collect_text(messages: Sequence[ModelMessage]) -> list[str]:
 def _request_part_text(part: ModelRequestPart) -> list[str]:
     """Text segments a single request part contributes to the token estimate."""
     if isinstance(part, UserPromptPart):
-        return [_user_prompt_text_for_counting(part)]
+        return [''.join(user_prompt_texts(part))]
     elif isinstance(part, SystemPromptPart):
         return [part.content]
     elif isinstance(part, InstructionDeltaPart):
@@ -210,33 +210,6 @@ def _instructions_text(messages: Sequence[ModelMessage]) -> list[str]:
         if isinstance(msg, ModelRequest) and msg.instructions:
             return [msg.instructions]
     return []
-
-
-def tool_return_text(part: ToolReturnPart) -> str:
-    """The tool return's content as text, with each file named by identifier rather than spelled out.
-
-    A file's `repr` carries its bytes at ~3 characters per byte, so a 1 MB file would be estimated at
-    ~700k tokens and render into a summary prompt as escaped bytes. The reference is the one a
-    text-only tool result gives the model in its place (`ToolReturnPart.model_response_str_and_user_content`).
-    """
-    if not part.files:
-        return str(part.content)
-    return ' '.join(
-        f'See file {item.identifier}.' if is_multi_modal_content(item) else str(item) for item in part.content_items()
-    )
-
-
-def _user_prompt_text_for_counting(part: UserPromptPart) -> str:
-    """Extract text content from a user prompt part for counting."""
-    if isinstance(part.content, str):
-        return part.content
-    texts: list[str] = []
-    for item in part.content:
-        if isinstance(item, str):
-            texts.append(item)
-        elif isinstance(item, TextContent):
-            texts.append(item.content)
-    return ''.join(texts)
 
 
 def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = None) -> int:

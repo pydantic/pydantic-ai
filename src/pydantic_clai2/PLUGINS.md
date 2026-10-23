@@ -1170,7 +1170,7 @@ the model the harness's `AskUser` capability: one tool, `ask_user_question`, for
 asking you one to ten multiple-choice questions when the task is ambiguous. Each
 question appears inline above a compact numbered picker, keeping the conversation
 visible. The question is pinned with its choices, so output streamed meanwhile (a
-delegated task's, say) lands above it instead of between it and the picker. Up/Down moves the highlight; Enter or an option's number selects it.
+delegated task's, say) lands above it instead of between it and the picker. Up/Down or Tab/Shift+Tab moves the highlight; Enter or an option's number selects it.
 For multi-select questions, Enter or a number toggles that choice; select `Done`
 to submit at least one choice. The title says `question 2 of 3` when there are
 several. Esc or Ctrl-C declines the whole request and lets the model continue.
@@ -1292,10 +1292,13 @@ The sidebar's **Workers** tree, under the current session, is what `/tasks` show
 `host.tasks` and `on_task_event`: each delegated task under the one that started it, with its
 agent, model, elapsed time, and last action, and a link from the tool call that started it.
 Clicking one opens its transcript in the main pane, streamed as its run goes; a browser that
-connects meanwhile gets each running task's transcript so far. Its own box steers it
-(`host.tasks.steer`), and Stop, Background, and Resume act as `/tasks` does; Resume asks the
-agent to continue a finished task, as a prompt. Once a task finishes, the page shows its saved
-history (`GET /api/tasks/ID`), and the server keeps no live copy of it.
+connects meanwhile gets each running task's transcript so far. Its own box steers it while it
+runs (`host.tasks.steer`), and Stop and Background act as `/tasks` does. Once a task finishes,
+the page shows its saved history (`GET /api/tasks/ID`), and the server keeps no live copy of it;
+the box then prompts the task on its own (`host.tasks.prompt`), when it can resume: the task
+continues its saved history, its reply streams into its transcript, and the session's
+conversation and the agent never see it. `POST /api/tasks/ID/resume`, which the page no longer
+calls, still asks the agent to resume a finished task, as `/tasks resume` does.
 
 The page follows `/theme`: the `default` theme is Pydantic's own colours, in the
 browser's light or dark mode, and any other palette paints the page as it paints the terminal,
@@ -2690,12 +2693,22 @@ prompt the keyboard does:
   it each time you need it rather than keeping it. `listing()` returns a `TaskInfo` per task,
   each parent before its children: its ID, `parent_id`, `agent`, `model`, `prompt`, `status`
   (`running` or `finished`), `outcome`, start and finish times, whether it runs in the
-  `background`, whether it is `resumable`, its last `activity`, and its `usage`. `history(ID)` is
+  `background`, whether `background(ID)` can act on it (`backgroundable`), whether it is
+  `resumable`, its last `activity`, and its `usage`. `history(ID)` is
   its messages so far. `stop(ID)`, `background(ID)`, and `resume(ID)` act as `/tasks stop`,
   `background`, and `resume` do; `resume` enters the prompt asking the agent to resume it, as
-  `send_input` would. `steer(ID, TEXT)` sends a running task a message, which it reads at its
-  next model request, and returns `False` once it has finished, when `resume` is the way to go
-  on. An ID from another conversation raises `LookupError`.
+  `send_input` would. `await prompt(ID, TEXT)` runs a finished task again with `TEXT` as the
+  user's message, on its own, as the web UI's Workers tree does: it continues the task's saved
+  history with the agent, tools, and model it ran with, saves what it does there, and returns
+  once the task runs, its progress arriving as `on_task_event`. Nothing of it reaches the
+  conversation or the agent, and no turn waits for it, so `background` refuses it. It raises
+  `ValueError` for blank `TEXT`, for a task that is running, starting from a prompt, or cannot
+  resume, such as an `Explore` or `Plan` one, and for one its agent no longer delegates to or
+  whose delegate call fails or is denied, and
+  `RuntimeError` when this CLAI cannot prompt a task on its own; the task stays as it was.
+  `steer(ID, TEXT)` sends a running task a message, which it reads at its next model request,
+  and returns `False` once it has finished, when `prompt` or `resume` is the way to go on. An ID
+  from another conversation raises `LookupError`.
 
 | | `send_input(text)` | `submit_prompt(text)` |
 |---|---|---|

@@ -164,9 +164,9 @@ class RealtimeModelSettings(TypedDict, total=False):
 
     `True` enables it at effort `'medium'` on OpenAI (including GPT-Live's backend), Azure OpenAI, and
     Azure AI Voice Live, at the closest supported thinking level to `'medium'` on Gemini, and at `'high'`,
-    its only enabled effort, on xAI. `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'` selects an effort
-    level. `False` disables thinking (sent as effort `'none'` on OpenAI, Azure OpenAI, Azure AI Voice Live,
-    and xAI).
+    its only enabled effort, on xAI. `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'` selects an
+    effort level. `False` disables thinking (sent as effort `'none'` on OpenAI, Azure OpenAI, Azure AI
+    Voice Live, and xAI).
     OpenAI and Gemini apply it only to models whose profile reports
     [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking]. Other models
     silently ignore it. Providers with a richer native config expose it separately

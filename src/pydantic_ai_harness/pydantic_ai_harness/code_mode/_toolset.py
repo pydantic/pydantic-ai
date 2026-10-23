@@ -8,6 +8,7 @@ import math
 import re
 import warnings
 from collections.abc import Callable, Coroutine, Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
@@ -61,7 +62,7 @@ from pydantic_ai_harness._monty_exec import (
     is_sandbox_panic,
 )
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
-from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RunCodeArgs
+from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RUN_CODE_TOOL_NAME, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
 from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
 
@@ -315,11 +316,23 @@ def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited
                 f'Unknown `resource_limits` key(s): {sorted(unknown)}. '
                 f'Valid keys are {sorted(CodeModeResourceLimits.__annotations__)}.'
             )
-    max_duration_secs = 30 if limits is None else limits.get('max_duration_secs', 30)
-    max_memory = 256 * 1024 * 1024 if limits is None else limits.get('max_memory', 256 * 1024 * 1024)
-    max_suspensions = 1000 if limits is None else limits.get('max_suspensions', 1000)
-    if max_suspensions < 1:
-        raise UserError('`max_suspensions` must be at least 1')
+    # Read as `object` so values from untyped code are checked rather than trusted.
+    max_duration_secs: object = 30 if limits is None else limits.get('max_duration_secs', 30)
+    max_memory: object = 256 * 1024 * 1024 if limits is None else limits.get('max_memory', 256 * 1024 * 1024)
+    max_suspensions: object = 1000 if limits is None else limits.get('max_suspensions', 1000)
+    # Monty stores each limit as an unsigned 64-bit integer, or seconds for the duration; anything else fails
+    # every snippet. An explicit `None` for memory or duration keeps reaching Monty, which reads it as no limit.
+    if not (type(max_suspensions) is int and 1 <= max_suspensions < 2**64):
+        raise UserError('`max_suspensions` must be an integer of at least 1 and below 2**64')
+    if not (
+        max_duration_secs is None
+        or (
+            (type(max_duration_secs) is int or isinstance(max_duration_secs, float)) and 0 < max_duration_secs < 2.0**64
+        )
+    ):
+        raise UserError('`max_duration_secs` must be a positive number of seconds below 2**64')
+    if not (max_memory is None or (type(max_memory) is int and 0 < max_memory < 2**64)):
+        raise UserError('`max_memory` must be a positive integer number of bytes below 2**64')
     return {
         'max_feed_duration_secs': max_duration_secs,
         'max_memory': max_memory,
@@ -332,7 +345,6 @@ class _RunCodeArguments(RunCodeArgs):
     pass
 
 
-_RUN_CODE_TOOL_NAME = 'run_code'
 _FRAMEWORK_CONTROL_TOOL_KINDS = frozenset({'tool-search', 'capability-load'})
 """Kinds of the framework's control tools, which stay native to drive tool search and capability loading."""
 _RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArguments)
@@ -582,27 +594,14 @@ def _warn_missing_return_schemas(names: Sequence[str]) -> None:
     )
 
 
-def global_mode_is_sequential(get_mode: Callable[..., ParallelExecutionMode]) -> bool:
+def global_mode_is_sequential(get_mode: Callable[[], ParallelExecutionMode]) -> bool:
     """Whether the run-scoped execution mode forces sandbox tool calls to run sequentially.
 
     Only `'sequential'` does. `'parallel_ordered_events'` runs top-level tool calls concurrently and
     orders only their result events, which nested sandbox calls do not emit, so it dispatches them
     concurrently like `'parallel'`. `DBOSDurability` defaults to that mode, so serializing there
     would make every `asyncio.gather` in a DBOS run cost the sum of its calls' latencies.
-
-    pydantic-ai v1's `get_parallel_execution_mode` took the pending calls list
-    and folded per-tool `sequential` flags into the result; v2 dropped the
-    argument and returns only the run-scoped context-var mode. Passing `[]` in
-    v1 isolated that context var from per-tool flags, which is exactly what the
-    no-arg v2 call returns, so the two are equivalent.
-
-    Inspect the arity rather than catch `TypeError` so a genuine `TypeError`
-    raised inside the method is not swallowed. The `Callable[...]` parameter
-    type erases the bound signature so both call shapes typecheck whichever
-    major's stubs pyright resolves.
     """
-    if inspect.signature(get_mode).parameters:
-        return get_mode([]) == 'sequential'
     return get_mode() == 'sequential'
 
 
@@ -849,7 +848,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
 
-    monty_sandbox_url: str | None = field(default=None, kw_only=True)
+    monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
     """Run sandboxed code on remote Monty workers reached over this `ws://` or `wss://` URL.
 
     Only execution moves: tool dispatch, mounts, `os_access`, and print capture stay
@@ -898,9 +897,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     # `get_instructions` in the same step. Empty when there's nothing to surface.
     _last_catalog: str = field(default='', init=False, repr=False)
 
-    # Tracks deferred-tool names we've already warned about so we don't spam the
-    # logs every step. Reset on `for_run` because each run gets a fresh instance.
-    _warned_deferred: set[str] = field(default_factory=set[str], init=False, repr=False)
+    # Tools already named in a `CodeModeReturnSchemaWarning`, so the warning is not repeated every
+    # step. Reset on `for_run` because each run gets a fresh instance.
+    _warned_missing_return_schema: set[str] = field(default_factory=set[str], init=False, repr=False)
 
     def __post_init__(self) -> None:
         # Converted once here, so the copies `for_run` and `for_run_step` make do not warn again.
@@ -919,7 +918,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         new_self = replace(self, wrapped=new_wrapped)
         new_self._run_state = self._run_state
         new_self._repl = self._repl
-        new_self._warned_deferred = self._warned_deferred
+        new_self._warned_missing_return_schema = self._warned_missing_return_schema
         new_self._last_catalog = self._last_catalog
         return new_self
 
@@ -965,7 +964,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         tool_manager = ctx.tool_manager
         if tool_manager is None or tool_manager.tools is None:
             return None  # pragma: no cover - the agent installs its tool manager before streaming
-        tool = tool_manager.tools.get(_RUN_CODE_TOOL_NAME)
+        tool = tool_manager.tools.get(RUN_CODE_TOOL_NAME)
         if tool is None:
             return None  # pragma: no cover - `CodeMode` always contributes `run_code`
         return tool.toolset if isinstance(tool.toolset, cls) else None
@@ -1050,9 +1049,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             description = self._build_description(callable_defs, has_os=has_os, has_mount=has_mount)
             self._last_catalog = ''
 
-        if _RUN_CODE_TOOL_NAME in native_tools:
+        if RUN_CODE_TOOL_NAME in native_tools:
             raise UserError(
-                f"Tool name '{_RUN_CODE_TOOL_NAME}' is reserved for code mode. Rename your tool to avoid conflicts."
+                f"Tool name '{RUN_CODE_TOOL_NAME}' is reserved for code mode. Rename your tool to avoid conflicts."
             )
 
         # When the tool search tool is present, append context about run_code to its
@@ -1073,10 +1072,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             description += _tool_search_addendum(search_tool_name)
 
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(native_tools)
-        result[_RUN_CODE_TOOL_NAME] = _RunCodeTool(
+        result[RUN_CODE_TOOL_NAME] = _RunCodeTool(
             toolset=self,
             tool_def=ToolDefinition(
-                name=_RUN_CODE_TOOL_NAME,
+                name=RUN_CODE_TOOL_NAME,
                 description=description,
                 parameters_json_schema=_RUN_CODE_JSON_SCHEMA,
                 metadata={'code_arg_name': 'code', 'code_arg_language': 'python'},
@@ -1099,7 +1098,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         run_code_tool = self._as_run_code_tool(tool)
         if run_code_tool is None:
             # Native (non-sandboxed) tool -- pass through to the wrapped toolset.
-            return await self.wrapped.call_tool(name, tool_args, ctx, tool)
+            with self.speculation.unsafe_call() if self.speculation is not None else nullcontext():
+                return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
         code = tool_args['code']
         restart = tool_args.get('restart', False)
@@ -1186,7 +1186,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         # Determine execution mode for sandbox tool calls:
         # - global_sequential: selected through the parallel execution mode context var.
-        #   Checked with empty calls to isolate the context var from per-tool flags.
         # - sequential_tools: per-tool `sequential` flags on ToolDefinition.
         #   These tools are rendered as `def` (sync) and resolved inline.
         global_sequential = global_mode_is_sequential(tool_manager.get_parallel_execution_mode)
@@ -1226,9 +1225,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             sees it at the `await` site.
             """
             execution.nested_calls[call_part.tool_call_id] = call_part
+            guard: AbstractContextManager[None] = nullcontext()
             if speculation is not None and speculation.eligible(sandbox_name):
                 await speculation.report_miss(ctx, execution, sandbox_name, call_part)
-            return execution.finish(call_part, await run_nested_call(tool_manager, call_part))
+            elif speculation is not None:
+                guard = speculation.unsafe_call()
+            with guard:
+                return execution.finish(call_part, await run_nested_call(tool_manager, call_part))
 
         # Type-check only the first executed snippet. Monty's checker can reject valid later
         # snippets that reuse imports or pass a runtime-validated dict to a TypedDict parameter.
@@ -1421,7 +1424,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             td = tool.tool_def
 
             safe_name = _sanitize_tool_name(name)
-            if safe_name == _RUN_CODE_TOOL_NAME:
+            if safe_name == RUN_CODE_TOOL_NAME:
                 raise UserError(
                     f"Tool name '{name}' (sanitized to '{safe_name}') conflicts with the code mode "
                     f'meta-tool. Rename your tool to avoid conflicts.'
@@ -1435,7 +1438,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     stacklevel=2,
                 )
                 continue
-            if td.return_schema is None and name not in self._warned_deferred:
+            if td.return_schema is None and name not in self._warned_missing_return_schema:
                 missing_return_schema.append(name)
 
             if safe_name != name:
@@ -1445,7 +1448,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             callable_defs[safe_name] = td
         _warn_missing_return_schemas(missing_return_schema)
         # Recorded only once warned, so a warning escalated to an error is raised again next time.
-        self._warned_deferred.update(missing_return_schema)
+        self._warned_missing_return_schema.update(missing_return_schema)
         return callable_defs, sanitized_to_original
 
     @staticmethod

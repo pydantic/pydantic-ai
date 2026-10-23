@@ -189,11 +189,17 @@ class ZaiModel(OpenAIChatModel):
         return omit
 
     @override
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # Unified `thinking` always reaches `extra_body`, and `_translate_thinking` drops `openai_reasoning_effort`.
+        del model_settings
+        return ()
+
+    @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _ZaiChatCompletion:
         return _ZaiChatCompletion.model_validate(response.model_dump(warnings=False))
 
     @override
-    def _map_finish_reason(self, key: _ZaiFinishReason) -> FinishReason | None:
+    def _map_finish_reason(self, key: _ZaiFinishReason) -> FinishReason | None:  # pyright: ignore[reportIncompatibleMethodOverride]
         return _ZAI_FINISH_REASON_MAP.get(key)
 
     @property
@@ -247,7 +253,7 @@ def _zai_settings_to_openai_settings(
     if thinking_level is False:
         thinking_payload['type'] = 'disabled'
     elif thinking_level is not None:
-        # `True` and any effort level (`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`)
+        # `True` and any effort level (`'minimal'` through `'max'`)
         # enable thinking. Effort granularity is forwarded separately via `reasoning_effort`
         # on models that support it.
         thinking_payload['type'] = 'enabled'

@@ -1,3 +1,4 @@
+# description: Checks links in documentation, root Markdown, and examples each Monday and opens an issue when any are broken.
 name: Link check
 
 on:

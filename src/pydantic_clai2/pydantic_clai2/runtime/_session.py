@@ -57,6 +57,7 @@ from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised
 from pydantic_clai2.runtime.monty_cells import MONTY_CELL, MontyCell
 from pydantic_clai2.runtime.project_identity import ProjectIdentity, git_checkout, project_identity
 from pydantic_clai2.runtime.repl_state import ReplStates
+from pydantic_clai2.runtime.task_prompts import TASK_PROMPT, TaskPrompt
 from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')
@@ -781,6 +782,35 @@ class Session(Generic[DepsT, OutputT]):
             self._running = False
         self._monty_notes.append((self.summary.id, cell.note()))
         return cell
+
+    async def prompt_task(self, *, agent_name: str, task_id: str, text: str) -> None:
+        """Resume a finished task with `text` as the user's message, outside the conversation; see `task_prompts`.
+
+        Returns once the task settles, and raises `ValueError` with the delegate tool's reason when it
+        refuses to resume the task. The conversation's history and turns are left as they are, so
+        this may run beside a turn.
+        """
+        if self.delegations is None:
+            raise RuntimeError('This session delegates no tasks.')
+        script = TaskPrompt(agent_name=agent_name, task_id=task_id, text=text)
+        with session_context(self.summary.id), self.delegations.bind():
+            run_model, capabilities = self._bind()
+            capabilities.append(script)
+            self._add_local_workspace(capabilities)
+            await self.agent.run(
+                "Resume the user's task.",
+                output_type=str,
+                deps=self.deps,
+                # The session's model, which a task that inherits its parent's runs on.
+                model=run_model,
+                message_history=[],
+                conversation_id=self.summary.id,
+                capabilities=capabilities,
+                usage_limits=self.usage_limits,
+                metadata={TASK_PROMPT: True},
+            )
+        if script.refused is not None:
+            raise ValueError(script.refused)
 
     def _add_local_workspace(self, capabilities: list[AgentCapability[DepsT]]) -> bool:
         """Add CLAI's `LocalWorkspace` to a run's `capabilities` unless a configured one supplies it; whether it did."""

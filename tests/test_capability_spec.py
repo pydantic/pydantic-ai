@@ -25,6 +25,7 @@ from pydantic_ai.capabilities import (
     MCP,
     Caching,
     Capability,
+    Citations,
     FileUnderstanding,
     ImageGeneration,
     IncludeToolReturnSchemas,
@@ -95,6 +96,7 @@ def test_capability_types() -> None:
         {
             'NativeTool': NativeTool,
             'Caching': Caching,
+            'Citations': Citations,
             'RaiseContentFilterError': RaiseContentFilterError,
             'FileUnderstanding': FileUnderstanding,
             'ImageGeneration': ImageGeneration,
@@ -1716,10 +1718,11 @@ def test_model_json_schema_with_capabilities():
                         'thinking': {
                             'anyOf': [
                                 {'type': 'boolean'},
-                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'type': 'string'},
                             ],
                             'title': 'Thinking',
                         },
+                        'citations': {'title': 'Citations', 'type': 'boolean'},
                         'cache': {
                             'anyOf': [
                                 {'type': 'boolean'},
@@ -2004,6 +2007,13 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_Caching',
                     'type': 'object',
                 },
+                'spec_Citations': {
+                    'additionalProperties': False,
+                    'properties': {'Citations': {'$ref': '#/$defs/spec_params_Citations'}},
+                    'required': ['Citations'],
+                    'title': 'spec_Citations',
+                    'type': 'object',
+                },
                 'short_spec_SetToolMetadata': {
                     'additionalProperties': False,
                     'properties': {
@@ -2145,6 +2155,16 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_params_Caching',
                     'type': 'object',
                 },
+                'spec_params_Citations': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                    },
+                    'title': 'spec_params_Citations',
+                    'type': 'object',
+                },
                 'spec_XSearch': {
                     'additionalProperties': False,
                     'properties': {'XSearch': {'$ref': '#/$defs/spec_params_XSearch'}},
@@ -2210,7 +2230,7 @@ def test_model_json_schema_with_capabilities():
                         'effort': {
                             'anyOf': [
                                 {'type': 'boolean'},
-                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'type': 'string'},
                             ],
                             'title': 'Effort',
                         },
@@ -2392,6 +2412,8 @@ def test_model_json_schema_with_capabilities():
                                 {'$ref': '#/$defs/short_spec_NativeTool'},
                                 {'const': 'Caching', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_Caching'},
+                                {'const': 'Citations', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_Citations'},
                                 {'const': 'RaiseContentFilterError', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_RaiseContentFilterError'},
                                 {'$ref': '#/$defs/short_spec_FileUnderstanding'},
@@ -2623,6 +2645,8 @@ def test_model_json_schema_with_capabilities():
                             {'$ref': '#/$defs/short_spec_NativeTool'},
                             {'const': 'Caching', 'type': 'string'},
                             {'$ref': '#/$defs/spec_Caching'},
+                            {'const': 'Citations', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_Citations'},
                             {'const': 'RaiseContentFilterError', 'type': 'string'},
                             {'$ref': '#/$defs/spec_RaiseContentFilterError'},
                             {'$ref': '#/$defs/short_spec_FileUnderstanding'},
