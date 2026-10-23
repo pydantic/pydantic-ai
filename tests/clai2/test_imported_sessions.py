@@ -486,12 +486,15 @@ async def test_the_agent_a_session_came_from_survives_naming(tmp_path: Path) -> 
 
 def test_browser_says_where_sessions_came_from(tmp_path: Path) -> None:
     claude_session(tmp_path)
+    codex_session(tmp_path)
     to_import = find_import('claude', CLAUDE_ID).summary
     imported = ConversationSummary(
         workspace='/w', title='Codex copy', revision=2, message_count=4, tags=('from:codex', 'flags')
     )
+    # Imported before imports were tagged, with the bare tag they had then.
+    legacy = replace(find_import('codex', CODEX_ID).summary, title='Old copy', revision=2, tags=('codex', 'parser'))
     native = ConversationSummary(workspace='/w', title='CLAI session', revision=2, message_count=2, tags=('cli',))
-    entries = [replace(to_import, workspace='/w'), imported, native]
+    entries = [replace(to_import, workspace='/w'), imported, replace(legacy, workspace='/w'), native]
     browser = SessionBrowser(
         entries=entries,
         workspace='/w',
@@ -510,10 +513,13 @@ def test_browser_says_where_sessions_came_from(tmp_path: Path) -> None:
     assert re.search(r'Fix the parser +Claude Code · to import\n', frame)
     assert re.search(r'Codex copy +Codex · 4 msgs / 0 tok\n.*#flags\n', frame)
     assert re.search(r'CLAI session +2 msgs / 0 tok\n.*#cli', frame)
-    assert '#from:' not in frame
-    # A narrow pane drops the tokens, label included, before it squeezes the title.
+    assert re.search(r'Old copy +Codex · \d+ msgs / [\d,]+ tok\n.* #parser\n', frame)
+    assert '#from:' not in frame and '#codex' not in frame
+    # A narrow pane drops the tokens, label included, before it squeezes the title, then the label.
     narrow = re.sub(r'\x1b\[[0-9;]*m', '', '\n'.join(browser.frame(width=40, height=20)))
     assert re.search(r'Codex copy +Codex · 4 msgs\n', narrow)
+    tiny = re.sub(r'\x1b\[[0-9;]*m', '', '\n'.join(browser.frame(width=22, height=20)))
+    assert re.search(r' to import\n', tiny) and re.search(r' 4 msgs\n', tiny) and '·' not in tiny
 
 
 async def test_import_rejects_a_session_without_a_conversation(tmp_path: Path) -> None:
