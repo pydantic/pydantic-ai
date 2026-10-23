@@ -9,8 +9,9 @@ subscribing with [`on_event`][pydantic_ai.capabilities.on_event].
 Every event carries the `run_code` part's tool call id in the inherited
 [`tool_call_id`][pydantic_ai.messages.CapabilityEvent.tool_call_id] field, so one streamed
 snippet's events correlate across the stream and execution phases. Launch-scoped events share a
-`launch_id` unique within the run. A launch always ends in exactly one of claimed or evicted; a
-settled event arrives in between when stream traffic allows.
+`launch_id` unique within the run. A launch ends in exactly one of claimed or evicted, except
+that launches still unclaimed when the run ends are cancelled without an event; a settled event
+arrives in between when stream traffic allows.
 """
 
 from __future__ import annotations
