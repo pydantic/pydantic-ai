@@ -13373,7 +13373,7 @@ async def test_model_settings_delta_after_enqueued_messages_keeps_its_position()
     model = OpenAIResponsesModel('gpt-6.1-sol', provider=OpenAIProvider(api_key='test-key'))
 
     async def rendered(messages: list[ModelMessage]) -> list[Any]:
-        prepared = model.prepare_messages(_clean_message_history(messages))  # pyright: ignore[reportPrivateUsage]
+        prepared = model.prepare_messages(_clean_message_history(messages))
         _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
             prepared, OpenAIResponsesModelSettings(), ModelRequestParameters()
         )
