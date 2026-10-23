@@ -172,14 +172,14 @@ class GoogleProvider(BaseGoogleProvider):
         http_options = self._build_http_options(http_client=http_client, base_url=base_url, retry_options=retry_options)
         self._client = Client(vertexai=False, api_key=api_key, http_options=http_options)
 
-    def _client_for_api_version(self, api_version: str) -> Client | None:
-        """A new client on `api_version` with this provider's credentials, or `None` for a client the caller built.
+    def _client_for_api_version(self, api_version: str) -> Client:
+        """A new client on `api_version` with this provider's credentials.
 
         For a request the provider's own client can't make on its API version (Gemini Live's `proactivity`
-        is `v1alpha`-only). The caller owns and closes the new client.
+        is `v1alpha`-only). Only for a provider that built its client from an API key (`_api_key` is set):
+        a client the caller built can't be reproduced. The caller owns and closes the new client.
         """
-        if self._api_key is None:
-            return None
+        assert self._api_key is not None
         # Its own `HttpOptions` and HTTP clients: nothing it holds is shared with the provider's client.
         http_options = HttpOptions(
             base_url=self._base_url, api_version=api_version, headers={'User-Agent': get_user_agent()}

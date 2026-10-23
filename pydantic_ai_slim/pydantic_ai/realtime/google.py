@@ -1126,9 +1126,7 @@ class GoogleRealtimeModel(RealtimeModel):
     def _build_v1alpha_client(self) -> Client:
         """A `v1alpha` client for the session, which `connect` closes when it ends (see `_needs_v1alpha_client`)."""
         assert isinstance(self._provider, GoogleProvider)
-        client = self._provider._client_for_api_version(_PROACTIVITY_API_VERSION)  # pyright: ignore[reportPrivateUsage]
-        assert client is not None
-        return client
+        return self._provider._client_for_api_version(_PROACTIVITY_API_VERSION)  # pyright: ignore[reportPrivateUsage]
 
     async def _close_live_client(self, client: Client) -> None:
         """Close a client `_build_v1alpha_client` built for the session, leaving the provider's own alone."""

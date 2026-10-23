@@ -4010,9 +4010,8 @@ async def test_proactive_audio_dials_its_own_v1alpha_client(
     built: list[Client] = []
     client_for_api_version = provider._client_for_api_version  # pyright: ignore[reportPrivateUsage]
 
-    def record(api_version: str) -> Client | None:
+    def record(api_version: str) -> Client:
         new_client = client_for_api_version(api_version)
-        assert new_client is not None
         built.append(new_client)
         return new_client
 
