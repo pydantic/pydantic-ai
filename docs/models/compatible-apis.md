@@ -134,6 +134,9 @@ agent = Agent(model)
 
 ## LiteLLM
 
+!!! note "No `litellm` package dependency"
+    `LiteLLMProvider` does not install or import the `litellm` Python package. It talks to a LiteLLM proxy over HTTP using the OpenAI client.
+
 [`LiteLLMProvider`][pydantic_ai.providers.litellm.LiteLLMProvider] connects to a [LiteLLM proxy](https://docs.litellm.ai/docs/simple_proxy), which translates requests for the upstream providers it is configured with. Pass the proxy URL (for example `http://localhost:<port>`) as `api_base` and your LiteLLM key (or a placeholder) as `api_key`. Requests are sent as Chat Completions to `api_base` as-is, so you can also point it at an OpenAI-compatible upstream directly, such as `https://api.openai.com/v1` with your OpenAI key, but not at an API that only LiteLLM can translate. Use the `custom/` model name prefix for custom LLMs.
 
 ```python

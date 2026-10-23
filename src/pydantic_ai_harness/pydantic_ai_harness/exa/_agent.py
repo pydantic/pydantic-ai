@@ -4,29 +4,34 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from contextlib import suppress
 from dataclasses import KW_ONLY, dataclass, field
-from typing import TYPE_CHECKING, Literal, Protocol
+from functools import cached_property
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 from uuid import uuid4
 
+import anyio
 import httpx
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.exceptions import CallDeferred, ModelRetry, UserError
+from pydantic_ai.exceptions import CallDeferred, ModelRetry
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest, raise_retry, retry_as_result
+from pydantic_ai_harness._workspace_provider import stop_shielded
 from pydantic_ai_harness.exa._toolset import (
-    _AUTH_STATUS_RE,  # pyright: ignore[reportPrivateUsage]
-    _recoverable,  # pyright: ignore[reportPrivateUsage]
-    _source_list,  # pyright: ignore[reportPrivateUsage]
-    _with_sources,  # pyright: ignore[reportPrivateUsage]
+    DefaultExa,
+    is_recoverable,
+    recoverable,
+    source_list,
+    source_map,
+    with_sources,
 )
 
 try:
-    from exa_py import AsyncExa
     from exa_py.agent.types import AgentEffort, AgentEvent, AgentRun
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
@@ -67,6 +72,12 @@ class ExaAgentRuns(Protocol):
     fake in tests. The signatures mirror `exa_py`'s own (`create` is typed with
     the streaming union even though `ExaAgent` never streams), so a real
     `AsyncExa().agent.runs` satisfies the protocol as-is.
+
+    An object that also has `async def cancel(self, run_id: str)`, as
+    `exa_py`'s does, lets the capability cancel the runs nothing will read
+    (ones it hasn't finished polling, and ones left for the model to follow up
+    on) when the agent run is cancelled or inline polling fails with an error
+    the model can't fix, outside durable execution.
     """
 
     async def create(
@@ -88,15 +99,25 @@ class ExaAgentRuns(Protocol):
         ...  # pragma: no cover
 
 
+@runtime_checkable
+class _CancellableRuns(Protocol):
+    """The optional `cancel` method of an `ExaAgentRuns`."""
+
+    async def cancel(self, run_id: str) -> object:
+        """Cancel a queued or running agent run."""
+        ...  # pragma: no cover
+
+
+_CANCEL_GRACE_SECONDS = 5.0
+"""How long a cancelled or failed inline poll waits for Exa to accept the runs' cancellation."""
+
+
 def _default_runs() -> ExaAgentRuns:
-    """Build the Agent runs client of an `AsyncExa` from the `EXA_API_KEY` environment variable."""
-    try:
-        return AsyncExa().agent.runs
-    except ValueError as error:
-        raise UserError(
-            'ExaAgent needs an Exa API key: set the EXA_API_KEY environment variable, '
-            'or pass a configured runs client, e.g. ExaAgent(runs=AsyncExa(api_key=...).agent.runs).'
-        ) from error
+    """Build the default Agent runs client from the `EXA_API_KEY` environment variable."""
+    return DefaultExa(
+        missing_key_hint='ExaAgent needs an Exa API key: set the EXA_API_KEY environment variable, '
+        'or pass a configured runs client, e.g. ExaAgent(runs=AsyncExa(api_key=...).agent.runs).'
+    )
 
 
 def agent_run_result(
@@ -121,7 +142,7 @@ def agent_run_result(
             metadata={RUN_ID_METADATA_KEY: run.id, 'sources': []},
         )
     output = run.output
-    body = output.text or '' if output is not None else ''
+    body = (output.text or '') if output is not None else ''
     if output is not None and output.structured is not None:
         structured: object = output.structured
         if isinstance(output_schema, type):
@@ -132,16 +153,15 @@ def agent_run_result(
                     f'Exa agent run {run.id} output did not match the configured schema: {error}'
                 ) from error
         else:
-            body = json.dumps(structured)
+            body = json.dumps(structured, ensure_ascii=False)
     if not body:
         body = '(no text output)'
-    sources: dict[str, str | None] = {}
-    if output is not None and output.grounding:
-        sources = {citation.url: citation.title for entry in output.grounding for citation in entry.citations}
+    grounding = output.grounding if output is not None and output.grounding else []
+    sources = source_map((citation.url, citation.title) for entry in grounding for citation in entry.citations)
     text = f'{body}\n\nRun ID: {run.id} (pass as previous_run_id for follow-ups)'
     return ToolReturn(
-        _with_sources(text, sources),
-        metadata={RUN_ID_METADATA_KEY: run.id, 'sources': _source_list(sources)},
+        with_sources(text, sources),
+        metadata={RUN_ID_METADATA_KEY: run.id, 'sources': source_list(sources)},
     )
 
 
@@ -162,7 +182,8 @@ async def _create_run(
         effort=effort,
         previous_run_id=previous_run_id,
     )
-    assert isinstance(run, AgentRun)
+    if not isinstance(run, AgentRun):
+        raise TypeError(f'ExaAgentRuns.create must return an AgentRun, got {type(run).__name__}')
     return run.id
 
 
@@ -194,7 +215,7 @@ class ExaAgentToolset(FunctionToolset[AgentDepsT]):
         self._create_run = create_run
         self.add_function(self.exa_agent, name=_AGENT_TOOL_NAME)
 
-    @_recoverable
+    @recoverable(idempotent=False)
     async def exa_agent(self, query: str, previous_run_id: str | None = None) -> str:
         """Delegate an open-ended research, list-building, or enrichment task to an Exa agent.
 
@@ -272,10 +293,14 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
     """System prompt forwarded to the Exa agent run; `None` uses the API default."""
 
     poll_interval: int = 1000
-    """Milliseconds between polls while resolving a run inline."""
+    """Milliseconds between polls while resolving a run inline. Must be positive."""
 
     timeout_ms: int = 3_600_000
-    """Milliseconds to wait for a run to finish when resolving inline."""
+    """Milliseconds to wait for each run to finish when resolving inline. Must be positive.
+
+    Calls are polled one after another, each with its own timeout, so a model
+    response that starts several runs can wait up to this long per run.
+    """
 
     guidance: str | None = None
     """Custom delegation guidance for the system prompt.
@@ -285,7 +310,7 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
     """
 
     runs: ExaAgentRuns | None = None
-    """Exa Agent runs client; when `None`, `exa_py.AsyncExa().agent.runs` is built from `EXA_API_KEY`.
+    """Exa Agent runs client; when `None`, a default client wrapping `exa_py.AsyncExa` is built from `EXA_API_KEY`.
 
     Any object satisfying the `ExaAgentRuns` protocol works: use it to pass an
     API key explicitly or substitute a fake in tests.
@@ -297,6 +322,13 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
 
     _instance_token: str = field(default_factory=lambda: uuid4().hex, init=False, repr=False, compare=False)
     """Owner token for a capability constructed with `id=None`, which has no stable one."""
+
+    def __post_init__(self) -> None:
+        """Validate the inline polling bounds."""
+        if self.poll_interval <= 0:
+            raise ValueError(f'poll_interval must be positive, got {self.poll_interval}')
+        if self.timeout_ms <= 0:
+            raise ValueError(f'timeout_ms must be positive, got {self.timeout_ms}')
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Static delegation guidance: when to hand a task to `exa_agent`, and run ID continuation.
@@ -329,7 +361,7 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
     async def _create_run(self, query: str, previous_run_id: str | None) -> str | RetryRequest:
         return await retry_as_result(self._start_run(query, previous_run_id))
 
-    @_recoverable
+    @recoverable(idempotent=False)
     async def _start_run(self, query: str, previous_run_id: str | None) -> str:
         return await _create_run(
             self._resolved_runs(),
@@ -359,16 +391,51 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         """
         if self.execution != 'inline':
             return None
-        calls: dict[str, ToolReturn[str] | ModelRetry] = {}
+        owned: list[tuple[str, str]] = []
         for call in requests.calls:
             metadata = requests.metadata.get(call.tool_call_id, {})
             run_id = metadata.get(RUN_ID_METADATA_KEY)
             if metadata.get(_OWNER_METADATA_KEY) == self._owner_token and isinstance(run_id, str):
-                result = await self._resolve_run(run_id)
-                calls[call.tool_call_id] = ModelRetry(result.message) if isinstance(result, RetryRequest) else result
-        if not calls:
+                owned.append((call.tool_call_id, run_id))
+        if not owned:
             return None
+        calls: dict[str, ToolReturn[str] | ModelRetry] = {}
+        # Runs returned to the model as a retry, which may still be running for it to follow up on.
+        retried: list[str] = []
+        for index, (tool_call_id, run_id) in enumerate(owned):
+            try:
+                result = await self._resolve_run(run_id)
+            except BaseException:
+                # Cancelled, or failed with an error the model can't fix, which ends the agent run.
+                await self._cancel_runs(ctx, [*retried, *(run_id for _, run_id in owned[index:])])
+                raise
+            if isinstance(result, RetryRequest):
+                retried.append(run_id)
+                calls[tool_call_id] = ModelRetry(result.message)
+            else:
+                calls[tool_call_id] = result
         return DeferredToolResults(calls=calls)
+
+    async def _cancel_runs(self, ctx: RunContext[AgentDepsT], run_ids: list[str]) -> None:
+        """Cancel the runs a cancelled or failed wait leaves, as nothing will read their results.
+
+        Under durable execution the engine may resume the wait, for example on another worker after a
+        restart, so there the runs are left running.
+        """
+        runs = None if ctx.in_durable_context else self._resolved_runs()
+        if not isinstance(runs, _CancellableRuns):
+            return
+
+        async def cancel(run_id: str) -> None:
+            with suppress(Exception):
+                await runs.cancel(run_id)
+
+        async def cancel_all() -> None:
+            async with anyio.create_task_group() as group:
+                for run_id in run_ids:
+                    group.start_soon(cancel, run_id)
+
+        await stop_shielded(cancel_all, grace=_CANCEL_GRACE_SECONDS)
 
     @durable_operation('resolve_run')
     async def _resolve_run(self, run_id: str) -> ToolReturn[str] | RetryRequest:
@@ -381,20 +448,14 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         transient API error) becomes a `RetryRequest` that carries the run ID, since
         the run may still finish server-side and the model can follow up with
         `previous_run_id`. `handle_deferred_tool_calls` turns each into its
-        `ModelRetry` result. Auth failures propagate as configuration errors.
+        `ModelRetry` result. Account and configuration failures propagate.
         """
         try:
             run = await self._resolved_runs().poll_until_finished(
                 run_id, poll_interval=self.poll_interval, timeout_ms=self.timeout_ms
             )
-        except (TimeoutError, httpx.HTTPError) as error:
-            return RetryRequest(
-                f'Waiting for Exa agent run {run_id} failed: {error}. '
-                f'The run may still finish server-side; you can follow up by calling the tool '
-                f'again with previous_run_id={run_id!r}.'
-            )
-        except ValueError as error:
-            if _AUTH_STATUS_RE.search(str(error)):
+        except (TimeoutError, httpx.HTTPError, ValueError) as error:
+            if not isinstance(error, TimeoutError) and not is_recoverable(error):
                 raise
             return RetryRequest(
                 f'Waiting for Exa agent run {run_id} failed: {error}. '
@@ -416,7 +477,12 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         return self.id if self.id is not None else self._instance_token
 
     def _resolved_runs(self) -> ExaAgentRuns:
-        return self.runs if self.runs is not None else _default_runs()
+        return self.runs if self.runs is not None else self._default_runs_client
+
+    @cached_property
+    def _default_runs_client(self) -> ExaAgentRuns:
+        """One default client per capability, so its connection pool is reused across requests."""
+        return _default_runs()
 
     @classmethod
     def from_spec(

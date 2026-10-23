@@ -271,6 +271,42 @@ async def test_xai_streamed_failed_tool_result(allow_model_requests: None, xai_p
     )
 
 
+@pytest.mark.vcr
+async def test_xai_failed_tool_result(allow_model_requests: None, xai_provider: XaiProvider):
+    """A server-side tool that fails in a complete response is stored as its call part and one failed return part.
+
+    The recorded code execution times out, and xAI marks it failed on the assistant output as well as on its
+    `ROLE_TOOL` output.
+    """
+    agent = Agent(
+        XaiModel(XAI_REASONING_MODEL, provider=xai_provider),
+        capabilities=[NativeTool(CodeExecutionTool())],
+    )
+    result = await agent.run(
+        'Run exactly this Python with the code execution tool and nothing else: `while True: pass`. '
+        'Then say what happened in one line.'
+    )
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert [
+        (type(part).__name__, part.provider_details)
+        for part in response.parts
+        if isinstance(part, NativeToolCallPart | NativeToolReturnPart)
+    ] == snapshot(
+        [
+            ('NativeToolCallPart', {'function_name': 'code_execution'}),
+            (
+                'NativeToolReturnPart',
+                {
+                    'status': 'failed',
+                    'error': 'The code execution timed out. Try simplifying the computation or breaking it into smaller steps.',
+                },
+            ),
+        ]
+    )
+
+
 def _search(tool_call_id: str) -> NativeToolCallPart:
     return NativeToolCallPart(
         tool_name='web_search',

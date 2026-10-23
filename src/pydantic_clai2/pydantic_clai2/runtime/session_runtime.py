@@ -24,6 +24,7 @@ from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, Mode
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
+from pydantic_ai_harness.subagents import DelegationTask
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
 from pydantic_clai2.cli.self_update import Relaunch, Updates, WebHandoff
@@ -453,6 +454,7 @@ def create_shell(
     updates.report = lambda: loader.fire if loader.handles(UpdateProgress) else None
     # Only a page has no terminal to watch uv in; elsewhere uv keeps drawing its progress there.
     updates.capture = lambda: web_serving(loader) is not None
+    updates.serving = lambda: web_serving(loader)
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
@@ -772,7 +774,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     def handoff(self) -> WebHandoff | None:
         """The web UI to serve again once `/update` restarts CLAI as this session; `None` when it does not, or none runs."""
-        return None if self.updates.relaunch is None else web_serving(self.loader)
+        return self.updates.web
 
     def relaunch(self, *, web: WebHandoff | None) -> Relaunch | None:
         """Restart as the build `/update` installed, resuming this conversation and serving `web` again; else `None`."""
@@ -810,6 +812,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             fire=self.loader.fire,
             listening=lambda: self.loader.handles(TaskEvent),
             send_input=self.send_input,
+            prompt_task=self.prompt_task,
         )
         self.status.subagent = self.tasks.focused
         self.forks = Forks(
@@ -881,6 +884,15 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             return f'Task {record.id} may now be resumed with delegate_task(resume={record.id!r}).'
         self.editor.submit(resume_prompt(record))
         return f'Resume requested for task {record.id[:8]}.'
+
+    async def prompt_task(self, record: DelegationTask, text: str) -> None:
+        """Resume `record` with `text` as the user's message, outside the conversation, with this session's plugins.
+
+        A turn running meanwhile keeps the plugins it bound, which the task gets too.
+        """
+        if not self.turning:
+            self.session.plugins = self.run_plugins()
+        await self.session.prompt_task(agent_name=record.agent_name, task_id=record.id, text=text)
 
     def submit_prompt(self, text: str) -> None:
         """Queue `text` to run as a turn once the running `/command` returns."""
