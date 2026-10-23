@@ -23,8 +23,9 @@ one of four ways:
 
 What the walk cannot resolve to a member, such as `getattr(obj, name)`, falls back to the class,
 unless the class has a base outside the walked packages (`BaseModel`, `Exception`), which may define
-the member: those accesses record nothing. The classes in `MEMBER_LEVEL_ONLY` never get a class-level entry: nearly every change to core touches
-them, so a class-level entry would match every change.
+the member: those accesses record nothing. The classes in `MEMBER_LEVEL_ONLY` never get a
+class-level entry: nearly every change to core touches them, so a class-level entry would match
+every change.
 
 The manifest maps `core_file -> qualname -> {kinds, engines, sites}`. A change to a core definition
 matches an entry when the changed definition's qualname is the entry's qualname or nested under it:

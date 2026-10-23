@@ -10,8 +10,8 @@ the one that was recorded. Temporal's sandbox does not catch these in Pydantic A
 `TemporalDurability.wrap_run` execute outside an activity is workflow code. Running the Temporal
 durability, agent, toolset and tool-kind suites with a `sys.monitoring` hook that records each
 function first entered on Temporal's workflow event loop shows 92 core modules outside
-`durable_exec/` executing there. Most are data types and helpers (`messages`, `usage`, `_utils`, the model profiles), whose
-calls are only workflow-side when an orchestrating module makes them. The set below is the modules
+`durable_exec/` executing there. Most are data types and helpers (`messages`, `usage`, `_utils`,
+the model profiles), whose calls are only workflow-side when an orchestrating module makes them. The set below is the modules
 that own the run's control flow -- where a nondeterministic call decides what the workflow does
 next -- each of which the trace shows running on the workflow loop:
 
@@ -32,8 +32,9 @@ already raises inside a Temporal workflow, whose event loop implements no execut
 `_utils.run_in_executor` runs inline under `_utils.disable_threads` instead.
 
 **Existing call sites** are in `_ACCEPTED`, keyed by module, enclosing qualname and callee so the
-entries survive unrelated edits, with the number of such calls each key accepts. A new call is accepted only with a pragma on its line naming the
-reason, `# workflow-nondeterminism-ok: <reason>`; prefer a replay-safe alternative (an id or clock
+entries survive unrelated edits, with the number of such calls each key accepts. A new call is
+accepted only with a pragma on its line naming the reason, `# workflow-nondeterminism-ok: <reason>`;
+prefer a replay-safe alternative (an id or clock
 the durability capability supplies; `_agent_graph_sleep` for a delay) when one exists.
 """
 
@@ -253,10 +254,13 @@ def unexplained_calls(relative: str, calls: list[Call]) -> tuple[list[str], Coun
         accepted = _ACCEPTED.get(key, (0, ''))[0]
         if count > accepted:
             _, qualname, callee = key
-            problems.append(
-                f'{relative}::{qualname} calls `{callee}` {count} time(s) and `_ACCEPTED` accepts {accepted}; '
-                f'`{callee}` {denials[key]}'
-            )
+            if accepted:
+                problems.append(
+                    f'{relative}::{qualname} calls `{callee}` {count} times and `_ACCEPTED` accepts {accepted}; '
+                    'give the new call a pragma with a reason'
+                )
+            else:
+                problems.append(f'{relative}::{qualname} calls `{callee}`, which {denials[key]}')
     return problems, without_pragma
 
 
@@ -327,11 +331,24 @@ def test_nondeterministic_calls_resolves_imports_and_pragmas():
     assert unexplained_calls('fixture.py', calls)[0] == snapshot(
         [
             'fixture.py::Node.run has a `workflow-nondeterminism-ok` pragma with no reason',
-            'fixture.py::<module> calls `time.perf_counter` 1 time(s) and `_ACCEPTED` accepts 0; `time.perf_counter` reads a clock that has moved by the time the run replays',
-            'fixture.py::Node.run calls `pydantic_ai._utils.now_utc` 1 time(s) and `_ACCEPTED` accepts 0; `pydantic_ai._utils.now_utc` reads a clock that has moved by the time the run replays',
-            'fixture.py::Node.run calls `concurrent.futures.ThreadPoolExecutor` 1 time(s) and `_ACCEPTED` accepts 0; `concurrent.futures.ThreadPoolExecutor` finishes on another thread in an order that a replay does not reproduce',
-            'fixture.py::Node.run.nested calls `uuid.uuid4` 1 time(s) and `_ACCEPTED` accepts 0; `uuid.uuid4` draws randomness that a replay does not reproduce',
-            'fixture.py::Node.run.nested calls `pydantic_ai._uuid.uuid7` 1 time(s) and `_ACCEPTED` accepts 0; `pydantic_ai._uuid.uuid7` draws randomness that a replay does not reproduce',
-            'fixture.py::Node.run calls `open` 1 time(s) and `_ACCEPTED` accepts 0; `open` performs I/O whose result can differ on replay; do it in an activity',
+            'fixture.py::<module> calls `time.perf_counter`, which reads a clock that has moved by the time the run replays',
+            'fixture.py::Node.run calls `pydantic_ai._utils.now_utc`, which reads a clock that has moved by the time the run replays',
+            'fixture.py::Node.run calls `concurrent.futures.ThreadPoolExecutor`, which finishes on another thread in an order that a replay does not reproduce',
+            'fixture.py::Node.run.nested calls `uuid.uuid4`, which draws randomness that a replay does not reproduce',
+            'fixture.py::Node.run.nested calls `pydantic_ai._uuid.uuid7`, which draws randomness that a replay does not reproduce',
+            'fixture.py::Node.run calls `open`, which performs I/O whose result can differ on replay; do it in an activity',
+        ]
+    )
+
+
+def test_unexplained_calls_counts_calls_against_accepted_entries():
+    """An `_ACCEPTED` entry explains as many calls as it counts, and a further call in the same function fails."""
+    call = Call('resolve_run_id', 'pydantic_ai._uuid.uuid7', _RANDOM, None)
+    module = f'{CORE}/_agent_graph.py'
+
+    assert unexplained_calls(module, [call])[0] == []
+    assert unexplained_calls(module, [call, call])[0] == snapshot(
+        [
+            'pydantic_ai_slim/pydantic_ai/_agent_graph.py::resolve_run_id calls `pydantic_ai._uuid.uuid7` 2 times and `_ACCEPTED` accepts 1; give the new call a pragma with a reason'
         ]
     )
