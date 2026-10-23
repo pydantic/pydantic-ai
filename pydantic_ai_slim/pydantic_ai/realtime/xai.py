@@ -62,7 +62,6 @@ except ImportError as _import_error:  # pragma: no cover
         '`pip install "pydantic-ai-slim[xai-realtime]"`'
     ) from _import_error
 
-from .._instrumentation import get_instructions
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import BinaryAudio, ModelMessage, RealtimeSessionErrorEvent
@@ -88,7 +87,7 @@ from ._openai_protocol import (
     tool_def_to_openai,
     turn_detection_config,
 )
-from ._utils import inject_trace_context, resolve_advertised_tools
+from ._utils import inject_trace_context, resolve_advertised_tools, session_instructions
 from .codec import (
     CancelResponse,
     ClearAudio,
@@ -752,7 +751,7 @@ class XaiRealtimeModel(RealtimeModel):
         settings = cast('XaiRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         reconnect = settings.get('reconnect')
         handshake_timeout = settings.get('handshake_timeout', 30.0)
-        instructions = get_instructions(messages, model_request_parameters) or ''
+        instructions = session_instructions(messages, model_request_parameters)
         session_config = self._session_config(
             instructions=instructions, tools=model_request_parameters.function_tools, model_settings=settings
         )
