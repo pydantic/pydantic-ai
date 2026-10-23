@@ -151,6 +151,15 @@ class GoogleModelProfile(ModelProfile, total=False):
     See https://ai.google.dev/gemini-api/docs/thinking.
     """
 
+    google_disables_thinking_with_zero_budget: bool
+    """Whether unified `thinking=False` turns thinking off with `thinking_budget=0` on a model that otherwise
+    takes `thinking_level`. Default: `False`.
+
+    When disabled, `thinking=False` on such a model sends its lowest thinking level instead. `GoogleModel` enables it
+    for `gemini-3.1-pro-preview` on Vertex AI, which accepts `thinking_budget=0` and then doesn't think, while the
+    Gemini API rejects it for that model ("Budget 0 is invalid. This model only works in thinking mode.").
+    """
+
     google_thinking_levels: frozenset[GoogleThinkingLevel]
     """Thinking levels the model supports, from Google's per-model thinking table. Default: unset.
 

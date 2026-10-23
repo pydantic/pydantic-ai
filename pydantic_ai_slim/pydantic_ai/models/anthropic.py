@@ -1613,11 +1613,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if anthropic_thinking := model_settings.get('anthropic_thinking'):
             return anthropic_thinking
         thinking = model_request_parameters.thinking
-        if thinking is False and self.profile.get('thinking_enabled_by_default', False):
-            # Omitting `thinking` leaves it on for these models. `Model.prepare_request` has already dropped
-            # `False` for models that can't turn thinking off.
-            return {'type': 'disabled'}
-        if thinking is None or thinking is False:
+        if thinking is False:
+            if self.profile.get('thinking_always_enabled', False):
+                # A model that can't turn thinking off thinks as little as it can: adaptively at the lowest effort,
+                # which `_build_output_config` adds. A model without an effort setting is left at its default.
+                if self.profile.get('anthropic_supports_effort', False):
+                    return {'type': 'adaptive'}
+                return OMIT  # type: ignore[return-value]
+            if self.profile.get('anthropic_disables_thinking_with_between_tools', False):
+                return {'type': 'between_tools'}
+            if self.profile.get('thinking_enabled_by_default', False):
+                # Omitting `thinking` leaves it on for these models.
+                return {'type': 'disabled'}
+            return OMIT  # type: ignore[return-value]
+        if thinking is None:
             return OMIT  # type: ignore[return-value]
         if self.profile.get('anthropic_supports_adaptive_thinking', False):
             return {'type': 'adaptive'}
@@ -3654,16 +3663,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         effort: AnthropicEffort | None = model_settings.get('anthropic_effort')
         # Fall back to unified thinking effort level when anthropic_effort is not set
         # Only map effort level strings; bare True just enables thinking without a specific effort
-        if (
-            effort is None
-            and self.profile.get('anthropic_supports_effort', False)
-            and isinstance(model_request_parameters.thinking, str)
-        ):
-            effort = resolve_anthropic_effort(
-                model_request_parameters.thinking,
-                supports_xhigh=self.profile.get('anthropic_supports_xhigh_effort', False),
-                supports_max=self.profile.get('anthropic_supports_max_effort', True),
-            )
+        thinking = model_request_parameters.thinking
+        if effort is None and self.profile.get('anthropic_supports_effort', False):
+            if isinstance(thinking, str):
+                effort = resolve_anthropic_effort(
+                    thinking,
+                    supports_xhigh=self.profile.get('anthropic_supports_xhigh_effort', False),
+                    supports_max=self.profile.get('anthropic_supports_max_effort', True),
+                )
+            elif thinking is False and self.profile.get('thinking_always_enabled', False):
+                # The least thinking a model that can't turn it off accepts.
+                effort = 'low'
 
         if effort is not None:
             # Validate what reaches the wire, where a caller's `extra_body` thinking wins.
@@ -3691,19 +3701,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> None:
         """Reject `xhigh`/`max` effort combined with explicitly disabled thinking.
 
-        Claude Opus 5 and Haiku 5.5 cap effort at `high` once thinking is disabled, while Claude Opus 4.8 accepts
-        every effort level in that combination. Fail fast with a helpful message rather than letting
-        the API return an opaque 400.
+        Claude Opus 5 and Haiku 5.5 cap effort at `high` once thinking is disabled, as does Claude Sonnet 5.5 with
+        `between_tools`, while Claude Opus 4.8 accepts every effort level in that combination. Fail fast with a
+        helpful message rather than letting the API return an opaque 400.
         """
         if effort not in ('xhigh', 'max'):
             return
         if not self.profile.get('anthropic_disallows_top_effort_when_thinking_disabled', False):
             return
-        if isinstance(thinking, Omit) or thinking.get('type') != 'disabled':
+        if isinstance(thinking, Omit) or (thinking_type := thinking.get('type')) not in ('disabled', 'between_tools'):
             return
         raise UserError(
             f'Model {self.model_name!r} does not support `anthropic_effort={effort!r}` while thinking is '
-            "disabled (`thinking=False` or `anthropic_thinking={'type': 'disabled'}`). "
+            f"disabled (`thinking=False` or `anthropic_thinking={{'type': {thinking_type!r}}}`). "
             "Use an effort of 'high' or below, or enable thinking."
         )
 
@@ -5018,7 +5028,8 @@ def _effective_thinking_type(
     the model then answers without thinking. Unified thinking maps to `adaptive` when the profile advertises it
     and to `enabled` otherwise, the same mapping `_translate_thinking` uses to build the wire payload. With no
     thinking setting, models that think by default resolve to `adaptive`, as does `thinking=False` on a model
-    that can't turn thinking off. Returns `None` when the request won't think.
+    that can't turn thinking off, which then thinks at its lowest effort. Returns `None` when the request won't
+    think, including Claude Sonnet 5.5's `between_tools`, which doesn't think before responding.
     """
     if anthropic_thinking:
         thinking_type = anthropic_thinking.get('type')
