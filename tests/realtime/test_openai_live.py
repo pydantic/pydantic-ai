@@ -3840,6 +3840,150 @@ async def test_a_tool_result_the_dropping_sideband_took_is_sent_again_on_the_new
     assert connection._map_response_event(created, delegation_id='unknown') == []  # pyright: ignore[reportPrivateUsage]
 
 
+class _DyingWebSocket(_FakeWebSocket):
+    """A sideband dropping as the receive loop sends a continuation: that send hangs before it fails, others fail."""
+
+    def __init__(self, frames: list[str]) -> None:
+        super().__init__(frames)
+        self.continuation_hangs = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def send(self, data: str) -> None:
+        if json.loads(data)['type'] == 'response.create':
+            self.continuation_hangs.set()
+            await self.release.wait()
+        raise websockets.ConnectionClosedError(None, None)
+
+
+async def test_a_send_from_another_task_waits_while_the_receive_loop_sends_a_continuation() -> None:
+    """Only the receive loop's own sends skip waiting for the re-attach: a tool result sent meanwhile still waits."""
+    attached = _FakeWebSocket([_output_transcript(' found it', 'e2')])
+
+    async def reattach() -> Any:
+        return attached
+
+    dying = _DyingWebSocket([_output_transcript('Checking.', 'e1')])
+    connection = OpenAILiveConnection(dying, reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
+    connection._continuations_due.append(live_module._Delegation('d1'))  # pyright: ignore[reportPrivateUsage]
+    events = asyncio.create_task(_first_events(connection, 3))
+    await dying.continuation_hangs.wait()
+    sending = asyncio.create_task(connection.send(ToolResult('call_1', output='14C')))
+    await asyncio.sleep(0.01)
+    assert not sending.done()
+    dying.release.set()
+    await sending
+    assert await events == [
+        OutputTranscript('Checking.'),
+        RealtimeSessionReconnectEvent(state_restored=True),
+        OutputTranscript(' found it'),
+    ]
+    assert [json.loads(frame)['type'] for frame in attached.sent][:2] == ['response.item.create', 'response.create']
+
+
+class _ClosableWebSocket(_FakeWebSocket):
+    async def close(self) -> None:
+        self.closed = True
+
+
+async def test_a_reattach_that_lands_after_close_is_not_used() -> None:
+    """A sideband closed while it re-attaches doesn't take the new socket, which is closed, and its sends don't wait."""
+    reattaching, release = asyncio.Event(), asyncio.Event()
+    late = _ClosableWebSocket([])
+
+    async def reattach() -> Any:
+        reattaching.set()
+        await release.wait()
+        return late
+
+    dead = _DeadWebSocket([])
+    connection = OpenAILiveConnection(dead, reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
+    events = asyncio.create_task(_first_events(connection, 1))
+    await reattaching.wait()
+    sending = asyncio.create_task(connection.send(ToolResult('call_1', output='14C')))
+    await asyncio.sleep(0.01)
+    await connection.aclose()
+    with pytest.raises(websockets.ConnectionClosedError):
+        await sending
+    release.set()
+    await asyncio.sleep(0.01)
+    assert late.closed
+    assert late.sent == []
+    assert connection._ws is dead  # pyright: ignore[reportPrivateUsage]
+    events.cancel()
+
+
+class _ConfirmingWebSocket(_FakeWebSocket):
+    """A re-attached sideband whose backend starts the response a `response.create` asks for, ignores it, or which
+    drops as it is sent."""
+
+    def __init__(self, *, backend: str) -> None:
+        super().__init__([])
+        self._backend = backend
+
+    async def send(self, data: str) -> None:
+        continuing = json.loads(data)['type'] == 'response.create'
+        if continuing and self._backend == 'drops':
+            raise websockets.ConnectionClosedError(None, None)
+        await super().send(data)
+        if continuing and self._backend == 'confirms':
+            created = {
+                'type': 'response.created',
+                'sequence_number': 0,
+                'response': _backend_response(status='in_progress'),
+            }
+            self._frames.append(
+                json.dumps({'type': 'response.event', 'event_id': 'e9', 'delegation_id': 'd1', 'event': created})
+            )
+            self._arrived.set()
+
+
+@pytest.mark.parametrize('backend', ['confirms', 'ignores', 'drops'], ids=['resent', 'given-up', 'resend-fails'])
+async def test_a_continuation_the_dropping_sideband_swallowed_is_sent_again_then_given_up(
+    backend: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A continuation that seemed to go out as the sideband dropped, and that the backend never confirms after the
+    re-attach, was lost: it is sent again once, and should that go unanswered too, the delegation is given up on
+    rather than holding the session's turn clock forever.
+    """
+    monkeypatch.setattr(live_module, '_CONTINUATION_CONFIRM_SECONDS', 0.05)
+    attached = _ConfirmingWebSocket(backend=backend)
+
+    async def reattach() -> Any:
+        return attached
+
+    dropping = _DroppingWebSocket([])
+    connection = OpenAILiveConnection(dropping, reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
+    _open_delegation(connection, call_ids=('c1',))
+    await connection.send(ToolResult('c1', output='14C'))
+    connection._map_response_event(_backend_terminal(), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+    await connection._send_due_continuations()  # pyright: ignore[reportPrivateUsage]
+    assert [json.loads(frame)['type'] for frame in dropping.sent][-1] == 'response.create'
+
+    if backend == 'confirms':
+        events: list[Any] = []
+        # Well past the point where it would have been given up on.
+        with anyio.move_on_after(0.5):
+            async for event in connection:  # pragma: no branch
+                events.append(event)
+        assert events == [RealtimeSessionReconnectEvent(state_restored=True)]
+        delegation = connection._delegations['d1']  # pyright: ignore[reportPrivateUsage]
+        assert not delegation.continuation_unconfirmed and delegation.continuation_check_at is None
+    else:
+        events = await _first_events(connection, 2)
+        assert events[0] == RealtimeSessionReconnectEvent(state_restored=True)
+        assert events[1] == RealtimeSessionErrorEvent(
+            message=(
+                'The delegated OpenAI Responses backend never resumed after the WebRTC sideband re-attached: '
+                'its continuation was lost with the dropped sideband.'
+            ),
+            code='live_continuation_lost',
+        )
+        assert 'd1' not in connection._delegations  # pyright: ignore[reportPrivateUsage]
+    sent = [json.loads(frame)['type'] for frame in attached.sent]
+    # The round's output went out again with the re-attach, then the continuation, once more.
+    assert sent == ['response.item.create'] + (['response.create'] if backend != 'drops' else [])
+
+
 async def test_a_send_that_fails_with_no_reattach_coming_raises() -> None:
     async def reattach() -> Any:
         raise OSError('unreachable')
