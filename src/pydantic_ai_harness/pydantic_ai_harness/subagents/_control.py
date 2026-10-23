@@ -168,7 +168,11 @@ class RemoteSubAgent:
     """What the agent is good at, for the system-prompt listing."""
 
     resumable: bool = True
-    """Whether a finished task can be resumed, continuing the conversation the worker keeps."""
+    """Whether a finished task can be resumed, continuing the conversation the worker keeps.
+
+    The conversation lives in the worker that ran the task, so serve each remote agent name from one
+    worker: another worker that picks up the follow-up fails the task, having no conversation to resume.
+    """
 
     can_ask_questions: bool = True
     """Whether the agent gets an `ask_parent` tool to ask the delegating agent a question."""
