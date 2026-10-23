@@ -77,7 +77,7 @@ agent = Agent(
 )
 ```
 
-[Skills](skills.md) (your `SKILL.md` procedures, loaded on demand; point it at a `skills/` directory and add the `skills` extra), [Web Fetch](../capabilities/web-fetch.md), [Guardrails](guardrails.md), and [Dynamic Workflow](dynamic-workflow.md) slot in the same way; the [Coder page](coder.md#composition) lists what pairs well.
+[Skills](skills.md) (your `SKILL.md` procedures, loaded on demand; point it at a `skills/` directory and add the `skills` extra), [Web Fetch](../capabilities/web-fetch.md), [Guardrails](guardrails.md), and [Dynamic Workflow](dynamic-workflow.md) slot in the same way.
 
 ## No magic: it's capabilities all the way down
 
@@ -131,6 +131,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | Capability | Package | What it does |
 |---|---|---|
 | [FileSystem](filesystem.md) | Harness | Read, write, edit, list, and search files under a root in the run's workspace, with opt-in ripgrep tools; path-traversal checked, secrets read-only |
+| [Smart Search](smart-search.md) | Harness | Code search by behavior in the run's workspace: plain-English queries, ranked excerpts, judged by any model (a decision model over System One, or TypeSafe's Jev, recommended) |
 | [Shell](shell.md) | Harness | Command execution in the run's workspace with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
 | [Modal Sandbox](modal-sandbox.md) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
 | [E2B Sandbox](e2b-sandbox.md) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |

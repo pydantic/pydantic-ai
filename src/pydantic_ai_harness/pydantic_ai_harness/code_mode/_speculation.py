@@ -27,7 +27,8 @@ import asyncio
 import re
 import time
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from typing import Annotated, Any, Generic, Literal
 
@@ -107,6 +108,8 @@ class SpeculativeCall:
     task: asyncio.Task[NestedCallOutcome]
     launch_id: str
     started_at: float
+    unsafe_epoch: int
+    """The coordinator's `unsafe_epoch` at launch; the launch is claimable only while it is unchanged."""
     settled_at: float | None = None
     settle_emitted: bool = False
 
@@ -425,6 +428,23 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
     _index_to_part: dict[int, str] = field(default_factory=dict[int, str], init=False)
     _run_step: int | None = field(default=None, init=False)
     _tool_part_indexes: set[int] = field(default_factory=set[int], init=False)
+    _unsafe_epoch: int = field(default=0, init=False)
+
+    @contextmanager
+    def unsafe_call(self) -> Generator[None]:
+        """Bracket a call to a tool that is not eligible, nested in `run_code` or native.
+
+        The epoch moves on both edges, so a launch that started before or during such a call is
+        never claimed after it: the launch may have read state the call changes. The text-level
+        ordering barrier only saves wasted launches; this keeps adoption correct when code reaches
+        the tool without spelling its call (a helper from an earlier snippet), and when a retry
+        would claim a failed attempt's launch after a native write.
+        """
+        self._unsafe_epoch += 1
+        try:
+            yield
+        finally:
+            self._unsafe_epoch += 1
 
     def stash_step(
         self,
@@ -631,7 +651,11 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
             return len(closed_statements(code))
 
     def _in_flight(self, key: str) -> int:
-        return sum(len(watch.calls.get(key, ())) for watch in self._parts.values())
+        return sum(
+            call.unsafe_epoch == self._unsafe_epoch
+            for watch in self._parts.values()
+            for call in watch.calls.get(key, ())
+        )
 
     async def _launch(
         self,
@@ -662,6 +686,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
             task=asyncio.ensure_future(run_nested_call(tool_manager, call_part)),
             launch_id=launch_id,
             started_at=time.perf_counter(),
+            unsafe_epoch=self._unsafe_epoch,
         )
         call.task.add_done_callback(lambda _task, call=call: setattr(call, 'settled_at', time.perf_counter()))
         watch.calls.setdefault(_canonical_key(sandbox_name, extracted.kwargs), deque()).append(call)
@@ -756,6 +781,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         holding an exact `(function, arguments)` match: some providers re-key a tool call between
         the streamed part and its executed form, which would otherwise turn every launch into a
         miss, and the purity promise makes an identical launch from another part interchangeable.
+        Launches that predate a call to a tool that is not eligible stay queued for eviction.
 
         A launch `tool_calls_limit` refused is not usable: other launches may still have been
         pending when it was checked. It stays unclaimed, so eviction reports it, and without a
@@ -768,6 +794,8 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         for watch in watches:
             queue = watch.calls.get(key, deque[SpeculativeCall]())
             for call in queue:
+                if call.unsafe_epoch != self._unsafe_epoch:
+                    continue
                 # Consume exceptional launches before adoption raises, so a retry can run cold.
                 if (
                     call.task.done()

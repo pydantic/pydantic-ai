@@ -208,7 +208,13 @@ class Forked(BaseModel):
 
 
 class Steered(BaseModel):
-    """Whether the task was running to take the message; a finished one can be resumed instead."""
+    """Whether a running turn or task took the message; a finished task can be resumed instead."""
+
+    steered: bool
+
+
+class Steering(Entered):
+    """What Alt+Enter did: `steered` when the running turn took it, else it was entered as Enter enters it."""
 
     steered: bool
 
@@ -221,6 +227,7 @@ def create_app(*, service: WebService, token: str, hosts: frozenset[str], static
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     _page(app, token=token, static=static)
     _prompt(app, service)
+    _queue(app, service)
     _images(app, service)
     _sessions(app, service)
     _plugins(app, service)
@@ -324,6 +331,41 @@ def _prompt(app: FastAPI, service: WebService) -> None:
     @app.get('/api/models')
     async def models() -> list[str]:
         return await service.models()
+
+
+def _queue(app: FastAPI, service: WebService) -> None:
+    """Steer the running turn, and edit, steer, or remove the input queued behind it, as the prompt does.
+
+    Each route is there twice, as the composer's are: under `/api/sessions/ID/` for the live session
+    holding conversation ID, and unprefixed for the default session.
+    """
+
+    def session(conversation_id: str | None) -> SessionChannel:
+        return _run(service.default if conversation_id is None else lambda: service.session(conversation_id))
+
+    async def steer(body: Input, conversation_id: str | None = None) -> Steering:
+        channel = session(conversation_id)
+        if _run(lambda: channel.steer(body.text)):
+            return Steering(steered=True)
+        return Steering(steered=False, menu=_run(lambda: channel.send(body.text)))
+
+    async def edit_queued(input_id: str, body: Input, conversation_id: str | None = None) -> None:
+        channel = session(conversation_id)
+        _run(lambda: channel.edit_queued(input_id, body.text))
+
+    async def remove_queued(input_id: str, conversation_id: str | None = None) -> None:
+        channel = session(conversation_id)
+        _run(lambda: channel.remove_queued(input_id))
+
+    async def steer_queued(input_id: str, conversation_id: str | None = None) -> Steered:
+        channel = session(conversation_id)
+        return Steered(steered=_run(lambda: channel.steer_queued(input_id)))
+
+    for prefix in ('/api', '/api/sessions/{conversation_id}'):
+        app.post(f'{prefix}/steer')(steer)
+        app.put(f'{prefix}/queue/{{input_id}}', status_code=204)(edit_queued)
+        app.delete(f'{prefix}/queue/{{input_id}}', status_code=204)(remove_queued)
+        app.post(f'{prefix}/queue/{{input_id}}/steer')(steer_queued)
 
 
 def _images(app: FastAPI, service: WebService) -> None:

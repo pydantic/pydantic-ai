@@ -15,6 +15,7 @@ from opentelemetry.trace import get_current_span
 from pydantic import TypeAdapter
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
+from .._context_size import mark_context_input_tokens, marked_context_input_tokens
 from .._http import to_httpx2_timeout
 from .._run_context import RunContext
 from .._thinking_part import render_replayed_thinking
@@ -106,6 +107,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     ToolVisibility,
+    _declare_lone_newcomers,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_suffix_start,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
@@ -143,19 +145,31 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
 }
 
 
+def _native_tool_is_a_tools_entry(tool: AbstractNativeTool) -> bool:
+    """Whether `_add_native_tools` sends this native tool as an entry in the request's `tools`.
+
+    An MCP server goes in `mcp_servers` instead, and a custom tool search strategy is served by the
+    `search_tools` function tool, which `function_tools` already carries.
+    """
+    if isinstance(tool, MCPServerTool):
+        return False
+    return not (isinstance(tool, ToolSearchTool) and tool.strategy == 'custom')
+
+
 def _revealed_deferred_tool_order(
     messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
 ) -> list[str]:
     """Order revealed non-corpus deferred entries at the tail by their first reveal in history.
 
     Deferred entries are outside Anthropic's cache key, so this is a determinism rule, not a cache rule.
+    A mid-run newcomer (`introduced_tool_names`) is declared deferred for the same reason and joins them.
     """
     tool_defs = model_request_parameters.tool_defs
     return [
         name
         for name in discovered_tool_names_in_order(messages)
         if name in tool_defs
-        and tool_defs[name].defer_loading
+        and (tool_defs[name].defer_loading or name in model_request_parameters.introduced_tool_names)
         and tool_defs[name].with_native is None
         and model_request_parameters.visibility_of(name) == 'deferred'
     ]
@@ -310,6 +324,7 @@ try:
     )
     from anthropic.types.model_param import ModelParam
 
+    from ._anthropic_bedrock_count_tokens import BEDROCK_ANTHROPIC_VERSION
 except ImportError as _import_error:
     raise ImportError(
         'Please install `anthropic` to use the Anthropic model, '
@@ -529,6 +544,23 @@ _AnthropicCodeExecutionToolName: TypeAlias = Literal[
     'code_execution', 'bash_code_execution', 'text_editor_code_execution'
 ]
 _AnthropicCodeExecutionProviderDetailToolName: TypeAlias = Literal['bash_code_execution', 'text_editor_code_execution']
+_AssistantContentBlockParam: TypeAlias = (
+    BetaTextBlockParam
+    | BetaToolUseBlockParam
+    | BetaServerToolUseBlockParam
+    | BetaWebSearchToolResultBlockParam
+    | BetaCodeExecutionToolResultBlockParam
+    | BetaBashCodeExecutionToolResultBlockParam
+    | BetaTextEditorCodeExecutionToolResultBlockParam
+    | BetaWebFetchToolResultBlockParam
+    | BetaToolSearchToolResultBlockParam
+    | BetaAdvisorToolResultBlockParam
+    | BetaThinkingBlockParam
+    | BetaRedactedThinkingBlockParam
+    | BetaMCPToolUseBlockParam
+    | BetaRequestMCPToolResultBlockParam
+    | BetaCompactionBlockParam
+)
 _ANTHROPIC_CODE_EXECUTION_TOOL_NAMES: tuple[_AnthropicCodeExecutionToolName, ...] = (
     'code_execution',
     'bash_code_execution',
@@ -743,7 +775,10 @@ class AnthropicModelSettings(ModelSettings, total=False):
 
 
 def _build_extra_body(
-    model_settings: AnthropicModelSettings, thinking_override: dict[str, object] | None = None
+    model_settings: AnthropicModelSettings,
+    thinking_override: dict[str, object] | None = None,
+    *,
+    bedrock: bool = False,
 ) -> object | None:
     """Merge the sampling settings, and a `thinking` object the SDK cannot type, into `extra_body`.
 
@@ -751,6 +786,12 @@ def _build_extra_body(
     passing one is a `TypeError`. The API still takes them, so they ride in `extra_body` — the route
     the SDK's own migration guide names — rather than being silently dropped. Models that reject them
     never get here: `_drop_unsupported_sampling_settings` has already removed them.
+
+    On the legacy Bedrock client, `anthropic_version` is pinned to `bedrock-2023-05-31`. `anthropic>=2`
+    defaults it to the Messages API version `2026-10-21` instead, which Bedrock rejects with `Invalid API
+    version` for some Claude models (Sonnet 4.5 and Opus 4.5, though not Haiku 4.5, when verified live).
+    The SDK fills the field in only when the body has none. Reported upstream as
+    https://github.com/anthropics/anthropic-sdk-python/issues/2031; drop the pin once that is fixed.
 
     An explicit `extra_body` entry wins over the setting of the same name, preserving the precedence
     the SDK gave it while the parameters were still named arguments.
@@ -760,6 +801,8 @@ def _build_extra_body(
     }
     if thinking_override is not None:
         fields['thinking'] = thinking_override
+    if bedrock:
+        fields['anthropic_version'] = BEDROCK_ANTHROPIC_VERSION
     extra_body = model_settings.get('extra_body')
     if not fields:
         return extra_body
@@ -1142,7 +1185,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )
-        # Narrowed rather than handled in `_map_message` so `Model.prepare_messages` stays the only place
+        # Narrowed rather than handled in `_map_system_prompt_part` so `Model.prepare_messages` stays the only place
         # that knows the `<system>`-tagged fallback: where this is `False`, the mid-conversation parts are
         # rewritten before the adapter ever sees them.
         supports_inline_system_prompts = _profile.get('supports_inline_system_prompts', False) and not isinstance(
@@ -1225,16 +1268,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response = await self._messages_create(messages, False, model_settings, model_request_parameters)
         response = check_json_response(self.model_name, response)
         if isinstance(response, BetaMessage):
-            return self._process_response(response, model_request_parameters, model_settings)
-        # The request was streamed behind the scenes, see `_messages_create`. `_map_api_errors` maps a transport error
-        # that breaks the stream off, both while it opens and while it's read.
-        async with response.source:
-            streamed_response = await self._process_streamed_response(
-                response, model_request_parameters, model_settings
-            )
-            async for _ in streamed_response:
-                pass
-        return streamed_response.get()
+            model_response = self._process_response(response, model_request_parameters, model_settings)
+        else:
+            # The request was streamed behind the scenes, see `_messages_create`. `_map_api_errors` maps a transport
+            # error that breaks the stream off, both while it opens and while it's read.
+            async with response.source:
+                streamed_response = await self._process_streamed_response(
+                    response, model_request_parameters, model_settings
+                )
+                async for _ in streamed_response:
+                    pass
+            model_response = streamed_response.get()
+        _mark_continuation_context_input_tokens(messages, model_response)
+        return model_response
 
     async def count_tokens(
         self,
@@ -1270,12 +1316,30 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings = cast(AnthropicModelSettings, model_settings or {})
         response = await self._messages_create(messages, True, model_settings, model_request_parameters)
         async with response.source:
-            yield await self._process_streamed_response(response, model_request_parameters, model_settings)
+            streamed_response = await self._process_streamed_response(
+                response, model_request_parameters, model_settings
+            )
+            yield streamed_response
+            _mark_continuation_context_input_tokens(messages, streamed_response)
 
     def _request_thinks(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> bool:
         return _request_thinking_type(self.profile, model_settings, model_request_parameters) is not None
+
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        overriding: list[str] = []
+        # `_translate_thinking` sends an explicit thinking config instead of the unified one.
+        if model_settings.get('anthropic_thinking'):
+            overriding.append('anthropic_thinking')
+        # `_build_output_config` sends an explicit effort instead of the one an effort-level `thinking` maps to.
+        if (
+            model_settings.get('anthropic_effort') is not None
+            and isinstance(model_settings.get('thinking'), str)
+            and self.profile.get('anthropic_supports_effort', False)
+        ):
+            overriding.append('anthropic_effort')
+        return tuple(overriding)
 
     def _default_structured_output_mode(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -1408,6 +1472,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         A non-streaming request is streamed anyway when the SDK requires it for its `max_tokens`, so its response
         can be a stream too.
         """
+        model_request_parameters = self._declare_newcomers_left_alone(model_settings, model_request_parameters)
         # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
         # entries are then appended in history order; Anthropic excludes them from its cache key.
         revealed_tool_order = _revealed_deferred_tool_order(messages, model_request_parameters)
@@ -1487,7 +1552,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     speed=self._effective_speed(model_settings, anthropic_profile),
                     diagnostics=self._cache_diagnostics(messages, model_settings),
                     extra_headers=extra_headers,
-                    extra_body=_build_extra_body(model_settings, thinking_override),
+                    extra_body=_build_extra_body(
+                        model_settings, thinking_override, bedrock=isinstance(client, AsyncAnthropicBedrock)
+                    ),
                 )
 
             async def open_stream() -> _AnthropicEventStream:
@@ -1640,8 +1707,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # tools are never revealed, so a (forged or replayed) delta naming one renders nothing
         # and must not add the beta either.
         function_tool_defs = {tool_def.name: tool_def for tool_def in model_request_parameters.function_tools}
+        declared_tool_defs, _ = self._tool_choice_declarations(model_settings, model_request_parameters)
         if self.tool_addition_mode == 'by_reference' and any(
-            name in model_request_parameters.declared_tool_defs
+            name in declared_tool_defs
             and name in function_tool_defs
             and model_request_parameters.visibility_of(name) != 'visible'
             for message in messages
@@ -1651,7 +1719,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             for name in part.tools_added
         ):
             betas.add('mid-conversation-tool-changes-2026-07-01')
-        # Co-extensive with the renderer in `_map_message`: `clear_at` is a 400 without the beta. A user
+        # Co-extensive with the renderer in `_map_system_prompt_part`: `clear_at` is a 400 without the beta. A user
         # who can't use the beta opts out by setting the profile flag to `False`, which falls back to
         # leaving finished request-scoped prompts out of the request.
         if anthropic_profile.get('supports_request_scoped_system_prompts', False) and any(
@@ -1669,7 +1737,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         Used to gate auto-attachment of the `files-api-2025-04-14` beta header.
         Mirrors the per-item `provider_name == self.system` check the request
-        mappers (`_map_user_prompt`, `_map_message`'s `ToolReturnPart` branch)
+        mappers (`_map_user_prompt`, `_map_tool_return_part`)
         already perform — so the beta is added exactly when the wire shape
         requires it. `UploadedFile`s for other providers are intentionally
         ignored here; they will raise the existing `UserError` later in the
@@ -1804,7 +1872,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # `_add_native_tools` keeps off the wire below), and replaying advisor blocks without the tool
         # definition would 400.
         map_parameters = replace(
-            model_request_parameters,
+            self._declare_newcomers_left_alone(model_settings, model_request_parameters),
             native_tools=[tool for tool in model_request_parameters.native_tools if not isinstance(tool, AdvisorTool)],
         )
 
@@ -2020,7 +2088,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             provider_details = provider_details or {}
             provider_details['cache_diagnostics'] = response.diagnostics.model_dump(mode='json')
 
-        return ModelResponse(
+        model_response = ModelResponse(
             parts=items,
             usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
             model_name=response.model,
@@ -2031,6 +2099,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             state='suspended' if response.stop_reason == 'pause_turn' else 'complete',
             provider_details=provider_details,
         )
+        if (last_pass_input_tokens := _last_pass_input_tokens(response.usage)) is not None:
+            mark_context_input_tokens(model_response, last_pass_input_tokens)
+        return model_response
 
     def _get_enabled_server_tool_names(
         self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
@@ -2244,16 +2315,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 )
         return tools, mcp_servers, beta_features
 
-    def _prepare_tools_and_tool_choice(
+    def _tool_choice_declarations(
         self,
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[list[BetaToolUnionParam], BetaToolChoiceParam | None]:
-        """Determine which tools to send and the API tool_choice value.
-
-        Returns:
-            A tuple of (filtered_tools, tool_choice).
-        """
+    ) -> tuple[dict[str, ToolDefinition], BetaToolChoiceParam]:
+        """The tool definitions to declare, after any `tool_choice` restriction, and the API `tool_choice` value."""
         tool_defs = model_request_parameters.declared_tool_defs
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
@@ -2284,7 +2351,38 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 tool_choice = {'type': 'auto'} if tool_choice_mode == 'auto' or not supports else {'type': 'any'}
         else:
             assert_never(resolved_tool_choice)
+        return tool_defs, tool_choice
 
+    def _declare_newcomers_left_alone(
+        self, model_settings: AnthropicModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> ModelRequestParameters:
+        """Declare mid-run newcomers plainly when `tool_choice` leaves no other plainly declared tool.
+
+        Resolution keeps a newcomer deferred while another tool is plainly declared, but a `tool_choice`
+        restriction can filter that tool out of the request, leaving only deferred declarations, which
+        Anthropic rejects. Applied before the tools and messages are mapped, so the newcomer's reveal
+        blocks are dropped along with its `defer_loading` flag.
+        """
+        tool_defs, _ = self._tool_choice_declarations(model_settings, model_request_parameters)
+        return _declare_lone_newcomers(
+            model_request_parameters,
+            tool_defs.keys(),
+            wire_native_tools=[
+                tool for tool in model_request_parameters.native_tools if _native_tool_is_a_tools_entry(tool)
+            ],
+        )
+
+    def _prepare_tools_and_tool_choice(
+        self,
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[list[BetaToolUnionParam], BetaToolChoiceParam | None]:
+        """Determine which tools to send and the API tool_choice value.
+
+        Returns:
+            A tuple of (filtered_tools, tool_choice).
+        """
+        tool_defs, tool_choice = self._tool_choice_declarations(model_settings, model_request_parameters)
         if not tool_defs:
             return [], None
 
@@ -2314,7 +2412,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         return tools, tool_choice
 
-    async def _map_message(  # noqa: C901
+    async def _map_message(
         self,
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
@@ -2322,8 +2420,75 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         messages = self._trim_before_compaction(messages)
-        system_prompt_parts: list[str] = []
-        anthropic_messages: list[BetaMessageParam] = []
+        map_context = _MapMessagesContext(
+            model_request_parameters=model_request_parameters,
+            # Whenever this request withholds a tool's schema, render any local-shape `search_tools`
+            # history exchanges as Anthropic's "client-side" tool-search wire — `tool_use` paired with a
+            # `tool_result` whose `content` is a `tool_reference` array. That block is the reveal: it
+            # unlocks the withheld schemas server-side without forcing the model to re-search, and works
+            # regardless of the current request's strategy (default native, named native, or custom
+            # callable), covering the no-history single-turn custom callable case too (where the local
+            # `search_tools` exchange is created on this turn).
+            #
+            # Reading the deferred tools rather than the presence of a `ToolSearchTool` is deliberate:
+            # tool search is one thing that can trigger a reveal, not what makes a reveal legal. A run
+            # whose deferred tools are all capability-gated sends no search tool at all and still needs
+            # this, and Anthropic agrees — a `tool_reference` result with no tool-search tool in the
+            # request returns 200 and the model calls the revealed tool (verified live on
+            # `claude-sonnet-5` and `claude-opus-4-8`).
+            # A `None` visibility means unresolved parameters from a direct `Model` call (every
+            # production path resolves via `prepare_request` first); the authored flag is the stand-in.
+            deferred_tools_active=any(
+                model_request_parameters.visibility_of(t.name) == 'deferred'
+                for t in model_request_parameters.function_tools
+            ),
+            # The API 400s if advisor blocks appear in history without the advisor tool in the current
+            # request, so when it's absent we strip advisor call/result blocks during replay (per
+            # Anthropic's docs). When present, blocks — including a dangling pause_turn call — round-trip
+            # verbatim (no pairing logic needed).
+            advisor_active=any(isinstance(t, AdvisorTool) for t in model_request_parameters.native_tools),
+            bm25_requested=any(
+                isinstance(t, ToolSearchTool) and t.strategy == 'bm25' for t in model_request_parameters.native_tools
+            ),
+            # Filter `tool_reference` entries during replay against the tools the current turn
+            # will actually send: Anthropic rejects references to tools not in the wire `tools`
+            # list (e.g. an MCP that failed to register this turn). The previously-discovered
+            # name still lives in history; it just isn't worth replaying as a tool reference.
+            #
+            # `tool_defs` rather than `function_tools` so this matches what `_prepare_tools_and_tool_choice`
+            # actually sends, which includes output tools. Nothing generates a reveal naming an output tool
+            # today — the framework's only generator reads `function_tools`, and the UI adapters round-trip
+            # names from it — so this changes no current behavior. It keeps the filter honest against the
+            # wire regardless, rather than silently dropping a block whenever the two sets diverge.
+            # Read after the `tool_choice` restriction, which leaves tools out of the request: a reveal naming
+            # one of those would be just as unknown as one naming a tool that's gone.
+            declared_tool_names=set(self._tool_choice_declarations(model_settings, model_request_parameters)[0]),
+            tool_defs_by_name={tool.name: tool for tool in model_request_parameters.function_tools},
+        )
+        leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
+        for m in messages:
+            if isinstance(m, ModelRequest):
+                standing_prompt_count = _standing_system_prompt_count(m) if m is leading_request else 0
+                await self._map_model_request(m, standing_prompt_count, map_context)
+            elif isinstance(m, ModelResponse):
+                self._map_model_response(m, map_context)
+            else:
+                assert_never(m)
+        anthropic_messages = map_context.anthropic_messages
+
+        _drop_unpaired_native_tool_calls(anthropic_messages)
+        _place_system_messages_before_generation(anthropic_messages)
+        _anchor_system_messages(anthropic_messages)
+        self._add_container_uploads(anthropic_messages, model_request_parameters)
+        system_prompt = self._build_system_prompt(
+            map_context.system_prompt_parts, messages, model_request_parameters, model_settings
+        )
+        return system_prompt, anthropic_messages
+
+    def _add_container_uploads(
+        self, anthropic_messages: list[BetaMessageParam], model_request_parameters: ModelRequestParameters
+    ) -> None:
+        """Add each Anthropic-hosted `CodeExecutionTool` file to every user message that can carry a `container_upload`."""
         # Cross-provider files are dropped silently here, not raised via
         # `_validate_uploaded_file_provider`; intentional per https://github.com/pydantic/pydantic-ai/issues/4338 (ignore over raise).
         pending_container_uploads = [
@@ -2333,45 +2498,92 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             for file in tool.files
             if file.provider_name == self.system
         ]
-        # Whenever this request withholds a tool's schema, render any local-shape `search_tools`
-        # history exchanges as Anthropic's "client-side" tool-search wire — `tool_use` paired with a
-        # `tool_result` whose `content` is a `tool_reference` array. That block is the reveal: it
-        # unlocks the withheld schemas server-side without forcing the model to re-search, and works
-        # regardless of the current request's strategy (default native, named native, or custom
-        # callable), covering the no-history single-turn custom callable case too (where the local
-        # `search_tools` exchange is created on this turn).
-        #
-        # Reading the deferred tools rather than the presence of a `ToolSearchTool` is deliberate:
-        # tool search is one thing that can trigger a reveal, not what makes a reveal legal. A run
-        # whose deferred tools are all capability-gated sends no search tool at all and still needs
-        # this, and Anthropic agrees — a `tool_reference` result with no tool-search tool in the
-        # request returns 200 and the model calls the revealed tool (verified live on
-        # `claude-sonnet-5` and `claude-opus-4-8`).
-        # A `None` visibility means unresolved parameters from a direct `Model` call (every
-        # production path resolves via `prepare_request` first); the authored flag is the stand-in.
-        deferred_tools_active = any(
-            model_request_parameters.visibility_of(t.name) == 'deferred'
-            for t in model_request_parameters.function_tools
-        )
-        # The API 400s if advisor blocks appear in history without the advisor tool in the current
-        # request, so when it's absent we strip advisor call/result blocks during replay (per
-        # Anthropic's docs). When present, blocks — including a dangling pause_turn call — round-trip
-        # verbatim (no pairing logic needed).
-        advisor_active = any(isinstance(t, AdvisorTool) for t in model_request_parameters.native_tools)
-        bm25_requested = any(
-            isinstance(t, ToolSearchTool) and t.strategy == 'bm25' for t in model_request_parameters.native_tools
-        )
-        # Filter `tool_reference` entries during replay against the tools the current turn
-        # will actually send: Anthropic rejects references to tools not in the wire `tools`
-        # list (e.g. an MCP that failed to register this turn). The previously-discovered
-        # name still lives in history; it just isn't worth replaying as a tool reference.
-        #
-        # `tool_defs` rather than `function_tools` so this matches what `_prepare_tools_and_tool_choice`
-        # actually sends, which includes output tools. Nothing generates a reveal naming an output tool
-        # today — the framework's only generator reads `function_tools`, and the UI adapters round-trip
-        # names from it — so this changes no current behavior. It keeps the filter honest against the
-        # wire regardless, rather than silently dropping a block whenever the two sets diverge.
-        declared_tool_names = set(model_request_parameters.declared_tool_defs)
+        if not pending_container_uploads:
+            return
+        for message in anthropic_messages:
+            if message['role'] == 'user':
+                existing = message['content']
+                assert isinstance(existing, list)
+                if _is_tool_result_only(existing):
+                    continue
+                extra: list[BetaContainerUploadBlockParam] = [
+                    {'type': 'container_upload', 'file_id': file_id} for file_id in pending_container_uploads
+                ]
+                message['content'] = [*existing, *extra]
+
+    def _build_system_prompt(
+        self,
+        system_prompt_parts: list[str],
+        messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+        model_settings: AnthropicModelSettings,
+    ) -> str | list[BetaTextBlockParam]:
+        """The top-level `system` parameter: the hoisted system prompt, then one block per instruction part."""
+        instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
+        system_prompt = '\n\n'.join(system_prompt_parts)
+        cache_instructions = model_settings.get('anthropic_cache_instructions')
+        if not instruction_parts and not (system_prompt and cache_instructions):
+            return system_prompt
+
+        # Each instruction part becomes a separate text block after the system prompt's.
+        leading_texts = [system_prompt] if system_prompt else []
+        system_prompt_blocks = [
+            BetaTextBlockParam(type='text', text=text)
+            for text in [*leading_texts, *(part.content for part in instruction_parts)]
+        ]
+        if cache_instructions:
+            # `instruction_parts` are sorted static-first, so the cache point goes on the last static
+            # instruction block, or on the system prompt block when every instruction is dynamic.
+            cache_block_idx = len(leading_texts) + sum(1 for part in instruction_parts if not part.dynamic) - 1
+            if cache_block_idx >= 0:
+                ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
+                system_prompt_blocks[cache_block_idx]['cache_control'] = self._build_cache_control(ttl)
+        return system_prompt_blocks
+
+    async def _map_model_request(
+        self, message: ModelRequest, standing_prompt_count: int, map_context: _MapMessagesContext
+    ) -> None:
+        """Append a `ModelRequest`'s user turn, then its `system` entries, to `map_context.anthropic_messages`."""
+        request_context = _MapModelRequestContext()
+        for part_index, request_part in enumerate(_sendable_request_parts(message.parts)):
+            if isinstance(request_part, SystemPromptPart):
+                self._map_system_prompt_part(
+                    request_part, part_index < standing_prompt_count, request_context, map_context
+                )
+            elif isinstance(request_part, UserPromptPart):
+                await self._map_user_prompt_part(request_part, request_context, map_context)
+            elif isinstance(request_part, (InstructionBaselinePart, InstructionDeltaPart)):
+                raise _unprojected_instruction_delta_error()
+            elif isinstance(request_part, ToolAvailabilityDeltaPart):
+                self._map_tool_availability_delta_part(
+                    request_part, request_context.tool_availability_blocks, map_context
+                )
+            elif isinstance(request_part, ToolReturnPart):
+                request_context.user_content_params.append(await self._map_tool_return_part(request_part, map_context))
+            elif isinstance(request_part, SpeechPart):  # pragma: no cover
+                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s.
+                raise _unconverted_speech_part_error()
+            elif isinstance(request_part, _UnpreparedPart):  # pragma: no cover
+                raise _unprepared_part_error(request_part)
+            else:
+                assert_never(request_part)
+        self._append_model_request_turns(request_context, map_context.anthropic_messages)
+
+    def _map_system_prompt_part(
+        self,
+        part: SystemPromptPart,
+        standing: bool,
+        request_context: _MapModelRequestContext,
+        map_context: _MapMessagesContext,
+    ) -> None:
+        # Narrowed to transports that serve the role, like `supports_inline_system_prompts` below. Where
+        # this is `False`, `prepare_messages` has already left out every request-scoped part whose
+        # request has been answered.
+        if part.scope == 'request' and self.profile.get('supports_request_scoped_system_prompts', False):
+            # Its own entry, so `clear_at` covers it alone. It needs no cache-point
+            # bookkeeping: it's never inside a cached prefix, and `cache_control` on it
+            # is a 400.
+            request_context.request_scoped_prompts.append(part.content)
         # Only the opening `SystemPromptPart`s in the first request are the run's own system prompt and
         # hoist to the top-level `system` parameter. Later ones are mid-conversation operator instructions:
         # where we support them they reach us verbatim (rather than `<system>`-tagged by `prepare_messages`)
@@ -2379,579 +2591,432 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # cached prefix the top-level `system` parameter sits in untouched. Where we don't,
         # `prepare_messages` has already rewritten them and none reach this branch — bar the adapter's
         # direct entry points, `count_tokens` and `request`, where hoisting them is the safe reading.
-        inline_system_prompts = self.profile.get('supports_inline_system_prompts', False)
-        # Narrowed to transports that serve the role, like the flag above. Where this is `False`,
-        # `prepare_messages` has already left out every request-scoped part whose request has been answered.
-        request_scoped_system_prompts = self.profile.get('supports_request_scoped_system_prompts', False)
-        # Already narrowed for transports that can't serve the `system` role, so this covers both halves
-        # of the gate — and it's the same flag the beta header is added under.
-        supports_tool_availability_delta = self.tool_addition_mode == 'by_reference'
-        leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
-        rendered_tool_additions: set[str] = set()
-        tool_defs_by_name = {tool.name: tool for tool in model_request_parameters.function_tools}
-        for m in messages:
-            if isinstance(m, ModelRequest):
-                standing_prompt_count = _standing_system_prompt_count(m) if m is leading_request else 0
-                user_content_params: list[BetaContentBlockParam] = []
-                mid_conversation_system_prompts: list[str] = []
-                request_scoped_prompts: list[str] = []
-                tool_availability_blocks: list[dict[str, Any]] = []
-                # `CachePoint`s authored after a mid-conversation instruction or a tool availability
-                # change, as the number of user blocks that preceded each one. They can't be placed
-                # while mapping: both render after this request's user blocks in the `system` entry
-                # despite being authored before the marker, so whether they fall inside the boundary
-                # depends on whether anything else follows the marker.
-                deferred_cache_points: list[tuple[int, Literal['5m', '1h']]] = []
-                for part_index, request_part in enumerate(_sendable_request_parts(m.parts)):
-                    if isinstance(request_part, SystemPromptPart):
-                        if request_part.scope == 'request' and request_scoped_system_prompts:
-                            # Its own entry, so `clear_at` covers it alone. It needs no cache-point
-                            # bookkeeping: it's never inside a cached prefix, and `cache_control` on it
-                            # is a 400.
-                            request_scoped_prompts.append(request_part.content)
-                        elif not inline_system_prompts or part_index < standing_prompt_count:
-                            system_prompt_parts.append(request_part.content)
-                        else:
-                            # System-voice parts within one request all precede the same assistant
-                            # response. Rendering an interleaved entry after sibling user content is
-                            # deterministic and preserves the only ordering boundary that matters.
-                            mid_conversation_system_prompts.append(request_part.content)
-                    elif isinstance(request_part, UserPromptPart):
-                        async for content in self._map_user_prompt(request_part):
-                            if isinstance(content, CachePoint):
-                                if mid_conversation_system_prompts or tool_availability_blocks:
-                                    deferred_cache_points.append((len(user_content_params), content.ttl))
-                                else:
-                                    # A `CachePoint` asks to cache everything up to that point, and it
-                                    # normally attaches to the block before it in this same user message.
-                                    # A mid-conversation instruction used to leave one there — it was
-                                    # folded in as `<system>`-tagged text — and now goes to its own
-                                    # `system` entry instead, so `[SystemPromptPart,
-                                    # UserPromptPart([CachePoint(), ...])]` arrives here with nothing to
-                                    # attach to and used to raise. The boundary is still well defined
-                                    # whenever the conversation has a previous message: it's the end of
-                                    # that message, which is everything the entry and this turn build on.
-                                    # Only a `CachePoint` with no prior content anywhere still raises,
-                                    # which is the case the error is actually about.
-                                    self._add_cache_control_to_last_param(
-                                        user_content_params or _last_message_content(anthropic_messages),
-                                        ttl=content.ttl,
-                                    )
-                            else:
-                                user_content_params.append(content)
-                    elif isinstance(request_part, (InstructionBaselinePart, InstructionDeltaPart)):
-                        raise _unprojected_instruction_delta_error()
-                    elif isinstance(request_part, ToolAvailabilityDeltaPart):
-                        if not supports_tool_availability_delta:
-                            # `prepare_messages` projects the delta onto the local tool-search exchange
-                            # for every model and transport that can't render it natively, so arriving
-                            # here means that projection didn't run — the same pipeline bug the other
-                            # adapters raise on, reachable by calling `Model.request` directly. Raising
-                            # matches them; rendering the blocks anyway would send them without the
-                            # `mid-conversation-tool-changes` beta header, which is added under this
-                            # same condition, and earn a 400 in place of an explanation.
-                            raise _unprepared_part_error(request_part)
-                        # Both block types carry a `tool_reference`, and the API rejects one naming a
-                        # tool this request doesn't declare: `tool_addition/tool_removal references
-                        # unknown tool '...'`. Replayed history routinely names tools that have since
-                        # gone — the turn announcing a removal is the last one that still declares it,
-                        # and a tool added then removed is absent from every turn after that. So a
-                        # block that can no longer be referenced is dropped, not asserted away: the
-                        # tool's absence from `tools` already tells the model what the block would.
-                        # `declared_tool_names` is the one bound above and shared with the tool-search
-                        # replay filters — same question, so it should be the same answer.
-                        for name in request_part.tools_added:
-                            tool_def = tool_defs_by_name.get(name)
-                            if (
-                                name in declared_tool_names
-                                and name not in rendered_tool_additions
-                                and tool_def is not None
-                                and model_request_parameters.visibility_of(name) != 'visible'
-                            ):
-                                tool_availability_blocks.append(
-                                    {'type': 'tool_addition', 'tool': {'type': 'tool_reference', 'name': name}}
-                                )
-                                rendered_tool_additions.add(name)
-                    elif isinstance(request_part, ToolReturnPart):
-                        tool_result_content: list[beta_tool_result_block_param.Content] = []
+        elif standing or not self.profile.get('supports_inline_system_prompts', False):
+            map_context.system_prompt_parts.append(part.content)
+        else:
+            # System-voice parts within one request all precede the same assistant
+            # response. Rendering an interleaved entry after sibling user content is
+            # deterministic and preserves the only ordering boundary that matters.
+            request_context.mid_conversation_system_prompts.append(part.content)
 
-                        custom_tool_refs, custom_empty_message = _build_custom_tool_search_replay_blocks(
-                            request_part, deferred_tools_active, declared_tool_names
-                        )
-                        if custom_tool_refs:
-                            tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
-                                tool_use_id=_guard_tool_call_id(t=request_part),
-                                type='tool_result',
-                                content=custom_tool_refs,
-                                is_error=False,
-                            )
-                            user_content_params.append(tool_result_block_param)
-                            continue
-                        if custom_tool_refs is not None:
-                            # Empty-results path on the custom-callable strategy. Anthropic
-                            # rejects an empty `tool_result.content` list, so we send the
-                            # `message` text from the typed return (set by the toolset's
-                            # `_empty_return`) as a single text block instead.
-                            empty_message = custom_empty_message or _NO_MATCHES_MESSAGE
-                            tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
-                                tool_use_id=_guard_tool_call_id(t=request_part),
-                                type='tool_result',
-                                content=[BetaTextBlockParam(text=empty_message, type='text')],
-                                is_error=False,
-                            )
-                            user_content_params.append(tool_result_block_param)
-                            continue
+    async def _map_user_prompt_part(
+        self, part: UserPromptPart, request_context: _MapModelRequestContext, map_context: _MapMessagesContext
+    ) -> None:
+        user_content_params = request_context.user_content_params
+        async for content in self._map_user_prompt(part):
+            if not isinstance(content, CachePoint):
+                user_content_params.append(content)
+            elif request_context.mid_conversation_system_prompts or request_context.tool_availability_blocks:
+                request_context.deferred_cache_points.append((len(user_content_params), content.ttl))
+            else:
+                # A `CachePoint` asks to cache everything up to that point, and it
+                # normally attaches to the block before it in this same user message.
+                # A mid-conversation instruction used to leave one there — it was
+                # folded in as `<system>`-tagged text — and now goes to its own
+                # `system` entry instead, so `[SystemPromptPart,
+                # UserPromptPart([CachePoint(), ...])]` arrives here with nothing to
+                # attach to and used to raise. The boundary is still well defined
+                # whenever the conversation has a previous message: it's the end of
+                # that message, which is everything the entry and this turn build on.
+                # Only a `CachePoint` with no prior content anywhere still raises,
+                # which is the case the error is actually about.
+                self._add_cache_control_to_last_param(
+                    user_content_params or _last_message_content(map_context.anthropic_messages),
+                    ttl=content.ttl,
+                )
 
-                        for item in request_part.content_items(mode='str', wrap_if_error=False):
-                            if isinstance(item, UploadedFile):
-                                self._validate_uploaded_file_provider(item)
-                                if item.media_type.startswith('image/'):
-                                    tool_result_content.append(
-                                        BetaImageBlockParam(
-                                            source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
-                                            type='image',
-                                        )
-                                    )
-                                elif item.media_type.startswith(('text/', 'application/')):
-                                    tool_result_content.append(
-                                        BetaRequestDocumentBlockParam(
-                                            source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
-                                            type='document',
-                                        )
-                                    )
-                                else:
-                                    raise UserError(
-                                        f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
-                                        'Only image and document (text/application) types are supported.'
-                                    )
-                            elif is_multi_modal_content(item):
-                                tool_result_content.append(await self._map_file_to_content_block(item, 'tool returns'))  # pyright: ignore[reportArgumentType]
-                            elif isinstance(item, str):  # pragma: no branch
-                                tool_result_content.append(BetaTextBlockParam(text=item, type='text'))
+    def _append_model_request_turns(
+        self, request_context: _MapModelRequestContext, anthropic_messages: list[BetaMessageParam]
+    ) -> None:
+        user_content_params = request_context.user_content_params
+        # A marker that ends the request has the instruction authored before it and nothing
+        # authored after it, so the `system` entry's final block is exactly its boundary. A
+        # marker with content after it can't have both, and lands where it was authored: the
+        # instruction then sits outside the boundary, which caches a prefix of what was asked
+        # for rather than more than was asked for.
+        system_entry_cache_ttl: Literal['5m', '1h'] | None = None
+        for marked_at, ttl in request_context.deferred_cache_points:
+            if marked_at == len(user_content_params):
+                system_entry_cache_ttl = ttl
+            else:
+                self._add_cache_control_to_last_param(
+                    user_content_params[:marked_at] or _last_message_content(anthropic_messages), ttl=ttl
+                )
+        if len(user_content_params) > 0:
+            anthropic_messages.append({'role': 'user', 'content': user_content_params})
+        if request_context.mid_conversation_system_prompts or request_context.tool_availability_blocks:
+            system_content_params: list[BetaContentBlockParam] = [
+                BetaTextBlockParam(text=content, type='text')
+                for content in request_context.mid_conversation_system_prompts
+            ]
+            system_content_params.extend(cast('list[BetaContentBlockParam]', request_context.tool_availability_blocks))
+            # The boundary covers the whole system entry, availability blocks included — a
+            # terminal `CachePoint` lands on the entry's final block, never inside the entry.
+            if system_entry_cache_ttl is not None:
+                self._add_cache_control_to_last_param(system_content_params, ttl=system_entry_cache_ttl)
+            anthropic_messages.append({'role': 'system', 'content': system_content_params})
+        if request_context.request_scoped_prompts:
+            # Sent with every request, current or not: once a later user turn exists the API stops
+            # rendering it, and leaving it in place is what keeps the cached prefix and the thinking
+            # blocks bound to it valid. It goes after the request's other system entry so that one
+            # can still carry the request's cache boundary.
+            anthropic_messages.append(
+                {
+                    'role': 'system',
+                    'content': [
+                        BetaTextBlockParam(text=content, type='text')
+                        for content in request_context.request_scoped_prompts
+                    ],
+                    'clear_at': 'next_user_message',
+                }
+            )
 
-                        tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
-                            tool_use_id=_guard_tool_call_id(t=request_part),
-                            type='tool_result',
-                            content=tool_result_content or '',
-                            is_error=request_part.outcome in ERROR_OUTCOMES,
-                        )
-                        user_content_params.append(tool_result_block_param)
-                    elif isinstance(request_part, SpeechPart):  # pragma: no cover
-                        # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s.
-                        raise _unconverted_speech_part_error()
-                    elif isinstance(request_part, _UnpreparedPart):  # pragma: no cover
-                        raise _unprepared_part_error(request_part)
-                    else:
-                        assert_never(request_part)
-                # A marker that ends the request has the instruction authored before it and nothing
-                # authored after it, so the `system` entry's final block is exactly its boundary. A
-                # marker with content after it can't have both, and lands where it was authored: the
-                # instruction then sits outside the boundary, which caches a prefix of what was asked
-                # for rather than more than was asked for.
-                system_entry_cache_ttl: Literal['5m', '1h'] | None = None
-                for marked_at, ttl in deferred_cache_points:
-                    if marked_at == len(user_content_params):
-                        system_entry_cache_ttl = ttl
-                    else:
-                        self._add_cache_control_to_last_param(
-                            user_content_params[:marked_at] or _last_message_content(anthropic_messages), ttl=ttl
-                        )
-                if len(user_content_params) > 0:
-                    anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
-                if mid_conversation_system_prompts or tool_availability_blocks:
-                    system_content_params: list[BetaContentBlockParam] = [
-                        BetaTextBlockParam(text=content, type='text') for content in mid_conversation_system_prompts
-                    ]
-                    system_content_params.extend(cast('list[BetaContentBlockParam]', tool_availability_blocks))
-                    # The boundary covers the whole system entry, availability blocks included — a
-                    # terminal `CachePoint` lands on the entry's final block, never inside the entry.
-                    if system_entry_cache_ttl is not None:
-                        self._add_cache_control_to_last_param(system_content_params, ttl=system_entry_cache_ttl)
-                    anthropic_messages.append(BetaMessageParam(role='system', content=system_content_params))
-                if request_scoped_prompts:
-                    # Sent with every request, current or not: once a later user turn exists the API stops
-                    # rendering it, and leaving it in place is what keeps the cached prefix and the thinking
-                    # blocks bound to it valid. It goes after the request's other system entry so that one
-                    # can still carry the request's cache boundary.
-                    anthropic_messages.append(
-                        BetaMessageParam(
-                            role='system',
-                            content=[
-                                BetaTextBlockParam(text=content, type='text') for content in request_scoped_prompts
-                            ],
-                            clear_at='next_user_message',
+    def _map_tool_availability_delta_part(
+        self,
+        part: ToolAvailabilityDeltaPart,
+        tool_availability_blocks: list[dict[str, Any]],
+        map_context: _MapMessagesContext,
+    ) -> None:
+        # `tool_addition_mode` is already narrowed for transports that can't serve the `system` role, so
+        # this covers both halves of the gate — and it's the same flag the beta header is added under.
+        if self.tool_addition_mode != 'by_reference':
+            # `prepare_messages` projects the delta onto the local tool-search exchange
+            # for every model and transport that can't render it natively, so arriving
+            # here means that projection didn't run — the same pipeline bug the other
+            # adapters raise on, reachable by calling `Model.request` directly. Raising
+            # matches them; rendering the blocks anyway would send them without the
+            # `mid-conversation-tool-changes` beta header, which is added under this
+            # same condition, and earn a 400 in place of an explanation.
+            raise _unprepared_part_error(part)
+        # Both block types carry a `tool_reference`, and the API rejects one naming a
+        # tool this request doesn't declare: `tool_addition/tool_removal references
+        # unknown tool '...'`. Replayed history routinely names tools that have since
+        # gone — the turn announcing a removal is the last one that still declares it,
+        # and a tool added then removed is absent from every turn after that. So a
+        # block that can no longer be referenced is dropped, not asserted away: the
+        # tool's absence from `tools` already tells the model what the block would.
+        # `declared_tool_names` is the one shared with the tool-search replay filters —
+        # same question, so it should be the same answer.
+        for name in part.tools_added:
+            tool_def = map_context.tool_defs_by_name.get(name)
+            if (
+                name in map_context.declared_tool_names
+                and name not in map_context.rendered_tool_additions
+                and tool_def is not None
+                and map_context.model_request_parameters.visibility_of(name) != 'visible'
+            ):
+                tool_availability_blocks.append(
+                    {'type': 'tool_addition', 'tool': {'type': 'tool_reference', 'name': name}}
+                )
+                map_context.rendered_tool_additions.add(name)
+
+    async def _map_tool_return_part(
+        self, part: ToolReturnPart, map_context: _MapMessagesContext
+    ) -> beta_tool_result_block_param.BetaToolResultBlockParam:
+        custom_tool_refs, custom_empty_message = _build_custom_tool_search_replay_blocks(
+            part, map_context.deferred_tools_active, map_context.declared_tool_names
+        )
+        if custom_tool_refs:
+            return beta_tool_result_block_param.BetaToolResultBlockParam(
+                tool_use_id=_guard_tool_call_id(t=part),
+                type='tool_result',
+                content=custom_tool_refs,
+                is_error=False,
+            )
+        if custom_tool_refs is not None:
+            # Empty-results path on the custom-callable strategy. Anthropic
+            # rejects an empty `tool_result.content` list, so we send the
+            # `message` text from the typed return (set by the toolset's
+            # `_empty_return`) as a single text block instead.
+            return beta_tool_result_block_param.BetaToolResultBlockParam(
+                tool_use_id=_guard_tool_call_id(t=part),
+                type='tool_result',
+                content=[BetaTextBlockParam(text=custom_empty_message or _NO_MATCHES_MESSAGE, type='text')],
+                is_error=False,
+            )
+
+        tool_result_content: list[beta_tool_result_block_param.Content] = []
+        for item in part.content_items(mode='str', wrap_if_error=False):
+            if isinstance(item, UploadedFile):
+                self._validate_uploaded_file_provider(item)
+                if item.media_type.startswith('image/'):
+                    tool_result_content.append(
+                        BetaImageBlockParam(
+                            source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
+                            type='image',
                         )
                     )
-            elif isinstance(m, ModelResponse):
-                assistant_content_params: list[
-                    BetaTextBlockParam
-                    | BetaToolUseBlockParam
-                    | BetaServerToolUseBlockParam
-                    | BetaWebSearchToolResultBlockParam
-                    | BetaCodeExecutionToolResultBlockParam
-                    | BetaBashCodeExecutionToolResultBlockParam
-                    | BetaTextEditorCodeExecutionToolResultBlockParam
-                    | BetaWebFetchToolResultBlockParam
-                    | BetaToolSearchToolResultBlockParam
-                    | BetaAdvisorToolResultBlockParam
-                    | BetaThinkingBlockParam
-                    | BetaRedactedThinkingBlockParam
-                    | BetaMCPToolUseBlockParam
-                    | BetaRequestMCPToolResultBlockParam
-                    | BetaCompactionBlockParam
-                ] = []
-                carried_thinking_params: list[BetaTextBlockParam] = []
-                for response_part in m.parts:
-                    if isinstance(response_part, TextPart):
-                        if response_part.content:
-                            assistant_content_params.append(BetaTextBlockParam(text=response_part.content, type='text'))
-                    elif isinstance(response_part, ToolCallPart):
-                        tool_use_block_param = BetaToolUseBlockParam(
-                            id=_guard_tool_call_id(t=response_part),
-                            type='tool_use',
-                            name=response_part.tool_name,
-                            input=response_part.args_as_dict(),
+                elif item.media_type.startswith(('text/', 'application/')):
+                    tool_result_content.append(
+                        BetaRequestDocumentBlockParam(
+                            source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
+                            type='document',
                         )
-                        assistant_content_params.append(tool_use_block_param)
-                    elif isinstance(response_part, ThinkingPart):
-                        # An empty signature (e.g. from an interrupted stream) is never valid,
-                        # so fall back to tagged text rather than triggering a 400 from the API.
-                        if response_part.provider_name == self.system and response_part.signature:
-                            if response_part.id == 'redacted_thinking':
-                                assistant_content_params.append(
-                                    BetaRedactedThinkingBlockParam(
-                                        data=response_part.signature,
-                                        type='redacted_thinking',
-                                    )
-                                )
-                            else:
-                                assistant_content_params.append(
-                                    BetaThinkingBlockParam(
-                                        thinking=response_part.content,
-                                        signature=response_part.signature,
-                                        type='thinking',
-                                    )
-                                )
-                        elif response_part.content:  # pragma: no branch
-                            thinking_text, carry_in_user_turn = render_replayed_thinking(
-                                response_part.content, self.profile
-                            )
-                            thinking_param = BetaTextBlockParam(text=thinking_text, type='text')
-                            if carry_in_user_turn:
-                                carried_thinking_params.append(thinking_param)
-                            else:
-                                assistant_content_params.append(thinking_param)
-                    elif isinstance(response_part, NativeToolCallPart):
-                        if response_part.provider_name == self.system:
-                            tool_use_id = _guard_tool_call_id(t=response_part)
-                            if response_part.tool_name == WebSearchTool.kind:
-                                server_tool_use_block_param = BetaServerToolUseBlockParam(
-                                    id=tool_use_id,
-                                    type='server_tool_use',
-                                    name='web_search',
-                                    input=response_part.args_as_dict(),
-                                )
-                                _add_anthropic_caller_param(server_tool_use_block_param, response_part)
-                                assistant_content_params.append(server_tool_use_block_param)
-                            elif response_part.tool_name in (
-                                CodeExecutionTool.kind,
-                                'bash_code_execution',
-                                'text_editor_code_execution',
-                            ):
-                                anthropic_tool_name = _get_anthropic_code_execution_tool_name(response_part)
-                                server_tool_use_block_param = BetaServerToolUseBlockParam(
-                                    id=tool_use_id,
-                                    type='server_tool_use',
-                                    name=anthropic_tool_name,
-                                    input=response_part.args_as_dict(),
-                                )
-                                _add_anthropic_caller_param(server_tool_use_block_param, response_part)
-                                assistant_content_params.append(server_tool_use_block_param)
-                            elif response_part.tool_name == WebFetchTool.kind:
-                                server_tool_use_block_param = BetaServerToolUseBlockParam(
-                                    id=tool_use_id,
-                                    type='server_tool_use',
-                                    name='web_fetch',
-                                    input=response_part.args_as_dict(),
-                                )
-                                _add_anthropic_caller_param(server_tool_use_block_param, response_part)
-                                assistant_content_params.append(server_tool_use_block_param)
-                            elif response_part.tool_name == AdvisorTool.kind:
-                                if not advisor_active:
-                                    continue
-                                server_tool_use_block_param = BetaServerToolUseBlockParam(
-                                    id=tool_use_id,
-                                    type='server_tool_use',
-                                    name='advisor',
-                                    input=response_part.args_as_dict(),
-                                )
-                                _add_anthropic_caller_param(server_tool_use_block_param, response_part)
-                                assistant_content_params.append(server_tool_use_block_param)
-                            elif response_part.tool_name == ToolSearchTool.kind:
-                                # Round-trip the native variant (bm25/regex) so we don't
-                                # silently rewrite the algorithm. `_map_server_tool_use_block`
-                                # stashes it in `provider_details['strategy']`. On the legacy Bedrock
-                                # InvokeModel API, `bm25` calls replay as `regex` unless this request
-                                # asks for `bm25` (see `_REGEX_DEFAULT_TOOL_SEARCH_CLIENTS`).
-                                details = response_part.provider_details or {}
-                                strategy: Literal['bm25', 'regex'] = (
-                                    'regex'
-                                    if details.get('strategy') == 'regex'
-                                    or (
-                                        isinstance(self.client, _REGEX_DEFAULT_TOOL_SEARCH_CLIENTS)
-                                        and not bm25_requested
-                                    )
-                                    else 'bm25'
-                                )
-                                native_name = (
-                                    'tool_search_tool_regex' if strategy == 'regex' else 'tool_search_tool_bm25'
-                                )
-                                # Rebuild the variant-specific wire shape from the
-                                # cross-provider `queries` slot. bm25 expects `{"query": "..."}`,
-                                # regex expects `{"pattern": "..."}`. Joining with a space
-                                # matches Anthropic's single-string input on either variant.
-                                args_dict = response_part.args_as_dict()
-                                if 'queries' in args_dict:
-                                    raw_queries = args_dict.get('queries')
-                                    queries: list[str] = (
-                                        [q for q in cast('list[Any]', raw_queries) if isinstance(q, str)]
-                                        if isinstance(raw_queries, list)
-                                        else []
-                                    )
-                                    wire_key = 'pattern' if strategy == 'regex' else 'query'
-                                    wire_input: dict[str, Any] = {wire_key: ' '.join(queries)}
-                                else:
-                                    wire_input = args_dict
-                                server_tool_use_block_param = BetaServerToolUseBlockParam(
-                                    id=tool_use_id,
-                                    type='server_tool_use',
-                                    name=native_name,
-                                    input=wire_input,
-                                )
-                                _add_anthropic_caller_param(server_tool_use_block_param, response_part)
-                                assistant_content_params.append(server_tool_use_block_param)
-                            elif (
-                                response_part.tool_name.startswith(MCPServerTool.kind)
-                                and (server_id := response_part.tool_name.split(':', 1)[1])
-                                and (args := response_part.args_as_dict())
-                                and (tool_name := args.get('tool_name'))
-                                and (tool_args := args.get('tool_args')) is not None
-                            ):  # pragma: no branch
-                                mcp_tool_use_block_param = BetaMCPToolUseBlockParam(
-                                    id=tool_use_id,
-                                    type='mcp_tool_use',
-                                    server_name=server_id,
-                                    name=tool_name,
-                                    input=tool_args,
-                                )
-                                assistant_content_params.append(mcp_tool_use_block_param)
-                    elif isinstance(response_part, NativeToolReturnPart):
-                        if response_part.provider_name == self.system:
-                            tool_use_id = _guard_tool_call_id(t=response_part)
-                            if response_part.tool_name in (
-                                WebSearchTool.kind,
-                                'web_search_tool_result',  # Backward compatibility
-                            ) and isinstance(response_part.content, dict | list):
-                                block = BetaWebSearchToolResultBlockParam(
-                                    tool_use_id=tool_use_id,
-                                    type='web_search_tool_result',
-                                    content=cast(
-                                        BetaWebSearchToolResultBlockParamContentParam,
-                                        response_part.content,  # pyright: ignore[reportUnknownMemberType]
-                                    ),
-                                )
-                                _add_anthropic_caller_param(block, response_part)
-                                assistant_content_params.append(block)
-                            elif response_part.tool_name in (
-                                CodeExecutionTool.kind,
-                                'code_execution_tool_result',  # Backward compatibility
-                                'bash_code_execution',
-                                'text_editor_code_execution',
-                            ) and isinstance(response_part.content, dict | list):
-                                match _get_anthropic_code_execution_tool_name(response_part):
-                                    case 'code_execution':
-                                        assistant_content_params.append(
-                                            BetaCodeExecutionToolResultBlockParam(
-                                                tool_use_id=tool_use_id,
-                                                type='code_execution_tool_result',
-                                                content=cast(
-                                                    BetaCodeExecutionToolResultBlockParamContentParam,
-                                                    response_part.content,  # pyright: ignore[reportUnknownMemberType]
-                                                ),
-                                            )
-                                        )
-                                    case 'bash_code_execution':
-                                        assistant_content_params.append(
-                                            BetaBashCodeExecutionToolResultBlockParam(
-                                                tool_use_id=tool_use_id,
-                                                type='bash_code_execution_tool_result',
-                                                content=cast(
-                                                    BashCodeExecutionToolResultBlockParamContent,
-                                                    response_part.content,  # pyright: ignore[reportUnknownMemberType]
-                                                ),
-                                            )
-                                        )
-                                    case 'text_editor_code_execution':  # pragma: no branch
-                                        assistant_content_params.append(
-                                            BetaTextEditorCodeExecutionToolResultBlockParam(
-                                                tool_use_id=tool_use_id,
-                                                type='text_editor_code_execution_tool_result',
-                                                content=cast(
-                                                    TextEditorCodeExecutionToolResultBlockParamContent,
-                                                    response_part.content,  # pyright: ignore[reportUnknownMemberType]
-                                                ),
-                                            )
-                                        )
-                            elif response_part.tool_name == WebFetchTool.kind and isinstance(
-                                response_part.content, dict
-                            ):
-                                block = BetaWebFetchToolResultBlockParam(
-                                    tool_use_id=tool_use_id,
-                                    type='web_fetch_tool_result',
-                                    content=cast(
-                                        WebFetchToolResultBlockParamContent,
-                                        response_part.content,  # pyright: ignore[reportUnknownMemberType]
-                                    ),
-                                )
-                                _add_anthropic_caller_param(block, response_part)
-                                assistant_content_params.append(block)
-                            elif response_part.tool_name == AdvisorTool.kind:
-                                # Drop advisor result blocks when continuing without the advisor tool: the
-                                # API 400s if they appear in history without the tool in the request, and
-                                # Anthropic's docs prescribe stripping them (mirrors the orphan tool-search
-                                # drop above). When kept, the discriminated content dict round-trips verbatim
-                                # so the server can decrypt a redacted advisor result on the next turn.
-                                if advisor_active and isinstance(response_part.content, dict):
-                                    assistant_content_params.append(
-                                        BetaAdvisorToolResultBlockParam(
-                                            tool_use_id=tool_use_id,
-                                            type='advisor_tool_result',
-                                            content=cast(
-                                                AdvisorToolResultBlockParamContent,
-                                                response_part.content,  # pyright: ignore[reportUnknownMemberType]
-                                            ),
-                                        )
-                                    )
-                            elif isinstance(response_part, NativeToolSearchReturnPart):
-                                assistant_content_params.append(
-                                    _build_tool_search_replay_block(response_part, tool_use_id, declared_tool_names)
-                                )
-                            elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
-                                response_part.content, dict
-                            ):  # pragma: no branch
-                                mcp_content = cast(
-                                    'dict[str, Any]',
-                                    response_part.content,  # pyright: ignore[reportUnknownMemberType]
-                                )
-                                assistant_content_params.append(
-                                    BetaRequestMCPToolResultBlockParam(
-                                        content=mcp_content['content'],
-                                        is_error=mcp_content['is_error'],
-                                        tool_use_id=tool_use_id,
-                                        type='mcp_tool_result',
-                                    )
-                                )
-                    elif isinstance(response_part, CompactionPart):
-                        if response_part.provider_name == self.system:  # pragma: no branch
-                            compaction_block = BetaCompactionBlockParam(
-                                content=response_part.content, type='compaction'
-                            )
-                            if (
-                                response_part.provider_details
-                                and response_part.provider_details.get('encrypted_content') is not None
-                            ):
-                                compaction_block['encrypted_content'] = response_part.provider_details[
-                                    'encrypted_content'
-                                ]
-                            assistant_content_params.append(compaction_block)
-                    elif isinstance(response_part, FilePart):  # pragma: no cover
-                        # Files generated by models are not sent back to models that don't themselves generate files.
-                        pass
-                    elif isinstance(response_part, SpeechPart):  # pragma: no cover
-                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
-                        raise _unconverted_speech_part_error()
-                    else:
-                        assert_never(response_part)
-                if carried_thinking_params:
-                    # Reasoning replayed in an assistant turn teaches a model that imitates assistant
-                    # formatting to write `<thinking>` tags into its visible answers
-                    # (https://github.com/pydantic/pydantic-ai/issues/5869), so it gets a user turn of its
-                    # own, built here so its position is fixed while mapping. It goes *ahead* of any
-                    # `system` entry this request emitted, so that entry has no user turn to hop and keeps
-                    # the cache boundary it was authored with (see `_place_system_messages_before_generation`).
-                    insert_at = len(anthropic_messages)
-                    while insert_at > 0 and anthropic_messages[insert_at - 1]['role'] == 'system':
-                        insert_at -= 1
-                    anthropic_messages.insert(insert_at, BetaMessageParam(role='user', content=carried_thinking_params))
-                if len(assistant_content_params) > 0:
-                    anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
-            else:
-                assert_never(m)
-
-        _drop_unpaired_native_tool_calls(anthropic_messages)
-        _place_system_messages_before_generation(anthropic_messages)
-        _anchor_system_messages(anthropic_messages)
-
-        if pending_container_uploads:
-            for message in anthropic_messages:
-                if message['role'] == 'user':
-                    existing = message['content']
-                    assert isinstance(existing, list)
-                    if _is_tool_result_only(existing):
-                        continue
-                    extra: list[BetaContainerUploadBlockParam] = [
-                        {'type': 'container_upload', 'file_id': file_id} for file_id in pending_container_uploads
-                    ]
-                    message['content'] = [*existing, *extra]
-
-        instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
-        system_prompt = '\n\n'.join(system_prompt_parts)
-
-        # Build system prompt blocks: each instruction part becomes a separate text block.
-        # When anthropic_cache_instructions is enabled, the cache point goes after the last
-        # static instruction (or at the end if all instructions are static).
-        cache_instructions = model_settings.get('anthropic_cache_instructions')
-
-        if instruction_parts or cache_instructions:
-            system_prompt_blocks: list[BetaTextBlockParam] = []
-
-            if system_prompt:
-                system_prompt_blocks.append(BetaTextBlockParam(type='text', text=system_prompt))
-
-            if instruction_parts:
-                for part in instruction_parts:
-                    system_prompt_blocks.append(BetaTextBlockParam(type='text', text=part.content))
-
-            if system_prompt_blocks and cache_instructions:
-                ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
-                # Find the last block that corresponds to a static instruction.
-                # system_prompt_blocks layout: [system_prompt_block?, ...instruction_blocks]
-                # instruction_parts are sorted static-first, so find the boundary.
-                if instruction_parts:
-                    has_dynamic = any(p.dynamic for p in instruction_parts)
-                    if has_dynamic:
-                        # Cache after the last static instruction block
-                        num_prefix_blocks = 1 if system_prompt else 0
-                        num_static = sum(1 for p in instruction_parts if not p.dynamic)
-                        if num_static > 0:
-                            cache_block_idx = num_prefix_blocks + num_static - 1
-                        else:
-                            # All dynamic: cache the system prompt block if it exists
-                            cache_block_idx = 0 if system_prompt else None
-                    else:
-                        # All static: cache the last block
-                        cache_block_idx = len(system_prompt_blocks) - 1
+                    )
                 else:
-                    # No instruction parts, just system prompt: cache it
-                    cache_block_idx = 0
+                    raise UserError(
+                        f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
+                        'Only image and document (text/application) types are supported.'
+                    )
+            elif is_multi_modal_content(item):
+                tool_result_content.append(await self._map_file_to_content_block(item, 'tool returns'))  # pyright: ignore[reportArgumentType]
+            elif isinstance(item, str):  # pragma: no branch
+                tool_result_content.append(BetaTextBlockParam(text=item, type='text'))
 
-                if cache_block_idx is not None:
-                    system_prompt_blocks[cache_block_idx]['cache_control'] = self._build_cache_control(ttl)
+        return beta_tool_result_block_param.BetaToolResultBlockParam(
+            tool_use_id=_guard_tool_call_id(t=part),
+            type='tool_result',
+            content=tool_result_content or '',
+            is_error=part.outcome in ERROR_OUTCOMES,
+        )
 
-            if system_prompt_blocks:
-                return system_prompt_blocks, anthropic_messages
+    def _map_model_response(self, message: ModelResponse, map_context: _MapMessagesContext) -> None:
+        """Append a `ModelResponse`'s assistant turn to `map_context.anthropic_messages`."""
+        assistant_content_params: list[_AssistantContentBlockParam] = []
+        carried_thinking_params: list[BetaTextBlockParam] = []
+        for response_part in message.parts:
+            if isinstance(response_part, TextPart):
+                if response_part.content:
+                    assistant_content_params.append(BetaTextBlockParam(text=response_part.content, type='text'))
+            elif isinstance(response_part, ToolCallPart):
+                assistant_content_params.append(
+                    BetaToolUseBlockParam(
+                        id=_guard_tool_call_id(t=response_part),
+                        type='tool_use',
+                        name=response_part.tool_name,
+                        input=response_part.args_as_dict(),
+                    )
+                )
+            elif isinstance(response_part, ThinkingPart):
+                self._map_thinking_part(response_part, assistant_content_params, carried_thinking_params)
+            elif isinstance(response_part, NativeToolCallPart):
+                self._map_native_tool_call_part(response_part, assistant_content_params, map_context)
+            elif isinstance(response_part, NativeToolReturnPart):
+                self._map_native_tool_return_part(response_part, assistant_content_params, map_context)
+            elif isinstance(response_part, CompactionPart):
+                self._map_compaction_part(response_part, assistant_content_params)
+            elif isinstance(response_part, FilePart):  # pragma: no cover
+                # Files generated by models are not sent back to models that don't themselves generate files.
+                pass
+            elif isinstance(response_part, SpeechPart):  # pragma: no cover
+                # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                raise _unconverted_speech_part_error()
+            else:
+                assert_never(response_part)
+        self._append_model_response_turns(
+            assistant_content_params, carried_thinking_params, map_context.anthropic_messages
+        )
 
-        return system_prompt, anthropic_messages
+    @staticmethod
+    def _append_model_response_turns(
+        assistant_content_params: list[_AssistantContentBlockParam],
+        carried_thinking_params: list[BetaTextBlockParam],
+        anthropic_messages: list[BetaMessageParam],
+    ) -> None:
+        if carried_thinking_params:
+            # Reasoning replayed in an assistant turn teaches a model that imitates assistant
+            # formatting to write `<thinking>` tags into its visible answers
+            # (https://github.com/pydantic/pydantic-ai/issues/5869), so it gets a user turn of its
+            # own, built here so its position is fixed while mapping. It goes *ahead* of any
+            # `system` entry this request emitted, so that entry has no user turn to hop and keeps
+            # the cache boundary it was authored with (see `_place_system_messages_before_generation`).
+            insert_at = len(anthropic_messages)
+            while insert_at > 0 and anthropic_messages[insert_at - 1]['role'] == 'system':
+                insert_at -= 1
+            anthropic_messages.insert(insert_at, {'role': 'user', 'content': carried_thinking_params})
+        if len(assistant_content_params) > 0:
+            anthropic_messages.append({'role': 'assistant', 'content': assistant_content_params})
+
+    def _map_compaction_part(
+        self, part: CompactionPart, assistant_content_params: list[_AssistantContentBlockParam]
+    ) -> None:
+        if part.provider_name == self.system:  # pragma: no branch
+            compaction_block = BetaCompactionBlockParam(content=part.content, type='compaction')
+            if part.provider_details and part.provider_details.get('encrypted_content') is not None:
+                compaction_block['encrypted_content'] = part.provider_details['encrypted_content']
+            assistant_content_params.append(compaction_block)
+
+    def _map_thinking_part(
+        self,
+        part: ThinkingPart,
+        assistant_content_params: list[_AssistantContentBlockParam],
+        carried_thinking_params: list[BetaTextBlockParam],
+    ) -> None:
+        # An empty signature (e.g. from an interrupted stream) is never valid,
+        # so fall back to tagged text rather than triggering a 400 from the API.
+        if part.provider_name == self.system and part.signature:
+            if part.id == 'redacted_thinking':
+                assistant_content_params.append(
+                    BetaRedactedThinkingBlockParam(data=part.signature, type='redacted_thinking')
+                )
+            else:
+                assistant_content_params.append(
+                    BetaThinkingBlockParam(thinking=part.content, signature=part.signature, type='thinking')
+                )
+        elif part.content:  # pragma: no branch
+            thinking_text, carry_in_user_turn = render_replayed_thinking(part.content, self.profile)
+            thinking_param = BetaTextBlockParam(text=thinking_text, type='text')
+            if carry_in_user_turn:
+                carried_thinking_params.append(thinking_param)
+            else:
+                assistant_content_params.append(thinking_param)
+
+    def _map_native_tool_call_part(
+        self,
+        part: NativeToolCallPart,
+        assistant_content_params: list[_AssistantContentBlockParam],
+        map_context: _MapMessagesContext,
+    ) -> None:
+        if part.provider_name != self.system:
+            return
+        tool_use_id = _guard_tool_call_id(t=part)
+        if part.tool_name == WebSearchTool.kind:
+            name, tool_input = 'web_search', part.args_as_dict()
+        elif part.tool_name in (
+            CodeExecutionTool.kind,
+            'bash_code_execution',
+            'text_editor_code_execution',
+        ):
+            name, tool_input = _get_anthropic_code_execution_tool_name(part), part.args_as_dict()
+        elif part.tool_name == WebFetchTool.kind:
+            name, tool_input = 'web_fetch', part.args_as_dict()
+        elif part.tool_name == AdvisorTool.kind:
+            if not map_context.advisor_active:
+                return
+            name, tool_input = 'advisor', part.args_as_dict()
+        elif part.tool_name == ToolSearchTool.kind:
+            name, tool_input = self._map_tool_search_call_input(part, map_context.bm25_requested)
+        else:
+            if (
+                part.tool_name.startswith(MCPServerTool.kind)
+                and (server_id := part.tool_name.split(':', 1)[1])
+                and (args := part.args_as_dict())
+                and (tool_name := args.get('tool_name'))
+                and (tool_args := args.get('tool_args')) is not None
+            ):  # pragma: no branch
+                mcp_tool_use_block_param = BetaMCPToolUseBlockParam(
+                    id=tool_use_id,
+                    type='mcp_tool_use',
+                    server_name=server_id,
+                    name=tool_name,
+                    input=tool_args,
+                )
+                assistant_content_params.append(mcp_tool_use_block_param)
+            return
+        server_tool_use_block_param = BetaServerToolUseBlockParam(
+            id=tool_use_id,
+            type='server_tool_use',
+            name=name,
+            input=tool_input,
+        )
+        _add_anthropic_caller_param(server_tool_use_block_param, part)
+        assistant_content_params.append(server_tool_use_block_param)
+
+    def _map_tool_search_call_input(
+        self, part: NativeToolCallPart, bm25_requested: bool
+    ) -> tuple[Literal['tool_search_tool_regex', 'tool_search_tool_bm25'], dict[str, Any]]:
+        # Round-trip the native variant (bm25/regex) so we don't
+        # silently rewrite the algorithm. `_map_server_tool_use_block`
+        # stashes it in `provider_details['strategy']`. On the legacy Bedrock
+        # InvokeModel API, `bm25` calls replay as `regex` unless this request
+        # asks for `bm25` (see `_REGEX_DEFAULT_TOOL_SEARCH_CLIENTS`).
+        details = part.provider_details or {}
+        strategy: Literal['bm25', 'regex'] = (
+            'regex'
+            if details.get('strategy') == 'regex'
+            or (isinstance(self.client, _REGEX_DEFAULT_TOOL_SEARCH_CLIENTS) and not bm25_requested)
+            else 'bm25'
+        )
+        native_name = 'tool_search_tool_regex' if strategy == 'regex' else 'tool_search_tool_bm25'
+        # Rebuild the variant-specific wire shape from the
+        # cross-provider `queries` slot. bm25 expects `{"query": "..."}`,
+        # regex expects `{"pattern": "..."}`. Joining with a space
+        # matches Anthropic's single-string input on either variant.
+        args_dict = part.args_as_dict()
+        if 'queries' not in args_dict:
+            return native_name, args_dict
+        raw_queries = args_dict.get('queries')
+        queries: list[str] = (
+            [q for q in cast('list[Any]', raw_queries) if isinstance(q, str)] if isinstance(raw_queries, list) else []
+        )
+        wire_key = 'pattern' if strategy == 'regex' else 'query'
+        return native_name, {wire_key: ' '.join(queries)}
+
+    def _map_native_tool_return_part(
+        self,
+        part: NativeToolReturnPart,
+        assistant_content_params: list[_AssistantContentBlockParam],
+        map_context: _MapMessagesContext,
+    ) -> None:
+        if part.provider_name != self.system:
+            return
+        tool_use_id = _guard_tool_call_id(t=part)
+        if part.tool_name in (
+            WebSearchTool.kind,
+            'web_search_tool_result',  # Backward compatibility
+        ) and isinstance(part.content, dict | list):
+            block = BetaWebSearchToolResultBlockParam(
+                tool_use_id=tool_use_id,
+                type='web_search_tool_result',
+                content=cast(
+                    BetaWebSearchToolResultBlockParamContentParam,
+                    part.content,  # pyright: ignore[reportUnknownMemberType]
+                ),
+            )
+            _add_anthropic_caller_param(block, part)
+            assistant_content_params.append(block)
+        elif part.tool_name in (
+            CodeExecutionTool.kind,
+            'code_execution_tool_result',  # Backward compatibility
+            'bash_code_execution',
+            'text_editor_code_execution',
+        ) and isinstance(part.content, dict | list):
+            assistant_content_params.append(_build_code_execution_tool_result_block(part, tool_use_id))
+        elif part.tool_name == WebFetchTool.kind and isinstance(part.content, dict):
+            block = BetaWebFetchToolResultBlockParam(
+                tool_use_id=tool_use_id,
+                type='web_fetch_tool_result',
+                content=cast(
+                    WebFetchToolResultBlockParamContent,
+                    part.content,  # pyright: ignore[reportUnknownMemberType]
+                ),
+            )
+            _add_anthropic_caller_param(block, part)
+            assistant_content_params.append(block)
+        elif part.tool_name == AdvisorTool.kind:
+            # Drop advisor result blocks when continuing without the advisor tool: the
+            # API 400s if they appear in history without the tool in the request, and
+            # Anthropic's docs prescribe stripping them (mirrors the orphan tool-search
+            # drop above). When kept, the discriminated content dict round-trips verbatim
+            # so the server can decrypt a redacted advisor result on the next turn.
+            if map_context.advisor_active and isinstance(part.content, dict):
+                assistant_content_params.append(
+                    BetaAdvisorToolResultBlockParam(
+                        tool_use_id=tool_use_id,
+                        type='advisor_tool_result',
+                        content=cast(
+                            AdvisorToolResultBlockParamContent,
+                            part.content,  # pyright: ignore[reportUnknownMemberType]
+                        ),
+                    )
+                )
+        elif isinstance(part, NativeToolSearchReturnPart):
+            assistant_content_params.append(
+                _build_tool_search_replay_block(part, tool_use_id, map_context.declared_tool_names)
+            )
+        elif part.tool_name.startswith(MCPServerTool.kind) and isinstance(part.content, dict):  # pragma: no branch
+            mcp_content = cast(
+                'dict[str, Any]',
+                part.content,  # pyright: ignore[reportUnknownMemberType]
+            )
+            assistant_content_params.append(
+                BetaRequestMCPToolResultBlockParam(
+                    content=mcp_content['content'],
+                    is_error=mcp_content['is_error'],
+                    tool_use_id=tool_use_id,
+                    type='mcp_tool_result',
+                )
+            )
 
     @staticmethod
     def _limit_cache_points(
@@ -3325,6 +3390,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             effort = resolve_anthropic_effort(
                 model_request_parameters.thinking,
                 supports_xhigh=self.profile.get('anthropic_supports_xhigh_effort', False),
+                supports_max=self.profile.get('anthropic_supports_max_effort', True),
             )
 
         if effort is not None:
@@ -3551,6 +3617,43 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
                 details[f'advisor_{key}'] = advisor_total
 
     return details
+
+
+def _last_pass_input_tokens(response_usage: BetaUsage | BetaMessageDeltaUsage) -> int | None:
+    """The input tokens of a response's last sampling pass, cache included, or `None` when the passes aren't reported.
+
+    A server-side tool loop samples the model once per tool round, and the top-level usage sums the passes: what they
+    cost, but more than any pass's context. A beta that returns `iterations` (such as `compact-2026-01-12`) reports
+    each pass, and the last `message` one (`fallback_message` when a fallback model served the turn) measures the
+    context; a `compaction` entry measures the compaction, not the context. See `BetaUsage.iterations`.
+
+    A single-pass response gets a value too, though its sum is already its context: each `pause_turn` segment needs a
+    stamp of its own, as the continuation merges the segments' metadata shallowly.
+    """
+    for iteration in reversed(response_usage.iterations or []):
+        if iteration.type in ('message', 'fallback_message'):
+            return iteration.input_tokens + iteration.cache_read_input_tokens + iteration.cache_creation_input_tokens
+    return None
+
+
+def _mark_continuation_context_input_tokens(
+    messages: list[ModelMessage], response: ModelResponse | StreamedResponse
+) -> None:
+    """Give a `pause_turn` continuation segment that didn't report its passes the context size of its own usage.
+
+    Otherwise the continuation's shallow metadata merge would keep an earlier segment's last pass as the context of
+    the merged response. A continuation resends the same betas, so every segment is expected to report `iterations`
+    if the first did; this guards against one that doesn't. A turn that never reported them keeps its summed usage as
+    the context.
+    """
+    previous = messages[-1] if messages else None
+    if (
+        isinstance(previous, ModelResponse)
+        and previous.state == 'suspended'
+        and marked_context_input_tokens(previous) is not None
+        and marked_context_input_tokens(response) is None
+    ):
+        mark_context_input_tokens(response, response.usage.input_tokens)
 
 
 def _map_usage(
@@ -3847,6 +3950,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                     self._usage = _map_usage(
                         event, self._provider_name, self._provider_url, self._model_name, self._usage
                     )
+                    if (last_pass_input_tokens := _last_pass_input_tokens(event.usage)) is not None:
+                        mark_context_input_tokens(self, last_pass_input_tokens)
                     if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch
                         self.provider_details = self.provider_details or {}
                         self.provider_details['finish_reason'] = raw_finish_reason
@@ -3923,6 +4028,39 @@ class AnthropicStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
+@dataclass
+class _MapMessagesContext:
+    """The request-wide facts `AnthropicModel._map_message` maps each message against, and what it builds across them."""
+
+    model_request_parameters: ModelRequestParameters
+    deferred_tools_active: bool
+    advisor_active: bool
+    bm25_requested: bool
+    declared_tool_names: set[str]
+    tool_defs_by_name: dict[str, ToolDefinition]
+    system_prompt_parts: list[str] = field(default_factory=list[str])
+    anthropic_messages: list[BetaMessageParam] = field(default_factory=list[BetaMessageParam])
+    rendered_tool_additions: set[str] = field(default_factory=set[str])
+
+
+@dataclass
+class _MapModelRequestContext:
+    """What `AnthropicModel._map_model_request` collects from one `ModelRequest`'s parts before it emits the turns."""
+
+    user_content_params: list[BetaContentBlockParam] = field(default_factory=list[BetaContentBlockParam])
+    mid_conversation_system_prompts: list[str] = field(default_factory=list[str])
+    request_scoped_prompts: list[str] = field(default_factory=list[str])
+    tool_availability_blocks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    # `CachePoint`s authored after a mid-conversation instruction or a tool availability
+    # change, as the number of user blocks that preceded each one. They can't be placed
+    # while mapping: both render after this request's user blocks in the `system` entry
+    # despite being authored before the marker, so whether they fall inside the boundary
+    # depends on whether anything else follows the marker.
+    deferred_cache_points: list[tuple[int, Literal['5m', '1h']]] = field(
+        default_factory=list[tuple[int, Literal['5m', '1h']]]
+    )
+
+
 def _build_custom_tool_search_replay_blocks(
     request_part: ToolReturnPart, deferred_tools_active: bool, declared_tool_names: set[str]
 ) -> tuple[list[BetaToolReferenceBlockParam] | None, str | None]:
@@ -3958,6 +4096,34 @@ def _build_custom_tool_search_replay_blocks(
         if match['name'] in declared_tool_names
     ]
     return refs, request_part.message
+
+
+def _build_code_execution_tool_result_block(
+    part: NativeToolReturnPart, tool_use_id: str
+) -> (
+    BetaCodeExecutionToolResultBlockParam
+    | BetaBashCodeExecutionToolResultBlockParam
+    | BetaTextEditorCodeExecutionToolResultBlockParam
+):
+    match _get_anthropic_code_execution_tool_name(part):
+        case 'code_execution':
+            return BetaCodeExecutionToolResultBlockParam(
+                tool_use_id=tool_use_id,
+                type='code_execution_tool_result',
+                content=cast(BetaCodeExecutionToolResultBlockParamContentParam, part.content),
+            )
+        case 'bash_code_execution':
+            return BetaBashCodeExecutionToolResultBlockParam(
+                tool_use_id=tool_use_id,
+                type='bash_code_execution_tool_result',
+                content=cast(BashCodeExecutionToolResultBlockParamContent, part.content),
+            )
+        case 'text_editor_code_execution':  # pragma: no branch
+            return BetaTextEditorCodeExecutionToolResultBlockParam(
+                tool_use_id=tool_use_id,
+                type='text_editor_code_execution_tool_result',
+                content=cast(TextEditorCodeExecutionToolResultBlockParamContent, part.content),
+            )
 
 
 def _build_tool_search_replay_block(
@@ -4249,10 +4415,7 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
                 block['type'] in ('server_tool_use', 'mcp_tool_use')
                 and block['id'] not in returned_native_tool_call_ids
             )
-            tool_search = block.get('name') in ('tool_search_tool_bm25', 'tool_search_tool_regex')
-            if unpaired and (not suffix_is_tool_result_only or tool_search):
-                # Tool search is retried instead of preserved in flight because Bedrock rejects
-                # that shape even though the direct Anthropic API accepts other native tools there.
+            if unpaired and not suffix_is_tool_result_only:
                 # Keep a cache boundary on the nearest preceding cacheable block. Moving it
                 # forward would cache content the user placed outside the boundary. If no such
                 # block exists, the boundary disappears with the block that carried it.
@@ -4308,7 +4471,7 @@ def _anchor_system_messages(anthropic_messages: list[BetaMessageParam]) -> None:
         if index > 0 and anthropic_messages[index - 1]['role'] in ('user', 'system'):
             continue
         anthropic_messages.insert(
-            index, BetaMessageParam(role='user', content=[BetaTextBlockParam(text=_USER_ANCHOR_TEXT, type='text')])
+            index, {'role': 'user', 'content': [BetaTextBlockParam(text=_USER_ANCHOR_TEXT, type='text')]}
         )
 
 

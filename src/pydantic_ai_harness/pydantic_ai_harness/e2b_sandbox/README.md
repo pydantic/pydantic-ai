@@ -228,7 +228,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder(), 
 | `env` | Environment variables every command gets. Default: `None`. Output is decoded as UTF-8 either way; the default template's locale is POSIX, so pass `env={'LC_ALL': 'C.UTF-8'}` if a tool such as `wc -m` should count characters rather than bytes. Nothing from your machine's environment reaches the sandbox. |
 | `mounts` | [Filesystems to show as folders](https://pydantic.dev/docs/ai/harness/cloud-storage/), such as an `S3Filesystem`, or a function of the run that picks them, for example one folder per customer. File tools reach them. Default: none. |
 
-Commands run on the asyncio event loop only: the E2B SDK reads their output with asyncio tasks, so under Trio `run` raises `UserError`.
+`E2BSandbox` needs asyncio: the E2B SDK runs every request on asyncio, so under Trio every operation, including `destroy`, raises `UserError` before it reaches E2B.
 
 ## Durable execution
 
