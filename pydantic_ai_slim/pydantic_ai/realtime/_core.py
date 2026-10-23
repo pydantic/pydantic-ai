@@ -363,6 +363,7 @@ class _Response:
     open_part: SpeechPart | TextPart | None = None
     open_part_item: str | None = None
     open_part_index: int = 0
+    open_part_position: int = 0
     """The stream index of `open_part` (see `SessionCore._take_index`)."""
     open_transcript: str = ''
     open_audio: bytearray = field(default_factory=bytearray)
@@ -448,6 +449,7 @@ class SessionCore:
         responses_are_requests: bool = True,
         answers_tool_calls_per_response: bool = False,
         tracks_tool_rounds: bool = False,
+        speech_spans_tool_calls: bool = False,
         input_transcription_enabled: bool = True,
         retain_input_audio: bool = False,
         retain_output_audio: bool = False,
@@ -468,6 +470,7 @@ class SessionCore:
         self._answers_per_response = answers_tool_calls_per_response
         """Whether one reply answers all the tool results of a response, rather than one per result."""
         self._tracks_tool_rounds = tracks_tool_rounds
+        self._speech_spans_calls = speech_spans_tool_calls
         """Whether to say when tool rounds are over (`ToolRoundsOver`), for a connection that prunes them."""
         self._transcription = input_transcription_enabled
         self._retain_input = retain_input_audio
@@ -819,6 +822,7 @@ class SessionCore:
             part = response.open_part = self._with_item_details(response, part, item_id)
             response.open_part_item = item_id
             response.open_part_index = index = self._take_index()
+            response.open_part_position = len(response.parts)
             response.open_transcript = ''
             self._part_items[index] = item_id
             while len(self._part_items) > MAX_CUTTABLE_OUTPUT_ITEMS:
@@ -881,7 +885,7 @@ class SessionCore:
                 wav = pcm_to_wav(bytes(response.open_audio), self._output_rate)
                 audio = BinaryContent(data=wav, media_type=_WAV_MEDIA_TYPE)
                 part = replace(part, audio=self._audio_budget.track(audio, len(response.open_audio), output=True))
-        response.parts.append(part)
+        response.parts.insert(response.open_part_position, part)
         if response.open_part_item is not None:
             response.closed_parts[response.open_part_item] = (response.open_part_index, part)
         self._effects.append(PartEndEvent(index=response.open_part_index, part=part))
@@ -902,7 +906,8 @@ class SessionCore:
         ):
             # Repeated (a resumed conversation replaying it, say): the call is already recorded, once.
             return
-        self._close_part(response)
+        if not self._speech_spans_calls:
+            self._close_part(response)
         call = ToolCallPart(tool_name=event.tool_name, args=event.args, tool_call_id=event.tool_call_id)
         response.parts.append(call)
         index = self._take_index()

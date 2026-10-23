@@ -873,6 +873,10 @@ class OpenAILiveConnection(RealtimeConnection):
         return True
 
     @property
+    def _speech_spans_tool_calls(self) -> bool:
+        return True
+
+    @property
     def _sends_failed_tool_results(self) -> bool:
         # A round missing an output never continues, and Live can't cancel the delegation it is in: left so, Live
         # delegates nothing more for the rest of the session (checked live).

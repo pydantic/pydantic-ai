@@ -652,6 +652,10 @@ class RealtimeConnection(ABC):
         return False
 
     @property
+    def _speech_spans_tool_calls(self) -> bool:
+        return False
+
+    @property
     def _sends_failed_tool_results(self) -> bool:
         """Whether a call whose tool raised still needs a result sent, saying it failed, for the model to move on.
 
