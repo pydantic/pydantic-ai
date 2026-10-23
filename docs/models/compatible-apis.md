@@ -100,6 +100,10 @@ agent = Agent(model)
 ...
 ```
 
+Use [`NativeOutput`][pydantic_ai.output.NativeOutput] for Fireworks' schema-constrained structured output.
+Fireworks enforces the schema through its OpenAI-compatible `response_format` parameter.
+As the [Fireworks structured output documentation](https://docs.fireworks.ai/structured-responses/structured-response-formatting) describes, `pattern` enforcement is best-effort: unsupported regex constructs, such as lookahead and lookbehind, are ignored, leaving the field as an unconstrained string. Pydantic AI still validates the output, so a value that doesn't match the pattern triggers an output retry.
+
 ## Heroku AI
 
 To use [Heroku AI](https://www.heroku.com/ai), first create an API key.
@@ -377,6 +381,10 @@ agent = Agent(model)
 ```
 
 Compatibility with one API does not imply support for the other or for every OpenAI feature. `OpenAIProvider` also assumes OpenAI's models: it selects a profile from the model name as if it were an OpenAI model, whatever the `base_url`. For other models, features such as `thinking` or structured output may be ignored or rejected until you configure the [model profile](#model-profile).
+
+## Non-standard finish reasons
+
+When an OpenAI-compatible API returns a `finish_reason` outside the five that OpenAI defines, `OpenAIChatModel` keeps the response, gives it a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `None`, and keeps the raw value in [`provider_details['finish_reason']`][pydantic_ai.messages.ModelResponse.provider_details].
 
 ## Model profile
 

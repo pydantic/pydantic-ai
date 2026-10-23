@@ -40,7 +40,6 @@ except ImportError as _import_error:
         'you can use the `google-realtime` optional group - `pip install "pydantic-ai-slim[google-realtime]"`'
     ) from _import_error
 
-from .._instrumentation import get_instructions
 from .._utils import generate_tool_call_id
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelHTTPError, UserError
@@ -130,6 +129,8 @@ from ._utils import (
     seed_retry_feedback_text,
     seed_speech_content,
     seed_user_content,
+    session_instructions,
+    wrap_seeded_system_prompts,
 )
 from .codec import (
     AudioDelta,
@@ -585,7 +586,8 @@ async def _seed_turns(
     because they describe provider-executed work whose answer text is already retained.
 
     Thinking signatures and `provider_details` are provider-session-bound and are not replayed.
-    `SystemPromptPart`s are routed through `system_instruction`, and `CachePoint`s are ignored. User
+    The standing system prompt the history opens with is routed through `system_instruction`, a later
+    `SystemPromptPart` is seeded as `<system>`-tagged user text, and `CachePoint`s are ignored. User
     speech is seeded as its transcript, or as its retained 16 kHz audio on a model whose profile sets
     `supports_seeding_audio`; on other models (Gemini 2.5 rejects audio in seeded turns) speech
     requires a transcript. Other unrepresentable content raises [`UserError`][pydantic_ai.exceptions.UserError].
@@ -593,7 +595,7 @@ async def _seed_turns(
     turns: list[genai_types.Content] = []
     supports_images = profile.get('supports_seeding_images', False)
     supports_audio = profile.get('supports_seeding_audio', False)
-    for message in messages:
+    for message in wrap_seeded_system_prompts(messages):
         if isinstance(message, ModelRequest):
             parts = await _seed_request_parts(
                 message.parts,
@@ -1308,7 +1310,7 @@ class GoogleRealtimeModel(RealtimeModel):
     ) -> AsyncGenerator[GoogleRealtimeConnection]:
         client = self._provider.client
         settings = cast('GoogleRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
-        instructions = get_instructions(messages, model_request_parameters) or ''
+        instructions = session_instructions(messages, model_request_parameters)
         # Transparent reconnect needs session resumption, so the server restores state on re-dial;
         # a `reconnect` policy requests it automatically (see `_session_resumption_enabled`). An
         # explicit opt-out alongside a policy would silently reconnect into a model that remembers

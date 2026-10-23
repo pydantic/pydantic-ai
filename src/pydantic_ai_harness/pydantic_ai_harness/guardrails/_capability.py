@@ -47,6 +47,7 @@ from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserContent, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._background_completion import get_background_completion
+from pydantic_ai_harness._task_report import is_task_report
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 from pydantic_ai_harness.guardrails._shared import (
     GuardOutcome,
@@ -117,9 +118,10 @@ def _find_prompt_part(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessa
     trimmed from the start moves it. Only when no part can be told to be the copy, because the
     request was rebuilt, is the most recent part in `messages` used.
     """
-    prompt = _latest_prompt_part(ctx.messages)
+    skip_task_reports = ctx.prompt is None
+    prompt = _latest_prompt_part(ctx.messages, skip_task_reports=skip_task_reports)
     if prompt is None:
-        return _latest_prompt_part(messages)
+        return _latest_prompt_part(messages, skip_task_reports=skip_task_reports)
     if any(part is prompt for request in messages for part in request.parts):
         return prompt
     holder = next(
@@ -131,7 +133,7 @@ def _find_prompt_part(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessa
         None,
     )
     copy = None if holder is None else _find_copy(prompt, holder.parts)
-    return copy if copy is not None else _latest_prompt_part(messages)
+    return copy if copy is not None else _latest_prompt_part(messages, skip_task_reports=skip_task_reports)
 
 
 def _find_copy(prompt: UserPromptPart, parts: Sequence[object]) -> UserPromptPart | None:
@@ -149,14 +151,37 @@ def _find_copy(prompt: UserPromptPart, parts: Sequence[object]) -> UserPromptPar
     return candidates[0] if len(candidates) == 1 else None
 
 
-def _latest_prompt_part(messages: Sequence[ModelMessage]) -> UserPromptPart | None:
-    """The most recent `UserPromptPart` in `messages`, if any."""
+def _history_prompt_parts(ctx: RunContext[AgentDepsT]) -> int:
+    """How many `UserPromptPart`s the latest request in the run's history holding one carries.
+
+    A run resuming from a request reports all of them combined as `ctx.prompt`. A part an outer
+    capability adds for this request only is not in the history, so it is not counted.
+    """
+    return next(
+        (
+            count
+            for message in reversed(ctx.messages)
+            if (count := sum(isinstance(part, UserPromptPart) for part in message.parts))
+        ),
+        0,
+    )
+
+
+def _latest_prompt_part(messages: Sequence[ModelMessage], *, skip_task_reports: bool) -> UserPromptPart | None:
+    """The most recent `UserPromptPart` in `messages`, if any.
+
+    `skip_task_reports` is set only for a run without a prompt of its own. `ctx.prompt` is always
+    guarded, whatever metadata it carries, including a prompt taken from a request that ends
+    `message_history`. Earlier history is trusted as the caller's own (untrusted client history
+    goes through a UI adapter first), so a part there that carries a `SubAgents` task report's
+    metadata is taken for one: a child agent's output, not the prompt.
+    """
     return next(
         (
             part
             for message in reversed(messages)
             for part in reversed(message.parts)
-            if isinstance(part, UserPromptPart)
+            if isinstance(part, UserPromptPart) and not (skip_task_reports and is_task_report(part))
         ),
         None,
     )
@@ -209,7 +234,9 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     input guardrail, and neither is `replace` on a multimodal prompt: the guard sees
     the whole prompt rendered as text, and writing one string back over a
     prompt built from several parts would drop the attached ones, so it raises
-    [`UserError`][pydantic_ai.exceptions.UserError] instead.
+    [`UserError`][pydantic_ai.exceptions.UserError] instead. The same holds for
+    a run resuming from a request with several prompt parts, which the guard
+    screens together, as `ctx.prompt` reports them.
 
     ```python
     from pydantic_ai import Agent
@@ -287,11 +314,14 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         part: UserPromptPart | None,
         prompt: str,
+        *,
+        prompt_parts: int,
     ) -> None:
         """Evaluate the guard and act on its verdict.
 
         `allow` returns; `block` raises `SkipModelRequest`; `replace` rewrites
-        the prompt `part`; `retry` and `replace` under `parallel=True` raise
+        the prompt `part`; `retry`, `replace` under `parallel=True`, and
+        `replace` on a prompt of more than one part (`prompt_parts`) raise
         `UserError`.
         """
         verdict, position = await evaluate_all(
@@ -324,6 +354,13 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
                         'already started with the original prompt. Use sequential mode for prompt redaction.'
                     )
                 replacement = _require_prompt_text(verdict.replacement, position)
+                if prompt_parts > 1:
+                    raise UserError(
+                        f'An InputGuardrail returned GuardrailResult.replace() for a prompt made of {prompt_parts} '
+                        'parts. The guard saw them as one text, so one replacement cannot be written back over '
+                        'them without dropping or merging parts. Return GuardrailResult.allow() or '
+                        'GuardrailResult.block() for such prompts, or guard the output instead.'
+                    )
                 if part is None:
                     raise UserError('InputGuardrail could not find a user prompt to redact in the request.')
                 _replace_prompt(part, replacement)
@@ -347,17 +384,24 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
             return await handler(request_context)
         part = _find_prompt_part(ctx, request_context.messages)
         content = ctx.prompt if part is None else part.content
+        prompt_parts = _history_prompt_parts(ctx) if ctx.prompt is not None else 0
+        if prompt_parts > 1:
+            # A run resuming from a request with several prompt parts reports them combined as
+            # `ctx.prompt`; the guard screens all of them, not just the last.
+            content = ctx.prompt
         if content is None:
             return await handler(request_context)
         prompt = _prompt_text(content)
         if not self.parallel:
-            await self._run_guard(ctx, part, prompt)
+            await self._run_guard(ctx, part, prompt, prompt_parts=prompt_parts)
             return await handler(request_context)
 
         async def run_handler() -> ModelResponse:
             return await handler(request_context)
 
-        guard_task: asyncio.Task[None] = asyncio.create_task(self._run_guard(ctx, part, prompt))
+        guard_task: asyncio.Task[None] = asyncio.create_task(
+            self._run_guard(ctx, part, prompt, prompt_parts=prompt_parts)
+        )
         self._parallel_verdict = guard_task
         handler_task: asyncio.Task[ModelResponse] = asyncio.create_task(run_handler())
         try:

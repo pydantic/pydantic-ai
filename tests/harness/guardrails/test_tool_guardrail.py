@@ -683,6 +683,92 @@ class TestResultGuardOnAFailedTool:
         assert seen == ['ok']
         assert [part.content for part in retries] == ['validator: result must be uppercase']
 
+    async def test_a_raw_retry_from_a_capability_ordered_inside_is_screened(self):
+        """An `innermost` capability listed after the guard runs its result hook while the screening window is open."""
+        seen: list[object] = []
+
+        def result_guard(info: ToolResultInfo) -> GuardrailResult:
+            seen.append(info.result)
+            return GuardrailResult.replace(str(info.result).replace('sk-live-000', '[redacted]'))
+
+        class InsideRetry(AbstractCapability[None]):
+            def get_ordering(self) -> CapabilityOrdering:
+                return CapabilityOrdering(position='innermost')
+
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[None],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                result: Any,
+            ) -> Any:
+                raise ModelRetry('inside: key sk-live-000')
+
+        agent = Agent(
+            _scripted(_calls_lookup(query='key'), ModelResponse(parts=[TextPart(content='done')])),
+            deps_type=type(None),
+            capabilities=[ToolGuardrail[None](result_guard=result_guard), InsideRetry()],
+        )
+
+        @agent.tool_plain
+        def lookup(query: str) -> str:
+            return 'ok'
+
+        result = await agent.run('hi')
+        retries = [
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+        ]
+
+        assert seen == ['inside: key sk-live-000']
+        assert [part.content for part in retries] == ['inside: key [redacted]']
+
+    async def test_a_raw_retry_from_a_capability_ordered_outside_before_the_tool_is_not_screened(self):
+        """An argument hook ordered outside the guard runs before its window opens, so its retry passes through."""
+        seen: list[object] = []
+
+        def result_guard(info: ToolResultInfo) -> GuardrailResult:
+            seen.append(info.result)
+            return GuardrailResult.allow()
+
+        class OutsideRetry(AbstractCapability[None]):
+            calls = 0
+
+            async def before_tool_execute(
+                self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+            ) -> dict[str, Any]:
+                OutsideRetry.calls += 1
+                if OutsideRetry.calls == 1:
+                    raise ModelRetry('outside: ask again')
+                return args
+
+        agent = Agent(
+            _scripted(
+                _calls_lookup(query='key'), _calls_lookup(query='key'), ModelResponse(parts=[TextPart(content='done')])
+            ),
+            deps_type=type(None),
+            capabilities=[OutsideRetry(), ToolGuardrail[None](result_guard=result_guard)],
+        )
+
+        @agent.tool_plain
+        def lookup(query: str) -> str:
+            return 'ok'
+
+        result = await agent.run('hi')
+        retries = [
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+        ]
+
+        assert seen == ['ok']
+        assert [part.content for part in retries] == ['outside: ask again']
+
     async def test_another_capabilitys_error_hook_retry_is_not_screened(self):
         """Converting a tool exception into a retry is that capability's instruction, as on any agent."""
         seen: list[object] = []

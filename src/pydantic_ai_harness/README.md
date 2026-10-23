@@ -94,7 +94,7 @@ agent = Agent(
 )
 ```
 
-[Skills](pydantic_ai_harness/skills/) (your `SKILL.md` procedures, loaded on demand; point it at a `skills/` directory and add the `skills` extra), [Web Fetch](https://ai.pydantic.dev/capabilities/web-fetch/), [Guardrails](pydantic_ai_harness/guardrails/), and [Dynamic Workflow](pydantic_ai_harness/dynamic_workflow/) slot in the same way; the [Coder README](pydantic_ai_harness/coder/) lists what pairs well.
+[Skills](pydantic_ai_harness/skills/) (your `SKILL.md` procedures, loaded on demand; point it at a `skills/` directory and add the `skills` extra), [Web Fetch](https://ai.pydantic.dev/capabilities/web-fetch/), [Guardrails](pydantic_ai_harness/guardrails/), and [Dynamic Workflow](pydantic_ai_harness/dynamic_workflow/) slot in the same way.
 
 ## No magic: it's capabilities all the way down
 
