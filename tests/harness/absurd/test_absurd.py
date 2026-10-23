@@ -55,6 +55,7 @@ from pydantic_ai_harness.absurd._operation_backend import (
     _RAW_RESULT_KINDS,  # pyright: ignore[reportPrivateUsage]
 )
 
+from .._unserializable import circular_dict
 from ._task import checkpoints, claim_expires_at, reenter_running_task, running_task_context
 
 READINESS_WAIT_TIMEOUT = 10
@@ -85,12 +86,6 @@ def _tool_calling_model(*calls: ToolCallPart, counter: dict[str, int] | None = N
         return ModelResponse(parts=list(calls))
 
     return FunctionModel(fn, model_name='fn')
-
-
-def _circular_dict() -> dict[str, object]:
-    value: dict[str, object] = {}
-    value['self'] = value
-    return value
 
 
 def _late_toolset(calls: dict[str, int]) -> FunctionToolset[object]:
@@ -253,6 +248,48 @@ class TestDurability:
 
         assert tool_calls['calls'] == 1
         assert replayed.output == first.output == 'done'
+
+    async def test_redeployed_agent_gets_the_stored_steps(self, absurd: AsyncAbsurd) -> None:
+        # Steps match by name and encounter order, not by their inputs: a task re-entered after a
+        # deploy that changed the prompt, the tool, and the model still gets its stored results.
+        toolset = FunctionToolset[object](id='tools')
+
+        @toolset.tool_plain
+        def charge_card(amount: int) -> str:
+            return f'charged {amount}'
+
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('charge_card', {'amount': 42})),
+            name='billing',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability()],
+        )
+        async with running_task_context(absurd, 'billing') as ctx:
+            first = await agent.run('charge it')
+
+        model_calls = {'calls': 0}
+        tool_calls = {'calls': 0}
+        redeployed_toolset = FunctionToolset[object](id='tools')
+
+        @redeployed_toolset.tool_plain(name='charge_card')
+        def charge_card_v2(amount: int) -> str:
+            tool_calls['calls'] += 1
+            return f'charged {amount} again'
+
+        redeployed = Agent(
+            _tool_calling_model(ToolCallPart('charge_card', {'amount': 99}), counter=model_calls),
+            name='billing',
+            toolsets=[redeployed_toolset],
+            capabilities=[AbsurdDurability()],
+        )
+        async with reenter_running_task(absurd, ctx.task_id):
+            replayed = await redeployed.run('charge it twice')
+
+        def returned(messages: list[ModelMessage]) -> list[object]:
+            return [p.content for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
+
+        assert model_calls['calls'] == tool_calls['calls'] == 0
+        assert returned(replayed.all_messages()) == returned(first.all_messages()) == ['charged 42']
 
     async def test_registered_model_selected_per_run(self, absurd: AsyncAbsurd) -> None:
         # The selected model checkpoints under its own id-scoped step name, and a replay serves it.
@@ -670,7 +707,7 @@ class TestToolResults:
                 ),
             ),
             (
-                _circular_dict,
+                circular_dict,
                 snapshot(
                     'Absurd stores each step result as JSON, and this one could not be serialized: Circular reference detected (id repeated). If it is a tool result, return a JSON-serializable value from the tool.'
                 ),

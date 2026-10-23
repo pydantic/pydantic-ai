@@ -49,6 +49,7 @@ from pydantic_ai_harness.aws_lambda import (
     run_durable,
 )
 
+from .._unserializable import circular_dict
 from .conftest import FakeDurableContext
 from .test_aws_lambda_mcp import FakeMCPToolset
 
@@ -72,12 +73,6 @@ def build_agent(tool: Any, *, output_type: Any = None, **kwargs: Any) -> Agent[A
     tool.__name__ = 'act'
     agent.tool_plain(tool)
     return agent
-
-
-def _circular_dict() -> dict[str, object]:
-    value: dict[str, object] = {}
-    value['self'] = value
-    return value
 
 
 class TestDurableRun:
@@ -390,7 +385,7 @@ class TestToolResultSerialization:
         ('make_result', 'reason'),
         [
             (object, 'Unable to serialize unknown type'),
-            (_circular_dict, 'Circular reference detected'),
+            (circular_dict, 'Circular reference detected'),
         ],
         ids=['unknown-type', 'circular'],
     )
