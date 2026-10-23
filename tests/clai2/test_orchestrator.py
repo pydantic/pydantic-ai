@@ -57,7 +57,8 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 )
 from pydantic_clai2.builtin_plugins.web.service import WebService
 from pydantic_clai2.builtin_plugins.web.workspace_tools import SessionAnswer, WorkspaceTools, summarize
-from pydantic_clai2.builtin_plugins.web.workspaces import checkouts, enabled, open_workspace
+from pydantic_clai2.builtin_plugins.web.workspaces import checkouts, open_workspace, required_workspaces
+from pydantic_clai2.builtin_plugins.workspaces import Workspaces, WorktreeKind
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -569,7 +570,7 @@ async def test_without_the_workspaces_plugin(tmp_path: Path) -> None:
         assert await checkouts(made.web.host.plugins) == []
     assert await checkouts(None) == []
     with pytest.raises(RuntimeError, match='plugin is off'):
-        enabled(None)
+        required_workspaces(None)
 
 
 async def test_a_live_change_queued_before_a_switch_does_not_end_the_stream(tmp_path: Path) -> None:
@@ -723,6 +724,54 @@ async def test_the_sidebar_and_one_session_per_workspace(tmp_path: Path, reposit
             assert (await tools.workspace_destroy(ctx, workspace)).startswith(f'Destroyed workspace {workspace};')
             await published(client.queue, SessionsChanged)
         assert workspace not in service.workspace_locks
+
+
+async def test_destroying_a_kept_checkout_leaves_its_sessions(tmp_path: Path, repository: Path) -> None:
+    """A kind that keeps the checkout closes none of the sessions working there: they go on in the folder."""
+    async with parent(tmp_path) as made:
+        kept = Workspaces(
+            kinds={'kept': WorktreeKind(repo=str(repository), teardown='keep')}, directory=tmp_path / 'kept'
+        )
+        workspace = await kept.create(kind='kept')
+        session = await made.service.live.new(workspace=workspace.path)
+        assert (await kept.destroy(workspace.id, live=made.service.live)).teardown == 'keep'
+        assert workspace.path.exists() and await kept.listing() == []
+        assert made.sessions_in(workspace.path) == [session], 'still live'
+
+
+async def test_falling_behind_mid_wait_is_no_close(
+    tmp_path: Path, repository: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A wait whose following falls too far behind says the session is still open, so the model waits again."""
+    async with parent(tmp_path) as made:
+        tools = made.tools
+        workspace = await created(tools, repository)
+        await tools.session_start(workspace, 'block')
+        await made.blocked.wait()
+        entered = anyio.Event()
+        wait = SessionView.wait
+
+        async def entering(view: SessionView, *, timeout: float) -> WaitOutcome:
+            entered.set()
+            return await wait(view, timeout=timeout)
+
+        waited: list[str] = []
+        monkeypatch.setattr(SessionView, 'wait', entering)
+        async with anyio.create_task_group() as group:
+
+            async def waiting() -> None:
+                waited.append(await tools.session_wait(workspace, timeout=10))
+
+            group.start_soon(waiting)
+            await entered.wait()
+            with monkeypatch.context() as patched:
+                patched.setattr(live_module, 'QUEUE_LIMIT', 3)
+                for _ in range(3):
+                    made.service.hub.publish(SessionsChanged())
+        assert waited == [
+            f'Lost track of the session of workspace {workspace}, which is still open. Wait again to follow it.'
+        ]
+        assert await tools.session_interrupt(workspace) == 'Interrupted.', 'followed again, mid-turn'
 
 
 async def test_the_workspace_session_is_the_users_too(

@@ -1475,7 +1475,7 @@ other worktree, and its sessions are live sessions of the same CLAI.
 |---|---|
 | `/workspaces` or `/workspaces list` | every workspace: its ID, kind, branch, and folder |
 | `/workspaces create KIND [REPO [REF]]` | check out REPO at REF on a new branch named after the workspace's ID; the kind's own repository and ref fill in what is left out; a relative REPO is in the session's folder |
-| `/workspaces destroy ID` | close this CLAI's live sessions in it, remove the checkout (or keep it, as the kind says), and forget it; the branch is kept. Run it from a session outside the checkout: in one of its own, it refuses |
+| `/workspaces destroy ID` | remove the checkout (or keep it, as the kind says) and forget it; the branch is kept. Before removing the checkout it closes this CLAI's live sessions there, so run it from a session outside the checkout: in one of its own, it refuses. A kept checkout's sessions go on |
 
 **Kinds.** The settings are named kinds of workspace, each a backend with its options, edited in
 the settings menu (`/plugins configure workspaces`, or the web UI's plugins panel), which also adds
@@ -1511,8 +1511,8 @@ anything that is not a worktree.
 from `host.plugins` (the `workspaces` row's `settings`, a `WorkspacesSettings`). Its methods:
 `listing()`, `get(id)`, `create(kind=, repo=, ref=, base=host.workspace)` (a relative `repo` is in
 `base`), `attach(id, conversation)`, which records the session run there, and
-`destroy(id, live=host.live)`, which first closes the live sessions in the checkout (refusing, with
-none closed, when the session asking is one of them), each returning
+`destroy(id, live=host.live)`, which closes the live sessions in the checkout before it removes it
+(refusing, with none closed, when the session asking is one of them), each returning
 a `Workspace` record. A new backend implements `backend.Backend`: `create` and `destroy`.
 `configured(host.plugins)` builds that `Workspaces` from the loaded plugin's settings, or returns
 `None` while it is off.
@@ -1550,7 +1550,7 @@ card that names a workspace has an **Open** button that shows that session in th
 |---|---|
 | `workspace_list()` | every workspace, and the kinds the model may make |
 | `workspace_create(kind, repo='', ref='')` | a new workspace; nothing runs in it yet |
-| `workspace_destroy(workspace)` | close its session and remove it, only once the user confirmed (below) |
+| `workspace_destroy(workspace)` | stop following its session and remove it, closing its sessions when the checkout goes, only once the user confirmed (below) |
 | `session_start(workspace, prompt)` | open its session, starting one in the checkout if it has none, and send `prompt` |
 | `session_send(workspace, text)` | another prompt, queued behind a running turn |
 | `session_read(workspace, last=5)` | in short: whether a turn runs, how the last one ended, what is asked, and the last items, each cut to 600 characters |
@@ -1580,9 +1580,10 @@ rather than failing the run.
 
 **Its conversation** is one file, `$XDG_STATE_HOME/pydantic-clai2/orchestrator.json`, readable by you
 alone, in Pydantic AI's message-history JSON. It survives a reload and a restart and never shows
-among the saved sessions or in `/resume`. Every CLAI with the web UI has the same chat: each turn starts from the file as it is then, which an open page catches up to,
-and saves it when it ends, unless another CLAI changed the file meanwhile: that turn then fails and
-is not kept, rather than writing over the other CLAI's.
+among the saved sessions or in `/resume`. Every CLAI with the web UI has the same chat: each turn
+starts from the file as it is then, which an open page catches up to, and saves it when it ends,
+unless another CLAI changed the file meanwhile: that turn then fails and is not kept, rather than
+writing over the other CLAI's.
 A turn the file cannot take fails with the reason; until a save works, this CLAI's chat goes on from
 it rather than from the file. That save replaces the file unless another CLAI changed it meanwhile,
 in which case the turns not saved are dropped in favour of the file.

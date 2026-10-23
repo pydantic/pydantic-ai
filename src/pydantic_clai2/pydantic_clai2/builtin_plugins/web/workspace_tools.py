@@ -22,7 +22,7 @@ from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.client import SessionView
 from pydantic_clai2.builtin_plugins.web.local_client import LocalClient
 from pydantic_clai2.builtin_plugins.web.protocol import Item, SessionsChanged
-from pydantic_clai2.builtin_plugins.web.workspaces import enabled, workspace_session
+from pydantic_clai2.builtin_plugins.web.workspaces import required_workspaces, workspace_session
 from pydantic_clai2.builtin_plugins.workspaces import Workspaces, describe
 from pydantic_clai2.builtin_plugins.workspaces.manager import works_in
 
@@ -138,7 +138,7 @@ class WorkspaceTools:
 
     def workspaces(self) -> Workspaces:
         """The registry with the kinds the `workspaces` plugin is configured with; `RuntimeError` while it is off."""
-        return enabled(self.service.host.plugins)
+        return required_workspaces(self.service.host.plugins)
 
     async def view(self, workspace_id: str, *, start: bool = False) -> SessionView:
         """The workspace's session, followed from first use until it closes; with `start`, a new one if it has none."""
@@ -168,6 +168,13 @@ class WorkspaceTools:
         except LookupError:
             return False
         return works_in(session.workspace, (await self.workspaces().get(workspace_id)).path)
+
+    def _is_live(self, live_id: str) -> bool:
+        try:
+            self.service.live.get(live_id)
+        except LookupError:
+            return False
+        return True
 
     async def disconnect(self, workspace_id: str) -> None:
         """Stop following a workspace's session, which stays open until it is idle."""
@@ -217,7 +224,7 @@ class WorkspaceTools:
         return f'Created workspace {workspace.id} at {workspace.path} on branch {workspace.branch}.'
 
     async def workspace_destroy(self, ctx: RunContext[None], workspace: str) -> str:
-        """Close its sessions, remove its checkout (unless its kind keeps it), and forget it.
+        """Remove its checkout, closing the sessions working there first, unless its kind keeps it; then forget it.
 
         Only after the user picked `Destroy ID` in `ask_user_question`, with ID the workspace's.
         """
@@ -281,8 +288,12 @@ class WorkspaceTools:
         if outcome == 'timeout':
             return f'Workspace {workspace} is still running. Wait again, `session_read` it, or `session_interrupt` it.'
         if outcome == 'closed':
+            link = self.links.get(workspace)
             await self.disconnect(workspace)
-            return f'The session of workspace {workspace} closed.'
+            # Following also ends when it falls too far behind, while the session goes on.
+            if link is None or not self._is_live(link.live_id):
+                return f'The session of workspace {workspace} closed.'
+            return f'Lost track of the session of workspace {workspace}, which is still open. Wait again to follow it.'
         answer = next((item.text for item in reversed(view.items) if item.kind == 'assistant'), '')
         ended = view.last_turn.outcome if view.last_turn is not None else 'no turn ran'
         return f'Workspace {workspace} is idle; last turn: {ended}. Its final answer:\n{_cut(answer, ANSWER_CHARS)}'

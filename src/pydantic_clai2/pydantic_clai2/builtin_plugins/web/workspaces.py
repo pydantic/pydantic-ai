@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from pydantic_clai2.builtin_plugins.web.service import WebService
 
 
-def enabled(plugins: PluginCatalog | None) -> Workspaces:
+def required_workspaces(plugins: PluginCatalog | None) -> Workspaces:
     """The configured workspaces; `RuntimeError` while the `workspaces` plugin is off."""
     workspaces = configured(plugins)
     if workspaces is None:
@@ -32,7 +32,7 @@ async def workspace_session(service: 'WebService', workspace_id: str, *, start: 
     checkout is gone. Under a per-workspace lock, so the page and the orchestrator asking at once start one.
     """
     async with service.workspace_locks[workspace_id]:
-        workspaces = enabled(service.host.plugins)
+        workspaces = required_workspaces(service.host.plugins)
         workspace = await workspaces.get(workspace_id)
         session = None
         if workspace.conversation is not None:
