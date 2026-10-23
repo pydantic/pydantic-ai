@@ -50,22 +50,23 @@ class GoogleWorkspace(AbstractCapability[AgentDepsT]):
     _: KW_ONLY
 
     id: str | None = None
-    """Stable capability and toolset ID, derived from `services` when not given.
+    """Stable capability and toolset ID, `google-workspace-<products>` with the products sorted when not given.
 
-    The products are what decide this capability's tools, so they are what identify it -- the same way `StackOne`
-    is identified by its linked account. Deriving it rather than fixing it to `'google-workspace'` is what lets one
-    agent reach two different sets of products: their ids differ, so they stay two capabilities. Two for the same
-    products are a mistake, and collide.
+    Instances whose products overlap register the same tool names, so wrap one in `PrefixTools`. When their products
+    are the same, also give it a distinct `id`, since their default ones collide.
+
+    The id is derived once, at construction: `dataclasses.replace` with different `services` keeps the old one unless
+    you also pass `id=None`.
     """
 
     description: str | None = _DEFAULT_DESCRIPTION
-    """Describes the capability when the agent loads it on demand."""
+    """Describes the capability when the agent loads it on demand. Left at its default, it names the selected products."""
 
     auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
     """A Google access token or a function of the run context that returns one.
 
     Unset, it uses `GOOGLE_ACCESS_TOKEN`. A function never does: if it returns `None` or `''`, that run has no Google
-    Workspace tools.
+    Workspace tools. `'oauth'` raises an error, since Google does not support automatic OAuth client registration.
     """
 
     read_only: bool = False
@@ -82,36 +83,41 @@ class GoogleWorkspace(AbstractCapability[AgentDepsT]):
         for service in self.services:
             if service not in _MCP_URLS:
                 raise UserError(f'Unknown Google Workspace service {service!r}; expected one of {sorted(_MCP_URLS)}.')
-        self.id = self._derived_id()
+        if self.id is None:
+            self.id = f'google-workspace-{"-".join(sorted(self.services))}'
+
+    def get_description(self) -> str | None:
+        """Return `description`, or one naming the selected products while it is left at its default."""
+        if self.description != _DEFAULT_DESCRIPTION:
+            return self.description
+        return f'Use these Google Workspace products: {", ".join(service.title() for service in self.services)}.'
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the tools for the selected products, with names prefixed by product."""
         toolset = (
-            DynamicToolset(self._connect_for_run, per_run_step=False, id=self._derived_id())
+            DynamicToolset(self._connect_for_run, per_run_step=False, id=self.id)
             if callable(self.auth)
             else self._connect(self.auth)
         )
         return read_only_toolset(toolset) if self.read_only else toolset
 
-    def _derived_id(self) -> str:
-        """This capability's `id`, falling back to the one the products name."""
-        return self.id if self.id is not None else f'google-workspace-{"-".join(sorted(self.services))}'
-
     def _connect_for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         auth = self.auth(ctx) if callable(self.auth) else self.auth
-        if auth == 'oauth':
-            # FastMCP reads 'oauth' as "log in through a browser", which would hang a server run.
-            raise UserError("The `auth` function must return an API key or token, not 'oauth'.")
         return self._connect(auth) if auth else None
 
     def _connect(self, auth: str | None) -> AbstractToolset[AgentDepsT]:
         auth = credential(auth, env='GOOGLE_ACCESS_TOKEN', service='Google Workspace')
-        prefix = self._derived_id()
+        if auth == 'oauth':
+            # FastMCP reads 'oauth' as a browser sign-in that registers its own client, which Google does not allow.
+            raise UserError(
+                "Google Workspace needs an access token, not 'oauth': "
+                'Google does not support automatic OAuth client registration.'
+            )
         return CombinedToolset(
             [
                 MCPToolset[AgentDepsT](
                     _MCP_URLS[service],
-                    id=f'{prefix}-{service}',
+                    id=f'{self.id}-{service}',
                     auth=auth,
                     include_instructions=self.include_instructions,
                 ).prefixed(service)
