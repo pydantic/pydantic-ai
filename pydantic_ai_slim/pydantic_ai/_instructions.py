@@ -505,9 +505,7 @@ def _changed_capability_id(change: InstructionDeltaPart) -> str:
 
 def loaded_part_capability_id(part: InstructionPart) -> str | None:
     """The loaded capability an instruction part belongs to, as `resolve_loaded_capability_instructions` keys it."""
-    if part.id is None:
-        return None
-    source = part.id.source
+    source = part.id.source if part.id is not None else None
     return source.id if isinstance(source, CapabilityInstructionSource) else None
 
 
