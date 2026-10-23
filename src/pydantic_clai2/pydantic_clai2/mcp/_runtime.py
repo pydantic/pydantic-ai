@@ -287,7 +287,8 @@ class MCPServers:
                 command=server.command,
                 args=server.args,
                 env=resolve(server.env),
-                cwd=server.cwd,
+                # A relative `cwd` is the session's subdirectory; an absolute one stays as it is.
+                cwd=str(self.store.workspace / (server.cwd or '')),
                 keep_alive=False,
                 log_file=self.log_path(entry.name),
             )

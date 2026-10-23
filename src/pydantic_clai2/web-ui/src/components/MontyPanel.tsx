@@ -1,5 +1,5 @@
-import { memo, useLayoutEffect, useRef, useState } from 'react'
-import { api } from '../api'
+import { memo, useContext, useLayoutEffect, useRef, useState } from 'react'
+import { SessionContext } from '../api'
 import { cell } from '../code'
 import { highlight } from '../markdown'
 import type { Item, StatusInfo, SubCall } from '../protocol'
@@ -105,6 +105,7 @@ const CellView = memo(function CellView({ item, number, turn, restart }: Cell) {
 function CellInput({ disabled, reason, onError }: { disabled: boolean; reason: string; onError: (message: string) => void }) {
   const [code, setCode] = useState('')
   const area = useRef<HTMLTextAreaElement>(null)
+  const session = useContext(SessionContext)
   useLayoutEffect(() => {
     const element = area.current
     if (!element) return
@@ -116,7 +117,7 @@ function CellInput({ disabled, reason, onError }: { disabled: boolean; reason: s
     if (!text || disabled) return
     setCode('')
     try {
-      await api.send(`/monty ${text}`)
+      await session.send(`/monty ${text}`)
     } catch (error) {
       setCode(text)
       onError(error instanceof Error ? error.message : String(error))

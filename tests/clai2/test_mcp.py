@@ -49,6 +49,7 @@ def write_server(tmp_path: Path, *, with_tool: bool = True) -> tuple[Path, Path]
     script.write_text(
         'import os, sys\nfrom pathlib import Path\n'
         f'Path({str(pid_file)!r}).write_text(str(os.getpid()))\n'
+        f'Path({str(tmp_path / "server.cwd")!r}).write_text(os.getcwd())\n'
         'print("server booted", file=sys.stderr, flush=True)\n'
         'from mcp.server.fastmcp import FastMCP\n'
         'server = FastMCP("test")\n'
@@ -67,11 +68,22 @@ def assert_exited(pid_file: Path) -> None:
 async def test_http_client_rejects_redirects(monkeypatch: pytest.MonkeyPatch) -> None:
     requests: list[httpx.Request] = []
 
-    async def respond(transport: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
+    def respond(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         return httpx.Response(307, headers={'location': 'http://127.0.0.1/private'}, request=request)
 
-    monkeypatch.setattr(httpx.AsyncHTTPTransport, 'handle_async_request', respond)
+    sdk_client = mcp_settings.create_mcp_http_client
+
+    def mock_transport_client(
+        headers: dict[str, str] | None = None, timeout: httpx.Timeout | None = None, auth: httpx.Auth | None = None
+    ) -> httpx.AsyncClient:
+        # The SDK's settings on a transport of this client's own: patching `httpx.AsyncHTTPTransport` would also
+        # record the requests other threads send meanwhile.
+        defaults = sdk_client(headers=headers, timeout=timeout, auth=auth)
+        transport = httpx.MockTransport(respond)
+        return httpx.AsyncClient(headers=defaults.headers, timeout=defaults.timeout, auth=auth, transport=transport)
+
+    monkeypatch.setattr(mcp_settings, 'create_mcp_http_client', mock_transport_client)
     async with http_client(headers={'X-Test': 'present'}) as client:
         response = await client.post('https://example.com/mcp')
         assert response.status_code == 307
@@ -269,13 +281,17 @@ async def test_start_stop_restart_logs_and_agent_use(tmp_path: Path) -> None:
 
 
 @pytest.mark.subprocess(reason='starts a real stdio MCP server written in Python')
-async def test_tools_without_start_and_empty_server(tmp_path: Path) -> None:
+@pytest.mark.parametrize('cwd', [None, 'sub'])
+async def test_tools_without_start_and_empty_server(tmp_path: Path, cwd: str | None) -> None:
+    """A stdio server starts in the session's directory, not the process's; a relative `cwd` is inside it."""
     script, pid_file = write_server(tmp_path, with_tool=False)
-    store = MCPStore(tmp_path / 'config', workspace=tmp_path)
+    (tmp_path / 'repo' / 'sub').mkdir(parents=True)
+    store = MCPStore(tmp_path / 'config', workspace=tmp_path / 'repo')
     plugin = make_plugin({}, store)
-    store.put('local', StdioServer(type='stdio', command=sys.executable, args=[str(script)]))
+    store.put('local', StdioServer(type='stdio', command=sys.executable, args=[str(script)], cwd=cwd))
     assert await plugin.commands.execute_async('/mcp tools local') == 'No tools provided by local.'
     assert_exited(pid_file)
+    assert Path((tmp_path / 'server.cwd').read_text()).resolve() == (tmp_path / 'repo' / (cwd or '')).resolve()
 
 
 @pytest.mark.subprocess(reason='starts a stdio MCP server command that exits immediately')

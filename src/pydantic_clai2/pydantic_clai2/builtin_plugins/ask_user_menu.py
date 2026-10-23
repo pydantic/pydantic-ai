@@ -271,6 +271,9 @@ def render_call(event: FunctionToolCallEvent) -> RenderableType:
 def render_answer(event: AskUserAnsweredEvent) -> RenderableType:
     """Leave a record of what was picked in the transcript, since the menu itself is gone."""
     text = Text()
+    if event.failed:
+        text.append('● The question failed', style=theme.color(theme.MUTED))
+        return text
     if event.response.cancelled:
         text.append('● You declined to answer', style=theme.color(theme.MUTED))
         return text
@@ -295,6 +298,9 @@ class AskUserPlugin(Plugin):
     """`AskUser` with the terminal answerer, a readable call header, and a transcript line per answer."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+        # The picker needs a terminal; a session without one, such as one the browser runs, gets no question tool.
+        if not self.host.console.is_terminal:
+            return ()
         return (AskUser(answerer=TerminalAnswerer(full_screen=self.host.full_screen, console=self.host.console)),)
 
     def render(self, event: AgentStreamEvent) -> RenderableType | None:

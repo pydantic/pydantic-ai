@@ -149,6 +149,8 @@ agent = Agent(
 
 To keep what the dropped turns said, summarize them instead, with a history processor like [summarize old messages](../message-history.md#summarize-old-messages) or the [harness](https://pydantic.dev/docs/ai/harness/compaction/)'s `SummarizingCompaction`. Either way the summary has to be written by a language model: Jev does not write text, so pass `SummarizingCompaction` a language model as `model=` rather than letting it default to the agent's. Give it a `max_tokens=` with headroom under 32k, such as `20_000`: it counts from the usage Jev reported for the last request, but estimates anything newer, and any history with no reported usage, at about four characters a token, which undercounts the JSON Jev is sent by about a quarter.
 
+To choose what to keep instead of summarizing everything, the harness's [`RelevanceCompaction`](https://pydantic.dev/docs/ai/harness/compaction/) asks a judge, which can be Jev itself, whether each older step is still needed, and keeps, summarizes or drops it accordingly.
+
 ## What Jev answers badly
 
 Everything below returns an answer rather than an error, which is what makes it worth knowing.
@@ -176,6 +178,35 @@ These come from running Jev behind Pydantic AI, not from TypeSafe.
 
 !!! note "Measure on your own data"
     Measure accuracy, the hand-off rate and any threshold on labelled examples of your own before relying on them.
+
+## Files
+
+Jev reads text only. To ask about a document, image or video, add the [File Understanding](../capabilities/file-understanding.md) capability with a model that can read it, and Jev gets a description in the file's place:
+
+```python
+from enum import StrEnum
+
+from pydantic_ai import Agent, DocumentUrl
+from pydantic_ai.capabilities import FileUnderstanding
+
+
+class DocumentSubject(StrEnum):
+    """What is this document about?"""
+
+    animals = 'animals'
+    vehicles = 'vehicles'
+    other = 'other'
+
+
+agent = Agent(
+    'typesafe:jev-latest',
+    output_type=DocumentSubject,
+    capabilities=[FileUnderstanding(fallback_subagent_model='{{ openai:medium }}')],
+)
+result = agent.run_sync([DocumentUrl('https://example.com/field-guide.pdf')])
+print(result.output.value)
+#> animals
+```
 
 ## `provider` argument
 

@@ -218,7 +218,7 @@ async def test_escape_declines_the_whole_request() -> None:
     assert screen.events == ['taken', 'released']
 
 
-def test_render_answer_lists_picks_or_the_decline() -> None:
+def test_render_answer_lists_picks_decline_or_failure() -> None:
     answered = AskUserAnsweredEvent(
         request_id='r1',
         response=AskUserResponse(
@@ -232,9 +232,12 @@ def test_render_answer_lists_picks_or_the_decline() -> None:
     console = Console(file=output, width=80)
     console.print(render_answer(answered))
     console.print(render_answer(AskUserAnsweredEvent(request_id='r2', response=AskUserResponse(cancelled=True))))
+    console.print(
+        render_answer(AskUserAnsweredEvent(request_id='r3', response=AskUserResponse(cancelled=True), failed=True))
+    )
     text = output.getvalue()
     assert '● Approach: Patch\n● Targets: api.py, db.py\n' in text
-    assert '● You declined to answer' in text
+    assert text.endswith('● You declined to answer\n● The question failed\n')
 
 
 @pytest.mark.parametrize('sandboxed', [False, True])
@@ -295,7 +298,8 @@ async def test_call_header_escapes_line_breaks_in_question_headers() -> None:
 
 
 async def test_plugin_declares_capability_and_renderer() -> None:
-    host: PluginHost[None] = PluginHost(name='ask_user', console=Console(file=io.StringIO()), settings={})
+    console = Console(file=io.StringIO(), force_terminal=True)
+    host: PluginHost[None] = PluginHost(name='ask_user', console=console, settings={})
     loaded = load_plugin(AskUserPlugin, host)
     (capability,) = loaded.capabilities
     assert isinstance(capability, AskUser)
@@ -305,6 +309,12 @@ async def test_plugin_declares_capability_and_renderer() -> None:
     )
     assert loaded.plugin.render(PartStartEvent(index=0, part=TextPart('hi'))) is None
     assert any(plugin.id == 'ask_user' for plugin in DEFAULT_PLUGINS)
+
+
+async def test_plugin_asks_nothing_without_a_terminal() -> None:
+    """A session with no terminal, such as one the browser runs, gets no question tool from this plugin."""
+    host: PluginHost[None] = PluginHost(name='ask_user', console=Console(file=io.StringIO()), settings={})
+    assert load_plugin(AskUserPlugin, host).capabilities == ()
 
 
 async def test_declining_reaches_the_model_through_the_plugin() -> None:

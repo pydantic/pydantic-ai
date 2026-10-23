@@ -7,6 +7,11 @@ on:
   schedule:
     - cron: '10 */6 * * *'
   workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow incident to verify with this run'
   workflow_call:
     secrets:
       ZAI_API_KEY:
@@ -142,6 +147,8 @@ pre-agent-steps:
       path: attention-candidates.json
       retention-days: 1
       overwrite: true
+# Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
+max-daily-ai-credits: -1
 imports:
   - shared/otel-logfire.md
   - shared/tool-hints.md

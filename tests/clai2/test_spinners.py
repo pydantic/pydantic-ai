@@ -368,7 +368,7 @@ class TestRegistration:
             async def prompt_async(self, label: str, **kwargs: object) -> str:
                 return values.pop(0)
 
-        monkeypatch.setattr('pydantic_clai2._app.PromptSession', Prompt)
+        monkeypatch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
         store = SettingsStore(tmp_path / 'config.db')
         store.plugins_dir.mkdir(parents=True, exist_ok=True)
         (store.plugins_dir / 'wave.py').write_text(PLUGIN)
@@ -415,9 +415,9 @@ async def test_prompt_title_follows_the_selection(width: int) -> None:
         if width == 80:
             frame = BUILTIN_SPINNERS['binary'].frames[0]
             # An empty queue and draft have nothing to steer, so the title carries no queue hints.
-            assert plain.rstrip('─') == f' Working {frame} '
+            assert plain.rstrip('─') == f'─ Working {frame} '
             assert f'{accent}{frame}' in title
-            hint = f' Working {frame} | Enter: queue | Alt+Enter: steer '
+            hint = f'─ Working {frame} | Enter: queue | Alt+Enter: steer '
             live.buffer.replace('typed')
             assert Text.from_ansi(live.frame()[0]).plain.startswith(hint)
             live.buffer.replace('')
@@ -427,6 +427,6 @@ async def test_prompt_title_follows_the_selection(width: int) -> None:
             assert plain.startswith(hint)
         else:
             # Too narrow to show the whole frame: nothing is highlighted rather than half a frame.
-            assert plain.startswith(' Working') and accent not in title
+            assert plain.startswith('─ Working') and accent not in title
         async with live.opened():
             pass
