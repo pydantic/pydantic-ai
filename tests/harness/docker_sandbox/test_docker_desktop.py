@@ -96,7 +96,8 @@ async def test_concurrent_first_uses_start_one_display(docker: FakeDocker, conta
         for _ in range(3):
             tg.start_soon(workspace.display_size)
 
-    assert docker.xvfb_starts == 1
+    # Without the lock all three would run the start script; the fake's display would still start once.
+    assert len([call for call in docker.calls if 'Xvfb' in call]) == 1
 
 
 async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, container_dir: Path) -> None:

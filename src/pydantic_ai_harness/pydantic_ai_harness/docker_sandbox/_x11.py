@@ -144,35 +144,27 @@ def _move(x: int | None, y: int | None) -> list[str]:
     return [] if x is None or y is None else ['mousemove', str(x), str(y)]
 
 
+DISPLAY = ':1'
+"""The X display the desktop runs on, as `DISPLAY` names it."""
+
+
 class X11Computer:
     """Controls an X display with `xdotool` and captures it with `scrot`, through a backend's commands.
 
-    The X server must already be running: starting it is the environment's job (for example an image that runs
-    `Xvfb :1`). Needs `xdotool`, `scrot`, `base64`, and `mktemp` in the environment. Text outside ASCII can lose
-    characters: `xdotool` types it by remapping keys on the fly. A backend with a desktop
-    implements [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay] by delegating to an instance:
-
-    ```python {test="skip" lint="skip"}
-    async def screenshot(self) -> bytes:
-        return await X11Computer(self).screenshot()
-    ```
-
-    Args:
-        backend: The environment's commands, which run inside it.
-        display: The X display to control, as `DISPLAY` would name it.
+    The X server must already be running on `DISPLAY`. Needs `xdotool`, `scrot`, `base64`, and `mktemp` in the
+    environment. Text outside ASCII can lose characters: `xdotool` types it by remapping keys on the fly.
     """
 
-    def __init__(self, backend: SupportsCommands, *, display: str = ':1'):
+    def __init__(self, backend: SupportsCommands):
         self._backend = backend
-        self._display = display
 
     async def _run(self, command: list[str] | str) -> CommandResult:
         result = await self._backend.run(
-            command, shell=isinstance(command, str), env={'DISPLAY': self._display}, timeout=_COMMAND_TIMEOUT
+            command, shell=isinstance(command, str), env={'DISPLAY': DISPLAY}, timeout=_COMMAND_TIMEOUT
         )
         if result.exit_code != 0:
             raise WorkspaceError(
-                f'Display command failed with exit code {result.exit_code} on display {self._display}: '
+                f'Display command failed with exit code {result.exit_code} on display {DISPLAY}: '
                 f'{(result.stderr or result.stdout).strip()}'
             )
         return result

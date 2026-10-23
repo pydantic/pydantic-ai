@@ -53,7 +53,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
 
-from ._x11 import X11Computer
+from ._x11 import DISPLAY, X11Computer
 
 __all__ = ('DESKTOP_DOCKERFILE', 'DockerSandboxBackend', 'remove_container')
 
@@ -228,19 +228,16 @@ ENV LANG=C.UTF-8
 
 _DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
 
-_DISPLAY = ':1'
-
 _START_DESKTOP = (
     'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
-    f'setsid Xvfb {_DISPLAY} -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>{_PID_DIR}/xvfb.log & xvfb=$!; i=0; '
+    f'setsid Xvfb {DISPLAY} -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>{_PID_DIR}/xvfb.log & xvfb=$!; i=0; '
     'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
     'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
     f"echo 'the X server did not start:' >&2; tail -n 5 {_PID_DIR}/xvfb.log >&2; exit 1; fi; "
     'sleep 0.1; i=$((i+1)); done; fi; '
-    'setsid fluxbox >/dev/null 2>&1 & '
-    'xdotool getdisplaygeometry'
+    'setsid fluxbox >/dev/null 2>&1 &'
 )
-"""Starts a 1280x800 X display unless one is running, and a window manager, then reports the display's size.
+"""Starts a 1280x800 X display unless one is running, and a window manager.
 
 It gives up as soon as the X server exits, or after 10 seconds. A second `fluxbox` exits when one is already running,
 so starting it every time recovers one that died or never started.
@@ -516,7 +513,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         # One start at a time: two would both find no display and launch two X servers.
         async with self._display_lock:
             if not self._display_started:
-                result = await self.run(_START_DESKTOP, shell=True, env={'DISPLAY': _DISPLAY}, timeout=30)
+                result = await self.run(_START_DESKTOP, shell=True, env={'DISPLAY': DISPLAY}, timeout=30)
                 if result.exit_code != 0:
                     raise WorkspaceError(
                         f'could not start the display in Docker workspace {self._name}: the image needs Xvfb, '
@@ -524,7 +521,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
                     )
                 self._display_started = True
         try:
-            return await operation(X11Computer(self, display=_DISPLAY))
+            return await operation(X11Computer(self))
         except UnsupportedComputerActionError:
             raise  # a refused action, such as an unknown key: the display is fine
         except WorkspaceError:
