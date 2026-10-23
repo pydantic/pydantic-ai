@@ -536,14 +536,27 @@ def test_benchmark_classifier_keeps_new_source_and_unknown_status_conservative(t
     assert outputs == {'run_benchmarks': 'true'}
 
 
-@pytest.mark.parametrize(
-    'filename',
-    TypeAdapter(dict[str, list[str]]).validate_json(
+def test_benchmark_classifier_covers_import_inventory():
+    filenames = TypeAdapter(dict[str, list[str]]).validate_json(
         (Path(__file__).parents[2] / 'tests/benchmarks/dependencies.json').read_text()
-    )['loaded'],
-)
-def test_benchmark_classifier_covers_import_inventory(tmp_path: Path, filename: str):
-    assert _classify(tmp_path, [(filename, '')], workflow_path=BENCHMARK_WORKFLOW) == {'run_benchmarks': 'true'}
+    )['loaded']
+    classifier = CLASSIFIER_JOB_ADAPTER.validate_python(_workflow(BENCHMARK_WORKFLOW)['jobs']['classify'])
+    run = classifier['steps'][0]['run']
+    function = run[run.index('affects_benchmarks() {') : run.index('\nrun_benchmarks=false')]
+    process = subprocess.run(
+        [
+            'bash',
+            '-e',
+            '-c',
+            function + '\nfor filename; do affects_benchmarks "$filename" || { echo "$filename skips"; exit 1; }; done',
+            'benchmark-inventory',
+            *filenames,
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert process.returncode == 0, process.stdout + process.stderr
 
 
 @pytest.mark.subprocess(reason='Benchmark dependency inventory requires fresh imports, isolated from other suites')
