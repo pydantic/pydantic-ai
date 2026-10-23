@@ -11,7 +11,7 @@ from pydantic_core import SchemaValidator
 from .._instructions import normalize_toolset_instruction_parts
 from .._run_context import AgentDepsT, RunContext
 from .._utils import gather
-from ..messages import InstructionId, InstructionPart, ToolsetInstructionSource
+from ..messages import InstructionPart, ToolsetInstructionSource
 from ..tools import ToolDefinition, ToolsPrepareFunc
 from ._instruction_collection import InstructionContribution, make_contribution
 
@@ -61,6 +61,8 @@ class _RelayedPart:
     """A copy of the part as the child contributed it, so a part edited in place no longer counts as relayed."""
     derived_key: bool = False
     """Whether the framework chose the part's key; see `InstructionContribution.derived_key`."""
+    framework_appended: bool = False
+    """Whether the part appends by the framework's choice; see `InstructionContribution.framework_appended`."""
 
 
 @dataclass
@@ -254,7 +256,13 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
             # speak under a key it doesn't own.
             if (relay := relays.parts.get(id(part))) is not None and relay.part is part and part == relay.snapshot:
                 contributions.append(
-                    InstructionContribution(relay.source, relay.source_id, (part,), derived_key=relay.derived_key)
+                    InstructionContribution(
+                        relay.source,
+                        relay.source_id,
+                        (part,),
+                        derived_key=relay.derived_key,
+                        framework_appended=relay.framework_appended,
+                    )
                 )
             else:
                 contributions.append(make_contribution(self, part))
@@ -281,6 +289,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
                         part,
                         replace(part),
                         derived_key=contribution.derived_key,
+                        framework_appended=contribution.framework_appended,
                     ),
                 )
                 for contribution in contributions
@@ -317,15 +326,6 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         if key is None or ':' in key:
             return None
         return ToolsetInstructionSource(key)
-
-    def _framework_appended_instruction_ids(self) -> frozenset[InstructionId]:
-        """The ids of this toolset's blocks that use `on_change='append'` by the framework's choice.
-
-        Where appending isn't supported, such as in a realtime session, these blocks fall back to
-        rewriting without the warning an author's own opt-in gets. Called on leaf toolsets only, via
-        [`apply`][pydantic_ai.toolsets.AbstractToolset.apply].
-        """
-        return frozenset()
 
     @abstractmethod
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:

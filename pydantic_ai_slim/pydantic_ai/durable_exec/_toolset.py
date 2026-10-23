@@ -22,6 +22,7 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, T
 from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets._instruction_collection import mark_framework_appended
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
@@ -947,7 +948,12 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         # Always route through the durable unit: deciding based on locally-cached state (e.g.
         # instructions a warm in-process MCP server already holds) would make the durable
         # schedule depend on process warmth and diverge on replay/recovery (#5884).
-        return await self._get_instructions_operation(self._ctx_for_unit(ctx))
+        instructions = await self._get_instructions_operation(self._ctx_for_unit(ctx))
+        # The part was rebuilt from the unit's result, so the framework-appended mark the server's own
+        # toolset gave it inside the unit has to be given again out here.
+        if isinstance(instructions, InstructionPart) and instructions.on_change == 'append':
+            mark_framework_appended(instructions)
+        return instructions
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]

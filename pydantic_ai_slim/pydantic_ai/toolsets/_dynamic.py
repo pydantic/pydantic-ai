@@ -2,17 +2,13 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Self, TypeAlias
+from typing import Any, Self, TypeAlias
 
 from .._run_context import AgentDepsT, RunContext, without_tool_name_path
-from ..messages import InstructionPart
+from ..messages import InstructionPart, ToolsetInstructionSource
 from ..tools import ToolDefinition
-from ._instruction_collection import framework_appended_instruction_ids
+from ._instruction_collection import InstructionContribution, flatten_marked_contributions, make_contribution
 from .abstract import AbstractToolset, ToolsetTool
-
-if TYPE_CHECKING:
-    from ._instruction_collection import InstructionContribution
 
 ToolsetFunc: TypeAlias = Callable[
     [RunContext[AgentDepsT]],
@@ -134,29 +130,27 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
             return None
         return await self._toolset.get_instructions(ctx)
 
-    def _instruction_children(self) -> Sequence[AbstractToolset[AgentDepsT]]:
-        # This toolset speaks for the one its function builds: with an `id`, what that toolset says is
-        # keyed by it, and without one it goes out unkeyed. The exception is a built toolset whose
-        # instructions append by the framework's choice, such as an `MCPToolset`'s server instructions,
-        # also behind transparent wrappers like `FilteredToolset`:
-        # unkeyed, they'd be downgraded with a warning on every request, so an id-less dynamic toolset
-        # passes that one's own key along instead.
-        toolset = self._toolset
-        if self.id is None and toolset is not None and framework_appended_instruction_ids(toolset):
-            return (toolset,)
-        return ()
-
     async def _collect_instruction_contributions(
         self, ctx: RunContext[AgentDepsT]
     ) -> list[InstructionContribution[AgentDepsT]]:
-        contributions = await super()._collect_instruction_contributions(ctx)
-        if self._instruction_children():
-            # A key passed along from the built toolset is the framework's choice, not an `id` given here.
-            contributions = [replace(contribution, derived_key=True) for contribution in contributions]
+        toolset = self._toolset
+        if self.id is not None or toolset is None or type(self).get_instructions is not DynamicToolset.get_instructions:
+            # This toolset speaks for the one its function builds, keying what that one says by its own `id`.
+            return await super()._collect_instruction_contributions(ctx)
+        # Without an `id` there's nothing to key the built toolset's instructions by here, so they go out
+        # unkeyed, except those that append by the framework's choice, such as an `MCPToolset`'s server
+        # instructions, however the built toolset wraps it: unkeyed, they'd be downgraded with a warning
+        # on every request, so they keep the key the built toolset gave them. That key is the framework's
+        # choice, not an `id` given here.
+        contributions: list[InstructionContribution[AgentDepsT]] = []
+        for part, framework in flatten_marked_contributions(await toolset._collect_instruction_contributions(ctx)):
+            if framework and part.id is not None and isinstance(part.id.source, ToolsetInstructionSource):
+                contributions.append(
+                    InstructionContribution(self, part.id.source, (part,), derived_key=True, framework_appended=True)
+                )
+            else:
+                contributions.append(make_contribution(self, part))
         return contributions
-
-    def _authors_own_instructions(self) -> bool:
-        return not self._instruction_children() or type(self).get_instructions is not DynamicToolset.get_instructions
 
     async def get_tool_for_tool_def(
         self, tool_def: ToolDefinition, ctx: RunContext[AgentDepsT]

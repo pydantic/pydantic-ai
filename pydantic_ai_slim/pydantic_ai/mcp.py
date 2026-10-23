@@ -40,6 +40,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 # importing a family that the other generation's installs don't ship.
 from ._http import AsyncHTTPClient, HTTPAuth, HTTPTimeout
 from .direct import model_request
+from .toolsets._instruction_collection import mark_framework_appended
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 try:
@@ -1472,7 +1473,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             return None if self._instructions is None else messages.InstructionPart(content=self._instructions)
         # A keyed server contributes its block even while it sends no instructions, so instructions a later
         # connection adds are appended as a change, and ones it drops are withdrawn, without moving the prefix.
-        return messages.InstructionPart(content=self._instructions or '', dynamic=False, on_change='append')
+        return mark_framework_appended(
+            messages.InstructionPart(content=self._instructions or '', dynamic=False, on_change='append')
+        )
 
     @property
     def _instruction_key(self) -> str | None:
@@ -1487,17 +1490,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         host = urlparse(url).hostname if isinstance(url, str) else None
         # `:` delimits id segments, so an IPv6 literal such as `::1` is spelled with `-` instead.
         return host.replace(':', '-') if host else None
-
-    def _framework_appended_instruction_ids(self) -> frozenset[messages.InstructionId]:
-        # Only the instructions this class returns append by the framework's choice. A subclass that
-        # overrides `get_instructions` decides for itself, and gets the same warnings any author does.
-        if (
-            self.include_instructions
-            and type(self).get_instructions is MCPToolset.get_instructions
-            and (source := self._instruction_source()) is not None
-        ):
-            return frozenset({messages.InstructionId(source)})
-        return frozenset()
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve the tools currently exposed by the server.

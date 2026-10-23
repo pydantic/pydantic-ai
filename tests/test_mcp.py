@@ -60,7 +60,6 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, DynamicToolset, FunctionToolset
 from pydantic_ai.toolsets._instruction_collection import (
     flatten_instruction_contributions,
-    framework_appended_instruction_ids,
     make_contribution,
 )
 from pydantic_ai.usage import RunUsage
@@ -1263,22 +1262,77 @@ A later <context> element with the same id replaces the earlier one and stays in
         )
         assert load_return.content == {'instructions': 'You are an MCP test server.'}
 
-    async def test_framework_appended_instruction_ids(self, fastmcp_server: FastMCP[None]):
-        class AppendingToolset(MCPToolset[None]):
-            """Chooses `on_change='append'` itself, so its own opt-in gets the usual warnings."""
+    @pytest.mark.parametrize(
+        ('composition', 'author_block'),
+        [
+            ('direct', 'toolset:author'),
+            ('filtered', 'toolset:author'),
+            ('dynamic-no-id', 'unnamed'),
+            ('dynamic-filtered-no-id', 'unnamed'),
+            ('dynamic-with-id', 'toolset:outer'),
+            ('subclass', 'toolset:author'),
+        ],
+    )
+    async def test_only_an_authors_own_append_opt_in_warns_however_toolsets_compose(
+        self, fastmcp_server: FastMCP[None], composition: str, author_block: str
+    ):
+        """Whether a block appends by the framework's choice travels with the block, not its id.
 
+        In a deferred capability, where appending isn't supported, an author's `on_change='append'` block
+        warns and the server's instructions don't, however the toolsets around them pass them along or
+        key them anew: a `DynamicToolset` with an `id` keys both under `toolset:outer`, and only the
+        author's is reported. An `MCPToolset` subclass that returns its own append block is its author.
+        """
+
+        class AppendingMCPToolset(MCPToolset[None]):
             async def get_instructions(self, ctx: RunContext[None]) -> InstructionPart | None:
-                return InstructionPart(content='Own instructions.', on_change='append')  # pragma: no cover
+                return InstructionPart(content='Own guidance.', on_change='append')
 
-        toolset = CombinedToolset(
-            [
-                MCPToolset(fastmcp_server, id='docs', include_instructions=True),
-                MCPToolset(fastmcp_server, id='excluded'),
-                MCPToolset(fastmcp_server, include_instructions=True),
-                AppendingToolset(fastmcp_server, id='own', include_instructions=True),
+        def members() -> list[AbstractToolset[None]]:
+            if composition == 'subclass':
+                return [AppendingMCPToolset(fastmcp_server, id='author', include_instructions=True)]
+            return [
+                MCPToolset(fastmcp_server, id='docs_server', include_instructions=True),
+                FunctionToolset[None](
+                    instructions=InstructionPart(content='Author guidance.', on_change='append'), id='author'
+                ),
             ]
-        )
-        assert framework_appended_instruction_ids(toolset) == {InstructionId(ToolsetInstructionSource('docs'))}
+
+        toolsets: list[AbstractToolset[None]]
+        if composition in ('direct', 'subclass'):
+            toolsets = members()
+        elif composition == 'filtered':
+            toolsets = [CombinedToolset(members()).filtered(lambda _ctx, _tool: True)]
+        elif composition == 'dynamic-no-id':
+            toolsets = [DynamicToolset[None](lambda _ctx: CombinedToolset(members()))]
+        elif composition == 'dynamic-filtered-no-id':
+            toolsets = [
+                DynamicToolset[None](lambda _ctx: CombinedToolset(members()).filtered(lambda _ctx, _tool: True))
+            ]
+        else:
+            toolsets = [DynamicToolset[None](lambda _ctx: CombinedToolset(members()), id='outer')]
+
+        calls = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'docs'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        capability = Capability[None](id='docs', defer_loading=True, toolsets=toolsets)
+        agent = Agent(FunctionModel(model_fn), deps_type=type(None), capabilities=[capability])
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            await agent.run('Continue.')
+
+        assert [
+            str(warning.message) for warning in caught if 'deferred capability instructions' in str(warning.message)
+        ] == [
+            f"`on_change='append'` is not supported for deferred capability instructions, so instruction blocks "
+            f'{author_block!r} are delivered when the capability loads and their later changes are not tracked.'
+        ]
 
     async def test_get_instructions_returns_none_when_disabled(
         self, fastmcp_server: FastMCP[None], run_context: RunContext

@@ -122,19 +122,21 @@ def explicitly_appended_blocks(
     instructions: Sequence[SourcedInstruction[AgentDepsT]],
     parts: Sequence[InstructionPart],
     *,
-    framework_toolset_ids: Collection[InstructionId] = (),
+    framework_toolset_parts: Collection[InstructionPart] = (),
 ) -> list[str]:
     """The blocks among `parts` an author, rather than the framework, asked `on_change='append'` for, by id or name.
 
-    `parts` are what `instructions` (and any toolsets) resolved to. `framework_toolset_ids` are the
-    toolset blocks that append by the framework's choice rather than their author's, such as MCP
-    server instructions.
+    `parts` are what `instructions` (and any toolsets) resolved to. `framework_toolset_parts` are the
+    very part objects among them that toolsets append by the framework's choice rather than their
+    author's, such as MCP server instructions, told apart by identity rather than by an id an author's
+    block could share.
     """
-    framework_ids = {sourced.id for sourced in instructions if sourced.framework_default} | set(framework_toolset_ids)
+    framework_ids = {sourced.id for sourced in instructions if sourced.framework_default}
+    framework_parts = {id(part) for part in framework_toolset_parts}
     return [
         str(part.id) if part.id is not None else part.name or 'unnamed'
         for part in parts
-        if part.on_change == 'append' and part.id not in framework_ids
+        if part.on_change == 'append' and id(part) not in framework_parts and part.id not in framework_ids
     ]
 
 

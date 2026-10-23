@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Generic
 
@@ -26,6 +27,37 @@ class InstructionContribution(Generic[AgentDepsT]):
     `DynamicToolset` passes its built `MCPToolset`'s key along. Two such contributions that land on one
     key fall back to unkeyed, rewriting instructions instead of colliding.
     """
+    framework_appended: bool = False
+    """Whether these parts use `on_change='append'` by the framework's choice rather than their author's.
+
+    Set where such a part is made, by `mark_framework_appended`, and carried with the part through every toolset that passes it along or keys it anew, so it never
+    has to be inferred from an id another block could share.
+    """
+
+
+_FRAMEWORK_APPENDED_PARTS: ContextVar[dict[int, InstructionPart] | None] = ContextVar(
+    '_FRAMEWORK_APPENDED_PARTS', default=None
+)
+"""The part objects marked framework-appended during the collection in progress, by identity."""
+
+
+def mark_framework_appended(part: InstructionPart) -> InstructionPart:
+    """Record that `part` uses `on_change='append'` by the framework's choice, for the collection in progress.
+
+    A toolset that appends its blocks by default, rather than because its author asked, returns its
+    parts through this, so where appending isn't supported they fall back to rewriting without the
+    warning an author's own opt-in gets. Tracked by object identity, so a block another toolset builds,
+    or that ends up under the same id, is never mistaken for it.
+    """
+    if (marked := _FRAMEWORK_APPENDED_PARTS.get()) is not None:
+        marked[id(part)] = part
+    return part
+
+
+def is_framework_appended(part: InstructionPart) -> bool:
+    """Whether this part object was marked by `mark_framework_appended` during the collection in progress."""
+    marked = _FRAMEWORK_APPENDED_PARTS.get()
+    return part.on_change == 'append' and marked is not None and marked.get(id(part)) is part
 
 
 def make_contribution(
@@ -56,54 +88,33 @@ def make_contribution(
         source_id=source_id,
         parts=(resolved_part,),
         derived_key=source_id is not None and source.id is None,
+        framework_appended=is_framework_appended(part),
     )
-
-
-def framework_appended_instruction_ids(toolset: AbstractToolset[AgentDepsT]) -> set[InstructionId]:
-    """The ids of blocks under `toolset` that append by the framework's choice rather than their author's.
-
-    Keyed the way collection keys them: a toolset that passes its instruction children along leaves
-    their keys as they are, and one that speaks for what's below it without passing it along, such as
-    a `DynamicToolset` with an `id`, keys everything its leaves contribute under its own.
-    """
-    ids: set[InstructionId] = set()
-
-    def visit(node: AbstractToolset[AgentDepsT]) -> None:
-        if children := node._instruction_children():  # pyright: ignore[reportPrivateUsage]
-            for child in children:
-                visit(child)
-            return
-        leaf_ids: set[InstructionId] = set()
-        node.apply(lambda leaf: leaf_ids.update(leaf._framework_appended_instruction_ids()))  # pyright: ignore[reportPrivateUsage]
-        if (source := node._instruction_source()) is not None:  # pyright: ignore[reportPrivateUsage]
-            ids.update(InstructionId(source, name=leaf_id.name) for leaf_id in leaf_ids)
-
-    visit(toolset)
-    return ids
 
 
 async def collect_toolset_instructions(
     toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
 ) -> list[InstructionPart]:
     """Collect instruction parts once at the authoring toolset boundary."""
-    parts, _ = await collect_toolset_instructions_with_framework_ids(toolset, ctx)
+    parts, _ = await collect_toolset_instructions_with_framework_parts(toolset, ctx)
     return parts
 
 
-async def collect_toolset_instructions_with_framework_ids(
+async def collect_toolset_instructions_with_framework_parts(
     toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
-) -> tuple[list[InstructionPart], set[InstructionId]]:
-    """Collect instruction parts, with the ids of those that append by the framework's choice rather than their author's.
+) -> tuple[list[InstructionPart], list[InstructionPart]]:
+    """Collect instruction parts, and which of them append by the framework's choice rather than their author's.
 
-    Read off each surviving contribution, so a block keeps that status only while it's still the one
-    the framework built: an author's block that ends up with the same id as a framework-appended one
-    stays the author's.
+    The second list holds the very part objects in the first that are framework-appended, so a consumer
+    tells them apart by identity rather than by an id an author's block could share.
     """
-    contributions = await toolset._collect_instruction_contributions(ctx)  # pyright: ignore[reportPrivateUsage]
-    flattened = _flatten(contributions)
-    return [part for part, _ in flattened], {
-        part.id for part, framework in flattened if framework and part.id is not None
-    }
+    token = _FRAMEWORK_APPENDED_PARTS.set({})
+    try:
+        contributions = await toolset._collect_instruction_contributions(ctx)  # pyright: ignore[reportPrivateUsage]
+        flattened = flatten_marked_contributions(contributions)
+    finally:
+        _FRAMEWORK_APPENDED_PARTS.reset(token)
+    return [part for part, _ in flattened], [part for part, framework in flattened if framework]
 
 
 def flatten_instruction_contributions(
@@ -116,15 +127,16 @@ def flatten_instruction_contributions(
     rewriting, as they did before keys were derived, so only explicitly chosen `id`s can collide.
 
     Separate from the collection itself so a toolset that has already gathered its children can
-    apply the rule without re-entering the walk that produced them.
+    apply the rule without re-entering the walk that produced them. The framework-appended parts it
+    returns stay marked, so a toolset that keys them anew still knows them for what they are.
     """
-    return [part for part, _ in _flatten(contributions)]
+    return [part for part, _ in flatten_marked_contributions(contributions)]
 
 
-def _flatten(
+def flatten_marked_contributions(
     contributions: list[InstructionContribution[AgentDepsT]],
 ) -> list[tuple[InstructionPart, bool]]:
-    """Flatten contributions as `flatten_instruction_contributions` does, marking the parts that append by the framework's choice."""
+    """Flatten contributions as `flatten_instruction_contributions` does, pairing each part with whether it's framework-appended."""
     explicit_owners: dict[ToolsetInstructionSource, AbstractToolset[AgentDepsT]] = {}
     sources_by_key: dict[ToolsetInstructionSource, set[int]] = {}
     for contribution in contributions:
@@ -139,7 +151,6 @@ def _flatten(
                 f'instructions, so {str(source_id)!r} would address parts from each. '
                 'Toolset `id`s must be unique among all toolsets registered with the same agent.'
             )
-    framework_ids_by_source: dict[int, set[InstructionId]] = {}
     parts: list[tuple[InstructionPart, bool]] = []
     for contribution in contributions:
         if (
@@ -154,11 +165,7 @@ def _flatten(
                 if part.content.strip()
             )
             continue
-        source = contribution.source
-        if (framework_ids := framework_ids_by_source.get(id(source))) is None:
-            framework_ids = framework_ids_by_source[id(source)] = framework_appended_instruction_ids(source)
-        parts.extend(
-            (part, part.on_change == 'append' and part.id is not None and part.id in framework_ids)
-            for part in contribution.parts
-        )
+        framework = contribution.framework_appended
+        for part in contribution.parts:
+            parts.append((mark_framework_appended(part) if framework else part, framework))
     return parts
