@@ -155,18 +155,58 @@ async def test_session_titles_metadata(recorded: RecordingClient, tmp_path: Path
     assert recorded.reports[-1] == ('tab.rename', {'label': 'My conversation'})
     await loaded.dispatch(TurnEnd(text='hello', outcome='completed'))
     metadata = [params for method, params in recorded.reports if method == 'pane.report_metadata'][-1]
+    assert metadata['applies_to_source'] == 'clai2'
     assert metadata['title'] == 'My conversation'
     assert metadata['ttl_ms'] == 86_400_000
     assert metadata['tokens'] == {'model': 'agent default', 'tokens': f'{session.summary.total_tokens:,}'}
     await session.clear()
     assert recorded.reports[-1] == ('tab.rename', {'label': None})
     references = [params for method, params in recorded.reports if method == 'pane.report_agent_session']
+    database = ['--database', str(tmp_path / 'config.db')]
+    # Unsaved conversations restart under their ID; saved ones resume.
     assert references == [
-        {'agent_session_id': first, 'agent_session_path': str(store.database)},
-        {'agent_session_id': session.conversation_id, 'agent_session_path': str(store.database)},
+        {
+            'agent_session_id': first,
+            'agent_session_path': str(store.database),
+            'resume_argv': ['clai2', '--session-id', first, *database],
+        },
+        {
+            'agent_session_id': first,
+            'agent_session_path': str(store.database),
+            'resume_argv': ['clai2', '--resume', first, *database],
+        },
+        {
+            'agent_session_id': session.conversation_id,
+            'agent_session_path': str(store.database),
+            'resume_argv': ['clai2', '--session-id', session.conversation_id, *database],
+        },
     ]
     await loaded.dispatch(SessionEnd(reason='exit'))
     assert recorded.closed
+
+
+@pytest.mark.parametrize('directory', ['default', "it's", 'line\nbreak'])
+async def test_resume_argv_database(
+    recorded: RecordingClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directory: str
+) -> None:
+    """The default database needs no `--database`; herdr would reject the whole report for an unsafe path."""
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path))
+    folder = tmp_path / 'pydantic-clai2' if directory == 'default' else tmp_path / directory
+    folder.mkdir()
+    session = Session(
+        Agent(TestModel()), deps=None, conversations=SqliteConversationStore(database=folder / 'sessions.db')
+    )
+    host = PluginHost(
+        name='herdr', console=Console(file=io.StringIO(), force_terminal=True), settings={}, conversation=session
+    )
+    loaded = load_plugin(herdr.HerdrPlugin, host)
+    await loaded.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
+    reference = next(params for method, params in recorded.reports if method == 'pane.report_agent_session')
+    if directory == 'default':
+        assert reference['resume_argv'] == ['clai2', '--session-id', session.conversation_id]
+    else:
+        assert 'resume_argv' not in reference
+    await loaded.dispatch(SessionEnd(reason='exit'))
 
 
 async def test_nested_run_does_not_report_idle(recorded: RecordingClient) -> None:
@@ -331,7 +371,7 @@ def test_socket_delivery_and_release(server: Server) -> None:
     params = requests[0]['params']
     assert isinstance(params, dict)
     assert params['pane_id'] == 'w1:p1'
-    assert params['source'] == 'herdr:clai2'
+    assert params['source'] == 'clai2'
     assert params['agent'] == 'clai2'
 
 

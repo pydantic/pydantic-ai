@@ -2504,8 +2504,9 @@ emitted.
 ### Herdr integration
 
 Enable `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane to report
-CLAI2's state, session reference, model/token metadata, and conversation title.
-It starts disabled and does nothing outside herdr. See
+CLAI2's state, session reference, model/token metadata, and conversation title,
+and to let herdr reopen the conversation after a herdr restart. It starts
+disabled and does nothing outside herdr. See
 [the plugin guide](../PLUGINS.md#herdr-integration) for details and limitations.
 
 ### Agent of Empires integration
