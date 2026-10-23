@@ -42,8 +42,8 @@ async def _wait_for_notice(log: Path) -> None:
             await anyio.sleep(0.05)
 
 
-class _ReadsHeldUntilWritten(LocalWorkspaceBackend):
-    """Marks the first read of the start of a job log with a `read` file, and holds later reads until `written` exists."""
+class _FirstReadMarked(LocalWorkspaceBackend):
+    """Marks the first read of the start of a job log that returns output with a `read` file."""
 
     def __init__(self, working_dir: Path) -> None:
         super().__init__(working_dir)
@@ -58,15 +58,29 @@ class _ReadsHeldUntilWritten(LocalWorkspaceBackend):
         timeout: float | None = None,
     ) -> CommandResult:
         assert isinstance(command, str)
-        from_start = 'tail -c +1 ' in command
-        if 'tail -c +' in command and not from_start:
+        result = await super().run(command, shell=shell, env=env, timeout=timeout)
+        if 'tail -c +1 ' in command and result.stdout.strip():
+            (self.markers / 'read').touch()
+        return result
+
+
+class _ReadsHeldUntilWritten(_FirstReadMarked):
+    """Also holds reads past the start of a job log until `written` exists."""
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        assert isinstance(command, str)
+        if 'tail -c +' in command and 'tail -c +1 ' not in command:
             with anyio.fail_after(10):
                 while not (self.markers / 'written').exists():
                     await anyio.sleep(0.01)
-        result = await super().run(command, shell=shell, env=env, timeout=timeout)
-        if from_start and result.stdout.strip():
-            (self.markers / 'read').touch()
-        return result
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
 class _ClearedOnEveryRead(LocalWorkspaceBackend):
@@ -217,9 +231,18 @@ class TestShellLogLimits:
 
     async def test_events_report_a_cleared_log(self, tmp_path: Path) -> None:
         # The first write is streamed before the second pushes the log past the limit and it is emptied.
-        command = "printf '%01500d\\n' 0; sleep 0.3; printf '%01500d\\n' 0; sleep 0.5; echo after"
+        command = (
+            "printf '%01500d\\n' 0; until [ -e read ]; do sleep 0.01; done; printf '%01500d\\n' 0; "
+            'until [ "$(cat .pydantic-ai-harness/shell/*/log_clears 2> /dev/null | wc -c)" -ge 2 ]; do sleep 0.01; done; '
+            'echo after'
+        )
         recorder = Recorder()
-        output = await shell(tmp_path, {'command': command, 'timeout': 60}, capabilities=[recorder], max_log_bytes=2000)
+        output = await call_tool(
+            [Shell[None](denied_commands=[], tools=['shell'], max_log_bytes=2000), recorder],
+            'shell',
+            {'command': command, 'timeout': 30},
+            workspace=_FirstReadMarked(tmp_path),
+        )
         assert '"exit_code": 0' in output
         assert recorder.output.startswith('0' * 1500)
         assert recorder.output.endswith(f'{NOTICE}\nafter\n')
@@ -284,14 +307,19 @@ class TestShellLogLimits:
         )
         group = int(output.split('kill -- -', 1)[1].split('`', 1)[0])
         clears = _handle(output, 'Output').parent / 'log_clears'
+        status = _handle(output, 'Status')
         try:
             with anyio.fail_after(10):
                 while not clears.exists() or clears.stat().st_size < 2:
                     await anyio.sleep(0.01)
-            await anyio.sleep(0.3)  # several checks
+                # The wrapper publishes the exit code only once the watcher has made its last check.
+                os.killpg(group, signal.SIGTERM)
+                while json.loads(status.read_text())['exit_code'] is None:
+                    await anyio.sleep(0.01)
             assert clears.read_bytes() == b'xx'
         finally:
-            os.killpg(group, signal.SIGTERM)
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(group, signal.SIGTERM)
 
     async def test_finished_event_reports_a_clear_while_the_log_is_measured(self, tmp_path: Path) -> None:
         recorder = Recorder()

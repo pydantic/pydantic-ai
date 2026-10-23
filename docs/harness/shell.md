@@ -171,7 +171,9 @@ command reads to the end and exits.
 
 Unlike `max_file_bytes`, this works with `tools=['shell']` and only applies to
 the logs, not to files the command writes. A log can grow by up to one second
-of output past the limit before it is emptied.
+of output past the limit before it is emptied. No telemetry spans are emitted
+for a clear: it shows as the notice in the log and, when it happens while a
+`shell` call waits, as `truncated=True` on its finished event.
 
 ## Environment control
 
