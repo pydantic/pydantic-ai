@@ -29,7 +29,7 @@ from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
-from .._computer_use import COMPUTER_KIND, computer_tool
+from .._computer_use import COMPUTER_KIND, SAFETY_CHECKS, computer_tool
 from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, TEXT_DOCUMENT_MEDIA_TYPES
 from .._http import to_httpx2_timeout
 from .._instrumentation import get_instructions
@@ -4054,9 +4054,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 if self._history_changed(m, messages[:index]):
                     return None, messages, True
                 # A computer call's safety checks are acknowledged from the call, so it has to be in the request.
-                if any(
-                    isinstance(p, ToolCallPart) and (p.provider_details or {}).get('safety_checks') for p in m.parts
-                ):
+                if any(isinstance(p, ToolCallPart) and (p.provider_details or {}).get(SAFETY_CHECKS) for p in m.parts):
                     return None, messages, True
                 previous_response_id = m.provider_response_id
                 break
@@ -6974,7 +6972,7 @@ def _map_computer_call(
     actions = item.actions if item.actions is not None else ([item.action] if item.action else [])
     provider_details: dict[str, Any] = {'computer_call': item.model_dump(mode='json', exclude_none=True)}
     if item.pending_safety_checks:
-        provider_details['safety_checks'] = [
+        provider_details[SAFETY_CHECKS] = [
             check.model_dump(mode='json', exclude_none=True) for check in item.pending_safety_checks
         ]
     return ToolCallPart(
@@ -7011,11 +7009,7 @@ def _map_computer_call_output(
         'call_id': call_id,
         'output': {'type': 'computer_screenshot', 'image_url': screenshot or _BLANK_SCREENSHOT},
     }
-    if (
-        part.outcome == 'success'
-        and call is not None
-        and (checks := (call.provider_details or {}).get('safety_checks'))
-    ):
+    if part.outcome == 'success' and call is not None and (checks := (call.provider_details or {}).get(SAFETY_CHECKS)):
         output['acknowledged_safety_checks'] = checks
     metadata: Any = part.metadata
     items: list[responses.ResponseInputItemParam] = [output]
