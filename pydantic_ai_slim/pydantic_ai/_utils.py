@@ -721,6 +721,18 @@ def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> s
     return x._traceparent(required=False) or ''  # type: ignore[reportPrivateUsage]
 
 
+def dataclass_fields_equal(left: object, right: object) -> bool:
+    """Whether two instances of one class are equal by the class's `compare` dataclass fields.
+
+    A class that hashes by identity (one that isn't a dataclass, or a `@dataclass(eq=False)` over bases that
+    don't generate equality) compares by identity, so equal instances always hash equal.
+    """
+    if not is_dataclass(left) or type(left).__hash__ is object.__hash__:
+        return left is right
+    names = [f.name for f in fields(left) if f.compare]
+    return tuple(getattr(left, name) for name in names) == tuple(getattr(right, name) for name in names)
+
+
 def dataclasses_no_defaults_repr(self: Any) -> str:
     """Exclude fields with values equal to the field default.
 

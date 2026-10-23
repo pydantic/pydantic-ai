@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         ClearToolResults,
         DeduplicateFileReads,
         FallbackCompaction,
+        RelevanceCompaction,
         ReportContextUsage,
         SlidingWindowCompaction,
         SummarizingCompaction,
@@ -64,6 +65,7 @@ if TYPE_CHECKING:
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
     from .skills import Skills
+    from .smart_search import SmartSearch
     from .smol_sandbox import SmolSandbox, SmolSandboxBackend
     from .spend import SpendLimits
     from .sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
@@ -136,6 +138,7 @@ __all__ = [
     'PydanticAIDocs',
     'Pylon',
     'READ_ONLY_TOOL_NAMES',
+    'RelevanceCompaction',
     'RenderWorkflows',
     'ReportContextUsage',
     'RepoContext',
@@ -145,6 +148,7 @@ __all__ = [
     'Shell',
     'Skills',
     'SlidingWindowCompaction',
+    'SmartSearch',
     'SmolSandbox',
     'SmolSandboxBackend',
     'SpendLimits',
@@ -205,6 +209,7 @@ _CAPABILITY_EXPORTS = {
     'PromptInjectionDefender': 'prompt_injection_defender',
     'PydanticAIDocs': 'pydantic_ai_docs',
     'Pylon': 'pylon',
+    'RelevanceCompaction': 'compaction',
     'RenderWorkflows': 'render',
     'ReportContextUsage': 'compaction',
     'RepoContext': 'repo_context',
@@ -212,6 +217,7 @@ _CAPABILITY_EXPORTS = {
     'Shell': 'shell',
     'Skills': 'skills',
     'SlidingWindowCompaction': 'compaction',
+    'SmartSearch': 'smart_search',
     'SmolSandbox': 'smol_sandbox',
     'SpendLimits': 'spend',
     'SpritesSandbox': 'sprites_sandbox',
