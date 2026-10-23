@@ -100,7 +100,7 @@ class Shell(AbstractCapability[AgentDepsT]):
     max_log_bytes: int | None = field(default=100_000_000, kw_only=True)
     """Size past which a background or `shell` command's log is emptied, leaving a notice. Must be positive.
 
-    Checked once a second while the command runs; the command keeps running. Bounds the disk a
+    Checked once a second while the command runs, which keeps running, and once more when it ends. Bounds the disk a
     chatty or runaway command (such as one reading its own log) can fill. `None` disables it.
     """
 

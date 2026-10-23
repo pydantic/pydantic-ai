@@ -156,8 +156,9 @@ tool-call result carries the failure and limit context.
 ## Limit command logs
 
 The output logs of `start_command` and `shell` commands are bounded by
-`Shell(max_log_bytes=...)`, 100 MB by default. While a command runs, each log is
-checked once a second; a log past the limit is emptied and gets the notice
+`Shell(max_log_bytes=...)`, 100 MB by default. Each log is checked once a
+second while a command runs and once more when it ends; a log past the limit
+is emptied and gets the notice
 `[Log exceeded max_log_bytes=<n>; earlier output was cleared.]`. The command
 keeps running, so a dev server that logs a lot is not stopped, and later output
 is logged as usual. Pass `max_log_bytes=None` to turn it off.

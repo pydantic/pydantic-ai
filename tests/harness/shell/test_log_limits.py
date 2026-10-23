@@ -271,6 +271,12 @@ class TestShellLogLimits:
         assert '"exit_code": 0' in output
         assert recorder.output == f'first\n{NOTICE}\nafter\n'
 
+    async def test_log_of_a_command_ending_between_checks_is_cleared(self, tmp_path: Path) -> None:
+        # The command ends before the watcher's first check, which only its last check can catch.
+        output = await shell(tmp_path, {'command': "printf '%03000d' 0", 'timeout': 30}, max_log_bytes=2000)
+        assert '"exit_code": 0' in output
+        assert _handle(output, 'Output').read_text() == f'{NOTICE}\n'
+
     async def test_a_log_holding_only_the_notice_is_left_alone(self, tmp_path: Path) -> None:
         # The notice alone is over this log limit; clearing it again would loop at every check.
         output = await shell(

@@ -50,6 +50,17 @@ dir=$1
 publish() {{
   printf '{{"pid": %s, "exit_code": %s}}' "$$" "$1" > "$dir/status.tmp" && mv -f "$dir/status.tmp" "$dir/status.json"
 }}
+clear_logs() {{
+  for log in "$out" "$err"; do
+    __harness_size=$(( $(wc -c < "$log" 2> /dev/null) + 0 ))
+    if [ "$__harness_size" -gt "$1" ] && [ "$__harness_size" -gt $(( ${{#__harness_notice}} + 1 )) ]; then
+      printf x >> "$dir/log_clears"
+      : > "$log"
+      printf '%s\\n' "$__harness_notice" >> "$log"
+      printf x >> "$dir/log_clears"
+    fi
+  done
+}}
 watch_logs() {{
   trap '__harness_watch_stopped=1; kill "$__harness_sleeper" 2> /dev/null' TERM
   __harness_notice="[Log exceeded max_log_bytes=$1; earlier output was cleared.]"
@@ -59,18 +70,11 @@ watch_logs() {{
     [ -z "$__harness_watch_stopped" ] || kill "$__harness_sleeper" 2> /dev/null
     wait "$__harness_sleeper" || [ $? -gt 128 ] || __harness_interval=1
     [ -z "$__harness_watch_stopped" ] && [ ! -e "$dir/watch.stop" ] || break
-    for log in "$out" "$err"; do
-      __harness_size=$(( $(wc -c < "$log" 2> /dev/null) + 0 ))
-      [ "$__harness_size" -gt $(( ${{#__harness_notice}} + 1 )) ] || continue
-      if [ -z "$__harness_watch_stopped" ] && [ "$__harness_size" -gt "$1" ]; then
-        printf x >> "$dir/log_clears"
-        : > "$log"
-        printf '%s\\n' "$__harness_notice" >> "$log"
-        printf x >> "$dir/log_clears"
-      fi
-    done
+    clear_logs "$1"
   done
   wait "$__harness_sleeper" 2> /dev/null
+  # Once more for the output since the last round, so a finished job's logs end within the limit.
+  clear_logs "$1"
 }}
 stop_watcher() {{
   [ -z "$watcher" ] || {{ true 2> /dev/null > "$dir/watch.stop"; kill "$watcher" 2> /dev/null; wait "$watcher" 2> /dev/null; }}
@@ -102,15 +106,16 @@ publish $code
 """The job's supervisor: arguments are the job directory, the log mode, the command, the file limit, the launcher's PID,
 the log limit, and the seconds between log checks.
 
-With a log limit, a watcher checks each log every `_LOG_CHECK_INTERVAL` seconds and empties one that has grown past it,
-leaving a notice. It appends a byte to `log_clears` before and after each clear, so a reader can tell a clear is under
-way (an odd size) or done, even once the log has grown back. The command keeps running, and a command that reads its own
-log (a glob over job logs) reaches the end of it and stops, instead of copying the log into itself until the disk is
-full. A log holding no more than the notice is left alone, so a limit below its size doesn't clear it at every check.
-The watcher starts before `max_file_bytes` applies, since `log_clears` keeps growing, finishes a clear it has started
-when the wrapper stops it, and exits once the wrapper is gone (killed on its own and reaped). The wrapper stops it with
-`watch.stop` as well as `TERM`, since a `TERM` sent as the watcher starts can be lost before its trap is set. It sleeps in a child it
-stops and reaps itself, so a stopped job leaves no orphan behind; a `sleep` without fractional seconds gets 1.
+With a log limit, a watcher checks each log every `_LOG_CHECK_INTERVAL` seconds, and once more when it stops, and
+empties one that has grown past it, leaving a notice. It appends a byte to `log_clears` before and after each clear, so
+a reader can tell a clear is under way (an odd size) or done, even once the log has grown back. The command keeps
+running, and a command that reads its own log (a glob over job logs) reaches the end of it and stops, instead of copying
+the log into itself until the disk is full. A log holding no more than the notice is left alone, so a limit below its
+size doesn't clear it at every check. The watcher starts before `max_file_bytes` applies, since `log_clears` keeps
+growing, finishes a clear it has started when the wrapper stops it, and exits once the wrapper is gone (killed on its
+own and reaped). The wrapper stops it with `watch.stop` as well as `TERM`, since a `TERM` sent as the watcher starts
+can be lost before its trap is set. It sleeps in a child it stops and reaps itself, so a stopped job leaves no orphan
+behind; a `sleep` without fractional seconds gets 1.
 
 The `TERM` trap lets the wrapper outlive a `SIGTERM` sent to the whole group long enough to
 publish the command's exit status; the command itself runs with default signal handling, since
