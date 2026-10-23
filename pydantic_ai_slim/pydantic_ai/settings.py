@@ -559,7 +559,9 @@ class ModelSettings(TypedDict, total=False):
     for reasoning models).
 
     Provider-specific thinking settings (e.g., `anthropic_thinking`,
-    `openai_reasoning_effort`) take precedence over this unified field.
+    `openai_reasoning_effort`) take precedence over this unified field. When one comes from a broader
+    scope than this field, such as the model's `settings` while this is set for a run, a `UserWarning`
+    names both.
 
     Listed below are the model classes that translate this field onto the request. A class whose models
     always reason and take no thinking parameter is not listed at all (Cohere); where only some of a
@@ -586,6 +588,22 @@ class ModelSettings(TypedDict, total=False):
     * Z.AI (as `extra_body['thinking']`)
     * Bedrock Mantle (the Responses interface only; the Chat Completions interface serves only the
       `gpt-oss-safeguard` models, which take no thinking parameter)
+    """
+
+    citations: bool
+    """Whether to ask for citations from providers that only cite when asked.
+
+    Citations go on [`TextPart.citations`][pydantic_ai.messages.TextPart.citations].
+
+    Supported by:
+
+    * Anthropic (documents, including those returned by tools, and Web Fetch)
+    * Bedrock (TXT and PDF documents, including those returned by tools, on Anthropic models)
+    * xAI (inline citations)
+
+    Only used when the output is text. On Anthropic models, a `tool_choice` that forces a tool call raises a
+    `UserError` when the request has something to cite. Providers that always cite ignore this setting. See
+    [Citations, tools and structured output](../citations.md#citations-tools-and-structured-output).
     """
 
     cache: CacheSetting
@@ -706,6 +724,7 @@ ModelSettingName: TypeAlias = Literal[
     'stop_sequences',
     'extra_headers',
     'thinking',
+    'citations',
     'cache',
     'service_tier',
     'extra_body',
