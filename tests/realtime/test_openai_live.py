@@ -17,7 +17,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from datetime import UTC
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 import pytest
@@ -3785,6 +3785,16 @@ class _DeadWebSocket(_FakeWebSocket):
         raise websockets.ConnectionClosedError(None, None)
 
 
+class _SignallingDeadWebSocket(_DeadWebSocket):
+    def __init__(self, frames: list[str]) -> None:
+        super().__init__(frames)
+        self.send_failed = asyncio.Event()
+
+    async def send(self, data: str) -> None:
+        self.send_failed.set()
+        await super().send(data)
+
+
 async def test_a_tool_result_ready_while_the_sideband_is_away_goes_out_on_the_new_one() -> None:
     """The session runs on without a sideband, so a result sent before the re-attach lands waits for it."""
     reattaching, release = asyncio.Event(), asyncio.Event()
@@ -3795,11 +3805,13 @@ async def test_a_tool_result_ready_while_the_sideband_is_away_goes_out_on_the_ne
         await release.wait()
         return attached
 
-    connection = OpenAILiveConnection(_DeadWebSocket([]), reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
+    dead = _SignallingDeadWebSocket([])
+    connection = OpenAILiveConnection(dead, reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
     events = asyncio.create_task(_first_events(connection, 1))
     await reattaching.wait()
     sending = asyncio.create_task(connection.send(ToolResult('call_1', output='14C')))
-    await asyncio.sleep(0)
+    # It failed on the dropped sideband, and waits for the new one.
+    await dead.send_failed.wait()
     assert not sending.done()
     release.set()
     await sending
@@ -3846,12 +3858,15 @@ class _DyingWebSocket(_FakeWebSocket):
     def __init__(self, frames: list[str]) -> None:
         super().__init__(frames)
         self.continuation_hangs = asyncio.Event()
+        self.other_send_failed = asyncio.Event()
         self.release = asyncio.Event()
 
     async def send(self, data: str) -> None:
         if json.loads(data)['type'] == 'response.create':
             self.continuation_hangs.set()
             await self.release.wait()
+        else:
+            self.other_send_failed.set()
         raise websockets.ConnectionClosedError(None, None)
 
 
@@ -3868,7 +3883,8 @@ async def test_a_send_from_another_task_waits_while_the_receive_loop_sends_a_con
     events = asyncio.create_task(_first_events(connection, 3))
     await dying.continuation_hangs.wait()
     sending = asyncio.create_task(connection.send(ToolResult('call_1', output='14C')))
-    await asyncio.sleep(0)
+    # It failed on the dropped sideband while the receive loop's continuation hangs, and waits for the new one.
+    await dying.other_send_failed.wait()
     assert not sending.done()
     dying.release.set()
     await sending
@@ -3883,16 +3899,6 @@ async def test_a_send_from_another_task_waits_while_the_receive_loop_sends_a_con
 class _ClosableWebSocket(_FakeWebSocket):
     async def close(self) -> None:
         self.closed = True
-
-
-class _SignallingDeadWebSocket(_DeadWebSocket):
-    def __init__(self, frames: list[str]) -> None:
-        super().__init__(frames)
-        self.send_failed = asyncio.Event()
-
-    async def send(self, data: str) -> None:
-        self.send_failed.set()
-        await super().send(data)
 
 
 async def test_a_reattach_that_lands_after_close_is_not_used() -> None:
@@ -3931,7 +3937,7 @@ class _ConfirmingWebSocket(_FakeWebSocket):
     """A re-attached sideband whose backend starts the response a `response.create` asks for, ignores it, or which
     drops as it is sent."""
 
-    def __init__(self, *, backend: str) -> None:
+    def __init__(self, *, backend: Literal['confirms', 'ignores', 'drops']) -> None:
         super().__init__([])
         self._backend = backend
 
@@ -3954,7 +3960,7 @@ class _ConfirmingWebSocket(_FakeWebSocket):
 
 @pytest.mark.parametrize('backend', ['confirms', 'ignores', 'drops'], ids=['resent', 'given-up', 'resend-fails'])
 async def test_a_continuation_the_dropping_sideband_swallowed_is_sent_again_then_given_up(
-    backend: str, monkeypatch: pytest.MonkeyPatch
+    backend: Literal['confirms', 'ignores', 'drops'], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A continuation that seemed to go out as the sideband dropped, and that the backend never confirms after the
     re-attach, was lost: it is sent again once, and should that go unanswered too, the delegation is given up on
