@@ -4490,6 +4490,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     '`SpeechPart` instead.'
                 )
 
+            resolved.model._warn_unsupported_settings(  # pyright: ignore[reportPrivateUsage]
+                resolved.model_settings, resolved.model_request_parameters
+            )
+
             connection_manager = (
                 resolved.model.connect(
                     messages=resolved.request_messages,
