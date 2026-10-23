@@ -502,31 +502,44 @@ def create_failed_builtin_tool_response(
     *,
     tool_call_id: str = 'failed_tool_001',
     error_message: str = 'tool failed',
-    content: ToolCallOutputType | None = None,
+    assistant_text: str,
 ) -> chat_types.Response:
-    """Create a Response representing a failed builtin tool call."""
-    output = chat_pb2.CompletionOutput(
-        index=0,
-        finish_reason=sample_pb2.FinishReason.REASON_STOP,
-        message=chat_pb2.CompletionMessage(
-            role=chat_pb2.MessageRole.ROLE_ASSISTANT,
-            content=_serialize_content(content or ''),
-            tool_calls=[
-                create_server_tool_call(
-                    tool_name,
-                    {},
-                    tool_call_id=tool_call_id,
-                    tool_type=tool_type,
-                    status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_FAILED,
-                    error_message=error_message,
-                )
-            ],
-        ),
+    """Create a Response representing a failed builtin tool call.
+
+    Like the real API, it marks the call failed on both the assistant output and the `ROLE_TOOL` output,
+    whose content is the error.
+    """
+    failed_call = create_server_tool_call(
+        tool_name,
+        {},
+        tool_call_id=tool_call_id,
+        tool_type=tool_type,
+        status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_FAILED,
+        error_message=error_message,
     )
+    outputs = [
+        chat_pb2.CompletionOutput(
+            index=0,
+            finish_reason=sample_pb2.FinishReason.REASON_TOOL_CALLS,
+            message=chat_pb2.CompletionMessage(role=chat_pb2.MessageRole.ROLE_ASSISTANT, tool_calls=[failed_call]),
+        ),
+        chat_pb2.CompletionOutput(
+            index=1,
+            finish_reason=sample_pb2.FinishReason.REASON_TOOL_CALLS,
+            message=chat_pb2.CompletionMessage(
+                role=chat_pb2.MessageRole.ROLE_TOOL, content=error_message, tool_calls=[failed_call]
+            ),
+        ),
+        chat_pb2.CompletionOutput(
+            index=2,
+            finish_reason=sample_pb2.FinishReason.REASON_STOP,
+            message=chat_pb2.CompletionMessage(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content=assistant_text),
+        ),
+    ]
 
     return _build_response_with_outputs(
         response_id=f'grok-{tool_call_id}',
-        outputs=[output],
+        outputs=outputs,
     )
 
 

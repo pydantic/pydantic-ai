@@ -4743,14 +4743,17 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
 
 
 def test_builtin_tool_call_part_failed_status(allow_model_requests: None):
-    """Ensure failed server-side tool calls carry provider status/error into return parts."""
+    """A failed server-side tool call is stored as its call part and a return part carrying the status and error.
+
+    xAI marks the call failed on the assistant output as well as on the `ROLE_TOOL` output.
+    """
 
     response = create_failed_builtin_tool_response(
         tool_name=CodeExecutionTool.kind,
         tool_type=chat_pb2.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL,
         tool_call_id='code_exec_1',
         error_message='sandbox error',
-        content='tool failed',
+        assistant_text='The code failed.',
     )
 
     mock_client = MockXai.create_mock([response])
@@ -4768,15 +4771,22 @@ def test_builtin_tool_call_part_failed_status(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content='tool failed'),
+                    NativeToolCallPart(
+                        tool_name=CodeExecutionTool.kind,
+                        args={},
+                        tool_call_id='code_exec_1',
+                        provider_name='xai',
+                        provider_details={'function_name': 'code_execution'},
+                    ),
                     NativeToolReturnPart(
                         tool_name=CodeExecutionTool.kind,
-                        content='tool failed',
+                        content='sandbox error',
                         tool_call_id='code_exec_1',
                         provider_name='xai',
                         provider_details={'status': 'failed', 'error': 'sandbox error'},
                         timestamp=IsDatetime(),
                     ),
+                    TextPart(content='The code failed.'),
                 ],
                 usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
