@@ -83,13 +83,15 @@ async def test_fireworks_native_output(
 
     Neither the unprofiled `kimi-k3` nor `qwen_model_profile` sets `supports_json_schema_output`, so this
     would raise `UserError: Native structured output is not supported by this model` before any request
-    if `FireworksProvider` didn't set the flag.
+    if `FireworksProvider` didn't set the flag. Although Fireworks' docs say `json_schema` disables reasoning
+    output, both models return `reasoning_content` alongside the schema-constrained answer.
     """
     provider = FireworksProvider(api_key=fireworks_api_key, http_client=request_capture.client)
     model = OpenAIChatModel(f'accounts/fireworks/models/{case.model_name}', provider=provider)
     agent = Agent(model, output_type=NativeOutput(City))
-    result = await agent.run('Where is the Eiffel Tower? Reply in JSON.')
+    result = await agent.run('Where is the Eiffel Tower?')
     assert result.output == City(city='Paris', country='France')
+    assert [part.part_kind for part in result.response.parts] == ['thinking', 'text']
     assert request_capture.body('/chat/completions')['response_format'] == case.response_format
 
 
