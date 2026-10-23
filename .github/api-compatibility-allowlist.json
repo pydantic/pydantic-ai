@@ -109,7 +109,7 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
     },
     {
-      "against": "v2.59.0",
+      "against": "v2.60.0",
       "fingerprint": "5942d1f85250e036051aa785e370fb32df99305905a5995c525b7faa2d44a657",
       "reason": "Adds `thinking_summary` to `ModelSettingName` for the new unified `ModelSettings.thinking_summary` setting; every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11084"
