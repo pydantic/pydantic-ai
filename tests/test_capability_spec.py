@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -25,6 +25,7 @@ from pydantic_ai.capabilities import (
     MCP,
     Caching,
     Capability,
+    Citations,
     FileUnderstanding,
     ImageGeneration,
     IncludeToolReturnSchemas,
@@ -59,13 +60,14 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
+    AbstractNativeTool,
     CodeExecutionTool,
     MCPServerTool,
     WebFetchTool,
     WebSearchTool,
 )
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
-from pydantic_ai.settings import ModelSettings as _ModelSettings
+from pydantic_ai.settings import ModelSettings as _ModelSettings, ToolOrOutput
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -94,6 +96,7 @@ def test_capability_types() -> None:
         {
             'NativeTool': NativeTool,
             'Caching': Caching,
+            'Citations': Citations,
             'RaiseContentFilterError': RaiseContentFilterError,
             'FileUnderstanding': FileUnderstanding,
             'ImageGeneration': ImageGeneration,
@@ -647,11 +650,32 @@ def test_agent_from_spec_capabilities_merged():
     assert any(isinstance(c, ExtraCap) for c in children)
 
 
+def _subclasses(cls: type) -> Iterator[type]:
+    for subclass in cls.__subclasses__():
+        yield subclass
+        yield from _subclasses(subclass)
+
+
+def _open_nested_dataclass_defs(schema: dict[str, Any]) -> dict[str, Any]:
+    """Drop the `additionalProperties: false` that Pydantic 2.14 adds to nested stdlib-dataclass definitions.
+
+    From 2.14, the schema model's `extra='forbid'` also reaches the stdlib dataclasses it nests (the native
+    tool configs and `ToolOrOutput`), where earlier versions left their definitions open. Dropping it from those
+    definitions keeps the snapshot stable across the supported pydantic range; every other definition keeps it.
+    """
+    dataclass_names = {cls.__name__ for cls in _subclasses(AbstractNativeTool)} | {ToolOrOutput.__name__}
+    defs = {
+        name: {k: v for k, v in definition.items() if not (name in dataclass_names and k == 'additionalProperties')}
+        for name, definition in schema['$defs'].items()
+    }
+    return {**schema, '$defs': defs}
+
+
 def test_model_json_schema_with_capabilities():
     # Unit (not VCR): this pins the generated JSON-schema/capabilities mapping, which is built internally
     # from the known-model enum and never produced by any API response — no cassette could exercise it.
     pytest.importorskip('mcp', reason='schema varies without mcp package')
-    schema = AgentSpec.model_json_schema_with_capabilities()
+    schema = _open_nested_dataclass_defs(AgentSpec.model_json_schema_with_capabilities())
     assert remove_schema_descriptions(schema) == snapshot(
         {
             '$defs': {
@@ -1332,6 +1356,8 @@ def test_model_json_schema_with_capabilities():
                         'moonshotai:kimi-k2.7-code',
                         'moonshotai:kimi-k2.7-code-highspeed',
                         'moonshotai:kimi-k3',
+                        'moonshotai:kimi-k3.1-pro',
+                        'moonshotai:kimi-k3.1-pro-highspeed',
                         'moonshotai:kimi-latest',
                         'moonshotai:kimi-thinking-preview',
                         'moonshotai:moonshot-v1-128k',
@@ -1694,10 +1720,11 @@ def test_model_json_schema_with_capabilities():
                         'thinking': {
                             'anyOf': [
                                 {'type': 'boolean'},
-                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'type': 'string'},
                             ],
                             'title': 'Thinking',
                         },
+                        'citations': {'title': 'Citations', 'type': 'boolean'},
                         'cache': {
                             'anyOf': [
                                 {'type': 'boolean'},
@@ -1982,6 +2009,13 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_Caching',
                     'type': 'object',
                 },
+                'spec_Citations': {
+                    'additionalProperties': False,
+                    'properties': {'Citations': {'$ref': '#/$defs/spec_params_Citations'}},
+                    'required': ['Citations'],
+                    'title': 'spec_Citations',
+                    'type': 'object',
+                },
                 'short_spec_SetToolMetadata': {
                     'additionalProperties': False,
                     'properties': {
@@ -2123,6 +2157,16 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_params_Caching',
                     'type': 'object',
                 },
+                'spec_params_Citations': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                    },
+                    'title': 'spec_params_Citations',
+                    'type': 'object',
+                },
                 'spec_XSearch': {
                     'additionalProperties': False,
                     'properties': {'XSearch': {'$ref': '#/$defs/spec_params_XSearch'}},
@@ -2188,7 +2232,7 @@ def test_model_json_schema_with_capabilities():
                         'effort': {
                             'anyOf': [
                                 {'type': 'boolean'},
-                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'type': 'string'},
                             ],
                             'title': 'Effort',
                         },
@@ -2370,6 +2414,8 @@ def test_model_json_schema_with_capabilities():
                                 {'$ref': '#/$defs/short_spec_NativeTool'},
                                 {'const': 'Caching', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_Caching'},
+                                {'const': 'Citations', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_Citations'},
                                 {'const': 'RaiseContentFilterError', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_RaiseContentFilterError'},
                                 {'$ref': '#/$defs/short_spec_FileUnderstanding'},
@@ -2601,6 +2647,8 @@ def test_model_json_schema_with_capabilities():
                             {'$ref': '#/$defs/short_spec_NativeTool'},
                             {'const': 'Caching', 'type': 'string'},
                             {'$ref': '#/$defs/spec_Caching'},
+                            {'const': 'Citations', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_Citations'},
                             {'const': 'RaiseContentFilterError', 'type': 'string'},
                             {'$ref': '#/$defs/spec_RaiseContentFilterError'},
                             {'$ref': '#/$defs/short_spec_FileUnderstanding'},

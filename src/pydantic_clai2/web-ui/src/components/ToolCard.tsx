@@ -8,7 +8,6 @@ import { DiffView, diffStats } from './DiffView'
 import {
   BranchIcon,
   ChevronIcon,
-  ExternalIcon,
   FileIcon,
   FolderIcon,
   OrchestratorIcon,
@@ -229,8 +228,7 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
       {workspace && openWorkspace && item.name !== 'workspace_destroy' ? (
         <div className="tool-head">
           {row}
-          <button className="tool-link" onClick={() => openWorkspace(workspace)} title={`Open ${workspace}'s page`}>
-            <ExternalIcon size={12} />
+          <button className="tool-link" onClick={() => openWorkspace(workspace)} title={`Open ${workspace}'s session`}>
             Open
           </button>
         </div>
