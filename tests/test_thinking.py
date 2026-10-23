@@ -7,8 +7,9 @@ the Thinking capability, and end-to-end integration via FunctionModel.
 # pyright: reportPrivateUsage=false, reportArgumentType=false
 from __future__ import annotations
 
-from dataclasses import replace
-from typing import Any, Literal
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from typing import Any, Literal, get_args
 from unittest.mock import MagicMock
 
 import pytest
@@ -22,14 +23,14 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.profiles import ModelProfile, merge_profile
-from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile, resolve_anthropic_effort
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.google import GoogleModelProfile, google_model_profile
-from pydantic_ai.profiles.grok import grok_model_profile
-from pydantic_ai.profiles.groq import groq_model_profile
+from pydantic_ai.profiles.grok import GrokModelProfile, grok_model_profile
+from pydantic_ai.profiles.groq import GROQ_GPT_OSS_REASONING_EFFORT_MAP, groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
-from pydantic_ai.settings import ModelSettings, ThinkingLevel
+from pydantic_ai.settings import ModelSettings, ThinkingEffort, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
 from ._inline_snapshot import snapshot
@@ -52,10 +53,14 @@ with try_import() as openai_imports:
     )
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openrouter import (
+        _OPENROUTER_EFFORT_MAP,
         OpenRouterModel,
         OpenRouterModelSettings,
         _openrouter_settings_to_openai_settings,
     )
+    from pydantic_ai.models.snowflake import _REASONING_EFFORT_MAP as _SNOWFLAKE_REASONING_EFFORT_MAP
+    from pydantic_ai.models.zai import _zai_settings_to_openai_settings
+    from pydantic_ai.profiles.zai import _GLM_5_3_REASONING_EFFORT_MAPPING
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -72,8 +77,11 @@ with try_import() as bedrock_imports:
     from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
 
 with try_import() as xai_imports:
-    from pydantic_ai.models.xai import XaiModel, XaiModelSettings
+    from pydantic_ai.models.xai import XaiModel, XaiModelSettings, _map_reasoning_effort
     from pydantic_ai.providers.xai import XaiProvider
+
+with try_import() as mistral_imports:
+    from pydantic_ai.models.mistral import _MISTRAL_REASONING_EFFORT_MAP
 
 pytestmark = []
 
@@ -954,7 +962,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=True)
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         assert result == {'thinking': {'type': 'enabled', 'budget_tokens': 10000}}
 
     def test_anthropic_variant_thinking_false(self):
@@ -967,7 +975,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=False)
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         assert result == {'thinking': {'type': 'disabled'}}
 
     def test_openai_variant_thinking_false(self):
@@ -981,7 +989,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=False)
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         # thinking=False: no reasoning_effort set, returns None
         assert result is None
 
@@ -995,7 +1003,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking='high')
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         assert result == {'reasoning_effort': 'high'}
 
     def test_qwen_variant_thinking_true(self):
@@ -1008,7 +1016,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=True)
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         assert result == {'reasoning_config': 'high'}
 
     def test_qwen_variant_thinking_false(self):
@@ -1022,9 +1030,85 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=False)
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         # thinking=False on Qwen: no reasoning_config set, returns None (empty dict is falsy)
         assert result is None
+
+    @pytest.mark.parametrize(
+        ('thinking', 'expected_effort'),
+        [
+            (True, 'medium'),
+            ('minimal', 'low'),
+            ('low', 'low'),
+            ('medium', 'medium'),
+            ('high', 'high'),
+            ('xhigh', 'xhigh'),
+        ],
+    )
+    def test_xai_variant_thinking_levels(self, thinking: ThinkingLevel, expected_effort: str):
+        """Grok on Converse takes effort nested as `reasoning.effort`, not the flat gpt-oss `reasoning_effort`.
+
+        Not a VCR test: the recording account has no Grok access on Converse.
+        """
+        model = _bedrock_model(
+            BedrockModelProfile(
+                bedrock_thinking_variant='xai',
+                supports_thinking=True,
+            )
+        )
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=thinking)
+        result = model._build_additional_model_request_fields(settings, params, [])
+        assert result == {'reasoning': {'effort': expected_effort}}
+
+    def test_xai_variant_thinking_false(self):
+        """thinking=False on the xAI Bedrock variant is a no-op (Grok always reasons).
+
+        Not a VCR test: the recording account has no Grok access on Converse.
+        """
+        model = _bedrock_model(
+            BedrockModelProfile(
+                bedrock_thinking_variant='xai',
+                supports_thinking=True,
+            )
+        )
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=False)
+        result = model._build_additional_model_request_fields(settings, params, [])
+        assert result is None
+
+    def test_xai_variant_thinking_true_keeps_model_default(self):
+        """thinking=True on Grok 4.7 omits `reasoning` so its documented `high` default applies.
+
+        Not a VCR test: the recording account has no Grok access on Converse.
+        """
+        profile = BedrockProvider.model_profile('us.xai.grok-4.7')
+        assert profile is not None
+        model = _bedrock_model(profile)
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=True)
+        result = model._build_additional_model_request_fields(settings, params, [])
+        assert result is None
+
+    def test_xai_variant_user_reasoning_wins(self):
+        """A user-supplied `reasoning` in `bedrock_additional_model_requests_fields` is left untouched.
+
+        Not a VCR test: the recording account has no Grok access on Converse.
+        """
+        model = _bedrock_model(
+            BedrockModelProfile(
+                bedrock_thinking_variant='xai',
+                supports_thinking=True,
+            )
+        )
+
+        settings = BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning': {'effort': 'low'}})
+        params = ModelRequestParameters(thinking='high')
+        result = model._build_additional_model_request_fields(settings, params, [])
+        assert result == {'reasoning': {'effort': 'low'}}
 
     def test_no_variant_thinking_passthrough(self):
         """When bedrock_thinking_variant is None, unified thinking is a no-op."""
@@ -1032,7 +1116,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking='high')
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         # No variant set, so no thinking fields are added
         assert result is None
 
@@ -1041,7 +1125,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=None)
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         assert result is None
 
     def _adaptive_model(self, *, supports_effort: bool = True):
@@ -1058,7 +1142,7 @@ class TestBedrockThinkingTranslation:
         """Bare thinking=True enables adaptive but doesn't set effort (matches AnthropicModel)."""
         model = self._adaptive_model()
         result = model._build_additional_model_request_fields(
-            BedrockModelSettings(), ModelRequestParameters(thinking=True)
+            BedrockModelSettings(), ModelRequestParameters(thinking=True), []
         )
         assert result == {'thinking': {'type': 'adaptive'}}
 
@@ -1066,7 +1150,7 @@ class TestBedrockThinkingTranslation:
         """thinking='high' on adaptive model adds output_config.effort sibling per AWS docs."""
         model = self._adaptive_model()
         result = model._build_additional_model_request_fields(
-            BedrockModelSettings(), ModelRequestParameters(thinking='high')
+            BedrockModelSettings(), ModelRequestParameters(thinking='high'), []
         )
         assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'high'}}
 
@@ -1078,7 +1162,7 @@ class TestBedrockThinkingTranslation:
         """Effort map: minimal/low → low, medium → medium, high → high, xhigh → max (best-effort)."""
         model = self._adaptive_model()
         result = model._build_additional_model_request_fields(
-            BedrockModelSettings(), ModelRequestParameters(thinking=level)
+            BedrockModelSettings(), ModelRequestParameters(thinking=level), []
         )
         assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': effort}}
 
@@ -1101,7 +1185,7 @@ class TestBedrockThinkingTranslation:
             )
         )
         result = model._build_additional_model_request_fields(
-            BedrockModelSettings(), ModelRequestParameters(thinking='xhigh')
+            BedrockModelSettings(), ModelRequestParameters(thinking='xhigh'), []
         )
         assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'xhigh'}}
 
@@ -1109,7 +1193,7 @@ class TestBedrockThinkingTranslation:
         """Effort is omitted when the profile doesn't advertise bedrock_supports_effort."""
         model = self._adaptive_model(supports_effort=False)
         result = model._build_additional_model_request_fields(
-            BedrockModelSettings(), ModelRequestParameters(thinking='high')
+            BedrockModelSettings(), ModelRequestParameters(thinking='high'), []
         )
         assert result == {'thinking': {'type': 'adaptive'}}
 
@@ -1117,14 +1201,14 @@ class TestBedrockThinkingTranslation:
         """User-provided output_config in bedrock_additional_model_requests_fields is preserved."""
         model = self._adaptive_model()
         settings = BedrockModelSettings(bedrock_additional_model_requests_fields={'output_config': {'effort': 'low'}})
-        result = model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking='high'))
+        result = model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking='high'), [])
         assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'low'}}
 
     def test_anthropic_variant_adaptive_thinking_false_omits(self):
         """thinking=False on adaptive model omits both thinking and output_config."""
         model = self._adaptive_model()
         result = model._build_additional_model_request_fields(
-            BedrockModelSettings(), ModelRequestParameters(thinking=False)
+            BedrockModelSettings(), ModelRequestParameters(thinking=False), []
         )
         assert result is None
 
@@ -1139,7 +1223,7 @@ class TestBedrockThinkingTranslation:
             )
         )
         result = model._build_additional_model_request_fields(
-            BedrockModelSettings(), ModelRequestParameters(thinking=False)
+            BedrockModelSettings(), ModelRequestParameters(thinking=False), []
         )
         assert result == {'thinking': {'type': 'disabled'}}
 
@@ -1873,3 +1957,358 @@ class TestPrepareRequestNoMutationDetailed:
 
         _merged2, params2 = model.prepare_request(None, ModelRequestParameters())
         assert params2.thinking is None
+
+
+# ---------------------------------------------------------------------------
+# Every effort level through every provider mapping
+# ---------------------------------------------------------------------------
+
+_SKIP_WITHOUT_OPENAI = pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+_SKIP_WITHOUT_ANTHROPIC = pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+_SKIP_WITHOUT_GOOGLE = pytest.mark.skipif(not google_imports(), reason='google-genai not installed')
+_SKIP_WITHOUT_BEDROCK = pytest.mark.skipif(not bedrock_imports(), reason='boto3 not installed')
+
+
+@dataclass(frozen=True)
+class EffortMapping:
+    """How one provider maps each unified effort level, and the value it should produce for each."""
+
+    resolve: Callable[[ThinkingEffort], object]
+    expected: dict[str, object]
+
+
+EFFORT_MAPPINGS = [
+    pytest.param(
+        EffortMapping(
+            lambda level: OpenAIChatModel._translate_thinking(
+                FunctionModel(_echo), {}, ModelRequestParameters(thinking=level)
+            ),
+            {'minimal': 'minimal', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'xhigh', 'max': 'xhigh'},
+        ),
+        id='openai-chat',
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: OpenAIChatModel._translate_thinking(
+                FunctionModel(_echo, profile=OpenAIModelProfile(openai_chat_supports_max_reasoning_effort=True)),
+                {},
+                ModelRequestParameters(thinking=level),
+            ),
+            {'minimal': 'minimal', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'xhigh', 'max': 'max'},
+        ),
+        id='openai-chat-max',
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: OpenAIResponsesModel._translate_thinking(
+                FunctionModel(_echo), {}, ModelRequestParameters(thinking=level)
+            ),
+            {
+                'minimal': {'effort': 'minimal'},
+                'low': {'effort': 'low'},
+                'medium': {'effort': 'medium'},
+                'high': {'effort': 'high'},
+                'xhigh': {'effort': 'xhigh'},
+                'max': {'effort': 'xhigh'},
+            },
+        ),
+        id='openai-responses',
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: OpenAIResponsesModel._translate_thinking(
+                FunctionModel(_echo, profile=OpenAIModelProfile(openai_responses_supports_max_reasoning_effort=True)),
+                {},
+                ModelRequestParameters(thinking=level),
+            ),
+            {
+                'minimal': {'effort': 'minimal'},
+                'low': {'effort': 'low'},
+                'medium': {'effort': 'medium'},
+                'high': {'effort': 'high'},
+                'xhigh': {'effort': 'xhigh'},
+                'max': {'effort': 'max'},
+            },
+        ),
+        id='openai-responses-max',
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: resolve_anthropic_effort(level, supports_xhigh=True, supports_max=True),
+            {'minimal': 'low', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'xhigh', 'max': 'max'},
+        ),
+        id='anthropic-effort',
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: resolve_anthropic_effort(level, supports_xhigh=False, supports_max=True),
+            {'minimal': 'low', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'max', 'max': 'max'},
+        ),
+        id='anthropic-effort-without-xhigh',
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: resolve_anthropic_effort(level, supports_xhigh=False, supports_max=False),
+            {'minimal': 'low', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'high', 'max': 'high'},
+        ),
+        id='anthropic-effort-without-xhigh-or-max',
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: resolve_anthropic_effort(level, supports_xhigh=True, supports_max=False),
+            {'minimal': 'low', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'xhigh', 'max': 'xhigh'},
+        ),
+        id='anthropic-effort-without-max',
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: AnthropicModel._translate_thinking(
+                FunctionModel(_echo, profile=AnthropicModelProfile(supports_thinking=True)),
+                {},
+                ModelRequestParameters(thinking=level),
+            ),
+            {
+                'minimal': {'type': 'enabled', 'budget_tokens': 1024},
+                'low': {'type': 'enabled', 'budget_tokens': 2048},
+                'medium': {'type': 'enabled', 'budget_tokens': 10000},
+                'high': {'type': 'enabled', 'budget_tokens': 16384},
+                'xhigh': {'type': 'enabled', 'budget_tokens': 32768},
+                'max': {'type': 'enabled', 'budget_tokens': 32768},
+            },
+        ),
+        id='anthropic-budget',
+        marks=_SKIP_WITHOUT_ANTHROPIC,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: GoogleModel._translate_thinking(
+                FunctionModel(_echo, profile=GoogleModelProfile(supports_thinking=True)),
+                {},
+                ModelRequestParameters(thinking=level),
+            ),
+            {
+                'minimal': {'include_thoughts': True, 'thinking_level': 'MINIMAL'},
+                'low': {'include_thoughts': True, 'thinking_level': 'LOW'},
+                'medium': {'include_thoughts': True, 'thinking_level': 'MEDIUM'},
+                'high': {'include_thoughts': True, 'thinking_level': 'HIGH'},
+                'xhigh': {'include_thoughts': True, 'thinking_level': 'HIGH'},
+                'max': {'include_thoughts': True, 'thinking_level': 'HIGH'},
+            },
+        ),
+        id='google',
+        marks=_SKIP_WITHOUT_GOOGLE,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: GoogleModel._translate_thinking(
+                FunctionModel(
+                    _echo, profile=GoogleModelProfile(supports_thinking=True, google_supports_thinking_level=False)
+                ),
+                {},
+                ModelRequestParameters(thinking=level),
+            ),
+            {
+                'minimal': {'include_thoughts': True, 'thinking_budget': 128},
+                'low': {'include_thoughts': True, 'thinking_budget': 2048},
+                'medium': {'include_thoughts': True, 'thinking_budget': 8192},
+                'high': {'include_thoughts': True, 'thinking_budget': 24576},
+                'xhigh': {'include_thoughts': True, 'thinking_budget': 24576},
+                'max': {'include_thoughts': True, 'thinking_budget': 24576},
+            },
+        ),
+        id='google-budget',
+        marks=_SKIP_WITHOUT_GOOGLE,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: GROQ_GPT_OSS_REASONING_EFFORT_MAP[level],
+            {'minimal': 'low', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'high', 'max': 'high'},
+        ),
+        id='groq-gpt-oss',
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _MISTRAL_REASONING_EFFORT_MAP[level],
+            {'minimal': 'high', 'low': 'high', 'medium': 'high', 'high': 'high', 'xhigh': 'high', 'max': 'high'},
+        ),
+        id='mistral',
+        marks=pytest.mark.skipif(not mistral_imports(), reason='mistral not installed'),
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _SNOWFLAKE_REASONING_EFFORT_MAP[level],
+            {'minimal': 'low', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'high', 'max': 'high'},
+        ),
+        id='snowflake',
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _OPENROUTER_EFFORT_MAP[level],
+            {'minimal': 'low', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'high', 'max': 'max'},
+        ),
+        id='openrouter',
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _zai_settings_to_openai_settings(
+                {}, ModelRequestParameters(thinking=level), supports_thinking=False, supports_reasoning_effort=True
+            ).get('extra_body'),
+            {
+                level: {'thinking': {'type': 'enabled'}, 'reasoning_effort': level}
+                for level in ('minimal', 'low', 'medium', 'high', 'xhigh', 'max')
+            },
+        ),
+        id='zai-glm-5.2',
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _zai_settings_to_openai_settings(
+                {},
+                ModelRequestParameters(thinking=level),
+                supports_thinking=False,
+                supports_reasoning_effort=True,
+                reasoning_effort_mapping=_GLM_5_3_REASONING_EFFORT_MAPPING,
+            ).get('extra_body'),
+            {
+                'minimal': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'low'},
+                'low': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'low'},
+                'medium': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'high'},
+                'high': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'high'},
+                'xhigh': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'max'},
+                'max': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'max'},
+            },
+        ),
+        id='zai-glm-5.3',
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _map_reasoning_effort(
+                level, GrokModelProfile(grok_reasoning_efforts=frozenset({'low', 'medium', 'high'}))
+            ),
+            {'minimal': 'low', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'high', 'max': 'high'},
+        ),
+        id='xai',
+        marks=pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed'),
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _bedrock_model(
+                BedrockModelProfile(bedrock_thinking_variant='qwen', supports_thinking=True)
+            )._build_additional_model_request_fields(
+                BedrockModelSettings(), ModelRequestParameters(thinking=level), []
+            ),
+            {
+                'minimal': {'reasoning_config': 'low'},
+                'low': {'reasoning_config': 'low'},
+                'medium': {'reasoning_config': 'high'},
+                'high': {'reasoning_config': 'high'},
+                'xhigh': {'reasoning_config': 'high'},
+                'max': {'reasoning_config': 'high'},
+            },
+        ),
+        id='bedrock-qwen',
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _bedrock_model(
+                BedrockModelProfile(bedrock_thinking_variant='openai', supports_thinking=True)
+            )._build_additional_model_request_fields(
+                BedrockModelSettings(), ModelRequestParameters(thinking=level), []
+            ),
+            {
+                'minimal': {'reasoning_effort': 'minimal'},
+                'low': {'reasoning_effort': 'low'},
+                'medium': {'reasoning_effort': 'medium'},
+                'high': {'reasoning_effort': 'high'},
+                'xhigh': {'reasoning_effort': 'xhigh'},
+                'max': {'reasoning_effort': 'xhigh'},
+            },
+        ),
+        id='bedrock-openai',
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _bedrock_model(
+                BedrockModelProfile(bedrock_thinking_variant='openai_responses', supports_thinking=True)
+            )._build_additional_model_request_fields(
+                BedrockModelSettings(), ModelRequestParameters(thinking=level), []
+            ),
+            {
+                'minimal': {'reasoning': {'effort': 'low'}},
+                'low': {'reasoning': {'effort': 'low'}},
+                'medium': {'reasoning': {'effort': 'medium'}},
+                'high': {'reasoning': {'effort': 'high'}},
+                'xhigh': {'reasoning': {'effort': 'xhigh'}},
+                'max': {'reasoning': {'effort': 'xhigh'}},
+            },
+        ),
+        id='bedrock-openai-responses',
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _bedrock_model(
+                BedrockModelProfile(bedrock_thinking_variant='xai', supports_thinking=True)
+            )._build_additional_model_request_fields(
+                BedrockModelSettings(), ModelRequestParameters(thinking=level), []
+            ),
+            {
+                'minimal': {'reasoning': {'effort': 'low'}},
+                'low': {'reasoning': {'effort': 'low'}},
+                'medium': {'reasoning': {'effort': 'medium'}},
+                'high': {'reasoning': {'effort': 'high'}},
+                'xhigh': {'reasoning': {'effort': 'xhigh'}},
+                'max': {'reasoning': {'effort': 'xhigh'}},
+            },
+        ),
+        id='bedrock-xai',
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _bedrock_model(
+                merge_profile(
+                    BedrockModelProfile(
+                        bedrock_thinking_variant='anthropic',
+                        bedrock_supports_adaptive_thinking=True,
+                        bedrock_supports_effort=True,
+                        supports_thinking=True,
+                    ),
+                    AnthropicModelProfile(anthropic_supports_max_effort=False),
+                )
+            )._build_additional_model_request_fields(
+                BedrockModelSettings(), ModelRequestParameters(thinking=level), []
+            ),
+            {
+                'minimal': {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'low'}},
+                'low': {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'low'}},
+                'medium': {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'medium'}},
+                'high': {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'high'}},
+                'xhigh': {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'high'}},
+                'max': {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'high'}},
+            },
+        ),
+        id='bedrock-anthropic-without-max',
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+]
+
+
+@pytest.mark.parametrize('mapping', EFFORT_MAPPINGS)
+def test_every_effort_level_resolves(mapping: EffortMapping):
+    """Each provider's mapping of every unified effort level, `'max'` included.
+
+    Not a VCR test: a level-keyed mapping that misses a level still type-checks and only raises `KeyError`
+    once a request uses that level, so iterating `ThinkingEffort` here catches a mapping a new level skips.
+    """
+    assert {level: mapping.resolve(level) for level in get_args(ThinkingEffort)} == mapping.expected

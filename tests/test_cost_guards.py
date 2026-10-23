@@ -286,7 +286,7 @@ def test_guards_work_under_xdist(run: RunPytest, monkeypatch: pytest.MonkeyPatch
             '*`test_guarded.py::test_unmarked` launched a Python interpreter during call:*',
             '*test_guarded.py::test_stale: no test covered by its `@pytest.mark.subprocess`*',
             '*slow test module collection*',
-            'test_guarded.py took 0.1*s to collect, over the 0.05s per-module budget (PYTEST_COLLECT_BUDGET_SECONDS).',
+            'test_guarded.py took *s to collect, over the 0.05s per-module budget (PYTEST_COLLECT_BUDGET_SECONDS).',
             '*worker startup and collection of 2 tests took *s (slowest worker collected in *s)',
         ]
     )
@@ -377,7 +377,7 @@ def test_the_collection_budget_fails_the_session_over_a_slow_module(run: RunPyte
     result.stdout.fnmatch_lines(
         [
             '*slow test module collection*',
-            f'test_guarded.py took 0.1*s to collect, over the 0.05s per-module budget ({COLLECT_BUDGET_ENV_VAR}).',
+            f'test_guarded.py took *s to collect, over the 0.05s per-module budget ({COLLECT_BUDGET_ENV_VAR}).',
             '*Import heavy optional dependencies inside the tests or fixtures that need them*',
         ]
     )

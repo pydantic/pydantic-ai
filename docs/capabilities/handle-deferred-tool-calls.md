@@ -16,7 +16,7 @@ async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> De
     return requests.build_results(approve_all=True)  # (1)!
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[HandleDeferredToolCalls(handle_deferred)])
+agent = Agent('{{ openai:medium }}', capabilities=[HandleDeferredToolCalls(handle_deferred)])
 ```
 
 1. Auto-approve every call that's waiting on approval. Real handlers typically inspect `requests.approvals` and `requests.calls` and decide per call — prompt an operator, check a policy, or execute an external call.

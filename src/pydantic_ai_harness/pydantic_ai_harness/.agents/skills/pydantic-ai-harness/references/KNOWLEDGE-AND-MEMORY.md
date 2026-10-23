@@ -17,8 +17,12 @@ demand). Only `Skills` needs an extra.
 
 Gives the model four tools: `write_memory(content, file='MEMORY.md', old_text=None)` (append, or
 replace one unique fragment), `read_memory(file)`, `delete_memory(file)` (`MEMORY.md` is
-protected), and `search_memory(query)`. By default a bounded excerpt of `MEMORY.md` plus the list
-of other files is injected into each request as a delimited user-role part.
+protected), and `search_memory(query)`. With a `FileStore` in the run's workspace (no `workspace=`,
+relative `directory`), `FileSystem` on the agent and `inject_memory=True` (the default), `read_memory` is left out
+(`unless_tool_kind=READ_FILE_KIND`) and the injected memory block gives the scope's directory, e.g.
+`.agent-memory/main/`. The guidance names no reader, so it stays static. By default a bounded excerpt of `MEMORY.md` plus the list
+of other files is injected into each request as a delimited user-role part, attached to the request
+that holds the latest user prompt (not after tool results), or to the last request when there is none.
 
 ```python
 from pydantic_ai import Agent
@@ -108,11 +112,31 @@ agent = Agent(
 Prefect both `store_resolver` and a callable `namespace` must be deterministic and do no backend
 I/O.
 
+### Write metadata (who wrote a file)
+
+When the app's UI also edits memory, record provenance with the write instead of in the note.
+`InMemoryStore`, `SqliteMemoryStore` and `PostgresMemoryStore` implement `MetadataMemoryStore`:
+`store.write_with_metadata(path, content, expected_version=..., metadata={'updated_by': 'ui'})`
+stores a `Mapping[str, str]` (at most 4,096 characters as JSON) in the content's transaction
+(Postgres: a queryable `write_metadata JSONB` column), and
+`store.read(...).metadata` returns it. `Memory(write_metadata=...)` (a mapping or a
+`RunContext -> Mapping | None` callable, resolved per write, never a tool argument) records it
+with the model's writes.
+
+- Every write replaces the metadata; a plain `write`, including the model's writes when
+  `write_metadata` is unset, leaves none, so `updated_by='ui'` cannot outlive an agent edit.
+  Deletes remove it; a replayed tool call returns its receipt and leaves the stored metadata as is.
+- Files live at `{namespace}/{agent_name}/{file}`, so a UI edits `{user_id}/main/MEMORY.md`.
+- `write_metadata` with a store that is not a `MetadataMemoryStore` (`FileStore`, or a custom
+  store implementing only `MemoryStore`) raises `UserError` at construction or run start.
+- A custom store opts in by implementing `write_with_metadata` (checked structurally, like
+  `search`), writing metadata atomically with the content; its `write` must record none.
+
 ### Bounded injection and search
 
 - `max_tokens=2_000` (approx, 4 chars/token) bounds guidance + notebook + file list together;
   `max_lines=200` additionally limits `MEMORY.md`; `max_memory_size=65_536` bounds per-file read,
-  search, and write. Overflow is omitted with a pointer to `read_memory` / `search_memory`.
+  search, and write. Overflow is omitted with a pointer to `read_memory` (or `read_file` when it replaces it) / `search_memory`.
 - `inject_memory=False` keeps the prompt cache-stable; the tools remain. Also use it when
   less-trusted actors can write to the store (memory is untrusted, model-written content).
 - `injection_errors='ignore'` (default) skips injection on a store failure; `'raise'` fails the run.
@@ -225,20 +249,26 @@ agent = Agent(
 ```
 
 Signature: `Skills(directories, *, include=None, exclude=None, missing_directories='error',
-duplicate_names='error', workspace=None)`. `directories` is one path or a sequence of library
+duplicate_names='error', unknown_names='error', workspace=None)`. `directories` is one path or a sequence of library
 directories (not individual skill folders), in precedence order.
 
 To layer project and personal libraries as coding agents do, pass
-`missing_directories='skip'` (absent folders are left out; a file in their place still fails) and
-`duplicate_names='keep_first'` (the earlier directory's valid skill wins, the other is skipped with
+`missing_directories='skip'` (absent folders are left out quietly; a file, or a skill package, in
+their place is left out with a `UserWarning`) and `duplicate_names='keep_first'` (the earlier directory's valid skill wins, the other is skipped with
 a `UserWarning`).
 
 A host that lets a person invoke a skill (a `/code-review src/app.py` command) reads the catalog
 with `catalog = await skills.load(LocalWorkspaceBackend('.'))` and sends
 `skill.render(arguments)` as the prompt: `$ARGUMENTS` in the body is substituted, else
 `ARGUMENTS: ...` is appended (indexed forms like `$0` and `$ARGUMENTS[0]` are left as-is).
-`catalog.skipped` lists the `SKILL.md` files left out, for the host to show; `load` emits no
-warnings itself.
+`catalog.skipped` lists the `SKILL.md` files and library paths left out as `SkippedSkill(path,
+reason, message)`, `reason` one of `'invalid'`, `'duplicate_name'`, `'not_a_directory'`,
+`'skill_package'`, for the host to show; `load` emits no warnings itself.
+
+Frontmatter `disable-model-invocation: true` keeps a skill out of the model's catalog
+(`SkillDefinition.model_invocable` is `False`) but `load` still returns it, for a host command.
+`user-invocable: false` sets `SkillDefinition.user_invocable` to `False`, for a host to offer no
+command; the model still sees it. Either field with a value other than `true` or `false` skips the skill.
 
 Gotchas:
 - Without PyYAML (the `skills` extra) importing the loader raises `ImportError`.
@@ -251,6 +281,7 @@ Gotchas:
   not compared) counts once.
 - `include` and `exclude` are mutually exclusive; unknown names fail at run start, and so do
   duplicate selected names and missing library paths with the default `'error'` options.
+  `unknown_names='skip'` ignores names no library has, for a selection shared across projects.
   Malformed frontmatter or a name not matching its directory warns and skips that skill.
 - With no skills found, `Skills` adds no instructions and no `load_capability` tool.
 - `description` is required. The loaded instructions name the skill's directory in the run's
@@ -267,12 +298,11 @@ Gotchas:
 
 ## PydanticAIDocs
 
-Adds one tool, `read_pyai_docs(topic)`, returning a Pydantic AI docs page verbatim, plus a short
-cache-stable instruction to read docs before writing capabilities, hooks, tools, or toolsets. It
-serves only these six Pydantic AI pages (`PydanticAIDocsTopic`), not your own docs: `capabilities`,
-`hooks`, `tools`, `tools-advanced`, `toolsets`, `agent`. The `capabilities` topic maps to
-`docs/capabilities.md`, which the docs no longer have (the page is now `docs/capabilities/overview.md`),
-so that topic only works from a local path that provides the file.
+Adds one tool, `read_pyai_docs(topic)`, returning a Pydantic AI docs page with its model aliases
+replaced by the models they name, plus a short cache-stable instruction to read docs before writing
+capabilities, hooks, tools, or toolsets. It serves only these six Pydantic AI pages
+(`PydanticAIDocsTopic`), not your own docs: `capabilities`, `hooks`, `tools`, `tools-advanced`,
+`toolsets`, `agent`.
 
 ```python
 from pydantic_ai import Agent

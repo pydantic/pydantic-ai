@@ -8,7 +8,7 @@ and blocks 'required' and list[str] values before they reach the model-specific 
 from __future__ import annotations
 
 import re
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -563,6 +563,50 @@ def test_bedrock_explicit_tool_forcing_non_anthropic_thinking_errors():
 
 
 @skip_if_no_bedrock
+@pytest.mark.parametrize(
+    ('tool_choice_value', 'expected_tool_choice'),
+    [
+        pytest.param('required', {'any': {}}, id='required'),
+        pytest.param(['tool_a'], {'tool': {'name': 'tool_a'}}, id='single_tool'),
+    ],
+)
+def test_bedrock_xai_grok_forces_tools_with_thinking(tool_choice_value: Any, expected_tool_choice: dict[str, Any]):
+    """Grok always reasons on Converse and accepts `toolChoice` `any`/`tool`, so thinking does not block forcing.
+
+    Not a VCR test: the recording account has no Grok access on Converse.
+    """
+    provider = BedrockProvider(bedrock_client=MagicMock())
+    model = BedrockConverseModel('us.xai.grok-4.6', provider=provider)
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], thinking='high')
+
+    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice=tool_choice_value), [])  # pyright: ignore[reportPrivateUsage]
+
+    assert tool_config is not None
+    assert tool_config.get('toolChoice') == expected_tool_choice
+
+
+@skip_if_no_bedrock
+@pytest.mark.parametrize('output_mode', ['auto', 'tool'])
+def test_bedrock_xai_grok_keeps_tool_output_with_thinking(output_mode: Literal['auto', 'tool']):
+    """Grok keeps tool output while it thinks, since Converse accepts the forced `toolChoice` Tool Output relies on.
+
+    Not a VCR test: the recording account has no Grok access on Converse.
+    """
+    provider = BedrockProvider(bedrock_client=MagicMock())
+    model = BedrockConverseModel('us.xai.grok-4.6', provider=provider)
+    params = ModelRequestParameters(
+        output_mode=output_mode,
+        output_tools=[make_tool('final_result')],
+        allow_text_output=False,
+        thinking='high',
+    )
+
+    _, prepared = model.prepare_request(None, params)
+
+    assert prepared.output_mode == 'tool'
+
+
+@skip_if_no_bedrock
 def test_bedrock_anthropic_tool_choice_profile_override_disables_forcing():
     profile = cast(
         BedrockModelProfile,
@@ -758,7 +802,7 @@ def test_bedrock_single_tool_fallback_filters_when_unsupported():
         thinking=True,
     )
 
-    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice='none'))  # pyright: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice='none'), [])  # pyright: ignore[reportPrivateUsage]
 
     assert tool_config is not None
     assert tool_config.get('toolChoice') == {'auto': {}}
@@ -810,7 +854,7 @@ def test_bedrock_tool_or_output_single_resolved_preserves_cache(
         allow_text_output=False,
     )
 
-    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice=tool_choice_value))  # pyright: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice=tool_choice_value), [])  # pyright: ignore[reportPrivateUsage]
 
     assert tool_config is not None
     assert tool_config.get('toolChoice') == {'tool': {'name': expected_forced_name}}
@@ -885,6 +929,40 @@ def test_google_allowed_function_names_ignore_unavailable_tools():
     config = tool_config['function_calling_config']  # pyright: ignore[reportTypedDictNotRequiredAccess]
     assert config is not None
     assert config['allowed_function_names'] == ['get_time']  # pyright: ignore[reportTypedDictNotRequiredAccess]
+
+
+@skip_if_no_openai
+@pytest.mark.parametrize(
+    'tool_choice,expected_names',
+    [
+        pytest.param(['tool_b', 'typo', 'tool_c'], ['tool_c', 'tool_b'], id='list'),
+        pytest.param(ToolOrOutput(function_tools=['tool_b', 'typo']), ['tool_b', 'final_result'], id='tool_or_output'),
+    ],
+)
+def test_openai_responses_allowed_tools_ignore_unavailable_tools(tool_choice: ToolChoice, expected_names: list[str]):
+    """`allowed_tools` drops the names `resolve_tool_choice` warns it will ignore, and keeps declaration order.
+
+    A unit test rather than VCR: cassette replay doesn't match on the request body, so only the built payload shows
+    an unknown name or a changed order. The live API returns a 400 for an `allowed_tools` name the request doesn't
+    define. `tool_b` is revealed via history, so it is absent from `declared_tool_defs` but stays forceable.
+    """
+    m = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=MagicMock()))
+    params = ModelRequestParameters(
+        function_tools=[make_tool('tool_c'), make_tool('tool_a'), make_tool('tool_b')],
+        output_tools=[make_tool('final_result')],
+        tool_visibility={'tool_b': 'via_history'},
+        allow_text_output=False,
+    )
+    settings: OpenAIResponsesModelSettings = {'tool_choice': tool_choice}
+
+    with pytest.warns(UserWarning, match=re.escape("will be ignored: ['typo']")):
+        _, responses_tool_choice = m._get_responses_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+
+    assert responses_tool_choice == {
+        'type': 'allowed_tools',
+        'mode': 'required',
+        'tools': [{'type': 'function', 'name': name} for name in expected_names],
+    }
 
 
 NATIVE_TOOL_CONFIG_CASES = [

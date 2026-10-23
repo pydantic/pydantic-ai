@@ -171,7 +171,7 @@ By default the adapter recognizes the harness `FileSystem` and `Shell` tool call
 
 ## MCP servers
 
-An ACP client may offer MCP servers during session setup. This adapter does not connect them itself; a `session_config` is the place to turn `session.mcp_servers` into Pydantic AI toolsets. If a client sends MCP servers and no `session_config` is installed to consume them, the session request is rejected (rather than silently ignoring them) so the mismatch is visible. The spec expects every agent to accept stdio MCP servers, so an agent meant for arbitrary editors should install a `session_config` that connects them (for example with `pydantic_ai.mcp.MCPServerStdio`).
+An ACP client may offer MCP servers during session setup. This adapter does not connect them itself; a `session_config` is the place to turn `session.mcp_servers` into Pydantic AI toolsets. If a client sends MCP servers and no `session_config` is installed to consume them, the session request is rejected (rather than silently ignoring them) so the mismatch is visible. The spec expects every agent to accept stdio MCP servers, so an agent meant for arbitrary editors should install a `session_config` that connects them (for example with `pydantic_ai.mcp.MCPToolset`).
 
 A spec-following client only sends HTTP/SSE MCP servers when the agent advertises support for those transports during `initialize` (stdio servers are not capability-gated). When your `session_config` connects them, say so:
 

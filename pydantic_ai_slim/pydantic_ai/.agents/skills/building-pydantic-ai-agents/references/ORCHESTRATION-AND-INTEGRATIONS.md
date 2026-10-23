@@ -86,6 +86,8 @@ Temporal entry points:
 - `PydanticAIPlugin`
 - `AgentPlugin`
 
+For runs long enough to approach Temporal's history limit, pass `TemporalDurability(continue_as_new=...)`. Before each model request where Temporal suggests continuing as new, it calls your function with the `RunContext`. The function calls `workflow.continue_as_new()` with everything the workflow's run method needs to resume, typically `None` as the prompt plus `ctx.messages`, `ctx.usage`, and `ctx.usage_limits`, or returns to defer.
+
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
 Capability hooks that must behave differently in deterministic workflow code check `ctx.in_durable_context`: `True` inside the durable workflow or flow, `False` in Temporal activities and DBOS steps (where tools run) and outside durable execution. Prefect tasks inherit their flow's context, so it is `True` there. Don't detect the engine by module or class name.
@@ -105,6 +107,12 @@ Set `MCPToolset(tool_error_behavior=...)` according to the server error semantic
 - `'error'` propagates the underlying exception to application code.
 
 Structured server error content is serialized as JSON for both `'retry'` and `'failed'`. Protocol and transport errors (as opposed to completed tool errors) stay retryable even under `'failed'`.
+
+## Render MCP Apps in a Frontend
+
+[MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) are HTML pages a server attaches to tools. `MCPToolset` needs no setup: a call to a tool with `_meta.ui.resourceUri` keeps an `MCPAppToolResult` in `ToolReturnPart.metadata['mcp_app']` (resource URI, tool input, full result, toolset `id`), which the model never sees. The AG-UI adapter sends it as an `mcp-apps` activity, the Vercel AI adapter as a `data-mcp-apps` chunk. Read the page with `read_resource_for_app(uri)`, which returns the MCP result as is, keeping the MIME type and `_meta.ui` (CSP, permissions).
+
+Relay the page's requests with `call_tool_for_app(name, arguments)` (app-visible tools only, `isError` results returned, no `process_tool_call`) and `read_resource_for_app(uri)` (any resource); both return the MCP wire result to send back as is. Use one `MCPToolset` per server.
 
 ## Use Embeddings for RAG
 

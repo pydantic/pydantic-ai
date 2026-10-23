@@ -63,13 +63,21 @@ def _leading_context_len(messages: Sequence[ModelMessage]) -> int:
     return count
 
 
-def reinject_pinned(original: Sequence[ModelMessage], compacted: list[ModelMessage]) -> list[ModelMessage]:
+def reinject_pinned(
+    original: Sequence[ModelMessage],
+    compacted: list[ModelMessage],
+    *,
+    protected_tail: int = 0,
+    insert_at: int | None = None,
+) -> list[ModelMessage]:
     """Re-inject any pinned parts from *original* that *compacted* dropped.
 
     Pinned parts already present in *compacted* are left where they are; missing ones are
     gathered into a single `ModelRequest` placed right after any leading system/summary
     messages, so they sit near the top of the surviving history. A no-op when *original* has
-    no pins or all pins survived, so it is always safe to call.
+    no pins or all pins survived, so it is always safe to call. `protected_tail` bounds
+    insertion to the prefix before that many unchanged trailing messages. `insert_at` places the
+    recovered pins at that index instead, for a strategy whose leading messages must stay as they were.
     """
     pinned = collect_pinned(original)
     if not pinned:
@@ -85,6 +93,7 @@ def reinject_pinned(original: Sequence[ModelMessage], compacted: list[ModelMessa
             missing.append(part)
     if not missing:
         return compacted
-    index = _leading_context_len(compacted)
+    leading = _leading_context_len(compacted) if insert_at is None else insert_at
+    index = min(leading, len(compacted) - protected_tail)
     pin_message = ModelRequest(parts=list(missing))
     return [*compacted[:index], pin_message, *compacted[index:]]

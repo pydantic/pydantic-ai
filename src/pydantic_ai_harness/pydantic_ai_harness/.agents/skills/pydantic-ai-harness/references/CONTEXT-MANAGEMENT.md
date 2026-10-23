@@ -16,6 +16,7 @@ tool-return pairs intact, and their edits persist into the run's message history
 | Tool outputs dominate context and can be re-fetched | `ClearToolResults` |
 | Agent re-reads the same files | `DeduplicateFileReads` |
 | Many turns: slow or costly but not overflowing, or only recent turns matter | `SlidingWindowCompaction(max_messages=...)` (no LLM call), or `SummarizingCompaction` to keep the gist |
+| Some old tool results are still needed verbatim, others are dead weight | `RelevanceCompaction` (a judge model ranks each older step) |
 | Summarization can fail (API error) and the run must survive | `FallbackCompaction` |
 | One runaway response or tool-call arg blows the cap | `ClampOversizedMessages` |
 | Model should wrap up rather than have history rewritten | `WarnNearLimits` |
@@ -53,6 +54,11 @@ agent without a reason: both rewrite history.
   `tokenizer=` or ~4 chars per token.
 - `keep_tokens=` is measured per message with provider usage too (`estimate_message_tokens`):
   responses count their `output_tokens`, including thinking returned without text.
+- A positive `keep_tokens` is a minimum, not a cap: `SlidingWindowCompaction` and
+  `SummarizingCompaction` keep the shortest unchanged suffix reaching it, including the message that
+  crosses it and the tool calls its results need, so it can overshoot by whole messages. Summaries,
+  receipts, pins and kept user turns are added on top. Leave headroom below the trigger; `0` and
+  `None` (`keep_messages`) keep their previous behavior.
 
 ## TieredCompaction (recommended default)
 
@@ -107,6 +113,9 @@ hence `max_tokens=1` / `max_messages=1`. `tiers` must be non-empty and exactly o
 `ClearToolResults(max_messages=None, max_tokens=None, keep_pairs=3, placeholder='[tool result cleared]', exclude_tools=frozenset(), clear_tool_inputs=False, min_clear_tokens=None)`:
 blanks old tool results, keeping the newest `keep_pairs`. `min_clear_tokens` skips clears too
 small to be worth a cache bust. Core `search_tools` / `load_capability` returns are never cleared.
+`max_messages` counts from the last cleared result, so clears come in batches about
+`(max_messages - 2 * keep_pairs) / 2` tool steps apart; at or below `2 * keep_pairs` it clears on
+every request.
 
 ### `DeduplicateFileReads`
 
@@ -116,7 +125,8 @@ drop live data). With no trigger it runs on every request.
 ### `SlidingWindowCompaction`
 
 `SlidingWindowCompaction(max_messages=None, max_tokens=None, keep_messages=40, keep_tokens=None, preserve_first_user_message=True, receipts=False)`:
-drops the oldest whole messages.
+drops the oldest whole messages. `keep_messages=0` still keeps the newest message, the request being
+answered.
 
 ### `SummarizingCompaction`
 
@@ -126,10 +136,26 @@ example a decision model) needs `model=` set or the first compaction raises `Use
 Useful keyword options: `model_settings`, `summarization_capabilities` (outer capabilities do not
 run on the summary call), `incremental=True` (update the previous summary rather than
 re-summarize), `keep_user_messages=False`, `tool_return_max_chars=500`, `summary_prompt` (must
-contain `{messages}`), `instructions`, `bridge_prefix=False`, `receipts=False`,
+contain `{messages}` and no other replacement field; any other prompt emits a `HarnessDeprecationWarning`
+and will raise `ValueError` in a future release), `instructions`, `bridge_prefix=False`, `receipts=False`,
 `event_stream_handler` (pass `drain_summary_events` for endpoints that reject non-streaming).
+`keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.
 Usage (tokens and the request) folds into the run's `ctx.usage`, so `UsageLimits` sees it. Keep
 the default `id='summarizing_compaction'` under durable execution.
+
+### `RelevanceCompaction`
+
+`RelevanceCompaction(model, *, summarizer=None, max_tokens=None, max_fraction=None, target_tokens=None, target_fraction=None, keep_tokens=8_000, summary_input_tokens=30_000, judge_step_tokens=2_000, judge_context_tokens=500, judge_concurrency=8, truncated_result_chars=300, receipts=False, id='relevance_compaction')`:
+`model`, the judge, is required: a decision model (`'system-one:<model>'`, `'typesafe:jev-latest'`) or any
+model with structured output, or a `FallbackModel` of both. Each older step (a response and the
+requests answering it) gets one judge request with two questions, `needed_verbatim` and
+`still_matters`. Steps are kept by `needed_verbatim` rank until the target (default half the
+trigger), the rest are reduced by `still_matters` rank (summarized when `summarizer` is a
+`SummarizingCompaction`, whose trigger is ignored, so `max_messages=1` works; otherwise tool
+results are cut to `truncated_result_chars`), and the remainder dropped. Steps holding a user prompt
+are never dropped. All judge requests of one compaction count as one request; judgements are cached
+per instance by task and step. Judge errors propagate: wrap in `FallbackCompaction`. As a
+`TieredCompaction` tier, set `target_tokens` explicitly.
 
 ### `ClampOversizedMessages`
 
@@ -171,7 +197,8 @@ agent = Agent(
 ## Observe instead of edit: WarnNearLimits and ReportContextUsage
 
 `WarnNearLimits(max_iterations=None, max_context_tokens=None, max_total_tokens=None, warn_on=None, warning_threshold=0.7, critical_remaining_iterations=3, *, max_context_fraction=None)`
-never edits history; it appends an URGENT then CRITICAL user-turn warning as limits approach. At
+never edits history; it enqueues an URGENT then CRITICAL warning as a request-scoped
+`SystemPromptPart(scope='request')` as limits approach: seen for that request only, kept in history. At
 least one limit is required; `warn_on` may only name configured kinds (`'iterations'`,
 `'context_window'`, `'total_tokens'`).
 
@@ -231,6 +258,13 @@ then a `shape:` line for JSON and a head/tail excerpt; the model pages it with t
 `read_tool_result(handle, offset=0, limit=200, from_end=False, pattern=None)` (`pattern` is a literal
 substring; at most 1,000 lines / 50,000 chars per call). Default with no `bands`:
 `Band(over=10_000, action=Spill(then=Truncate()))`, measured in characters.
+
+With `FileSystem` on the agent and the default `WorkspaceStore()` (no `workspace=` of its own),
+`read_tool_result` is left out (`unless_tool_kind=READ_FILE_KIND`) and the marker reads
+`... Read it with read_file(path='<handle>').]`, naming the tool as it is called in the run (keep
+`FileSystem` under its own names for now: a renamed `FileSystem` tool can't be called yet, #10927). `read_file` calls on paths under `.pydantic-ai-harness/tool-output/`
+are not reduced, so a spill read is never re-spilled. `read_file` has no `from_end`. Scripted tests
+should pick the reader by kind (`READ_FILE_KIND`, `READ_TOOL_RESULT_KIND`), not by name.
 
 ```python
 from pydantic_ai import Agent

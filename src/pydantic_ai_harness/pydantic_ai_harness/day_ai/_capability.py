@@ -11,7 +11,8 @@ Provider contract, verified 2026-09-24:
   annotations), so there is no `read_only` option.
 
 Sources: https://day.ai/mcp, https://github.com/day-ai/day-ai-sdk, and the endpoint itself
-(`https://day.ai/.well-known/oauth-protected-resource/api/mcp`, `https://day.ai/.well-known/oauth-authorization-server`).
+(`https://day.ai/.well-known/oauth-protected-resource/api/mcp`,
+`https://day.ai/.well-known/oauth-authorization-server`).
 Re-check by fetching both metadata documents and sending an unauthenticated `initialize` POST to the endpoint.
 """
 
@@ -58,17 +59,19 @@ class DayAI(AbstractCapability[AgentDepsT]):
     id: str | None = _ID
     """Stable capability and toolset ID, so `defer_loading=True` needs none.
 
-    One `DayAI` is one connection to one account, like `StackOne`'s linked account. Two sharing this `id` are
-    one connection stated twice when they agree, and an error when they differ; give each its own `id` to keep both.
+    Each `id` is one connection to one Day AI account. Two `DayAI` with the same `id` and the same settings are
+    merged into one, and two that differ raise an error; give each account its own `id`.
     """
 
     description: str | None = _DEFAULT_DESCRIPTION
     """Routing description used when the capability is loaded on demand."""
 
     auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
-    """A Day AI access token, `'oauth'` to sign in through the browser locally, or a function of the run context that returns a token.
+    """A Day AI access token, `'oauth'` to sign in through the browser locally, or a function of the run context
+    that returns a token.
 
-    Unset, it uses `DAY_AI_ACCESS_TOKEN`. A function never does: if it returns `None` or `''`, that run has no Day AI tools.
+    Unset, it uses `DAY_AI_ACCESS_TOKEN`. A function never does: if it returns `None` or `''`, that run has no
+    Day AI tools.
     """
 
     include_instructions: bool = True
@@ -78,7 +81,7 @@ class DayAI(AbstractCapability[AgentDepsT]):
     """Your own MCP client or transport, for full control of the connection. It cannot be combined with `auth`."""
 
     def __post_init__(self) -> None:
-        if self.client is not None and self.auth is not None:
+        if self.client is not None and self.auth:
             raise UserError('`client` owns the connection, so it cannot be combined with `auth`.')
 
     @classmethod
@@ -99,7 +102,7 @@ class DayAI(AbstractCapability[AgentDepsT]):
         auth = self.auth(ctx) if callable(self.auth) else self.auth
         if auth == 'oauth':
             # FastMCP reads 'oauth' as "log in through a browser", which would hang a server run.
-            raise UserError("The `auth` function must return an API key or token, not 'oauth'.")
+            raise UserError("The `auth` function must return an access token, not 'oauth'.")
         return self._connect(auth) if auth else None
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:

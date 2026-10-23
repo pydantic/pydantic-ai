@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 
 import httpx
 import httpx2
+import pydantic_core
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from cassetter import Cassette, RecordMode
@@ -33,6 +34,7 @@ import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder, ImageGenerator
 from pydantic_ai._cache_health import ConversationCacheMarkStore
 from pydantic_ai.capabilities import instrumentation as instrumentation_capability
+from pydantic_ai.exceptions import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     DocumentUrl,
     FilePart,
@@ -42,7 +44,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -852,6 +855,12 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
 _REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, JsonValue])
 
+
+def decode_request_body(content: bytes, headers: httpx2.Headers) -> bytes:
+    """Decode a wire request using HTTPX's content-encoding support."""
+    return httpx2.Response(200, content=content, headers=headers).content
+
+
 # What `httpx2.AsyncClient()` uses when no timeout is passed.
 _HTTPX_DEFAULT_TIMEOUT = 5.0
 
@@ -900,8 +909,8 @@ class RequestCapture:
     def bodies(self, path_suffix: str = '') -> list[dict[str, JsonValue]]:
         """Every captured body whose URL path ends with `path_suffix`, parsed on demand."""
         return [
-            _REQUEST_BODY_ADAPTER.validate_json(raw)
-            for path, raw in zip(self.paths, self.raw_bodies)
+            _REQUEST_BODY_ADAPTER.validate_json(decode_request_body(raw, headers))
+            for path, raw, headers in zip(self.paths, self.raw_bodies, self.headers)
             if path.endswith(path_suffix)
         ]
 
@@ -1112,6 +1121,11 @@ def openai_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def moonshotai_api_key() -> str:
+    return os.getenv('MOONSHOTAI_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def azure_api_key() -> str:
     return os.getenv('AZURE_OPENAI_API_KEY', 'mock-api-key')
 
@@ -1217,6 +1231,11 @@ def xai_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def elevenlabs_api_key() -> str:
+    return os.getenv('ELEVENLABS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def tavily_api_key() -> str:
     return os.getenv('TAVILY_API_KEY', 'mock-api-key')
 
@@ -1229,6 +1248,11 @@ def zai_api_key() -> str:
 @pytest.fixture(scope='session')
 def crusoe_api_key() -> str:
     return os.getenv('CRUSOE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def meta_api_key() -> str:
+    return os.getenv('META_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')
@@ -1290,6 +1314,7 @@ async def xai_provider(request: pytest.FixtureRequest) -> AsyncIterator[XaiProvi
 def bedrock_provider():
     try:
         import boto3
+        from botocore.config import Config
 
         from pydantic_ai.providers.bedrock import BedrockProvider
 
@@ -1302,10 +1327,14 @@ def bedrock_provider():
             yield provider
             provider.client.close()
         else:  # pragma: lax no cover
+            # `BedrockProvider`'s default read timeout; botocore's 60s cuts off a Nova code-interpreter
+            # sandbox timeout, which takes longer to come back.
+            config = Config(read_timeout=300)
             if os.getenv('AWS_PROFILE'):
                 bedrock_client = boto3.client(
                     'bedrock-runtime',
                     region_name=os.getenv('AWS_REGION', 'us-east-1'),
+                    config=config,
                 )
             else:
                 bedrock_client = boto3.client(
@@ -1316,6 +1345,7 @@ def bedrock_provider():
                         'AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'
                     ),
                     aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
+                    config=config,
                 )
             yield BedrockProvider(bedrock_client=bedrock_client)
             bedrock_client.close()
@@ -1454,7 +1484,37 @@ def disable_ssrf_protection_for_vcr():
         yield
 
 
-_RequestPartT = TypeVar('_RequestPartT', bound=SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart)
+def legacy_retry_prompt_part(
+    content: list[pydantic_core.ErrorDetails] | str,
+    *,
+    tool_name: str | None = None,
+    tool_call_id: str | None = None,
+    timestamp: datetime | None = None,
+) -> RetryPromptPart:  # pyright: ignore[reportDeprecated]
+    """Build the deprecated `RetryPromptPart` for a test that exercises how a legacy part is handled.
+
+    `filterwarnings = ["error"]` turns the deprecation into a failure, and every one of these tests
+    wants the part, not the warning — `test_retry_feedback.py` owns proving that it fires.
+    """
+    # TODO(v3): remove `legacy_retry_prompt_part` along with `RetryPromptPart`
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
+        part = RetryPromptPart(content=content, tool_name=tool_name)  # pyright: ignore[reportDeprecated]
+    if tool_call_id is not None:
+        part.tool_call_id = tool_call_id
+    if timestamp is not None:
+        part.timestamp = timestamp
+    return part
+
+
+_RequestPartT = TypeVar(
+    '_RequestPartT',
+    bound=SystemPromptPart
+    | UserPromptPart
+    | ToolReturnPart
+    | RetryPromptPart  # pyright: ignore[reportDeprecated]
+    | RetryFeedbackPart,
+)
 _ResponsePartT = TypeVar(
     '_ResponsePartT',
     bound=TextPart | ToolCallPart | NativeToolCallPart | NativeToolReturnPart | ThinkingPart | FilePart,

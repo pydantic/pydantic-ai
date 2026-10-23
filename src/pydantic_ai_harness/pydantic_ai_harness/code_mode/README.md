@@ -236,14 +236,76 @@ Override them with `resource_limits={'max_duration_secs': 10, 'max_memory': 134_
 supplies equivalent limits. It removes the time and memory caps, but leaves Monty's default
 suspension budget in place; suspensions cannot be unlimited.
 
+Nested tool calls also count toward the run's
+[`tool_calls_limit`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits), together with the
+`run_code` call that makes them. Each nested call is checked before it runs, counting the calls still
+pending, and one that would exceed the limit ends the run with `UsageLimitExceeded`, as a top-level tool
+call does. Catching the error inside the snippet does not prevent this.
+
 When `CodeMode` runs inside a Temporal workflow, it disables `max_duration_secs`, including an
 explicit override. `run_code` is replayed in workflow code, so measuring elapsed time there could
 make replay choose a different path from the recorded workflow. The memory and suspension caps still apply. Put
 time-bounded work behind a Temporal activity instead.
 
+## Concurrent tool calls
+
+Sandboxed tools render as `async def` functions, so generated code can start several calls and
+await them together with `asyncio.gather`. Whether those calls overlap follows the run's
+[parallel execution mode](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#parallel-tool-calls-concurrency):
+
+- `'parallel'` (the default) and `'parallel_ordered_events'` run gathered calls concurrently.
+  `'parallel_ordered_events'` only orders the result events of top-level tool calls, which nested
+  calls do not emit. It is the mode `DBOSDurability` uses by default.
+- `'sequential'` runs gathered calls one at a time, in the order the code started them.
+
+A tool marked `sequential=True` renders as a plain `def` and runs alone in every mode: calls the
+code started before it finish first.
+
+Durable engines that record nested calls as steps number them as they start. When a tool or a
+capability hook such as `before_tool_execute` awaits before its step starts, concurrent calls can
+start their steps in a different order on recovery. Pass `parallel_execution_mode='sequential'` to
+the durability capability to run nested calls one at a time.
+
 ## REPL state
 
 State persists between `run_code` calls within the same agent run -- variables, imports, and function definitions carry over. Pass `restart: true` in the tool call to reset state. If a worker crash or host-side execution failure invalidates the session, `run_code` returns a model retry that reports the reset and the nested calls that already started; the next snippet must recreate any required state.
+
+### Keep the REPL across runs
+
+Each agent run starts its own REPL, so a conversation made of several runs loses its sandbox state between them. Pass a `repl_store` to keep it: a run that calls `run_code` loads the state the store returns before its first snippet, and saves the REPL to the store when the run ends. The store is any object with async `load` and `save` methods (`pydantic_ai_harness.code_mode.CodeModeReplStore`), and the state is Monty's opaque dump of the REPL. Key it by `ctx.conversation_id`, which stays the same across runs when you pass `conversation_id` or the previous run's `message_history`:
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai_harness import CodeMode
+
+
+class InMemoryReplStore:
+    def __init__(self) -> None:
+        self.states: dict[str, bytes] = {}
+
+    async def load(self, ctx: RunContext) -> bytes | None:
+        return self.states.get(ctx.conversation_id or '')
+
+    async def save(self, ctx: RunContext, state: bytes | None) -> None:
+        key = ctx.conversation_id or ''
+        if state is None:
+            self.states.pop(key, None)
+        else:
+            self.states[key] = state
+
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(repl_store=InMemoryReplStore())])
+```
+
+- A run that never calls `run_code` neither loads nor saves.
+- `restart: true` skips the saved state. The run then saves its new REPL, or calls `save(ctx, None)` when the restarted snippet failed before creating one.
+- A restored REPL keeps the resource limits it was saved under, so the state records the run's resolved `resource_limits`. A state saved under other limits, or one Monty cannot load, such as a truncated dump or one from an incompatible Monty version, is dropped with a logged warning, and the run starts a fresh REPL.
+- Monty does not authenticate a dump. Return only states your application saved, from storage no one else can write to.
+- A timeout, worker crash, or cancelled snippet that resets the REPL keeps the state saved before the run, unless a later snippet in the run builds a new REPL, which is then saved. A cancelled run still saves an idle REPL.
+- A store error does not fail the run: a failed `load` starts a fresh REPL, and a failed `save` leaves the stored state as it was. A `save` still running after 10 seconds is cancelled, but work it handed to a thread may still finish, so write atomically. Each is logged as a warning.
+- Restored state skips the type check a fresh REPL's first snippet gets, since the checker does not know the restored names.
+- The dump holds every live value, so it can be large. To bound it, have `save` drop an oversized state and forget the old one. With `monty_sandbox_url`, a server that keeps sessions returns a record ID instead, which lives as long as the server keeps it, and a server that keeps nothing fails every save with a logged warning.
+- The store is not used under durable execution, where its I/O would run in replayed workflow code.
 
 ## Eager execution
 
@@ -285,6 +347,8 @@ session.
 Keep these limitations in mind:
 
 - Eager mode cannot undo side effects from code that has already run.
+- With a parallel `InputGuardrail`, a nested tool call from an eager statement waits for the
+  guard's verdict before it runs, so a blocked prompt runs no tool.
 - If the model later requests `restart: true`, some work may run again.
 - If the model changes an earlier line while streaming, `CodeMode` resets the REPL and asks
   the model to send the code again.
@@ -399,6 +463,13 @@ await update_record(key='status', value='ready')
 await search(query='status')  # Runs after the update, not speculatively ahead of it.
 ```
 
+Code can also reach a tool that is not eligible without naming it, for example through a
+helper defined in an earlier snippet. A launch is not used if a call to a tool that is not
+eligible, native or inside `run_code`, starts or finishes after the launch. The dispatch runs
+the tool normally instead and counts as a miss; the launch is discarded as wasted work.
+Only tool calls move this boundary: writes the sandbox makes through `mount` or `os_access`
+do not, so do not make a tool eligible if it reads state those writes change.
+
 To overlap an earlier blocking read with later calls, that read must also be eligible.
 Streamed `run_code` parts following another model tool call wait for normal dispatch.
 Eligibility is a trust decision, not an analysis of arbitrary Python side effects.
@@ -411,6 +482,8 @@ Keep these limitations in mind:
   comment can start too. It is discarded when the snippet finishes.
 - `sequential` tools never speculate, and nothing speculates when the run's parallel
   execution mode is `sequential`.
+- With a parallel `InputGuardrail`, a speculated call waits for the guard's verdict before it
+  runs, so a blocked prompt runs none of them.
 - Hooks on a speculated tool run when it starts, not when the snippet claims it. Hooks,
   approval, and guardrails on `run_code` itself run only after the model has finished writing
   the call, so they cannot stop a call that has already started early; this is the same
@@ -418,6 +491,9 @@ Keep these limitations in mind:
 - At most `max_tool_calls` calls (and never more than 32) start early per `run_code` call;
   later ones run cold. This speculative allowance is separate from the snippet's dispatch
   budget: unclaimed launches are extra work, not a reservation against `max_tool_calls`.
+- Under a `tool_calls_limit`, a call counts toward the limit from the moment it starts early,
+  including one the snippet never claims. A launch the limit refused runs cold if the snippet
+  asks for it.
 - Speculated tools must cooperate with asyncio cancellation. Cleanup requests cancellation
   and waits up to five seconds per streamed call, then stops waiting. A tool that suppresses
   cancellation can outlive the run; this timeout does not forcibly stop its work.
@@ -430,8 +506,8 @@ after a slow statement). Statements that eager mode runs claim those launches to
 
 ### Check whether speculation helps
 
-`CodeMode.speculation_stats` is `None` when speculation is disabled. When enabled, its counters
-accumulate across runs using that capability instance; take before/after snapshots for a
+`CodeMode.speculation_stats` counts launches across every run using that capability instance,
+and its counters stay at zero when speculation is disabled. Take before/after snapshots for a
 per-run comparison. Successful `run_code` returns can also carry a `speculation` entry in
 history-only metadata, alongside `tool_calls` and `tool_returns`. Model-visible content is unchanged.
 
@@ -441,14 +517,15 @@ history-only metadata, alongside `tool_calls` and `tool_returns`. Model-visible 
 | `adopted` | Capability instance | Speculative outcomes consumed by actual dispatches, including tool errors. |
 | `evicted` | Capability instance | Unclaimed launches discarded or sent a cancellation request. |
 | `hits` | `run_code` return | Dispatches that consumed a speculative outcome. |
-| `misses` | `run_code` return | Dispatches to eligible tools that found no matching launch and ran normally. |
+| `misses` | `run_code` return | Dispatches to eligible tools that found no usable launch and ran normally. |
 | `wasted` | `run_code` return | Unclaimed launches discarded at this call's successful completion. |
 | `hidden_ms` | `run_code` return | Sum of launch-to-settlement durations for adopted calls. |
 
 `hidden_ms` is **not measured end-to-end time saved**: calls can overlap, and it includes time
-spent waiting for a launch that was still running when claimed. Compare total run latency and
-external request cost with speculation on and off. Neither `evicted` nor `wasted` proves that
-an unused call completed, stopped, or avoided its cost.
+spent waiting for a launch that was still running when claimed, or for a parallel
+`InputGuardrail` verdict. Compare total run latency and external request cost with speculation
+on and off. Neither `evicted` nor `wasted` proves that an unused call completed, stopped, or
+avoided its cost.
 
 The lifecycle is also emitted as
 [capability events](https://pydantic.dev/docs/ai/core-concepts/hooks/) in the `code_mode`
@@ -579,11 +656,49 @@ result = agent.run_sync("What's the weather in Paris?")
 
 for msg in result.all_messages():
     for part in msg.parts:
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code':
+        if isinstance(part, ToolReturnPart) and part.tool_kind == 'code_mode.run_code':
             metadata = part.metadata or {}
             tool_calls = metadata['tool_calls']      # dict[str, ToolCallPart]
             tool_returns = metadata['tool_returns']  # dict[str, ToolReturnPart]
 ```
+
+## Recognizing `run_code` calls
+
+The `run_code` tool declares the `'code_mode.run_code'` [tool kind](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#typed-tool-parts), so its call parts are promoted to `RunCodeCallPart` (from `pydantic_ai_harness.code_mode`). A hook or history processor can recognize them with `isinstance` instead of matching the tool's name, and read the submitted code from `code` (or all its arguments, validated as `RunCodeArgs`, from `typed_args`):
+
+```python
+from dataclasses import dataclass, field
+from typing import Any
+
+from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs, WrapToolExecuteHandler
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai_harness import CodeMode
+from pydantic_ai_harness.code_mode import RunCodeCallPart
+
+
+@dataclass
+class RecordSnippets(AbstractCapability[Any]):
+    snippets: list[str] = field(default_factory=list)
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        if isinstance(call, RunCodeCallPart) and call.code is not None:
+            self.snippets.append(call.code)
+        return await handler(args)
+
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(), RecordSnippets()])
+```
+
+`run_code` calls recorded before `CodeMode` declared this kind load as plain `ToolCallPart`s. `ToolCallPart.narrow_type(part, tool_kind='code_mode.run_code')` promotes one.
 
 ## Filesystem and OS access
 
@@ -695,6 +810,7 @@ CodeMode(
     mount=None,           # host directories to share with the sandbox
     resource_limits=None, # sandbox time and memory caps; 'unlimited' removes them
     monty_sandbox_url=None, # ws:// or wss:// URL of a remote Monty worker server
+    repl_store=None,      # keep the run_code REPL across runs (CodeModeReplStore)
     dynamic_catalog=False,
 )
 ```

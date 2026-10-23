@@ -23,7 +23,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -136,13 +135,13 @@ def _call_tool_then_answer(messages: list[ModelMessage], info: AgentInfo) -> Mod
     return ModelResponse(parts=[TextPart('done')])
 
 
-def _retry_parts(messages: list[ModelMessage]) -> list[RetryPromptPart]:
+def _retry_parts(messages: list[ModelMessage]) -> list[ToolReturnPart]:
     return [
         part
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, RetryPromptPart)
+        if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
     ]
 
 
@@ -396,7 +395,7 @@ class TestExaAgent:
         assert result.output == 'done'
         [retry] = _retry_parts(result.all_messages())
         assert retry.tool_name == 'exa_agent'
-        assert 'did not match the configured schema' in retry.model_response()
+        assert 'did not match the configured schema' in retry.model_response_str(wrap_if_error=False)
 
     async def test_poll_timeout_becomes_retry_prompt_with_run_id(self) -> None:
         runs = _FakeRuns(
@@ -413,8 +412,8 @@ class TestExaAgent:
         assert result.output == 'done'
         [retry] = _retry_parts(result.all_messages())
         assert retry.tool_name == 'exa_agent'
-        assert 'run_t' in retry.model_response()
-        assert 'previous_run_id' in retry.model_response()
+        assert 'run_t' in retry.model_response_str(wrap_if_error=False)
+        assert 'previous_run_id' in retry.model_response_str(wrap_if_error=False)
 
     async def test_poll_transient_error_returned_as_retry_result(self) -> None:
         creator_runs = _FakeRuns(created=_run('queued', run_id='run_v'))
@@ -451,6 +450,23 @@ class TestExaAgent:
         )
         ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
         with pytest.raises(ValueError, match='status code 401'):
+            await capability.handle_deferred_tool_calls(ctx, requests=requests)
+
+    async def test_poll_payment_required_propagates(self) -> None:
+        creator_runs = _FakeRuns(created=_run('queued', run_id='run_x'))
+        capability = ExaAgent[None](runs=creator_runs)
+        with pytest.raises(CallDeferred) as exc_info:
+            await capability.get_toolset().exa_agent('task')
+        metadata = exc_info.value.metadata
+        assert metadata is not None
+
+        capability.runs = _FakeRuns(poll_error=ValueError('Request failed with status code 402: payment required'))
+        requests = DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='exa_agent', tool_call_id='c1')],
+            metadata={'c1': metadata},
+        )
+        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+        with pytest.raises(ValueError, match='status code 402'):
             await capability.handle_deferred_tool_calls(ctx, requests=requests)
 
     async def test_external_execution_bubbles_deferred_requests(self) -> None:
