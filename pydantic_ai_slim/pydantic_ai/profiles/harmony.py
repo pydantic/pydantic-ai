@@ -11,5 +11,10 @@ def harmony_model_profile(model_name: str) -> ModelProfile | None:
     """
     return merge_profile(
         openai_model_profile(model_name),
-        OpenAIModelProfile(supports_forced_tool_choice=False, ignore_streamed_leading_whitespace=True),
+        OpenAIModelProfile(
+            supports_thinking=True,
+            thinking_always_enabled=True,
+            supports_forced_tool_choice=False,
+            ignore_streamed_leading_whitespace=True,
+        ),
     )
