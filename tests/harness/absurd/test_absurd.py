@@ -268,13 +268,11 @@ class TestDurability:
             first = await agent.run('charge it')
 
         model_calls = {'calls': 0}
-        tool_calls = {'calls': 0}
         redeployed_toolset = FunctionToolset[object](id='tools')
 
         @redeployed_toolset.tool_plain(name='charge_card')
-        def charge_card_v2(amount: int) -> str:
-            tool_calls['calls'] += 1
-            return f'charged {amount} again'
+        def charge_card_v2(amount: int) -> str:  # pragma: no cover
+            raise AssertionError('served from the checkpoint')
 
         redeployed = Agent(
             _tool_calling_model(ToolCallPart('charge_card', {'amount': 99}), counter=model_calls),
@@ -288,7 +286,7 @@ class TestDurability:
         def returned(messages: list[ModelMessage]) -> list[object]:
             return [p.content for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
 
-        assert model_calls['calls'] == tool_calls['calls'] == 0
+        assert model_calls['calls'] == 0
         assert returned(replayed.all_messages()) == returned(first.all_messages()) == ['charged 42']
 
     async def test_registered_model_selected_per_run(self, absurd: AsyncAbsurd) -> None:
