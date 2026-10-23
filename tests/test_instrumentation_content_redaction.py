@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import httpx2
@@ -454,8 +454,9 @@ def test_an_mcp_capability_keeps_its_local_toolsets_own_marker(local: str):
     url = 'http://private-tenant.example/mcp'
     capability = MCP[None](local=Client(url) if local == 'client' else StreamableHttpTransport(url))
     assert isinstance(capability.local, MCPToolset)
-    assert capability.local.id == 'private-tenant.example'
-    assert capability.local._telemetry_url_derived_id == 'private-tenant.example'  # pyright: ignore[reportPrivateUsage]
+    toolset = cast('MCPToolset[None]', capability.local)
+    assert toolset.id == 'private-tenant.example'
+    assert toolset._telemetry_url_derived_id == 'private-tenant.example'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_a_hostname_derived_id_is_masked_only_while_its_derived():
