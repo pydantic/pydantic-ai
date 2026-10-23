@@ -536,6 +536,27 @@ def test_benchmark_classifier_keeps_new_source_and_unknown_status_conservative(t
     assert outputs == {'run_benchmarks': 'true'}
 
 
+@pytest.mark.parametrize(
+    ('filename', 'previous_filename', 'expected'),
+    [
+        ('tests/benchmarks/README.md', '', 'false'),
+        ('tests/benchmarks/AGENTS.md', '', 'false'),
+        ('tests/benchmarks/data/prompt.md', '', 'true'),
+        ('tests/benchmarks/README.md', 'tests/benchmarks/data/prompt.md', 'true'),
+        ('tests/benchmarks/data/prompt.md', 'tests/benchmarks/README.md', 'true'),
+    ],
+)
+def test_benchmark_classifier_distinguishes_documentation_from_markdown_workloads(
+    tmp_path: Path, filename: str, previous_filename: str, expected: str
+):
+    assert _classify(
+        tmp_path,
+        [(filename, previous_filename)],
+        workflow_path=BENCHMARK_WORKFLOW,
+        status='renamed' if previous_filename else 'modified',
+    ) == {'run_benchmarks': expected}
+
+
 def test_benchmark_classifier_covers_import_inventory():
     filenames = TypeAdapter(dict[str, list[str]]).validate_json(
         (Path(__file__).parents[2] / 'tests/benchmarks/dependencies.json').read_text()

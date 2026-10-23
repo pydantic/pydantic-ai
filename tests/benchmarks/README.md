@@ -58,7 +58,7 @@ Pull requests run CodSpeed when they change a benchmark dependency. Pushes to `m
 | Selected models, profiles, durable-execution primitives, embedding/image bases, workspaces | Transitive imports, enumerated by file in the manifest. `profiles/decision.py` and `providers/__init__.py` are included. |
 | Evals dataset, lifecycle, task-run, evaluator, reporting, and OTel modules | Transitive imports and report-context construction. |
 | `tests/__init__.py`, root `conftest.py`, `_inline_snapshot.py`, `cost_guards.py`, `cassette_hooks.py`, `cassette_utils.py` | Collection and autouse fixtures: event loop, instrumentation/cache resets, HTTP client tracking, VCR checks, SDK cache/GC workarounds, and test-cost hooks. |
-| `tests/benchmarks/*` | Workloads, local fixtures/collection hook, dependency map, and future benchmark data. |
+| `tests/benchmarks/*` except `README.md` and `AGENTS.md` | Workloads, local fixtures/collection hook, dependency map, and future benchmark data, including Markdown fixtures. The two audited documentation files are not runtime inputs. |
 
 Provider implementations, provider profiles, live-provider model adapters, realtime/UI adapters, durable-engine integrations, external tools, workspace conformance tests, and the unimported online/generation/judge eval modules skip when modified. `infer_model` receives model instances and returns them directly; its string dispatch and `infer_provider_class` branches do not load provider implementations. The imported wrappers and model utilities remain triggers.
 

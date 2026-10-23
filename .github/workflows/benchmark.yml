@@ -70,6 +70,8 @@ jobs:
               pyproject.toml|*/pyproject.toml|uv.lock|*/uv.lock|uv.toml|*/uv.toml|.python-version|*/.python-version) return 0 ;;
               requirements*.txt|*/requirements*.txt|requirements*.in|*/requirements*.in) return 0 ;;
               setup.py|*/setup.py|setup.cfg|*/setup.cfg|pytest.ini|*/pytest.ini|tox.ini|*/tox.ini) return 0 ;;
+              # Only audited documentation skips; future Markdown workload fixtures remain inputs.
+              tests/benchmarks/README.md|tests/benchmarks/AGENTS.md) return 1 ;;
               # Inventory and rationale: tests/benchmarks/dependencies.json and README.md.
               tests/benchmarks/*|tests/__init__.py|tests/conftest.py|tests/cost_guards.py) return 0 ;;
               tests/_inline_snapshot.py|tests/cassette_hooks.py|tests/cassette_utils.py) return 0 ;;
