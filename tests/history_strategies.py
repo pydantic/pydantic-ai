@@ -6,7 +6,7 @@ the same conversations are then damaged the ways stored, hand-built and UI-retur
 each kind of damage named by a `Damage` so a test can leave it out with `without`.
 
 The domain is narrower than what the message types accept. Each narrowing leaves out an input that providers
-and users never produce, or one whose shape needs its own strategy, left for a follow-up:
+and users never produce, or one whose shape needs its own strategy:
 
 - Text only, with no `BinaryContent` or URLs, so drawing and mapping a history does no I/O.
 - Values are ones a JSON round trip preserves (no NaN or infinities, no tuples), as a stored history has to.
@@ -20,7 +20,6 @@ and users never produce, or one whose shape needs its own strategy, left for a f
   `RetryFeedbackPart` for one that doesn't. The deprecated `RetryPromptPart` warns, and doesn't round-trip.
 - `RetryFeedbackPart.content` is a string. Its `list[ErrorDetails]` form carries pydantic-core's error shape
   (`loc` tuples, any `input`), which needs its own strategy.
-- `ToolReturnPart` list content is never `[]`: no checker reads a result's content, so an empty one adds nothing.
 - Thinking signatures are base64, as every provider sends them (Google decodes them), and signed thinking
   names one of the mapped models' providers, so it is sent back to the provider that made it.
 - A response has a `model_name` only with a `provider_name`: it came from a provider, or was built by hand,
@@ -112,7 +111,7 @@ summary)."""
 
 
 def _tool_returns(call: ToolCallPart) -> st.SearchStrategy[ToolReturnPart]:
-    content = _TEXT | _JSON_OBJECTS | st.lists(_JSON_VALUES, min_size=1, max_size=3)
+    content = _TEXT | _JSON_OBJECTS | st.lists(_JSON_VALUES, max_size=3)
     answered = st.builds(
         ToolReturnPart,
         st.just(call.tool_name),

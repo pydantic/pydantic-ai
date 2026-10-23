@@ -453,8 +453,9 @@ REPEATED_CALL_ID_REJECTIONS = {
     "cannot have duplicate tool ids 'call_0'\"",
 }
 """The APIs that rejected a call id repeated in one response, and how. OpenAI Responses (gpt-5.5) and Groq
-(openai/gpt-oss-120b) accepted it; the Hugging Face probe failed on an unrelated bug. The misspelling in OpenAI's
-error is its own."""
+(openai/gpt-oss-120b) accepted it. The Hugging Face probe failed on an unrelated bug,
+https://github.com/pydantic/pydantic-ai/issues/11125: once that is fixed, probe a repeated call id there again. The
+misspelling in OpenAI's error is its own."""
 
 KNOWN_FINDINGS = [
     KnownFinding(
