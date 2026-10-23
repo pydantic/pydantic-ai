@@ -54,9 +54,8 @@ class ToolResult:
 
     Built and sent by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] after it settles a
     call: the string-only realtime tool channel and the retry/failure error-key wrapping mean the
-    session renders the [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] or
-    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] it records in history down to this flat
-    shape, so every provider sends exactly the same rendering.
+    session renders the [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] it records in history
+    down to this flat shape, so every provider sends exactly the same rendering.
     """
 
     tool_call_id: str
@@ -659,6 +658,17 @@ class RealtimeConnection(ABC):
         For a provider that can't continue, or drop, a round of calls missing one of its results. The session then
         sends the failure history records (unless a usage limit stopped the call). Defaults to `False`: the model
         gets nothing for the call, and the exchange it was part of ends. Private until the realtime refactor settles.
+        """
+        return False
+
+    @property
+    def _transcribes_all_output(self) -> bool:
+        """Whether every word the model speaks reaches the session as transcript, though not always next to its audio.
+
+        Then an assistant speech part with neither transcript nor retained audio, in a response whose other speech has
+        a transcript, is a piece of that speech's audio a tool call split off from its words, and history leaves it
+        out. Defaults to `False`: such a part is recorded, as speech that was never transcribed. Private until the
+        realtime refactor settles.
         """
         return False
 

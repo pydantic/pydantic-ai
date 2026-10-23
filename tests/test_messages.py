@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 import warnings
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import fields, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -24,15 +24,19 @@ from pydantic_ai import (
     BinaryAudio,
     BinaryContent,
     BinaryImage,
+    Citation,
+    ContentCitationAnchor,
     DeferredToolRequests,
     DeferredToolRequestsEvent,
     DeferredToolResults,
     DeferredToolResultsEvent,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     ImageUrl,
     InstructionPart,
     InstrumentationSettings,
+    MarkerCitationAnchor,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -43,12 +47,12 @@ from pydantic_ai import (
     NativeToolReturnPart,
     PartDeltaEvent,
     RequestUsage,
-    RetryPromptPart,
     RunUsage,
     SpeechPart,
     SpeechPartDelta,
     TextContent,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
     ToolApproved,
@@ -62,6 +66,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
@@ -85,7 +90,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsNow, IsStr, message, message_part, try_import
+from .conftest import IsDatetime, IsNow, IsStr, legacy_retry_prompt_part, message, message_part, try_import
 
 with try_import() as openai_import_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -869,6 +874,98 @@ def test_builtin_tool_call_part_has_content(args: dict[str, object] | str | None
 def test_builtin_tool_call_part_has_content_empty(args: dict[str, object] | str | None):
     part = NativeToolCallPart(tool_name='web_search', args=args)
     assert not part.has_content()
+
+
+def test_citation_message_history_round_trip() -> None:
+    """Citations survive a dump and load of message history, and dump to the documented wire format."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'Paris is the capital of France. [1]',
+                    citations=[
+                        Citation(
+                            sources=[
+                                WebCitationSource(
+                                    url='https://example.com/paris',
+                                    title='Paris',
+                                    excerpts=["Paris is France's capital city."],
+                                )
+                            ],
+                            anchor=MarkerCitationAnchor(start=32, end=35),
+                        ),
+                        Citation(
+                            sources=[
+                                DocumentCitationSource(
+                                    document_id='file-123',
+                                    title='report.pdf',
+                                    excerpts=['The report identifies Paris as the capital.'],
+                                )
+                            ]
+                        ),
+                    ],
+                )
+            ]
+        )
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_python(messages)
+
+    assert ModelMessagesTypeAdapter.validate_python(serialized) == messages
+    assert serialized[0]['parts'][0]['citations'] == snapshot(
+        [
+            {
+                'sources': [
+                    {
+                        'kind': 'web',
+                        'url': 'https://example.com/paris',
+                        'title': 'Paris',
+                        'excerpts': ["Paris is France's capital city."],
+                    }
+                ],
+                'anchor': {'start': 32, 'end': 35, 'kind': 'marker'},
+            },
+            {
+                'sources': [
+                    {
+                        'kind': 'document',
+                        'document_id': 'file-123',
+                        'title': 'report.pdf',
+                        'excerpts': ['The report identifies Paris as the capital.'],
+                    }
+                ],
+                'anchor': None,
+            },
+        ]
+    )
+
+
+def test_text_part_delta_replaces_citations() -> None:
+    """A citations delta replaces the part's citations, as it replaces their raw entries in `provider_details`."""
+    first = Citation(sources=[WebCitationSource(url='https://example.com/paris')])
+    second = Citation(sources=[DocumentCitationSource(document_id='file-123', title='report.pdf')])
+    part = TextPart('Answer', citations=[first], provider_details={'citations': ['first']})
+
+    delta = TextPartDelta(content_delta='', citations_delta=[second], provider_details={'citations': ['second']})
+
+    part = delta.apply(part)
+
+    assert part == TextPart('Answer', citations=[second], provider_details={'citations': ['second']})
+
+
+@pytest.mark.parametrize(
+    'build, match',
+    [
+        pytest.param(lambda: ContentCitationAnchor(start=-1, end=0), '0 <= start < end', id='negative-start'),
+        pytest.param(lambda: MarkerCitationAnchor(start=2, end=1), '0 <= start < end', id='end-before-start'),
+        pytest.param(lambda: ContentCitationAnchor(start=1, end=1), '0 <= start < end', id='empty-range'),
+        pytest.param(lambda: Citation(sources=[]), 'at least one source', id='no-sources'),
+        pytest.param(lambda: DocumentCitationSource(), 'at least one source field', id='empty-document-source'),
+    ],
+)
+def test_citation_invariants(build: Callable[[], object], match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        build()
 
 
 def test_file_part_serialization_roundtrip():
@@ -2807,7 +2904,7 @@ class TestInstructionParts:
 
 def test_retry_prompt_strips_input_from_top_level_errors():
     """Top-level validation errors should not include `input` in model_response() since it duplicates the entire generated output."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {'type': 'missing', 'loc': ('required_field',), 'msg': 'Field required', 'input': {'wrong_field': 'value'}},
         ],
@@ -2819,7 +2916,7 @@ def test_retry_prompt_strips_input_from_top_level_errors():
 
 def test_retry_prompt_keeps_input_for_nested_errors():
     """Nested validation errors should keep `input` in model_response() to help the model locate the invalid part."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {'type': 'missing', 'loc': ('items', 0, 'sub_field'), 'msg': 'Field required', 'input': {'other': 'val'}},
         ],
@@ -2831,7 +2928,7 @@ def test_retry_prompt_keeps_input_for_nested_errors():
 
 def test_retry_prompt_mixed_top_level_and_nested_errors():
     """When both top-level and nested errors exist, only top-level input should be stripped."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {'type': 'missing', 'loc': ('root_field',), 'msg': 'Field required', 'input': {'root_key': 'root_val'}},
             {
@@ -2851,7 +2948,7 @@ def test_retry_prompt_mixed_top_level_and_nested_errors():
 
 def test_retry_prompt_strips_input_from_top_level_type_errors():
     """Top-level type/value errors also have input stripped, even though it's a small scalar value."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {
                 'type': 'int_parsing',
@@ -2868,7 +2965,7 @@ def test_retry_prompt_strips_input_from_top_level_type_errors():
 
 def test_retry_prompt_tool_call_keeps_input_at_top_level():
     """Tool-call retries (`tool_name` set) must preserve `input` so the model sees what args it sent."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         tool_name='evaluate_content',
         content=[
             {'type': 'missing', 'loc': ('content',), 'msg': 'Field required', 'input': {}},
@@ -2881,7 +2978,7 @@ def test_retry_prompt_tool_call_keeps_input_at_top_level():
 
 def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
     """Tool-call retries preserve `input` for nested errors too, matching the existing NativeOutput nested behavior."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         tool_name='evaluate_content',
         content=[
             {
@@ -2900,7 +2997,7 @@ def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
 def test_retry_prompt_otel_message_parts_include_content():
     """Retry prompt parts honor `include_content` like every other message part, in both the
     tool-call and non-tool branches."""
-    non_tool = RetryPromptPart(
+    non_tool = legacy_retry_prompt_part(
         content=[
             {
                 'type': 'string_type',
@@ -2910,7 +3007,7 @@ def test_retry_prompt_otel_message_parts_include_content():
             },
         ],
     )
-    tool = RetryPromptPart(tool_name='my_tool', tool_call_id='call_1', content='Try again')
+    tool = legacy_retry_prompt_part(tool_name='my_tool', tool_call_id='call_1', content='Try again')
 
     with_content = InstrumentationSettings(include_content=True)
     assert non_tool.otel_message_parts(with_content) == snapshot(

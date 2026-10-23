@@ -165,6 +165,18 @@ Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, wh
 Adding a workspace to an agent changes the tasks its flows run, so let running flows finish before
 you deploy the change.
 
+Workspace task cache keys include the run's [`run_id`][pydantic_ai.tools.RunContext.run_id] and a
+per-run call sequence. With distinct, stable explicit `run_id=` values, concurrent runs keep their
+own environments even when their arrival order changes on flow retry. Automatically derived run
+IDs still depend on arrival order, so pass explicit IDs for concurrent branches that can reorder.
+
+!!! warning "Upgrading workspace task cache keys"
+
+    Persisted workspace task results from versions before this change use different cache keys.
+    Retrying an in-flight flow across the upgrade re-executes workspace calls, which can create a
+    new environment instead of reattaching the original one. Let in-flight workspace flows finish
+    before upgrading. No manual cache deletion is required.
+
 Event stream handler and capability tasks include the agent's name in their cache key, so two agents in one
 flow never share a cached result. A flow retried across the upgrade that introduced this re-runs those tasks
 once instead of reading them from the cache.
@@ -238,11 +250,11 @@ their Prefect task, so `metadata={'prefect': False}` on an MCP tool raises a `Us
 
 ### Streaming
 
-[`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], and [`Agent.iter()`][pydantic_ai.agent.Agent.iter] work inside a Prefect flow, but their events are buffered rather than delivered in real time. The model stream runs inside the durable task, and its events are replayed to the flow after the task completes.
+[`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], and [`Agent.iter()`][pydantic_ai.agent.Agent.iter] work inside a Prefect flow, but their events are buffered rather than delivered in real time. The model stream runs inside the durable task, and once the task completes the flow replays its final response: each part arrives as one [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] carrying its full content, rather than as the deltas the model streamed, so the deltas aren't recorded in the task's result.
 
 For handlers with I/O side effects, pass `event_stream_handler=` to [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability]. Model events are delivered live inside each model-request task, while each tool event is delivered in its own event-handler task. Configure those per-event tasks with `event_stream_handler_task_config=`. As with any Prefect task, a handler may run more than once if a task retries, so keep its side effects idempotent.
 
-Alternatively, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream]. Its handler runs in flow code and must be deterministic because it re-runs on flow replay. Tool and final-output events arrive live, while the real captured model events are replayed after each model request completes. For examples, see the [streaming docs](../agent.md#streaming-all-events).
+Alternatively, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream]. Its handler runs in flow code and must be deterministic because it re-runs on flow replay. Tool and final-output events arrive live, while model events are replayed from the final response after each model request completes. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
 A durability `event_stream_handler=` and a separately registered `ProcessEventStream` are two distinct handlers, and each fires once. The durability handler receives live events inside the durable task, while `ProcessEventStream` sees the buffered replay in flow code.
 

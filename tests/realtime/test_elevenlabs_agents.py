@@ -38,12 +38,13 @@ from pydantic_ai.messages import (
     PartEndEvent,
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RetryInfo,
     SpeechPart,
     TextContent,
     TextPart,
     TextPartDelta,
     ToolCallPart,
+    ToolReturnPart,
 )
 from pydantic_ai.models import ModelRequestParameters, get_user_agent
 from pydantic_ai.realtime import RealtimeError, RealtimeModelProfile
@@ -930,7 +931,11 @@ async def test_tool_sync_off_hands_undefined_tool_calls_to_the_tool_manager() ->
                         break
 
     [result] = [event for event in events if isinstance(event, FunctionToolResultEvent)]
-    assert isinstance(result.part, RetryPromptPart)
+    assert isinstance(result.part, ToolReturnPart)
+    assert (result.part.outcome, result.part.retry) == (
+        'retried',
+        RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
+    )
     assert 'Unknown tool name' in str(result.part.content)
     assert 'get_weather' in str(result.part.content)
     assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []

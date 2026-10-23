@@ -94,7 +94,7 @@ agent = Agent(
 )
 ```
 
-[Skills](pydantic_ai_harness/skills/) (your `SKILL.md` procedures, loaded on demand; point it at a `skills/` directory and add the `skills` extra), [Web Fetch](https://ai.pydantic.dev/capabilities/web-fetch/), [Guardrails](pydantic_ai_harness/guardrails/), and [Dynamic Workflow](pydantic_ai_harness/dynamic_workflow/) slot in the same way; the [Coder README](pydantic_ai_harness/coder/) lists what pairs well.
+[Skills](pydantic_ai_harness/skills/) (your `SKILL.md` procedures, loaded on demand; point it at a `skills/` directory and add the `skills` extra), [Web Fetch](https://ai.pydantic.dev/capabilities/web-fetch/), [Guardrails](pydantic_ai_harness/guardrails/), and [Dynamic Workflow](pydantic_ai_harness/dynamic_workflow/) slot in the same way.
 
 ## No magic: it's capabilities all the way down
 
@@ -146,6 +146,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | Capability | Package | What it does |
 |---|---|---|
 | [FileSystem](pydantic_ai_harness/filesystem/) | Harness | Read, write, edit, list, and search files under a root in the run's workspace, with opt-in ripgrep tools; path-traversal checked, secrets read-only |
+| [Smart Search](pydantic_ai_harness/smart_search/) | Harness | Code search by behavior in the run's workspace: plain-English queries, ranked excerpts, judged by any model (a decision model over System One, or TypeSafe's Jev, recommended) |
 | [Shell](pydantic_ai_harness/shell/) | Harness | Command execution in the run's workspace with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
 | [Modal Sandbox](pydantic_ai_harness/modal_sandbox/) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
 | [E2B Sandbox](pydantic_ai_harness/e2b_sandbox/) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
@@ -180,7 +181,7 @@ Tools from third-party services, most through the service's own hosted MCP serve
 | [Notion](pydantic_ai_harness/notion/) | Harness | Search and change Notion workspace content. |
 | [Slack](pydantic_ai_harness/slack/) | Harness | Give an agent Slack messages, channels, and canvas tools. |
 | [Day AI](pydantic_ai_harness/day_ai/) | Harness | Search and update CRM records and meeting context through [Day AI](https://day.ai)'s hosted MCP server |
-| [Grain](pydantic_ai_harness/grain/) | Harness | Search meetings, transcripts, and notes through [Grain](https://grain.com)'s hosted MCP server |
+| [Grain](pydantic_ai_harness/grain/) | Harness | Search and read meetings, transcripts, and notes, and create clips and tag meetings, through [Grain](https://grain.com)'s hosted MCP server |
 | [Pylon](pydantic_ai_harness/pylon/) | Harness | Work with support issues, accounts, and contacts through [Pylon](https://www.usepylon.com)'s hosted MCP server |
 | [StackOne](pydantic_ai_harness/stackone/) | Harness | Act on linked SaaS accounts (HRIS, ATS, CRM, …) via [StackOne](https://www.stackone.com) |
 | [PostHog](pydantic_ai_harness/posthog/) | Harness | Query product analytics and manage feature flags, experiments, and dashboards through [PostHog](https://posthog.com)'s hosted MCP server |

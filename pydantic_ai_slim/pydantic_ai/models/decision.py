@@ -39,16 +39,17 @@ from ..messages import (
     MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
 from ..profiles import ModelProfile, merge_profile
@@ -62,8 +63,9 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
 )
@@ -200,6 +202,12 @@ class DecisionRequest:
     Only image media types are supported. Backends that do not support images must reject a nonempty tuple,
     including when `decide` is called directly.
     """
+    messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    """The conversation `state` was built from, for a backend that takes a conversation natively.
+
+    Empty when `decide` is called directly with only a `state`. Its images are the ones in `images`, resolved and in
+    the same order: the order they appear in, message by message and part by part.
+    """
 
 
 @dataclass(kw_only=True)
@@ -240,17 +248,39 @@ def _wire(value: DecisionQuestion | DecisionAnswer) -> dict[str, Any]:
     return wire
 
 
-def _probability_bounds(probabilities: Collection[float]) -> tuple[list[Decimal], list[Decimal]]:  # pyright: ignore[reportUnusedFunction]
-    """The bounded rounding intervals of the displayed probabilities, using at least two decimal places."""
+def _half_unit(value: Decimal, float_tolerance: Decimal) -> Decimal:
+    """How far a displayed value may be from the one it stands for.
+
+    Half a unit of its last decimal place, using at least two, as a value rounded for display may be off by. An
+    unrounded float prints all of its digits, which would make that interval far narrower than the error its own
+    arithmetic carries, so it is never narrower than `float_tolerance`.
+    """
+    return max(Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2, float_tolerance)
+
+
+def _probability_bounds(  # pyright: ignore[reportUnusedFunction]
+    probabilities: Collection[float], *, float_tolerance: Decimal = Decimal(0)
+) -> tuple[list[Decimal], list[Decimal]]:
+    """The bounded rounding intervals of the displayed probabilities, using at least two decimal places.
+
+    Each interval is at least `float_tolerance` either side of its probability, for a backend that sends unrounded
+    floats.
+    """
     values: list[Decimal] = [Decimal(str(probability)) for probability in probabilities]
-    half_units: list[Decimal] = [Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2 for value in values]
+    half_units: list[Decimal] = [_half_unit(value, float_tolerance) for value in values]
     lower: list[Decimal] = [max(Decimal(0), value - half_unit) for value, half_unit in zip(values, half_units)]
     upper: list[Decimal] = [min(Decimal(1), value + half_unit) for value, half_unit in zip(values, half_units)]
     return lower, upper
 
 
-def _score_fits(lower: Sequence[Decimal], upper: Sequence[Decimal], score: float) -> bool:  # pyright: ignore[reportUnusedFunction]
-    """Whether rounded probabilities can sum to one and produce the displayed score."""
+def _score_fits(  # pyright: ignore[reportUnusedFunction]
+    lower: Sequence[Decimal], upper: Sequence[Decimal], score: float, *, float_tolerance: Decimal = Decimal(0)
+) -> bool:
+    """Whether rounded probabilities can sum to one and produce the displayed score.
+
+    The score's own interval is at least `float_tolerance` either side of it, for a backend that sends unrounded
+    floats.
+    """
     remaining = Decimal(1) - sum(lower, Decimal(0))
     valid = 0 <= remaining <= sum((high - low for low, high in zip(lower, upper)), Decimal(0))
     if valid:
@@ -264,8 +294,7 @@ def _score_fits(lower: Sequence[Decimal], upper: Sequence[Decimal], score: float
                 rest -= taken
             bounds.append(mean)
         displayed_score = Decimal(str(score))
-        score_decimals = max(2, -int(displayed_score.as_tuple().exponent))
-        score_half_unit = Decimal(1).scaleb(-score_decimals) / 2
+        score_half_unit = _half_unit(displayed_score, float_tolerance)
         valid = displayed_score + score_half_unit >= bounds[0] and displayed_score - score_half_unit <= bounds[1]
     return valid
 
@@ -526,9 +555,13 @@ class DecisionModel(Model[InterfaceClient]):
     without it.
     """
 
+    # Retry feedback is a step taken for the prompt, so it goes along as a `retry` entry: translated, a validation
+    # error would become the user text judged as the request, and a `ModelRetry` message a system prompt.
+    _renders_retry_feedback = True
+
     @cached_property
     def profile(self) -> ModelProfile:
-        """The model profile: text output off and inline system prompts on, whatever the provider or `profile=` says.
+        """The model profile: text output off, inline system prompts on, and file input as the class takes it.
 
         A decision model answers questions and has no way to write text, so this is a fact about the class
         rather than a default to override: with text output left on, an `output_type` like `[Ticket, str]`
@@ -537,9 +570,22 @@ class DecisionModel(Model[InterfaceClient]):
         It also judges a system prompt rather than asking it, so a system prompt partway through the conversation
         stays a `system` entry: without inline system prompts, the shared request preparation would fold it into
         the user text, where it would be judged as the request.
+
+        Images are read only when the class sets
+        [`supports_image_input`][pydantic_ai.models.decision.DecisionModel.supports_image_input], and documents,
+        audio and video never are, so [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] describes
+        those files instead of letting them be refused, and a tool's file is otherwise replaced by a note.
         """
         return merge_profile(
-            super().profile, ModelProfile(supports_text_output=False, supports_inline_system_prompts=True)
+            super().profile,
+            ModelProfile(
+                supports_text_output=False,
+                supports_inline_system_prompts=True,
+                supports_image_input=self.supports_image_input,
+                supports_document_input=False,
+                supports_audio_file_input=False,
+                supports_video_input=False,
+            ),
         )
 
     @abstractmethod
@@ -551,7 +597,8 @@ class DecisionModel(Model[InterfaceClient]):
         question in `request.questions` needs an answer of the matching kind under the same name.
         Image-capable backends serialize `request.images` as evidence alongside `request.state`; other
         backends must reject a nonempty tuple, including when this method is called directly. Backend request
-        limits also apply to direct calls.
+        limits also apply to direct calls. A backend that takes a conversation natively sends `request.messages`
+        when there are any, in place of `request.state`.
 
         Raise [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] or
         [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] when the backend fails, so a
@@ -694,7 +741,7 @@ class DecisionModel(Model[InterfaceClient]):
                 raise UnfillableRoute(self.model_name, next(iter(routes)), 1.0)
             ask = _Ask.about(output_tool, instructions, limits, label=None)
             state, image_inputs = self._map_decision_input(messages, turn=done)
-            request = await self._prepare_decision_request(state, image_inputs, ask.questions, settings)
+            request = await self._prepare_decision_request(state, image_inputs, ask.questions, settings, messages)
             async with self._decide(request, settings, fields=True) as (
                 response,
                 span,
@@ -709,7 +756,7 @@ class DecisionModel(Model[InterfaceClient]):
         speculation = _Speculation.about(routes, output_tools, state, instructions, limits)
         questions = speculation.questions()
         questions.update(route_questions)
-        request_template = await self._prepare_decision_request(state, image_inputs, questions, settings)
+        request_template = await self._prepare_decision_request(state, image_inputs, questions, settings, messages)
 
         # A picked route whose fields are asked in a second request, past the size cutoff: the route, its label and
         # its questions.
@@ -803,6 +850,7 @@ class DecisionModel(Model[InterfaceClient]):
         image_inputs: list[BinaryContent | ImageUrl],
         questions: dict[str, DecisionQuestion],
         model_settings: DecisionModelSettings,
+        messages: list[ModelMessage],
     ) -> DecisionRequest:
         """Validate a complete request before resolving its image URLs."""
         self._check_request_limits(image_count=len(image_inputs), question_count=len(questions))
@@ -818,7 +866,7 @@ class DecisionModel(Model[InterfaceClient]):
                 if not image.is_image:
                     raise UserError(f'Image URL {item.url!r} returned content that is not an image.')
                 images.append(image)
-        return DecisionRequest(state=state, questions=questions, images=tuple(images))
+        return DecisionRequest(state=state, questions=questions, images=tuple(images), messages=messages)
 
     async def _fill(
         self,
@@ -874,7 +922,7 @@ class DecisionModel(Model[InterfaceClient]):
         if fill is None:
             raise UnfillableRoute(self.model_name, label, 1.0)
         state, image_inputs = self._map_decision_input(messages, turn=turn)
-        request_template = await self._prepare_decision_request(state, image_inputs, fill.questions, settings)
+        request_template = await self._prepare_decision_request(state, image_inputs, fill.questions, settings, messages)
         response, args, details = await self._fill(label, fill, request_template, settings, boolean_threshold)
         details['route'] = _forced_route(label)
         return self._response(tool, args, response.usage, response.model_name, details)
@@ -1018,7 +1066,8 @@ def _decide_span_attributes(
         attributes['pydantic_ai.decision.route_questions'] = safe_to_json(route_questions).decode()
         json_attributes.append('pydantic_ai.decision.route_questions')
     if include_content:
-        # The state is text or JSON, as it is on the wire, and only JSON is declared as such.
+        # The state is text or JSON, as a backend that sends it puts it on the wire, and only JSON is declared as such.
+        # A backend that sends `request.messages` instead puts the conversation the model request span records.
         if isinstance(request.state, str):
             attributes['pydantic_ai.decision.state'] = request.state
         else:
@@ -2116,8 +2165,8 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> tu
     A tool whose result is already in the turn is not offered again. A decision model judges the text in front of it
     and has no notion of having made a call: with a call and its result in view, the text still calls for the tool, so
     left on offer it is picked again until the usage limit, even with the result set apart under `done`. That goes for
-    a call made by a model behind this one too, since this model would propose it again on the same text. A call that
-    produced no result, because the tool asked for a retry, leaves the tool on offer. The turn is everything since the
+    a call made by a model behind this one too, since this model would propose it again on the same text. A call whose
+    result asked for a retry (`outcome='retried'`) leaves the tool on offer. The turn is everything since the
     last user prompt, which is the nearest thing to a run boundary the history has: a result from an earlier turn does
     not withhold the tool, but a judged history that ends in another agent's call to a tool of the same name does.
     """
@@ -2132,9 +2181,9 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> tu
                 # previous turn's.
                 returned.clear()
                 retried = False
-            elif isinstance(part, ToolReturnPart):
+            elif isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                 returned.add(part.tool_name)
-            elif isinstance(part, RetryPromptPart):
+            elif isinstance(part, ToolReturnPart | RetryFeedbackPart):
                 retried = True
     return [tool for tool in tools if tool.name not in returned], bool(returned) or retried
 
@@ -2262,12 +2311,16 @@ def _request_entry(part: ModelRequestPart, images: list[BinaryContent | ImageUrl
         return {'user': _prompt_text(part, images)}
     elif isinstance(part, ToolReturnPart):
         return _tool_return_entry(part, images)
-    elif isinstance(part, RetryPromptPart):
+    elif isinstance(part, RetryFeedbackPart):
         return {'retry': part.model_response()}
-    elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-        raise _unsynthesized_tool_availability_delta_error()
+    # TODO(v3): remove `RetryPromptPart`
+    elif isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        # A direct `request()` skips `prepare_messages`; judge the deprecated part as what it always meant.
+        return _request_entry(_translate_legacy_retry_part(part), images)
     elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):  # pragma: no cover
         raise _unprojected_instruction_delta_error()
+    elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+        raise _unprepared_part_error(part)
     elif isinstance(part, SpeechPart):  # pragma: no cover
         # `Model.prepare_messages` turns realtime speech into `UserPromptPart`s before this runs.
         raise _unconverted_speech_part_error()

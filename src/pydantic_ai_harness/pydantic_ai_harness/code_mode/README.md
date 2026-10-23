@@ -114,7 +114,7 @@ When you mark tools or whole toolsets `defer_loading=True` ([Tool Search](https:
 
 That fold-in grows `run_code`'s description, which invalidates the prompt-cache prefix once at the moment of discovery (turns with no discovery stay cache-warm). Two ways to avoid the bust:
 
-- Pass `dynamic_catalog=True` to keep `run_code.description` static across discoveries -- the catalog of sandboxed-tool signatures moves into agent instructions (as a dynamic [`InstructionPart`](https://ai.pydantic.dev/api/messages/#pydantic_ai.messages.InstructionPart)) and newly-discovered tools are announced via [`ctx.enqueue`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.enqueue) instead of by rebuilding the description:
+- Pass `dynamic_catalog=True` to make discoveries append to the conversation instead of rewriting it. The catalog of sandboxed-tool signatures moves out of `run_code.description` into the agent instructions, as a dynamic [`InstructionPart`](https://ai.pydantic.dev/api/messages/#pydantic_ai.messages.InstructionPart) with the id `toolset:code_mode:catalog` and [`on_change='append'`](https://ai.pydantic.dev/agent/#appending-instruction-changes): when a discovery adds a function, the updated catalog is appended to the message history. When Tool Search found the tool, a short system prompt part sent through [`ctx.enqueue`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.enqueue) also names the new functions; loading a capability appends only the catalog update. Deferred tools that `run_code` will take over are kept off the wire until they're found: the model finds them with the local `search_tools` tool, or by loading the capability that owns them, and from then on calls them from `run_code` only. The tool definitions and the instructions of earlier requests stay as they were sent, so the prompt cache survives the discovery:
 
 ```python
 from pydantic_ai_harness import CodeMode
@@ -122,7 +122,15 @@ from pydantic_ai_harness import CodeMode
 CodeMode(dynamic_catalog=True)
 ```
 
-  This pays off when paired with Tool Search: the tool-definitions block stays byte-stable so the prefix cache survives discoveries, at the cost of a larger (but cache-friendly) system prompt. With a fixed toolset and no Tool Search, the default keeps the system prompt shorter and is the better choice.
+  The catalog renders tool definitions into the instructions, including the names, descriptions and schemas an MCP server supplies. Tool definitions are trusted operator configuration: the model already receives them in the request's tool definitions with the same authority, so moving them into instructions gives them no authority they didn't have. Connect only MCP servers you trust. The discovery announcement names functions only by their Python identifiers, and keeps the tool names as found in its metadata.
+
+  The cache stays intact only if a callable `tools` selector gives the same answer for a tool before and after it's revealed. A selector that keeps a hidden tool native and sandboxes it once revealed declares the tool and then drops the declaration, which moves the cached prefix, as without `dynamic_catalog`.
+
+  The catalog block is keyed through the toolset id `code_mode`, which `CodeModeToolset` takes only with `dynamic_catalog=True`. If the agent has another toolset with the id `code_mode` that contributes instructions, the run raises a `UserError` for the duplicate id. Rename that toolset.
+
+  Two setups still declare such a tool natively, because only the provider's native tool search can find it there: the `'bm25'` and `'regex'` Tool Search strategies, which have no local `search_tools`, and a `tools` selector that keeps another deferred tool native, which keeps the native search on the wire in place of `search_tools`. In those setups the declaration is dropped when the tool moves into `run_code`, as it is without `dynamic_catalog`.
+
+  This pays off with Tool Search or deferred capabilities, at the cost of a larger system prompt. With a fixed toolset, the default keeps the system prompt shorter and is the better choice.
 
 - To instead keep a Tool Search corpus fully native -- never folded into `run_code`, but not callable from inside it -- exclude it with a `tools` selector; corpus members carry `with_native` set to the managing native tool:
 
@@ -347,6 +355,8 @@ session.
 Keep these limitations in mind:
 
 - Eager mode cannot undo side effects from code that has already run.
+- With a parallel `InputGuardrail`, a nested tool call from an eager statement waits for the
+  guard's verdict before it runs, so a blocked prompt runs no tool.
 - If the model later requests `restart: true`, some work may run again.
 - If the model changes an earlier line while streaming, `CodeMode` resets the REPL and asks
   the model to send the code again.
@@ -461,6 +471,13 @@ await update_record(key='status', value='ready')
 await search(query='status')  # Runs after the update, not speculatively ahead of it.
 ```
 
+Code can also reach a tool that is not eligible without naming it, for example through a
+helper defined in an earlier snippet. A launch is not used if a call to a tool that is not
+eligible, native or inside `run_code`, starts or finishes after the launch. The dispatch runs
+the tool normally instead and counts as a miss; the launch is discarded as wasted work.
+Only tool calls move this boundary: writes the sandbox makes through `mount` or `os_access`
+do not, so do not make a tool eligible if it reads state those writes change.
+
 To overlap an earlier blocking read with later calls, that read must also be eligible.
 Streamed `run_code` parts following another model tool call wait for normal dispatch.
 Eligibility is a trust decision, not an analysis of arbitrary Python side effects.
@@ -473,6 +490,8 @@ Keep these limitations in mind:
   comment can start too. It is discarded when the snippet finishes.
 - `sequential` tools never speculate, and nothing speculates when the run's parallel
   execution mode is `sequential`.
+- With a parallel `InputGuardrail`, a speculated call waits for the guard's verdict before it
+  runs, so a blocked prompt runs none of them.
 - Hooks on a speculated tool run when it starts, not when the snippet claims it. Hooks,
   approval, and guardrails on `run_code` itself run only after the model has finished writing
   the call, so they cannot stop a call that has already started early; this is the same
@@ -495,8 +514,8 @@ after a slow statement). Statements that eager mode runs claim those launches to
 
 ### Check whether speculation helps
 
-`CodeMode.speculation_stats` is `None` when speculation is disabled. When enabled, its counters
-accumulate across runs using that capability instance; take before/after snapshots for a
+`CodeMode.speculation_stats` counts launches across every run using that capability instance,
+and its counters stay at zero when speculation is disabled. Take before/after snapshots for a
 per-run comparison. Successful `run_code` returns can also carry a `speculation` entry in
 history-only metadata, alongside `tool_calls` and `tool_returns`. Model-visible content is unchanged.
 
@@ -506,14 +525,15 @@ history-only metadata, alongside `tool_calls` and `tool_returns`. Model-visible 
 | `adopted` | Capability instance | Speculative outcomes consumed by actual dispatches, including tool errors. |
 | `evicted` | Capability instance | Unclaimed launches discarded or sent a cancellation request. |
 | `hits` | `run_code` return | Dispatches that consumed a speculative outcome. |
-| `misses` | `run_code` return | Dispatches to eligible tools that found no matching launch and ran normally. |
+| `misses` | `run_code` return | Dispatches to eligible tools that found no usable launch and ran normally. |
 | `wasted` | `run_code` return | Unclaimed launches discarded at this call's successful completion. |
 | `hidden_ms` | `run_code` return | Sum of launch-to-settlement durations for adopted calls. |
 
 `hidden_ms` is **not measured end-to-end time saved**: calls can overlap, and it includes time
-spent waiting for a launch that was still running when claimed. Compare total run latency and
-external request cost with speculation on and off. Neither `evicted` nor `wasted` proves that
-an unused call completed, stopped, or avoided its cost.
+spent waiting for a launch that was still running when claimed, or for a parallel
+`InputGuardrail` verdict. Compare total run latency and external request cost with speculation
+on and off. Neither `evicted` nor `wasted` proves that an unused call completed, stopped, or
+avoided its cost.
 
 The lifecycle is also emitted as
 [capability events](https://pydantic.dev/docs/ai/core-concepts/hooks/) in the `code_mode`
@@ -797,6 +817,8 @@ CodeMode(
     os_access=None,       # OS behavior; custom handlers may expose host resources
     mount=None,           # host directories to share with the sandbox
     resource_limits=None, # sandbox time and memory caps; 'unlimited' removes them
+    eager=False,          # run statements while the run_code call is still streaming
+    speculate=None,       # read-only tool names, or 'declared', to start while run_code streams
     monty_sandbox_url=None, # ws:// or wss:// URL of a remote Monty worker server
     repl_store=None,      # keep the run_code REPL across runs (CodeModeReplStore)
     dynamic_catalog=False,

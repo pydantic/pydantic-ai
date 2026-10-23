@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
@@ -28,7 +28,10 @@ _OPENAI_BASE_BUILTINS = frozenset(
 `OpenAIResponsesModel` can handle. `ToolSearchTool` is gated per-model in the
 profile below."""
 
-OPENAI_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
+OpenAIReasoningEffort = Literal['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+"""A `reasoning_effort` value accepted by the OpenAI API, from least to most reasoning."""
+
+OPENAI_REASONING_EFFORT_MAP: dict[ThinkingLevel, OpenAIReasoningEffort] = {
     True: 'medium',
     False: 'none',
     'minimal': 'minimal',
@@ -36,8 +39,13 @@ OPENAI_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     'medium': 'medium',
     'high': 'high',
     'xhigh': 'xhigh',
+    'max': 'xhigh',
 }
-"""Maps unified thinking values to OpenAI reasoning_effort strings."""
+"""Maps unified thinking values to OpenAI reasoning_effort strings.
+
+`'max'` maps to `'xhigh'` here; `OpenAIChatModel` and `OpenAIResponsesModel` send `'max'` instead on models whose
+profile sets `openai_chat_supports_max_reasoning_effort` or `openai_responses_supports_max_reasoning_effort`.
+"""
 
 SAMPLING_PARAMS = (
     'temperature',
@@ -73,6 +81,9 @@ class _ReasoningSupport:
     supports_context: bool
     """The Responses API accepts `reasoning.context='all_turns'` for the model."""
 
+    efforts: frozenset[OpenAIReasoningEffort] | None = None
+    """The `reasoning.effort` values the Responses API accepts for the model, or `None` where they aren't pinned."""
+
     @property
     def supported(self) -> bool:
         """Whether the model reasons at all."""
@@ -94,10 +105,26 @@ _OPT_IN_REASONING = _ReasoningSupport(
 )
 """The model defaults to `reasoning_effort='none'` (reasoning off, sampling parameters allowed) and reasons on request."""
 
-_ALWAYS_ON_REASONING = _ReasoningSupport(
-    enabled_by_default=True, can_be_disabled=False, supports_mode=False, supports_context=False
+_O_SERIES_REASONING = _ReasoningSupport(
+    enabled_by_default=True,
+    can_be_disabled=False,
+    supports_mode=False,
+    supports_context=False,
+    efforts=frozenset(('low', 'medium', 'high')),
 )
-"""The model always reasons; it doesn't accept `reasoning_effort='none'`."""
+"""The o-series models always reason, at efforts `low` through `high`."""
+
+_CHAT_LATEST_REASONING = _ReasoningSupport(
+    enabled_by_default=True,
+    can_be_disabled=False,
+    supports_mode=False,
+    supports_context=False,
+    efforts=frozenset(('medium',)),
+)
+"""The GPT-5.1+ chat variants always reason at a fixed `'medium'` effort."""
+
+_GPT_5_PRO_EFFORTS: frozenset[OpenAIReasoningEffort] = frozenset(('medium', 'high', 'xhigh'))
+"""The efforts GPT-5.2+ -pro models accept (live-verified for gpt-5.2-pro, gpt-5.4-pro and gpt-5.5-pro, 2026-10)."""
 
 _GPT_6_MODEL_PREFIXES = ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol')
 
@@ -106,12 +133,20 @@ _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
     # `none`/`minimal` users to `low`); it carries over GPT-5.6's `reasoning.mode` and
     # `reasoning.context='all_turns'` per https://developers.openai.com/api/docs/models/gpt-6-astra.
     'gpt-6-astra': _ReasoningSupport(
-        enabled_by_default=True, can_be_disabled=False, supports_mode=True, supports_context=True
+        enabled_by_default=True,
+        can_be_disabled=False,
+        supports_mode=True,
+        supports_context=True,
+        efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
     ),
     # GPT-6.1 Sol follows GPT-6 Astra rather than GPT-6 Sol: it rejects `effort='none'`.
     # https://developers.openai.com/api/docs/models/gpt-6.1-sol
     'gpt-6.1-sol': _ReasoningSupport(
-        enabled_by_default=True, can_be_disabled=False, supports_mode=True, supports_context=True
+        enabled_by_default=True,
+        can_be_disabled=False,
+        supports_mode=True,
+        supports_context=True,
+        efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
     ),
     # GPT-6 Sol and Luna retain GPT-5.6's default medium reasoning and accept `effort='none'`.
     # https://developers.openai.com/api/docs/guides/latest-model
@@ -130,7 +165,11 @@ _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
     # gpt-5.5 reasons by default like gpt-5.6, but has no `reasoning.mode`. The -pro variant can't
     # be disabled; both accept `reasoning.context='all_turns'`.
     'gpt-5.5-pro': _ReasoningSupport(
-        enabled_by_default=True, can_be_disabled=False, supports_mode=False, supports_context=True
+        enabled_by_default=True,
+        can_be_disabled=False,
+        supports_mode=False,
+        supports_context=True,
+        efforts=_GPT_5_PRO_EFFORTS,
     ),
     'gpt-5.5': _ReasoningSupport(
         enabled_by_default=True, can_be_disabled=True, supports_mode=False, supports_context=True
@@ -138,38 +177,68 @@ _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
     # gpt-5.4 is opt-in like gpt-5.3 below, but (with its -pro variant) accepts
     # `reasoning.context='all_turns'`.
     'gpt-5.4-pro': _ReasoningSupport(
-        enabled_by_default=True, can_be_disabled=False, supports_mode=False, supports_context=True
+        enabled_by_default=True,
+        can_be_disabled=False,
+        supports_mode=False,
+        supports_context=True,
+        efforts=_GPT_5_PRO_EFFORTS,
     ),
     'gpt-5.4': _ReasoningSupport(
         enabled_by_default=False, can_be_disabled=True, supports_mode=False, supports_context=True
     ),
     # The GPT-5.1+ chat variants always reason at a fixed 'medium' effort: they reject sampling
     # parameters and any other `reasoning.effort` value, including 'none'.
-    'gpt-5.3-chat': _ALWAYS_ON_REASONING,
+    'gpt-5.3-chat': _CHAT_LATEST_REASONING,
     'gpt-5.3': _OPT_IN_REASONING,
-    'gpt-5.2-pro': _ALWAYS_ON_REASONING,
-    'gpt-5.2-chat': _ALWAYS_ON_REASONING,
+    'gpt-5.2-pro': _ReasoningSupport(
+        enabled_by_default=True,
+        can_be_disabled=False,
+        supports_mode=False,
+        supports_context=False,
+        efforts=_GPT_5_PRO_EFFORTS,
+    ),
+    'gpt-5.2-chat': _CHAT_LATEST_REASONING,
     'gpt-5.2': _OPT_IN_REASONING,
     # Covers gpt-5.1-codex and gpt-5.1-codex-max; the gpt-5.3+ codex variants match their
-    # mainline prefix instead (gpt-5.3-codex is opt-in like gpt-5.4).
-    'gpt-5.1-codex': _ALWAYS_ON_REASONING,
-    'gpt-5.1-chat': _ALWAYS_ON_REASONING,
+    # mainline prefix instead (gpt-5.3-codex is opt-in like gpt-5.4). Retired, so their efforts aren't pinned.
+    'gpt-5.1-codex': _ReasoningSupport(
+        enabled_by_default=True, can_be_disabled=False, supports_mode=False, supports_context=False
+    ),
+    'gpt-5.1-chat': _CHAT_LATEST_REASONING,
     'gpt-5.1': _OPT_IN_REASONING,
     # gpt-5-chat-latest doesn't reason at all.
     'gpt-5-chat': _NO_REASONING,
-    # The original GPT-5 family (incl. -mini/-pro/-codex) reasons at 'medium' by default.
-    # See https://platform.openai.com/docs/guides/reasoning
-    'gpt-5': _ALWAYS_ON_REASONING,
+    # gpt-5-pro only accepts `effort='high'` (live-verified 2026-10).
+    'gpt-5-pro': _ReasoningSupport(
+        enabled_by_default=True,
+        can_be_disabled=False,
+        supports_mode=False,
+        supports_context=False,
+        efforts=frozenset(('high',)),
+    ),
+    # gpt-5-codex reasons by default; it's retired (404 since 2026-07), so its efforts aren't pinned.
+    'gpt-5-codex': _ReasoningSupport(
+        enabled_by_default=True, can_be_disabled=False, supports_mode=False, supports_context=False
+    ),
+    # The original GPT-5 family (incl. -mini/-nano) reasons at 'medium' by default, and accepts
+    # `minimal` through `high`. See https://platform.openai.com/docs/guides/reasoning
+    'gpt-5': _ReasoningSupport(
+        enabled_by_default=True,
+        can_be_disabled=False,
+        supports_mode=False,
+        supports_context=False,
+        efforts=frozenset(('minimal', 'low', 'medium', 'high')),
+    ),
     # Match o-series families explicitly so gateway prefixes like `openrouter/` don't match.
-    'o1': _ALWAYS_ON_REASONING,
-    'o3': _ALWAYS_ON_REASONING,
-    'o4': _ALWAYS_ON_REASONING,
+    'o1': _O_SERIES_REASONING,
+    'o3': _O_SERIES_REASONING,
+    'o4': _O_SERIES_REASONING,
 }
 """Reasoning support per model-name prefix; the first matching prefix wins, so a more specific
 prefix (e.g. `'gpt-5.3-chat'`) must be listed before the broader one it would otherwise match
 (e.g. `'gpt-5.3'`), and every newer family before the plain `'gpt-5'` catch-all.
 Models that don't match any prefix don't reason. Every cell was verified against the live
-Responses API (2026-07; the GPT-6 family 2026-09). The full resolved matrix is pinned in
+Responses API (2026-07; the GPT-6 family 2026-09; the accepted efforts of models that always reason 2026-10). The full resolved matrix is pinned in
 `tests/profiles/test_openai.py`."""
 
 
@@ -213,6 +282,15 @@ class OpenAIModelProfile(ModelProfile, total=False):
     * `False`: No thinking content is sent in the request.
 
     Defaults to `'auto'` to ensure thinking is sent back in the format expected by the model/provider."""
+
+    openai_chat_thinking_requires_field_on_tool_calls: bool
+    """Whether the API rejects a thinking request whose tool-calling assistant turn lacks `openai_chat_thinking_field`. Default: `False`.
+
+    Only applies when `openai_chat_send_back_thinking_parts` is `'field'`. In that mode, a tool-calling assistant
+    turn that lacks the field gets it empty once the history holds a `ThinkingPart`. Set this for an API that also
+    rejects such a turn before any response has thought, such as a step served without thinking: the field is then
+    sent empty on every such turn whenever thinking is on for the request, through a setting or
+    `thinking_enabled_by_default`."""
 
     openai_supports_strict_tool_definition: bool
     """This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions. Default: `True`."""
@@ -287,7 +365,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
 
     The GPT-5.1+ mainline models support turning reasoning off via `effort='none'`, and sampling params are
     accepted in that mode. When reasoning is enabled (low/medium/high/xhigh), sampling params are not supported.
-    Whether the model reasons by default is tracked separately by `thinking_enabled_by_default`."""
+    Whether the model reasons by default is tracked separately by `thinking_enabled_by_default`.
+
+    Ignored when `openai_reasoning_efforts` is set: `'none'` in that set decides it instead."""
 
     openai_supports_minimal_reasoning_effort: bool
     """Whether the model accepts `reasoning_effort='minimal'`. Default: `True`.
@@ -295,7 +375,49 @@ class OpenAIModelProfile(ModelProfile, total=False):
     Disabled for GPT-5.6 models, whose documented reasoning efforts exclude `minimal`. When disabled,
     unified `thinking='minimal'` falls back to `reasoning_effort='low'`.
     See https://developers.openai.com/api/docs/guides/latest-model.
-    Explicit `openai_reasoning_effort='minimal'` settings are still passed through unchanged."""
+    Explicit `openai_reasoning_effort='minimal'` settings are still passed through unchanged.
+
+    Ignored when `openai_reasoning_efforts` is set."""
+
+    openai_reasoning_efforts: frozenset[OpenAIReasoningEffort]
+    """The `reasoning_effort` values the model accepts. Default: unset.
+
+    When set, the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting resolves to the
+    closest accepted effort: the lowest one at or above the requested level, else the highest. `thinking=False`
+    sends `'none'` where it's accepted, and otherwise the lowest accepted effort, so a model that always
+    reasons (`thinking_always_enabled`) thinks as little as it can. An empty set means the model has no
+    effort knob, so the unified setting sends nothing.
+
+    When set, it also decides whether the model takes `'none'` and `'minimal'`, in place of
+    `openai_supports_reasoning_effort_none` and `openai_supports_minimal_reasoning_effort`. When unset, unified
+    levels map one-to-one (see `openai_supports_minimal_reasoning_effort`), and `thinking=False` sends nothing on a
+    model that always reasons.
+    Explicit `openai_reasoning_effort` settings are passed through unchanged."""
+
+    openai_chat_supports_max_reasoning_effort: bool
+    """Whether the Chat Completions API accepts `reasoning_effort='max'` for this model. Default: `False`.
+
+    When enabled, unified `thinking='max'` is sent as `reasoning_effort='max'`; otherwise it falls back to `'xhigh'`.
+    OpenAI's own Chat Completions API rejects `'max'` on every model, so only providers that accept it set this
+    (DeepSeek V4, and Kimi K3, K2.6 and K2.7). Explicit `openai_reasoning_effort='max'` settings are still passed through unchanged."""
+
+    openai_chat_thinking_false_body: dict[str, Any]
+    """Request body fields that unified `thinking=False` sends on the Chat Completions API, in place of
+    `reasoning_effort`. Default: unset.
+
+    For providers whose off switch isn't `reasoning_effort='none'`, or whose lowest effort on a model that always
+    reasons isn't known from `openai_reasoning_efforts`. `MoonshotAIProvider` sets it to
+    `{'thinking': {'type': 'disabled'}}` on Kimi K2.5 and K2.6, and to `{'reasoning_effort': 'low'}` on Kimi K3,
+    which always reasons. The fields go out through `extra_body`, where keys the caller set in `extra_body` win,
+    and nothing is added when `openai_reasoning_effort` is set explicitly."""
+
+    openai_responses_supports_max_reasoning_effort: bool
+    """Whether the Responses API accepts `reasoning.effort='max'` for this model. Default: `False`.
+
+    `OpenAIProvider` enables it for the GPT-5.6 and GPT-6 families. `openai_model_profile` leaves it off, because
+    `max` is unverified on the OpenAI-compatible endpoints that share that profile, and so do the Codex and ChatGPT
+    plan usage profiles. When enabled, unified `thinking='max'` is sent as `reasoning.effort='max'`; otherwise it
+    falls back to `'xhigh'`. Explicit `openai_reasoning_effort='max'` settings are still passed through unchanged."""
 
     openai_responses_supports_reasoning_mode: bool
     """Whether the Responses API supports `reasoning.mode` (`'standard' | 'pro'`) for this model. Default: `False`.
@@ -386,6 +508,18 @@ class OpenAIModelProfile(ModelProfile, total=False):
     Responses APIs. When disabled, `CachePoint` markers are filtered out.
     """
 
+    openai_responses_tool_choice_accepts_additional_tools: bool
+    """Whether the Responses API accepts a `tool_choice` naming a tool that only an `additional_tools` input item
+    declares. Default: `False`.
+
+    Set by `OpenAIProvider` for GPT-5.6 and later models, which accept it by name and in `allowed_tools`. Earlier
+    models reject it with `Tool choice '<name>' not found in 'tools' parameter.`, so when a request's `tool_choice`
+    names a tool revealed that way, `OpenAIResponsesModel` declares it in `tools` for that request instead, which
+    changes that request's cached prompt prefix. A request with `openai_previous_response_id` or
+    `openai_conversation_id` set keeps the tool in the item alone, so earlier models still reject it: declaring it in
+    `tools` would leave the item out of the stored response and hide the tool from every request that continues it.
+    """
+
     openai_responses_supports_prompt_cache_diagnostics: bool
     """Whether the Responses endpoint serves prompt cache diagnostics for this model. Default: `False`.
 
@@ -472,7 +606,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
     # the `NativeOutput` marker, so an error from the API is acceptable.
-    return OpenAIModelProfile(
+    profile = OpenAIModelProfile(
         json_schema_transformer=OpenAIJsonSchemaTransformer,
         supports_json_schema_output=True,
         supports_json_object_output=True,
@@ -490,9 +624,16 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_responses_supports_reasoning_context=reasoning.supports_context,
         openai_supports_phase=supports_phase,
         openai_supports_prompt_cache_breakpoints=supports_prompt_cache_breakpoints,
-        openai_supports_minimal_reasoning_effort=not model_name.startswith(('gpt-5.6', *_GPT_6_MODEL_PREFIXES)),
+        openai_supports_minimal_reasoning_effort=(
+            'minimal' in reasoning.efforts
+            if reasoning.efforts is not None
+            else not model_name.startswith(('gpt-5.6', *_GPT_6_MODEL_PREFIXES))
+        ),
         supported_native_tools=supported_native_tools,
     )
+    if reasoning.efforts is not None:
+        profile['openai_reasoning_efforts'] = reasoning.efforts
+    return profile
 
 
 def is_openai_live_model(model_name: str) -> bool:
@@ -639,6 +780,8 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
     * all fields in properties must be marked as required
     """
 
+    _strict_supports_length_constraints: ClassVar[bool] = False
+
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict)
         self.root_ref = schema.get('$ref')
@@ -708,6 +851,8 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         # Track strict-incompatible keys
         incompatible_values: dict[str, Any] = {}
         for key in _STRICT_INCOMPATIBLE_KEYS:
+            if self._strict_supports_length_constraints and key in ('minLength', 'maxLength'):
+                continue
             value = schema.get(key, _sentinel)
             if value is not _sentinel:
                 incompatible_values[key] = value
@@ -765,13 +910,13 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                             self.is_strict_compatible = False
 
         if schema_type == 'array':
-            # OpenAI strict mode requires an array to describe its elements' type, via either `items`
-            # (list types) or `prefixItems` (tuple types). A bare `list` produces an empty `items: {}`,
-            # `list[Any]` a boolean `items: true`, and a schema may omit `items` entirely; none of these
-            # give the element a type, so they're rejected by the API in strict mode and there's no way
-            # to repair them without inventing an element type. `items` only types its elements when it's
-            # a schema object carrying a type-bearing keyword (a boolean node, `{}`, or a metadata-only
-            # node like `{'description': ...}` does not).
+            # OpenAI strict mode requires an array to describe its elements' type via `items`. A bare
+            # `list` produces an empty `items: {}`, `list[Any]` a boolean `items: true`, and a schema
+            # may omit `items` entirely; none of these give the element a type, so they're rejected by
+            # the API in strict mode and there's no way to repair them without inventing an element
+            # type. `items` only types its elements when it's a schema object carrying a type-bearing
+            # keyword (a boolean node, `{}`, or a metadata-only node like `{'description': ...}` does
+            # not).
             # See https://github.com/pydantic/pydantic-ai/issues/4425
             items = schema.get('items')
             has_typed_items = isinstance(items, dict) and any(key in items for key in _TYPE_BEARING_KEYS)
@@ -784,3 +929,74 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                 elif self.strict is None:  # pragma: no branch
                     self.is_strict_compatible = False
         return schema
+
+
+class _OpenAIGuardedJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        schema = super().transform(schema)
+        if schema.get('type') == 'array' and schema.get('prefixItems'):
+            # `prefixItems` alone does not satisfy OpenAI's typed-items requirement; keep unnormalized tuple schemas
+            # conservative.
+            if self.strict is True:
+                raise UserError(
+                    'Pydantic AI cannot use this tuple schema with `prefixItems` in OpenAI strict mode. '
+                    'Use a bounded list such as `Annotated[list[int], Field(min_length=4, max_length=4)]`, '
+                    'or set `strict=False`.'
+                )
+            elif self.strict is None:
+                self.is_strict_compatible = False
+        return schema
+
+
+# Selected by `OpenAIProvider.model_profile`, rather than the shared `openai_model_profile`.
+class _OpenAIJsonSchemaTransformer(_OpenAIGuardedJsonSchemaTransformer):  # pyright: ignore[reportUnusedClass]
+    _strict_supports_length_constraints = True
+
+    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
+        super().__init__(schema, strict=strict)
+        self._has_non_definition_ref = False
+        self._normalized_single_item_tuple = False
+
+    def walk(self) -> JsonSchema:
+        self._has_non_definition_ref = False
+        self._normalized_single_item_tuple = False
+        result = super().walk()
+        if self._normalized_single_item_tuple and self._has_non_definition_ref:
+            # This walk has no path context, so a non-definition ref might target a changed `items` or removed
+            # `prefixItems` node. Wait until the full walk to catch refs before or after the array, then rerun the
+            # guarded transformer on the original schema to preserve its reference behavior. The base walk never
+            # visits `not`, `if`/`then`/`else`, `propertyNames` or `contains`, so a ref inside those subtrees misses
+            # this check and can dangle after normalization.
+            transformer = _OpenAIGuardedJsonSchemaTransformer(self.schema, strict=self.strict)
+            result = transformer.walk()
+            self.is_strict_compatible = transformer.is_strict_compatible
+        return result
+
+    def _handle_array(self, schema: JsonSchema) -> JsonSchema:
+        prefix_items: list[JsonSchema | bool] | None = schema.get('prefixItems')
+        if (
+            self.strict is not False
+            and schema.get('type') == 'array'
+            and isinstance(prefix_items, list)
+            and len(prefix_items) == 1
+            and type(max_items := schema.get('maxItems')) is int
+            and max_items == 1
+        ):
+            schema['items'] = prefix_items[0]
+            del schema['prefixItems']
+            self._normalized_single_item_tuple = True
+        return super()._handle_array(schema)
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        if '$dynamicRef' in schema:
+            self._has_non_definition_ref = True
+
+        schema_ref = schema.get('$ref')
+        if (
+            isinstance(schema_ref, str)
+            and schema_ref not in ('#', self.root_ref)
+            and not _TOP_LEVEL_DEFINITION_REF.fullmatch(schema_ref)
+        ):
+            self._has_non_definition_ref = True
+
+        return super().transform(schema)

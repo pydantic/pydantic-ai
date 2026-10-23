@@ -142,6 +142,33 @@ editing, geometry, and normalized settings.
 GPT Image models require a verified organization on a paid usage tier: on an unverified organization every request fails
 with a rate-limit error before anything generates. Complex prompts can take up to two minutes to process.
 
+## Structured output schemas
+
+For ordinary, non-fine-tuned models used with [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] or
+[`OpenAIChatGPTProvider`][pydantic_ai.providers.openai_chatgpt.OpenAIChatGPTProvider], which serves the same public
+OpenAI API, string fields with `min_length` or `max_length` keep those bounds in strict structured outputs. Fine-tuned
+`ft:` models use a conservative schema transformer because OpenAI documents additional Structured Outputs restrictions
+for those models.
+The strict tuple and string-bound support described here has not been verified against the Codex backend, so
+[`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider] retains its existing schema handling.
+
+A one-item tuple such as `tuple[int]` can remain strict: its single allowed element is represented as a typed array
+`items` schema. Multi-item fixed tuples such as `tuple[int, int, int, int]` still use `prefixItems`; OpenAI strict mode
+does not support that tuple schema, so inferred strictness falls back to non-strict mode and explicitly strict
+[`ToolOutput`][pydantic_ai.output.ToolOutput] or [`NativeOutput`][pydantic_ai.output.NativeOutput] raises a
+[`UserError`][pydantic_ai.exceptions.UserError]. The same rules apply to function tool parameters in
+[strict mode](../tools-advanced.md#strict-mode). To keep an exact item count in strict mode, use a bounded list:
+
+```python
+from typing import Annotated
+
+from pydantic import BaseModel, Field
+
+
+class BoundingBox(BaseModel):
+    coordinates: Annotated[list[int], Field(min_length=4, max_length=4)]
+```
+
 ## Model settings
 
 You can customize model behavior using [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]:
@@ -394,6 +421,8 @@ print(result.output)
 #> 1234
 ```
 
+Don't continue, through `openai_previous_response_id`, a response from a model before GPT-5.6 whose request named a revealed tool in [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice]: that request declares the tool in `tools` instead of its `additional_tools` item (see [Tool Choice](../tools-advanced.md#tool-choice)), so the tool isn't in the response's stored input.
+
 !!! note
     Referencing a stored response requires the response to have actually been stored. OpenAI stores responses by default; if you've disabled storage via [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store] or your organization has Zero Data Retention enabled, chaining is unavailable and the full message history must be sent on every request.
 
@@ -581,21 +610,23 @@ print(result.output)
 #> True
 ```
 
-It reads the same `OPENAI_API_KEY`. Its provider, [`OpenAIDecisionsProvider`][pydantic_ai.providers.openai_decisions.OpenAIDecisionsProvider], takes the same arguments as [`OpenAIProvider`](#configure-the-provider), including a [custom client](#custom-openai-client):
+It reads the same `OPENAI_API_KEY`, and takes the same [`OpenAIProvider`](#configure-the-provider) as the other OpenAI models, including a [custom client](#custom-openai-client):
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel
-from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider
+from pydantic_ai.providers.openai import OpenAIProvider
 
-model = OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIDecisionsProvider(api_key='your-api-key'))
+model = OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIProvider(api_key='your-api-key'))
 agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
 ...
 ```
 
 All the questions of a request go to the API in one call, and its usage is reported in tokens, as for the Responses API. OpenAI bills only input tokens on this API, with no cache-read or cache-write charges. The `cost` Pydantic AI reports comes from [genai-prices](https://github.com/pydantic/genai-prices)' prices for `gpt-6-luna`, which price cached input apart, so it can differ from the bill when the API reports cached tokens.
 
-OpenAI Decisions supports image input through [`BinaryContent`][pydantic_ai.BinaryContent], [`BinaryImage`][pydantic_ai.messages.BinaryImage] or [`ImageUrl`][pydantic_ai.messages.ImageUrl]; `ImageUrl` images are downloaded and sent inline as data URLs. Images in user input and message history, including assistant file parts and tool or native-tool images, are included as state evidence, while instructions remain separate questions. See [image input](../input.md#image-input). Set `vendor_metadata={'detail': 'high'}` on an image to control its detail level; Decisions accepts `'low'`, `'high'`, `'auto'` and `'original'`. The metadata is preserved when image URLs are downloaded.
+The conversation goes to the API as Responses input items, rather than as the [state](decision.md#where-the-wording-comes-from) other decision models are sent: system prompts, user prompts, answers and tool calls with their results keep their roles, so a question names what to judge, such as "the user's latest request", where it would otherwise point at the state's `text`. Item types the API doesn't take are sent as text: thinking as the assistant's, wrapped in thinking tags, and a tool result whose call is no longer in the history as a framed `<tool_result>` on the user channel. An image from an assistant response goes in a user message too, right after the assistant's `<image N>` reference to it, since an assistant message can only hold text. Retry feedback goes as a `developer` message, so it isn't read as a newer request. A lone prompt with no history goes as plain text.
+
+OpenAI Decisions supports image input through [`BinaryContent`][pydantic_ai.BinaryContent], [`BinaryImage`][pydantic_ai.messages.BinaryImage] or [`ImageUrl`][pydantic_ai.messages.ImageUrl]; `ImageUrl` images are downloaded and sent inline as data URLs. Images in user input and message history, including assistant file parts and tool or native-tool images, are sent where they appear in the conversation, while instructions remain separate questions. See [image input](../input.md#image-input). Set `vendor_metadata={'detail': 'high'}` on an image to control its detail level; Decisions accepts `'low'`, `'high'`, `'auto'` and `'original'`. The metadata is preserved when image URLs are downloaded.
 
 `timeout`, `extra_headers` and `extra_body` are forwarded to the request, and the other generic settings, such as `temperature`, are ignored. [`OpenAIDecisionsModelSettings`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModelSettings] takes the two [thresholds](decision.md#confidence-and-thresholds) every decision model has, `decision_boolean_threshold` and `decision_route_threshold`.
 

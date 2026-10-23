@@ -88,7 +88,8 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
     keep_messages: int = 40
     """Number of tail messages to retain after trimming (message-count trigger).
 
-    With `receipts=True`, the receipt counts as one of these, but never displaces the newest message.
+    The newest message is always kept, so `0` keeps one. With `receipts=True`, the receipt
+    counts as one of these, but never displaces the newest message.
     """
 
     keep_tokens: int | None = None

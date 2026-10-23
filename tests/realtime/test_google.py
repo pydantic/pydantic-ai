@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -43,7 +44,8 @@ from pydantic_ai.messages import (
     PartEndEvent,
     PartStartEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -83,7 +85,7 @@ from pydantic_ai.realtime.lifecycle import AnswersRevised
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsDatetime, IsSameStr, IsStr, try_import
+from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part, try_import
 from .test_session import FakeRealtimeModel, make_tool_manager
 
 with try_import() as imports_successful:
@@ -1036,6 +1038,7 @@ def test_config_thinking_maps_to_thinking_level() -> None:
 
     assert thinking_config('high') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.HIGH)
     assert thinking_config('xhigh') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.HIGH)
+    assert thinking_config('max') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.HIGH)
     assert thinking_config('minimal') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.MINIMAL)
     assert thinking_config(True) == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.MEDIUM)
     assert thinking_config(False) == genai_types.ThinkingConfig(thinking_budget=0)
@@ -2195,6 +2198,38 @@ async def test_connect_continues_after_empty_server_turn() -> None:
     assert isinstance(events[-1], RealtimeSessionErrorEvent)
 
 
+async def test_connect_sends_seeded_system_prompts() -> None:
+    """The standing system prompt opens `system_instruction`; a later one is seeded in place as `<system>` text."""
+    session = _RecordingSession([[_turn('hi')]])
+    captured: dict[str, Any] = {}
+    history = [
+        ModelRequest(parts=[SystemPromptPart(content='Standing prompt.'), UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[SystemPromptPart(content='Mid-conversation note.'), UserPromptPart(content='more')]),
+        ModelResponse(parts=[TextPart(content='sure')]),
+    ]
+    model = _model(session, captured)
+    async with model.connect(
+        messages=[*history, ModelRequest(parts=[])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            instruction_parts=[InstructionPart(content='Agent instructions.')]
+        ),
+    ) as conn:
+        _ = [e async for e in conn]
+
+    assert captured['config'].system_instruction == 'Standing prompt.\n\nAgent instructions.'
+    turns = session.client_content[0]['turns']
+    assert [turn.model_dump(exclude_none=True) for turn in turns] == snapshot(
+        [
+            {'parts': [{'text': 'hi'}], 'role': 'user'},
+            {'parts': [{'text': 'hello'}], 'role': 'model'},
+            {'parts': [{'text': '<system>Mid-conversation note.</system>'}, {'text': 'more'}], 'role': 'user'},
+            {'parts': [{'text': 'sure'}], 'role': 'model'},
+        ]
+    )
+
+
 async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) -> None:
     async def download_image(*args: Any, **kwargs: Any) -> Any:
         return {'data': b'url-image', 'data_type': 'image/png'}
@@ -2238,8 +2273,16 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     tool_call_id='call-1',
                 ),
                 ToolReturnPart(tool_name='plain', content='ok', tool_call_id='plain-call'),
-                RetryPromptPart(tool_name='weather', content='invalid city', tool_call_id='call-1'),
-                RetryPromptPart(content='answer in prose'),
+                legacy_retry_prompt_part(tool_name='weather', content='invalid city', tool_call_id='call-1'),
+                # The shape the framework emits for that same failure, seeded beside the legacy one
+                # so the two are held to the same text.
+                ToolReturnPart(tool_name='weather', content='invalid city', tool_call_id='call-1', outcome='retried'),
+                legacy_retry_prompt_part(content='answer in prose'),
+                RetryFeedbackPart(content='answer in prose', retry=RetryInfo(cause='model_retry')),
+                RetryFeedbackPart(
+                    content=[{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an integer', 'input': 'lots'}],
+                    retry=RetryInfo(cause='validation_error'),
+                ),
                 UserPromptPart(
                     content=[
                         ImageUrl(url='https://example.com/a.png'),
@@ -2280,8 +2323,32 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     {'inline_data': {'data': b'tool-image', 'mime_type': 'image/png'}},
                     {'text': '</tool_result>'},
                     {'text': '[Tool plain-call: plain returned: ok]'},
-                    {'text': '[Tool call-1: weather error: invalid city\n\nFix the errors and try again.]'},
-                    {'text': 'Validation feedback:\nanswer in prose\n\nFix the errors and try again.'},
+                    {'text': '[Tool call-1: weather returned: {"error":"invalid city"}]'},
+                    {'text': '[Tool call-1: weather returned: {"error":"invalid city"}]'},
+                    {
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+answer in prose
+</retry_feedback>\
+"""
+                    },
+                    {
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+answer in prose
+</retry_feedback>\
+"""
+                    },
+                    {
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<validation_errors>
+[{"type":"int_parsing","loc":["count"],"msg":"not an integer","input":"lots"}]
+</validation_errors>\
+"""
+                    },
                     {'inline_data': {'data': b'url-image', 'mime_type': 'image/png'}},
                     {'inline_data': {'data': b'inline-image', 'mime_type': 'image/png'}},
                     {'text': 'spoken question'},
@@ -2353,7 +2420,9 @@ async def test_connect_seeds_function_parts_as_initial_history_where_supported()
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='get_weather', content='Hailing', tool_call_id='call-1'),
-                RetryPromptPart(tool_name='get_weather', content='City is required', tool_call_id='call-2'),
+                ToolReturnPart(
+                    tool_name='get_weather', content='City is required', tool_call_id='call-2', outcome='retried'
+                ),
                 ToolReturnPart(
                     tool_name='get_weather', content='Service down', tool_call_id='call-3', outcome='failed'
                 ),
@@ -2392,7 +2461,7 @@ async def test_connect_seeds_function_parts_as_initial_history_where_supported()
                         'function_response': {
                             'id': 'call-2',
                             'name': 'get_weather',
-                            'response': {'error': 'City is required\n\nFix the errors and try again.'},
+                            'response': {'error': 'City is required'},
                         }
                     },
                     {
@@ -3602,8 +3671,9 @@ async def test_connect_reconnect_retries_a_redial_that_exceeds_handshake_timeout
         ('gemini-3.8-live-extended-thinking', {'thinking': False}, 'LOW'),
         ('gemini-3.8-live-extended-thinking', {'thinking': True}, 'MEDIUM'),
         ('gemini-3.8-live-extended-thinking', {'thinking': 'high'}, 'HIGH'),
-        # `xhigh` has no Gemini equivalent and lands on the top level.
+        # `xhigh` and `max` have no Gemini equivalent and land on the top level.
         ('gemini-3.8-live-extended-thinking', {'thinking': 'xhigh'}, 'HIGH'),
+        ('gemini-3.8-live-extended-thinking', {'thinking': 'max'}, 'HIGH'),
         # An optional-thinking model is unaffected by any of the above.
         ('gemini-2.5-flash-native-audio-latest', None, None),
         ('gemini-2.5-flash-native-audio-latest', {'thinking': True}, 'MEDIUM'),

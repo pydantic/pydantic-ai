@@ -151,6 +151,15 @@ class GoogleModelProfile(ModelProfile, total=False):
     See https://ai.google.dev/gemini-api/docs/thinking.
     """
 
+    google_disables_thinking_with_zero_budget: bool
+    """Whether unified `thinking=False` turns thinking off with `thinking_budget=0` on a model that otherwise
+    takes `thinking_level`. Default: `False`.
+
+    When disabled, `thinking=False` on such a model sends its lowest thinking level instead. `GoogleModel` enables it
+    for `gemini-3.1-pro-preview` on Vertex AI, which accepts `thinking_budget=0` and then doesn't think, while the
+    Gemini API rejects it for that model ("Budget 0 is invalid. This model only works in thinking mode.").
+    """
+
     google_thinking_levels: frozenset[GoogleThinkingLevel]
     """Thinking levels the model supports, from Google's per-model thinking table. Default: unset.
 
@@ -226,7 +235,10 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
 
     # Thinking support: Gemini 3+ defaults to thinking enabled with thinking_level.
     # Older models: Gemini 2.5 uses thinking_budget; Gemini 2.0, 1.x, and Gemma do not support thinking.
-    if is_gemma or is_pre_gemini_2_5:
+    # `gemini-2.5-flash-image` doesn't think either: verified live 2026-10-23, the Gemini API 400s any thinking
+    # config with `Thinking is not enabled for this model`, and Vertex rejects `include_thoughts` and any nonzero
+    # budget with `thinking is not supported by this model`.
+    if is_gemma or is_pre_gemini_2_5 or 'gemini-2.5-flash-image' in model_name:
         supports_thinking = False
         google_supports_thinking_level = False
     elif is_gemini_2_5:
@@ -259,6 +271,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_object_output=is_modern_gemini or not is_image_model,
         supports_tools=not is_image_model,
         supports_tool_return_schema=not is_image_model,
+        supports_video_input=not is_image_model,
         supports_thinking=supports_thinking,
         thinking_always_enabled=thinking_always_enabled,
         google_supports_tool_combination=is_modern_gemini,
