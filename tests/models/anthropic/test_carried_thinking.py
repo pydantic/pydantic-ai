@@ -14,7 +14,6 @@ rather than out of the recording, and answered with a real 200.
 
 from __future__ import annotations as _annotations
 
-import os
 from typing import TYPE_CHECKING
 
 import pytest
@@ -203,27 +202,6 @@ async def test_carried_thinking_accepted_with_thinking_enabled(
     )
     assert result.output == snapshot(
         "A longer duration means more interest-rate risk, as the bond's price will be more sensitive to changes in interest rates."
-    )
-
-
-@pytest.fixture
-def anthropic_bedrock_client() -> AsyncAnthropicBedrock:
-    """An `AsyncAnthropicBedrock` client that needs no AWS credentials to replay.
-
-    The SDK signs with SigV4 whenever botocore can resolve credentials, and refuses a bearer token
-    alongside them — so recording with static keys leaves `api_key` unset, recording with a Bedrock API
-    key passes `AWS_BEARER_TOKEN_BEDROCK`, and replay falls back to a placeholder bearer token. Without
-    that fallback botocore reaches for the instance metadata endpoint on a runner that has no
-    credentials at all, and the request never gets as far as the cassette. `botocore` itself only ships
-    under the `bedrock` extra.
-    """
-    pytest.importorskip('botocore')
-
-    return AsyncAnthropicBedrock(
-        api_key=None
-        if os.environ.get('AWS_ACCESS_KEY_ID')
-        else os.environ.get('AWS_BEARER_TOKEN_BEDROCK', 'test-bedrock-token'),
-        aws_region=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'),
     )
 
 

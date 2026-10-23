@@ -86,6 +86,8 @@ Temporal entry points:
 - `PydanticAIPlugin`
 - `AgentPlugin`
 
+For runs long enough to approach Temporal's history limit, pass `TemporalDurability(continue_as_new=...)`. Before each model request where Temporal suggests continuing as new, it calls your function with the `RunContext`. The function calls `workflow.continue_as_new()` with everything the workflow's run method needs to resume, typically `None` as the prompt plus `ctx.messages`, `ctx.usage`, and `ctx.usage_limits`, or returns to defer.
+
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
 Capability hooks that must behave differently in deterministic workflow code check `ctx.in_durable_context`: `True` inside the durable workflow or flow, `False` in Temporal activities and DBOS steps (where tools run) and outside durable execution. Prefect tasks inherit their flow's context, so it is `True` there. Don't detect the engine by module or class name.

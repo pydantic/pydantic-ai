@@ -68,8 +68,9 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
-    RetryPromptPart,
+    ModelResponsePart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -1069,7 +1070,8 @@ def test_run_sends_the_model_back_when_it_stops_before_any_safe_output(monkeypat
     retries: list[str] = []
 
     def _respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        retries.extend(str(p.content) for m in messages[-1:] for p in m.parts if isinstance(p, RetryPromptPart))
+        # The model sees the harness's retry feedback as a fenced, attributed user turn.
+        retries.extend(p for m in messages[-1:] for part in m.parts if (p := _retry_feedback_text(part)) is not None)
         if not retries:
             return ModelResponse(parts=[TextPart('Now let me analyze the key concerns.')])
         if not sink.exists():
@@ -1078,11 +1080,24 @@ def test_run_sends_the_model_back_when_it_stops_before_any_safe_output(monkeypat
 
     assert _run_shim(_respond, sink) == 0
     assert retries == [
+        "Your previous response failed the application's validation (this is automated feedback, not a message "
+        'from the user):\n<retry_feedback>\n'
         'You ended your turn without emitting a safe output, so nothing has been posted. '
         'Continue the task and finish by calling the safe-output tool it ends with, '
-        'or `noop` if there is nothing to report.'
+        'or `noop` if there is nothing to report.\n</retry_feedback>'
     ]
     assert any(e.get('type') == 'result' and e.get('subtype') == 'success' for e in emitted)
+
+
+def _retry_feedback_text(part: ModelRequestPart | ModelResponsePart) -> str | None:
+    """The text of output-validator retry feedback as a model receives it, or `None` for any other part.
+
+    The model is handed prepared messages, where a `ModelRetry`'s `RetryFeedbackPart` has already become
+    user text fenced in `<retry_feedback>` behind the application attribution line.
+    """
+    if isinstance(part, UserPromptPart) and isinstance(part.content, str) and '<retry_feedback>' in part.content:
+        return part.content
+    return None
 
 
 def test_attention_run_retries_for_missing_decision_and_completes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -1112,8 +1127,8 @@ def test_attention_run_retries_for_missing_decision_and_completes(monkeypatch: p
     def _respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         for message in messages:
             for part in message.parts:
-                if isinstance(part, RetryPromptPart):
-                    retries.append(str(part.content))
+                if (text := _retry_feedback_text(part)) is not None:
+                    retries.append(text)
         if retries:
             with sink.open('a', encoding='utf-8') as f:
                 f.write(missing_decision + '\n')
@@ -1154,8 +1169,8 @@ def test_attention_agent_cannot_shrink_candidates_to_hide_a_missing_decision(
         available_tools.append({tool.name for tool in info.function_tools})
         for message in messages:
             for part in message.parts:
-                if isinstance(part, RetryPromptPart):
-                    retries.append(str(part.content))
+                if (text := _retry_feedback_text(part)) is not None:
+                    retries.append(text)
         if not available_tools[:-1]:
             return ModelResponse(
                 parts=[
@@ -2356,17 +2371,17 @@ def test_stream_events_truncates_long_tool_results():
     assert '…[+' in emitted and 'chars]' in emitted
 
 
-def test_stream_events_tags_retry_prompt_as_error():
-    """`ToolResultEvent.part` is `ToolReturnPart | RetryPromptPart`. A retry
-    means tool-call validation failed — gh-aw must see `is_error=True` so it
-    doesn't read it as a successful result."""
+def test_stream_events_tags_retried_result_as_error():
+    """A `ToolResultEvent` carrying `outcome='retried'` means the call has to be
+    made again — gh-aw must see `is_error=True` so it doesn't read it as a
+    successful result."""
 
     async def _events():
         yield FunctionToolResultEvent(
             part=ToolReturnPart(tool_name='Bash', content='ok', tool_call_id='c1'),
         )
         yield FunctionToolResultEvent(
-            part=RetryPromptPart(content='Validation failed', tool_name='Bash', tool_call_id='c2'),
+            part=ToolReturnPart(tool_name='Bash', content='Validation failed', tool_call_id='c2', outcome='retried'),
         )
 
     buf = io.StringIO()
@@ -2545,9 +2560,14 @@ def test_rate_limit_retry_transport_hands_the_last_429_to_the_sdk():
 @pytest.mark.parametrize(
     'error_code',
     [
+        '1113',
         '1308',
         '1309',
         '1310',
+        '1311',
+        '1313',
+        '1314',
+        '1315',
         '1316',
         '1317',
         '1318',
@@ -2934,6 +2954,55 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
     assert shim._run_seconds_left() is None  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.parametrize(
+    ('cut_off', 'num_turns'),
+    [
+        # 2 root requests and the sub-agent's 2.
+        pytest.param(False, 4, id='finished'),
+        # The root request in flight at the cutoff never completes.
+        pytest.param(True, 3, id='cut-off'),
+    ],
+)
+def test_num_turns_counts_subagent_requests_whether_finished_or_cut_off(
+    cut_off: bool, num_turns: int, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    # A 6-minute run budget, so the run starts outside the parent's time reserve with `Task` offered.
+    budget_secs = 360
+
+    async def _stream(messages: list[ModelMessage], info: AgentInfo):
+        returned = any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+        if shim.SUBAGENT_INSTRUCTIONS in (info.instructions or ''):
+            if returned:
+                yield 'sub done'
+            else:
+                yield {0: DeltaToolCall(name='Glob', json_args='{"pattern": "*"}')}
+        elif not returned:
+            yield {0: DeltaToolCall(name='Task', json_args='{"description": "probe", "prompt": "look"}')}
+        elif cut_off:
+            await _skip_clock_and_hang(budget_secs)
+        else:
+            yield 'done'
+
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    monkeypatch.setenv('PYDANTIC_AI_JOB_TIMEOUT_MINUTES', str(budget_secs // 60 + shim.JOB_TIMEOUT_HEADROOM_MINS))
+    monkeypatch.setattr(shim, 'log_safe_outputs_state', lambda: None)
+    buf = io.StringIO()
+    with redirect_stdout(buf), asyncio.Runner(loop_factory=_ClockSkippingLoop) as runner:
+        rc = runner.run(
+            shim._run_with_timeout(  # pyright: ignore[reportPrivateUsage]
+                'p',
+                FunctionModel(stream_function=_stream),
+                'lbl',
+                shim.select_claude_code_toolset(None, None, task=shim.task),
+                [],
+                'num-turns',
+            )
+        )
+    result = json.loads(buf.getvalue().splitlines()[-1])
+    assert (rc, result['type'], result['is_error']) == (int(cut_off), 'result', cut_off)
+    assert result['num_turns'] == num_turns
+
+
 @pytest.mark.parametrize('outcome', ['success', 'error', 'timeout'])
 def test_run_with_timeout_closes_anthropic_client(outcome: str, monkeypatch: pytest.MonkeyPatch):
     client = AsyncAnthropic(api_key='test')
@@ -3188,12 +3257,28 @@ def test_emit_result_error_subtype():
     assert obj['subtype'] == 'error' and obj['is_error'] is True
 
 
+def _zai_429_body(code: str | int) -> dict[str, object]:
+    """The error body the Anthropic SDK decodes from a Z.ai 429."""
+    return {
+        'type': 'error',
+        'error': {'type': 'rate_limit_error', 'code': code, 'message': f'[{code}][provider detail]'},
+        'request_id': 'request-1',
+    }
+
+
 @pytest.mark.parametrize(
     ('error', 'expected_kind', 'expected_status'),
     [
         (ModelHTTPError(401, 'test-model', {'error': {'type': 'authentication_error'}}), 'authentication', 401),
         (ModelHTTPError(403, 'test-model', {'error': {'type': 'permission_error'}}), 'authentication', 403),
         (ModelHTTPError(429, 'test-model', {'error': {'type': 'rate_limit_error'}}), 'rate_limit', 429),
+        (ModelHTTPError(429, 'test-model', None), 'rate_limit', 429),
+        (ModelHTTPError(429, 'glm-5.3-flash', _zai_429_body('1302')), 'rate_limit', 429),
+        (ModelHTTPError(429, 'glm-5.3-flash', _zai_429_body('1305')), 'rate_limit', 429),
+        (ModelHTTPError(429, 'glm-5.3-flash', _zai_429_body('1113')), 'plan_limit', 429),
+        (ModelHTTPError(429, 'glm-5.3-flash', _zai_429_body('1310')), 'plan_limit', 429),
+        (ModelHTTPError(429, 'glm-5.3-flash', _zai_429_body(1311)), 'plan_limit', 429),
+        (ModelHTTPError(429, 'glm-5.3-flash', _zai_429_body('9999')), 'rate_limit', 429),
         (ModelHTTPError(402, 'test-model', {'error': {'type': 'payment_required_error'}}), 'other', 402),
         (UsageLimitExceeded('request limit'), 'request_limit', None),
         (shim.RunTimeLimitExceeded(), 'time_limit', None),

@@ -34,6 +34,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import base64
 import json
+import re
 import time
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Generator, Sequence
@@ -58,7 +59,6 @@ except ImportError as _import_error:  # pragma: no cover
 
 from .. import _utils
 from .._http import legacy_httpx
-from .._instrumentation import get_instructions
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
@@ -87,8 +87,16 @@ from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._elevenlabs_audio_tags import AudioTagStripper as _AudioTagStripper, strip_audio_tags as _strip_audio_tags
 from ._inferred_lifecycle import InferredLifecycle
-from ._lifecycle import LifecycleEvent, OutputItemCut, RealtimeFrame, ResponseEnded, StaleEvent
-from ._utils import inject_trace_context, require_pcm_audio, resolve_advertised_tools
+from ._lifecycle import (
+    AnswersRevised,
+    InputId,
+    LifecycleEvent,
+    OutputItemCut,
+    RealtimeFrame,
+    ResponseEnded,
+    StaleEvent,
+)
+from ._utils import inject_trace_context, require_pcm_audio, resolve_advertised_tools, session_instructions
 from .codec import (
     AudioDelta,
     InputTranscript,
@@ -151,6 +159,11 @@ _REALTIME_MODE_MANAGED_OVERRIDES = {('agent', 'prompt', 'llm'), ('tts', 'model_i
 """The overrides Pydantic AI sends whose settings ElevenLabs manages itself for an agent in Realtime voice mode.
 
 Verified live: the server accepts them, then answers with the agent's Realtime model and TTS model all the same."""
+
+_TEXT_ID_PREFIX = 'pydantic_ai_input_'
+"""What the `id` a text input goes out under starts with, ahead of the input's id."""
+_TEXT_ID = re.compile(rf'{_TEXT_ID_PREFIX}(\d+)')
+"""The `id` a text input went out under, naming the input; an echoed id that doesn't parse names none."""
 
 _MCP_APPROVAL_DENIED = (
     'The ElevenLabs agent asked to approve a call to one of its MCP server tools, which a Pydantic AI session cannot '
@@ -471,6 +484,10 @@ class _AgentResponsePayload(BaseModel):
     agent_response: str
     response_id: str | None = None
     event_id: int | None = None
+    in_response_to_ids: list[str] | None = None
+    """The `id`s of the `user_message`s the reply answers (verified live): the one sent for it, and any sent while the
+    agent spoke, which fold into its next reply. Empty for a reply nothing asked for, like the greeting; the server
+    makes ids up for what the user said."""
 
 
 class _AgentResponseEvent(BaseModel):
@@ -1399,7 +1416,7 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
     ) -> AsyncGenerator[ElevenLabsAgentsRealtimeConnection]:
         settings = cast('ElevenLabsAgentsRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         self._check_settings(settings)
-        instructions = get_instructions(messages, model_request_parameters) or ''
+        instructions = session_instructions(messages, model_request_parameters)
         tools = model_request_parameters.function_tools or []
         advertised_tools, tool_choice = resolve_advertised_tools(tools, settings.get('tool_choice'))
         if (tool_choice[0] if isinstance(tool_choice, tuple) else tool_choice) == 'required':
@@ -1496,16 +1513,104 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
                 await opening.__aexit__(None, None, None)
 
 
+def _ends_before_reply(events: Sequence[RealtimeCodecEvent]) -> bool:
+    """Whether the codec events end a response before a reply's text (a reply that was still being voiced, say)."""
+    for event in events:
+        if isinstance(event, OutputTranscript):
+            return False
+        if isinstance(event, ResponseDone) or (isinstance(event, SessionUsage) and event.response_scoped):
+            return True
+    return False
+
+
 class _CascadeLifecycle(InferredLifecycle):
     """The inferred lifecycle of a cascaded pipeline, which replies to speech only once it has transcribed it.
 
     ElevenLabs' speech recognition hands the agent's LLM the user's words, and sends their transcript, before
     the LLM answers them. So audio with no transcript is never what a reply answers: microphone audio streamed
     before the agent's greeting (a reply nobody asked for) makes no spoken turn ahead of it.
+
+    A reply's text names the typed turns it answers, by the `id` each went out with (`in_response_to_ids`), which
+    revises what the order said (`AnswersRevised`): a greeting that text cut off as it started answers none of it.
     """
 
     transcripts_lag_replies = False
     untranscribed_audio_is_a_turn = False
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._text: set[InputId] = set()
+        """The text inputs sent, which a reply names by the `id` they went out with."""
+        self._named: tuple[InputId, ...] | None = None
+        """The text inputs the reply whose text is being mapped names, for its revision."""
+        self._named_others = False
+        """Whether that reply also names an input that isn't one of the text inputs sent (what the user said)."""
+
+    def text_sent(self, input_id: InputId) -> str:
+        """A text input is going out: the `id` to send it under, which the reply answering it names."""
+        self._text.add(input_id)
+        return f'{_TEXT_ID_PREFIX}{input_id}'
+
+    def reply_named(self, ids: Sequence[str]) -> None:
+        """The text of a reply came, naming (by their `id`s) the text inputs it answers; ids of others are ignored."""
+        matches = [_TEXT_ID.fullmatch(text_id) for text_id in ids]
+        named = tuple(int(match[1]) for match in matches if match is not None and int(match[1]) in self._text)
+        self._named = named
+        self._named_others = len(named) < len(ids)
+
+    def revise_open(self) -> list[LifecycleEvent]:
+        """Revise the response under way by the inputs its text named, ahead of the frame with that text.
+
+        The connection calls this when that response is the text's, so the revision comes before anything in the
+        frame can end it (a reply cut off, say, whose text trails its end, or empty text, which is no output). With
+        no response under way, the text starts one, and the revision comes with it (see `_output`).
+        """
+        named = self._named
+        if named is None or self._open is None:
+            return []
+        self._named = None
+        return self._revise_open(named)
+
+    def reply_mapped(self) -> None:
+        """The frame with a reply's text is through: names it didn't apply had no response to apply to."""
+        self._named = None
+
+    def _revision(
+        self, named: tuple[InputId, ...], answers: tuple[InputId, ...]
+    ) -> tuple[tuple[InputId, ...], tuple[InputId, ...]]:
+        """The text inputs a reply claims and releases, given those it names and those it was taken to answer.
+
+        A text sent while the agent spoke folds into its next reply, which may name only the latest of them: verified
+        live, two texts sent back to back while the agent spoke got one reply, to both, naming only the second. No
+        reply would ever name the first, so it would be owed a reply forever (and `wait_for_reply()` would hang): a
+        reply also answers the text sent before one it names. Text sent after any it names reached the agent after the
+        reply started, and is the next reply's. Unless the reply also names something else (what the user said, by an
+        id the server made up): that may well be what came after the text, folded in with it, so it releases nothing.
+        """
+        latest = max(named, default=-1)
+        claimed = tuple(input_id for input_id in self._unanswered if input_id in self._text and input_id <= latest)
+        if self._named_others:
+            return claimed, ()
+        released = tuple(input_id for input_id in answers if input_id in self._text and input_id > latest)
+        return claimed, released
+
+    def _revise_open(self, named: tuple[InputId, ...]) -> list[LifecycleEvent]:
+        """Revise the response under way by the inputs its text named."""
+        response_id = self._open
+        assert response_id is not None
+        claimed, released = self._revision(named, self._open_answers)
+        if not (claimed or released):
+            return []
+        self._unanswered = [input_id for input_id in self._unanswered if input_id not in claimed]
+        self._unanswered[:0] = released
+        self._open_answers = (*(input_id for input_id in self._open_answers if input_id not in released), *claimed)
+        return [AnswersRevised(response_id=response_id, claimed=claimed, released=released)]
+
+    def _output(self, event: RealtimeCodecEvent, before: list[LifecycleEvent], after: list[LifecycleEvent]) -> None:
+        super()._output(event, before, after)
+        if (named := self._named) is not None:
+            self._named = None
+            before.extend(self._revise_open(named))
 
 
 class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
@@ -1557,7 +1662,8 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         # received. The protocol does carry ids (`event_id` per turn, `response_id` on the whole-text
         # `agent_response`, `in_response_to_ids`), but each arrives only with a response's *end*, while
         # a response has to be announced with its first audio, and a tool round shares one `event_id`
-        # between the response that calls the tool and the one that answers its result.
+        # between the response that calls the tool and the one that answers its result. So the ids only
+        # correct what the order said: `in_response_to_ids` names the text inputs a reply answers.
         # The user's words are transcribed (and sent) before the agent's LLM answers them, never after.
         self._lifecycle = _CascadeLifecycle()
         # A barge-in on the response under way, which only its (truncated) terminal is yet to follow.
@@ -1601,21 +1707,23 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         cancellation, truncation, and images are not supported by the conversation WebSocket.
         """
         with self._lifecycle.sending(content) as input_id:
-            sent = await self._send(content)
+            sent = await self._send(content, input_id)
         if not sent:
             # A fire-and-forget call's result: the agent asked for none, so none will be answered.
             self._lifecycle.input_unanswerable(input_id)
         # ElevenLabs acknowledges nothing: where the input joined the conversation is known now.
         return self._lifecycle.take_pending()
 
-    async def _send(self, content: RealtimeInput) -> bool:
+    async def _send(self, content: RealtimeInput, input_id: InputId) -> bool:
         """Send `content` on the wire, returning whether anything was sent."""
         if isinstance(content, BinaryAudio):
             require_pcm_audio(content, provider_name=_PROVIDER_LABEL)
             # The one client message without a `type` discriminator.
             await self._send_event({'user_audio_chunk': base64.b64encode(content.data).decode('ascii')})
         elif isinstance(content, str):
-            await self._send_event({'type': 'user_message', 'text': content})
+            # Under an id of ours, which the agent's reply names in its `in_response_to_ids`.
+            text_id = self._lifecycle.text_sent(input_id)
+            await self._send_event({'type': 'user_message', 'text': content, 'id': text_id})
         elif isinstance(content, TextContext):
             # Injected into the LLM's view of the conversation without a user turn, so the agent
             # neither stops speaking nor replies; the optional `context_id` (which lets a later update
@@ -1722,7 +1830,11 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
 
     def _frame(self, events: list[RealtimeCodecEvent]) -> RealtimeFrame:
         """The frame for the codec events one server message makes, with their lifecycle events."""
-        frame = self._name_conversation(self._lifecycle_frame(events)) if events else []
+        # A reply's text revises the response under way ahead of the frame, so before anything in it can end that
+        # response; unless the frame ends a response before the text, which then starts one of its own.
+        revision = [] if _ends_before_reply(events) else self._lifecycle.revise_open()
+        frame = [*revision, *self._name_conversation(self._lifecycle_frame(events))] if events else revision
+        self._lifecycle.reply_mapped()
         cuts, self._cuts = self._cuts, []
         # Last, so that a response the frame ends is recorded by the time its cut applies (one still under way gets
         # it when it is).
@@ -1980,6 +2092,9 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             # this is its text, cut down to what was heard. (Audio's `is_final` marks the end of one TTS generation,
             # which can come mid-reply, so it isn't read.)
             payload = _AgentResponseEvent.model_validate(data).agent_response_event
+            if (answered := payload.in_response_to_ids) is not None:
+                # Which of the text inputs the reply answers, revising what the lifecycle worked out from the order.
+                self._lifecycle.reply_named(answered)
             self._response_open = True
             self._open_event_id = payload.event_id
             text, details = payload.agent_response, None

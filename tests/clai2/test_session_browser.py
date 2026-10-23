@@ -4,8 +4,9 @@ import subprocess
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from io import StringIO
-from itertools import chain, repeat
+from itertools import chain, count, repeat
 from pathlib import Path, PurePath
+from types import SimpleNamespace
 
 import pytest
 from termflow.ansi.utils import visible_length
@@ -230,7 +231,9 @@ def test_date_buckets() -> None:
 def test_idle_refresh_and_storage_errors_stay_in_menu(monkeypatch: pytest.MonkeyPatch) -> None:
     widget, entries = browser(keys=['', 'ctrl-c'])
     ticks = iter([0.0, 1.0, 1.0])
-    monkeypatch.setattr(module.time, 'monotonic', lambda: next(ticks))
+    # Replace the browser's `time`, not `module.time.monotonic`: that is the stdlib's clock, which other
+    # threads' event loops read too.
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: next(ticks)))
     entries[0] = replace(entries[0], title='Named in background')
     assert widget.loop() == ''
     assert isinstance(widget.output, StringIO)
@@ -241,9 +244,26 @@ def test_idle_refresh_and_storage_errors_stay_in_menu(monkeypatch: pytest.Monkey
 
     widget, _ = browser(keys=[Key.ENTER, Key.RIGHT, 'ctrl-c'])
     widget.preview = fail_preview
-    monkeypatch.setattr(module.time, 'monotonic', lambda: 0.0)
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: 0.0))
     assert widget.loop() == ''
     assert 'Cannot read this session' in widget.notice
+
+
+def test_moving_the_selection_never_waits_on_a_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refreshes wait for a poll without a key, so a held arrow key never waits on storage."""
+    widget, _ = browser(keys=[Key.ENTER, Key.DOWN, Key.UP, Key.DOWN, '', 'ctrl-c'])
+    refresh = widget.refresh
+    refreshed: list[str | None] = []
+
+    def counted(query: str, limit: int, archived: bool) -> list[ConversationSummary]:
+        refreshed.append(widget.selected_id)
+        return refresh(query, limit, archived)
+
+    widget.refresh = counted
+    # Every key arrives long after the last refresh.
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=count(step=1.0).__next__))
+    assert widget.loop() == ''
+    assert refreshed == ['three']
 
 
 def test_render_long_cards_all_modes_and_empty_projects() -> None:
@@ -329,7 +349,7 @@ def test_idle_loop_redraws_only_for_changes(monkeypatch: pytest.MonkeyPatch) -> 
     widget, _ = browser(keys=['', '', '', 'ctrl-c'])
     sizes = iter([(110, 24), (110, 24), (100, 24), (100, 24)])
     widget.size = lambda: next(sizes)
-    monkeypatch.setattr(module.time, 'monotonic', lambda: 0.0)
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: 0.0))
     assert widget.loop() == ''
     assert isinstance(widget.output, StringIO)
     assert widget.output.getvalue().count('CLAI > Resume session') == 2
@@ -337,10 +357,8 @@ def test_idle_loop_redraws_only_for_changes(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_failed_idle_refresh_waits_before_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     widget, _ = browser(keys=['', '', '', 'ctrl-c'])
-    # `time.monotonic` is the global one, so the clock holds its last tick for everything that
-    # reads it after the widget, such as the event loop the shared fixtures tear down on.
     ticks = chain([0.0, 0.6, 0.6, 0.7], repeat(0.8))
-    monkeypatch.setattr(module.time, 'monotonic', lambda: next(ticks))
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: next(ticks)))
     attempts: list[str] = []
 
     def fail(query: str, limit: int, archived: bool) -> list[ConversationSummary]:

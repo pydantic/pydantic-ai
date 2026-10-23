@@ -27,6 +27,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CompactionPart,
     ForceDownloadMode,
@@ -34,8 +35,11 @@ from pydantic_ai.messages import (
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
+    ToolRetryCause,
     _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     sanitize_messages,
 )
@@ -82,6 +86,7 @@ DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 _TOOL_NAME_PATTERN = re.compile(r'[a-zA-Z0-9_-]{1,64}')
 """The tool-name shape accepted by the strictest supported model providers."""
 _TOOL_AVAILABILITY_DELTA_PART_ADAPTER = TypeAdapter(ToolAvailabilityDeltaPart)
+_RETRY_FEEDBACK_PART_ADAPTER = TypeAdapter(RetryFeedbackPart)
 
 
 DEFAULT_ALLOWED_CONTENT_TYPES = frozenset({'application/json'})
@@ -271,6 +276,61 @@ def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvai
     return part
 
 
+def retry_feedback_payload(part: RetryFeedbackPart) -> dict[str, Any]:
+    """Serialize a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] for a metadata channel.
+
+    Both protocols dump harness retry feedback as a plain message, whose text is lossy — it says
+    nothing about the `retry.cause` that chose its voice — and indistinguishable from a message the client
+    wrote. So the part itself rides alongside it under a `retry_feedback` key in the metadata channel
+    each protocol already uses for Pydantic AI continuity claims (Vercel AI's `providerMetadata`,
+    AG-UI's `encrypted_value`), and that is what `load_messages` reconstructs from.
+
+    Each error's `ctx` is dropped, so this channel discloses no more than the text beside it: `ctx`
+    can hold whatever a `field_validator` was given as context, the rendered feedback never carries
+    it, and the client reads and echoes this channel. Nothing reads it back — the part is
+    reconstructed only to be rendered.
+    """
+    return _RETRY_FEEDBACK_PART_ADAPTER.dump_python(part, mode='json', exclude={'content': {'__all__': {'ctx'}}})
+
+
+_TOOL_RETRY_INFO_ADAPTER: TypeAdapter[RetryInfo[ToolRetryCause]] = TypeAdapter(RetryInfo[ToolRetryCause])
+
+
+def tool_retry_payload(retry: RetryInfo[ToolRetryCause]) -> dict[str, Any]:
+    """Serialize a retried tool return's [`retry`][pydantic_ai.messages.ToolReturnPart.retry] for a metadata channel."""
+    return _TOOL_RETRY_INFO_ADAPTER.dump_python(retry, mode='json', exclude_none=True)
+
+
+def parse_tool_retry(value: object) -> RetryInfo[ToolRetryCause] | None:
+    """Read a retried tool return's `retry` claim from a client-echoed metadata channel.
+
+    The claim is untrusted coming back in, so anything that doesn't validate, such as an unknown
+    cause, reads as `None`. It's metadata for the application only and never reaches the model, so a
+    forged one can mislead an audit but not the run.
+    """
+    try:
+        return _TOOL_RETRY_INFO_ADAPTER.validate_python(value)
+    except ValidationError:
+        return None
+
+
+def retry_feedback_from_payload(payload: object) -> RetryFeedbackPart | None:
+    """Rebuild the `RetryFeedbackPart` a dumped message claims to have been made from, or `None`.
+
+    `None` for anything that doesn't validate — including the absent payload of a system message the
+    client wrote — so only a message carrying the adapter's own marker can load as harness feedback.
+
+    Like every claim in that channel the marker is client-echoed, so it proves origin no more than a
+    `tool_kind` claim does: it separates our own dumped feedback from ordinary client system text, and
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] is what keeps a forged one from
+    reaching the model when the server owns the system prompt.
+    """
+    try:
+        return _RETRY_FEEDBACK_PART_ADAPTER.validate_python(payload)
+    except ValidationError:
+        return None
+
+
 @runtime_checkable
 class StateHandler(Protocol):
     """Protocol for state handlers in agent runs. Requires the class to be a dataclass with a `state` field."""
@@ -334,10 +394,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     """The `Accept` header value of the request, used to determine how to encode the protocol-specific events for the streaming response."""
 
     manage_system_prompt: Literal['server', 'client'] = 'server'
-    """Who owns the system prompt.
+    """Who owns the system prompt and request-level instructions in client-submitted messages.
 
-    Only affects `system_prompt` — [`instructions`][pydantic_ai.agent.Agent.instructions]
-    are always injected by the agent on every request regardless of this setting.
+    The agent's own [`instructions`][pydantic_ai.agent.Agent.instructions] are always
+    injected on every request regardless of this setting.
 
     `'server'` (default): the agent's configured `system_prompt` is authoritative.
     Any `SystemPromptPart` sent by the frontend is stripped with a warning (since a
@@ -345,11 +405,14 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     requests), and the agent's own system prompt is reinjected at the head of the
     first request via the
     [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability.
+    Request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions] on
+    frontend messages are reset to `None` as well.
 
     `'client'`: the frontend owns the system prompt. Frontend `SystemPromptPart`s
-    are preserved as-is, and the agent's configured `system_prompt` is not injected
-    — the caller is fully responsible for sending it on every turn if desired. To
-    opt into the same fallback-to-configured behavior as server mode, add the
+    and request-level `instructions` are preserved as-is, and the agent's configured
+    `system_prompt` is not injected — the caller is fully responsible for sending it
+    on every turn if desired. To opt into the same fallback-to-configured behavior as
+    server mode, add the
     [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability
     to your agent.
     """
@@ -527,7 +590,14 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
     @cached_property
     def deferred_tool_results(self) -> DeferredToolResults | None:
-        """Deferred tool results extracted from the request, used for tool approval workflows."""
+        """Deferred tool results extracted from the request, used for tool approval workflows.
+
+        An implementation may raise `UserError` to reject a malformed request: it is resolved inside
+        the stream returned by [`run_stream_native`][pydantic_ai.ui.UIAdapter.run_stream_native]
+        rather than when it is called, so the error reaches the client as a protocol error event
+        instead of escaping the streaming response. Any other exception escapes as it normally
+        would, so a bug in an implementation still surfaces as a server error.
+        """
         return None
 
     @cached_property
@@ -560,7 +630,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] — see its
         docstring for the full list of what's stripped — with these adapter-specific settings:
 
-        - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s are stripped only when
+        - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s and request-level
+          [`instructions`][pydantic_ai.messages.ModelRequest.instructions] are stripped only when
           [`manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt] is `'server'`,
           and the agent's configured `system_prompt` is reinjected by
           [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] on the next model
@@ -583,6 +654,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         return sanitize_messages(
             messages,
             strip_system_prompts=self.manage_system_prompt == 'server',
+            strip_instructions=self.manage_system_prompt == 'server',
             allowed_file_url_schemes=self.allowed_file_url_schemes,
             allowed_file_url_force_download=self.allowed_file_url_force_download,
             allow_uploaded_files=self.allow_uploaded_files,
@@ -647,6 +719,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     ) -> AsyncIterator[NativeEvent]:
         """Run the agent with the protocol-specific run input and stream Pydantic AI events.
 
+        A `UserError` from [`deferred_tool_results`][pydantic_ai.ui.UIAdapter.deferred_tool_results]
+        is re-raised on the first iteration of the returned stream rather than at the call site, so
+        a subclass rejecting a malformed request surfaces that as a protocol error event on the
+        stream. Any other exception still raises at the call site, and nothing else about the run
+        input is deferred.
+
         Args:
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
@@ -672,10 +750,25 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
             workspace: Optional [workspace](../../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
         """
-        if deferred_tool_results is None:
-            deferred_tool_results = self.deferred_tool_results
         if conversation_id is None:
             conversation_id = self.conversation_id
+
+        # A `UserError` rejecting the request is handed back as a failing stream so it reaches
+        # `transform_stream`'s error handling; the early return keeps the run setup below, like
+        # writing `deps.state`, from running for a request that never starts.
+        try:
+            if deferred_tool_results is None:
+                deferred_tool_results = self.deferred_tool_results
+        except UserError as e:
+            # Rebound because Python clears the `except ... as` name when the block exits, leaving
+            # the generator below with an unresolvable free variable.
+            error = e
+
+            async def rejected_stream() -> AsyncIterator[NativeEvent]:
+                raise error
+                yield  # pragma: no cover
+
+            return rejected_stream()
 
         frontend_messages = self.messages
         if message_history:

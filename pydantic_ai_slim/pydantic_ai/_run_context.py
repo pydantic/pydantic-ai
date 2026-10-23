@@ -558,9 +558,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
         Computed as the latest response's reported input tokens (including cached tokens) plus output
         tokens over the active model's
-        [`context_window`][pydantic_ai.models.AbstractModel.context_window]. For a response a provider
-        merged from several requests (Google long decode), whose usage sums their input tokens, the
-        input is the first request's. This estimates how full
+        [`context_window`][pydantic_ai.models.AbstractModel.context_window]. For a response whose usage
+        sums several model requests, the input is the one that measures the context: the first request's
+        of a Google long decode, and the last sampling pass's of an Anthropic response that reported its
+        passes, such as a server-side tool loop or a compaction. This estimates how full
         the next request may be; history processing and newly added content can change its actual
         size, and the value can exceed `1.0` when the last response came from a model with a larger
         window. Useful to trigger history compaction, e.g. in a
@@ -764,6 +765,31 @@ class RunContext(Generic[RunContextAgentDepsT]):
         if self.tool_manager is None or self.tool_manager.tools is None:
             return {}
         return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}
+
+    def tool_name_for_kind(self, kind: _messages.ToolKindLike) -> str | None:
+        """The name of the tool with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] in the current run step, or `None` if there is none.
+
+        Instructions and tool results can use it to name a tool without hard-coding a name that
+        may have been changed or prefixed (for example by [`PrefixTools`][pydantic_ai.capabilities.PrefixTools]).
+
+        It reads the same tools as [`tools`][pydantic_ai.tools.RunContext.tools], so a tool hidden by
+        deferred loading counts, keeping instructions that name it stable when it is revealed, and a
+        tool left out by [`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] doesn't.
+        When several tools have the kind, it returns the first in the order of
+        [`tools`][pydantic_ai.tools.RunContext.tools], which is the order the step's toolsets list
+        them in, so the answer is stable from step to step; iterate `tools` to see them all.
+
+        The step's tools are resolved before its instructions are rendered, so instruction functions,
+        model request hooks and tools all see the current step. Inside `get_tools` or a `prepare_tools`
+        hook they are still being resolved: there it answers from the previous step, or returns `None`
+        on the first. Inside a Temporal activity, where the tool manager isn't attached, it answers from a
+        snapshot taken when the activity was dispatched; anywhere else without a tool manager it returns `None`.
+
+        Args:
+            kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.
+        """
+        kind_id = _messages._tool_kind_id(kind)  # pyright: ignore[reportPrivateUsage]
+        return next((name for name, tool_def in self.tools.items() if tool_def.tool_kind == kind_id), None)
 
     @overload
     async def emit(self, event: CustomEventT, /) -> CustomEventT: ...

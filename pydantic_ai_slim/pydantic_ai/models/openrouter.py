@@ -83,7 +83,7 @@ _CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_f
 }
 
 # https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
-_OPENROUTER_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high', 'none']] = {
+_OPENROUTER_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high', 'max', 'none']] = {
     True: 'medium',
     False: 'none',
     'minimal': 'low',
@@ -91,6 +91,8 @@ _OPENROUTER_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high', 'no
     'medium': 'medium',
     'high': 'high',
     'xhigh': 'high',
+    # OpenRouter snaps `max` to the highest effort each routed model supports.
+    'max': 'max',
 }
 
 
@@ -271,7 +273,7 @@ class OpenRouterReasoning(TypedDict, total=False):
     token limits, but not both simultaneously.
     """
 
-    effort: Literal['xhigh', 'high', 'medium', 'low', 'minimal', 'none']
+    effort: Literal['max', 'xhigh', 'high', 'medium', 'low', 'minimal', 'none']
     """OpenAI-style reasoning effort level. Cannot be used with max_tokens."""
 
     max_tokens: int
@@ -733,6 +735,9 @@ def _openrouter_settings_to_openai_settings(
 
 class OpenRouterModel(OpenAIChatModel):
     """Extends OpenAIChatModel to capture extra metadata for Openrouter."""
+
+    # OpenRouter extends Chat Completions with a `video_url` content part, so video is up to the model.
+    _unsupported_file_inputs = frozenset()
 
     def __init__(
         self,

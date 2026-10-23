@@ -38,16 +38,19 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RequestUsage,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    Tool,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolKind,
     ToolReturn,
     ToolReturnPart,
     UnexpectedModelBehavior,
@@ -102,6 +105,7 @@ from ..conftest import (
     IsStr,
     RequestCapture,
     TestEnv,
+    legacy_retry_prompt_part,
     message,
     try_import,
 )
@@ -1183,11 +1187,13 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, I only know about "London".',
                         tool_name='get_location',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     ToolReturnPart(
                         tool_name='get_location',
@@ -4867,6 +4873,38 @@ async def test_openai_previous_response_id_auto_continues_an_unchanged_history_a
     assert [item.get('content') for item in second_request['input']] == ['Again']
 
 
+_LOOKUP_KIND = ToolKind('test_openai_responses', 'lookup')
+
+
+def _lookup() -> str:
+    return 'found'
+
+
+async def test_openai_previous_response_id_auto_continues_after_a_call_promoted_to_its_tool_kind(
+    allow_model_requests: None,
+):
+    """A call to a tool with a `tool_kind` is promoted after the response is digested, which changes nothing sent.
+
+    The promotion only stamps the kind onto the part, so the next request still continues from the response.
+    """
+    call = response_message([_function_call_item('fc_1', '{}')]).model_copy(update={'id': 'resp_1'})
+    mock_client = MockOpenAIResponses.create_mock([call, _text_reply('resp_2', 'done')])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        tools=[Tool(_lookup, name='lookup', tool_kind=_LOOKUP_KIND)],
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+    )
+
+    result = await agent.run('Look it up')
+
+    call_part = result.all_messages()[1].parts[0]
+    assert isinstance(call_part, ToolCallPart)
+    assert call_part.tool_kind == _LOOKUP_KIND.id
+    second_request = get_mock_responses_kwargs(mock_client)[1]
+    assert second_request['previous_response_id'] == 'resp_1'
+
+
 async def test_openai_previous_response_id_auto_ignores_application_only_metadata(allow_model_requests: None):
     """Metadata is never sent to the model, so it may hold anything, and changing it doesn't break the chain."""
     mock_client = MockOpenAIResponses.create_mock(
@@ -5149,11 +5187,13 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content=IsStr(),
                         tool_name='get_weather',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=3),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -10555,9 +10595,9 @@ async def test_openai_responses_image_generation_tool_without_image_output(
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -10719,9 +10759,9 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text or include your response in a tool call.',
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -15472,13 +15512,12 @@ async def test_openai_responses_compact_replants_standing_prompt(allow_model_req
 async def test_openai_responses_pre_compaction_introduced_tool_keeps_its_tools_declaration(
     allow_model_requests: None,
 ):
-    """The wire partition and the trim must see the same history.
+    """A delta before the compaction boundary doesn't take a tool out of `tools`.
 
-    Request building filters a delta-introduced tool out of `tools` so its `additional_tools` item
-    is the sole declaration — but when that item's carrier sits before the compaction boundary, the
-    trim drops it. Deriving `introduced_tool_names` from the trimmed history means the tool is
-    simply not "introduced" and keeps its regular `tools` declaration, instead of vanishing from
-    the request entirely."""
+    The trim drops the delta along with the rest of the pre-compaction history, so a plain tool it names
+    keeps its regular `tools` declaration rather than vanishing from the request. This calls the model
+    directly; `test_openai_responses_newcomer_before_a_compaction_is_declared_in_tools` in
+    `test_tool_population_diff.py` covers the agent run, where the newcomer tracking decides it."""
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
     tool = ToolDefinition(
@@ -18000,10 +18039,11 @@ async def _replay_input(
         provider=OpenAIProvider(api_key='not-used'),
         profile=OpenAIModelProfile(openai_responses_supports_interleaved_function_calls=not group_function_calls),
     )
+    parameters = model_request_parameters or ModelRequestParameters()
     _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        history,
+        model.prepare_messages(history, parameters),
         model_settings or OpenAIResponsesModelSettings(),
-        model_request_parameters or ModelRequestParameters(),
+        parameters,
     )
     return [dict(item) for item in items]
 
@@ -18021,7 +18061,7 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
         ),
         ModelRequest(
             parts=[
-                RetryPromptPart('read failed', tool_name='read', tool_call_id='call-a'),
+                legacy_retry_prompt_part('read failed', tool_name='read', tool_call_id='call-a'),
                 ToolReturnPart('view', 'contents', tool_call_id='call-b'),
             ]
         ),
@@ -18039,7 +18079,7 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
             {
                 'type': 'function_call_output',
                 'call_id': 'call-a',
-                'output': 'read failed\n\nFix the errors and try again.',
+                'output': '{"error":"read failed"}',
             },
             {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'contents'},
         ]
@@ -18053,7 +18093,7 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
             {
                 'type': 'function_call_output',
                 'call_id': 'call-a',
-                'output': 'read failed\n\nFix the errors and try again.',
+                'output': '{"error":"read failed"}',
             },
             {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'contents'},
         ]
@@ -18159,7 +18199,7 @@ async def test_openai_responses_function_call_grouping_ignores_active_tool_searc
         ModelRequest(
             parts=[
                 ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='shared-id'),
-                RetryPromptPart('search again', tool_name='search_tools', tool_call_id='shared-id'),
+                legacy_retry_prompt_part('search again', tool_name='search_tools', tool_call_id='shared-id'),
             ]
         ),
     ]
@@ -18600,7 +18640,7 @@ async def test_openai_responses_malformed_tool_args_degraded_on_the_wire(allow_m
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    legacy_retry_prompt_part(
                         tool_name='search_knowledge',
                         tool_call_id='call_123',
                         content='Invalid JSON: expected `,` or `}` at line 1 column 99',
