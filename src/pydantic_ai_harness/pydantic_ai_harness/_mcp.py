@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 import warnings
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from os import environ
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, PreparedToolset
-from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, PreparedToolset
 from pydantic_ai_harness._warn import MCPReadOnlyNoToolsWarning
-
-one_connection = one_per_id
-"""Resolve hosted MCP capabilities that share an `id`: one connection stated twice is one, two that disagree raise."""
 
 
 def credential(auth: str | None, *, env: str | None, service: str) -> str:
@@ -25,6 +22,32 @@ def credential(auth: str | None, *, env: str | None, service: str) -> str:
             f'Set `{env}` or pass `auth` to connect to {service}.' if env else f'Pass `auth` to connect to {service}.'
         )
     return auth
+
+
+def per_run_connection(
+    auth: Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]],
+    connect: Callable[[str], AbstractToolset[AgentDepsT]],
+    *,
+    id: str | None,
+    expects: str = 'an API key or token',
+) -> DynamicToolset[AgentDepsT]:
+    """Call `auth`, sync or async, at the start of each run and `connect` with its token; `None` or `''` means no tools.
+
+    `auth` is bound when the toolset is built, as a string `auth` is; per-run state comes from its `ctx`.
+    Registered once under a fixed `id`, as durable execution requires. `expects` names the token in the error raised
+    when `auth` returns `'oauth'`.
+    """
+
+    async def connect_for_run(ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
+        token = auth(ctx)
+        if isinstance(token, Awaitable):
+            token = await token
+        if token == 'oauth':
+            # FastMCP reads 'oauth' as "log in through a browser", which would hang a server run.
+            raise UserError(f"The `auth` function must return {expects}, not 'oauth'.")
+        return connect(token) if token else None
+
+    return DynamicToolset(connect_for_run, per_run_step=False, id=id)
 
 
 def is_read_only(tool: ToolDefinition) -> bool:

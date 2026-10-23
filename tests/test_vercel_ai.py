@@ -29,8 +29,11 @@ from pydantic_ai.messages import (
     BinaryContent,
     BinaryImage,
     CapabilityEvent,
+    Citation,
     CompactionPart,
+    ContentCitationAnchor,
     CustomEvent,
+    DocumentCitationSource,
     DocumentUrl,
     EnqueuedMessagesEvent,
     FilePart,
@@ -41,6 +44,7 @@ from pydantic_ai.messages import (
     InstructionId,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
+    MarkerCitationAnchor,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -75,8 +79,7 @@ from pydantic_ai.messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
-    _clean_message_history,  # pyright: ignore[reportPrivateUsage]
-    sanitize_messages,
+    WebCitationSource,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import (
@@ -100,6 +103,7 @@ from pydantic_ai.usage import UsageLimits
 from ._inline_snapshot import snapshot
 from .conftest import (
     IsDatetime,
+    IsList,
     IsSameStr,
     IsStr,
     iter_message_parts,
@@ -133,6 +137,7 @@ with try_import() as starlette_import_successful:
         FileUIPart,
         ReasoningUIPart,
         RegenerateMessage,
+        SourceUrlUIPart,
         StepStartUIPart,
         SubmitMessage,
         TextUIPart,
@@ -153,6 +158,7 @@ with try_import() as starlette_import_successful:
         FileChunk,
         SourceDocumentChunk,
         SourceUrlChunk,
+        TextEndChunk,
         ToolInputStartChunk,
     )
 
@@ -1509,7 +1515,26 @@ Want me to tailor\
             {
                 'type': 'text-end',
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'id': IsStr(), 'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': IsStr(),
+                        'provider_name': 'openai',
+                        'provider_details': {'citations': IsList(length=(1, ...))},
+                        'citations': IsList(length=(1, ...)),
+                    }
+                },
+            },
+            {
+                'type': 'source-url',
+                'sourceId': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html',
+                'url': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html',
+                'title': 'OpenTelemetry FastAPI Instrumentation — OpenTelemetry Python Contrib  documentation',
+            },
+            {
+                'type': 'source-url',
+                'sourceId': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/logging/logging.html?utm_source=openai',
+                'url': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/logging/logging.html?utm_source=openai',
+                'title': 'OpenTelemetry Logging Instrumentation — OpenTelemetry Python Contrib documentation',
             },
             {
                 'type': 'message-metadata',
@@ -1810,6 +1835,392 @@ async def test_event_stream_without_run_input():
             {'type': 'finish'},
         ]
     )
+
+
+def _cited_text_parts() -> list[TextPart]:
+    """Two consecutive cited text parts, which the Vercel AI protocol merges into one UI text part."""
+    repo = WebCitationSource('https://github.com/pydantic/pydantic-ai', title='pydantic/pydantic-ai')
+    docs = WebCitationSource('https://pydantic.dev/docs/ai/', title='Pydantic AI docs')
+    notes = DocumentCitationSource(document_id='file-1', title='notes.txt')
+    return [
+        TextPart(
+            'Pydantic AI is on GitHub.',
+            provider_name='google',
+            citations=[Citation([repo], anchor=ContentCitationAnchor(start=0, end=24))],
+        ),
+        TextPart(
+            ' Its docs are online.',
+            provider_name='google',
+            citations=[
+                Citation([repo, docs], anchor=ContentCitationAnchor(start=1, end=20)),
+                Citation([notes]),
+            ],
+        ),
+    ]
+
+
+async def test_event_stream_citations():
+    """Citations of merged text parts go on the `text-end` chunk, anchored to the combined text, and each web source
+    URL is listed once as a `source-url` chunk.
+
+    Unit test: no recorded provider streams two consecutive text parts that both carry anchored citations.
+    """
+    first, second = _cited_text_parts()
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=first)
+        yield PartEndEvent(index=0, part=first, next_part_kind='text')
+        yield PartStartEvent(index=1, part=second, previous_part_kind='text')
+        yield PartEndEvent(index=1, part=second)
+
+    event_stream = VercelAIEventStream()
+    chunks = [
+        chunk
+        async for chunk in event_stream.transform_stream(event_generator())
+        if isinstance(chunk, TextEndChunk | SourceUrlChunk)
+    ]
+
+    [text_end, *source_urls] = chunks
+    assert isinstance(text_end, TextEndChunk)
+    assert text_end.provider_metadata == snapshot(
+        {
+            'pydantic_ai': {
+                'provider_name': 'google',
+                'citations': [
+                    {
+                        'sources': [
+                            {
+                                'url': 'https://github.com/pydantic/pydantic-ai',
+                                'title': 'pydantic/pydantic-ai',
+                                'excerpts': [],
+                                'kind': 'web',
+                            }
+                        ],
+                        'anchor': {'start': 0, 'end': 24, 'kind': 'content'},
+                    },
+                    {
+                        'sources': [
+                            {
+                                'url': 'https://github.com/pydantic/pydantic-ai',
+                                'title': 'pydantic/pydantic-ai',
+                                'excerpts': [],
+                                'kind': 'web',
+                            },
+                            {
+                                'url': 'https://pydantic.dev/docs/ai/',
+                                'title': 'Pydantic AI docs',
+                                'excerpts': [],
+                                'kind': 'web',
+                            },
+                        ],
+                        'anchor': {'start': 26, 'end': 45, 'kind': 'content'},
+                    },
+                    {
+                        'sources': [
+                            {
+                                'document_id': 'file-1',
+                                'title': 'notes.txt',
+                                'excerpts': [],
+                                'kind': 'document',
+                            }
+                        ],
+                        'anchor': None,
+                    },
+                ],
+            }
+        }
+    )
+    assert source_urls == snapshot(
+        [
+            SourceUrlChunk(
+                source_id='https://github.com/pydantic/pydantic-ai',
+                url='https://github.com/pydantic/pydantic-ai',
+                title='pydantic/pydantic-ai',
+            ),
+            SourceUrlChunk(
+                source_id='https://pydantic.dev/docs/ai/', url='https://pydantic.dev/docs/ai/', title='Pydantic AI docs'
+            ),
+        ]
+    )
+
+
+def test_dump_and_load_citations():
+    """`dump_messages` lists each web source once after the merged text part; `load_messages` loads it back as one
+    text part with every citation, anchored in the merged text.
+
+    Unit test: no recorded provider returns two consecutive text parts that both carry anchored citations.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Where is Pydantic AI?')]),
+        ModelResponse(parts=list(_cited_text_parts()), provider_name='google'),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    assert [part for part in ui_messages[1].parts if isinstance(part, SourceUrlUIPart)] == snapshot(
+        [
+            SourceUrlUIPart(
+                source_id='https://github.com/pydantic/pydantic-ai',
+                url='https://github.com/pydantic/pydantic-ai',
+                title='pydantic/pydantic-ai',
+            ),
+            SourceUrlUIPart(
+                source_id='https://pydantic.dev/docs/ai/', url='https://pydantic.dev/docs/ai/', title='Pydantic AI docs'
+            ),
+        ]
+    )
+
+    [loaded] = VercelAIAdapter.load_messages(ui_messages)[1].parts
+    assert isinstance(loaded, TextPart)
+    assert loaded.citations == snapshot(
+        [
+            Citation(
+                sources=[
+                    WebCitationSource(url='https://github.com/pydantic/pydantic-ai', title='pydantic/pydantic-ai')
+                ],
+                anchor=ContentCitationAnchor(start=0, end=24),
+            ),
+            Citation(
+                sources=[
+                    WebCitationSource(url='https://github.com/pydantic/pydantic-ai', title='pydantic/pydantic-ai'),
+                    WebCitationSource(url='https://pydantic.dev/docs/ai/', title='Pydantic AI docs'),
+                ],
+                anchor=ContentCitationAnchor(start=26, end=45),
+            ),
+            Citation(sources=[DocumentCitationSource(document_id='file-1', title='notes.txt')]),
+        ]
+    )
+
+
+def test_load_invalid_citations():
+    """Provider metadata is client-controlled, so a citation that doesn't validate, or `provider_details` that isn't a
+    dict, is dropped, and the text and the other citations still load.
+
+    Unit test: no recorded answer holds an invalid citation, since only a client can send one.
+    """
+    ui_messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                TextUIPart(
+                    text='Hello',
+                    provider_metadata={
+                        'pydantic_ai': {
+                            'provider_name': 'anthropic',
+                            'citations': [
+                                # empty sources fails validation
+                                {'sources': []},
+                                {'sources': [{'url': 'https://example.com', 'kind': 'web'}]},
+                            ],
+                        }
+                    },
+                ),
+                TextUIPart(text='Bye', provider_metadata={'pydantic_ai': {'citations': 'not a list'}}),
+                TextUIPart(text='Again', provider_metadata={'pydantic_ai': {'provider_details': 'not a dict'}}),
+            ],
+        )
+    ]
+
+    assert VercelAIAdapter.load_messages(ui_messages)[0].parts == snapshot(
+        [
+            TextPart(
+                content='Hello',
+                provider_name='anthropic',
+                citations=[Citation(sources=[WebCitationSource(url='https://example.com')])],
+            ),
+            TextPart(content='Bye'),
+            TextPart(content='Again'),
+        ]
+    )
+
+
+def test_load_citations_outside_text():
+    """Citations whose anchor doesn't fit in the text part are dropped, and the others still load.
+
+    Unit test: no recorded answer has an anchor past its text, since only a client can send one.
+    """
+    source = {'url': 'https://example.com', 'kind': 'web'}
+    ui_messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                TextUIPart(
+                    text='Hello [1]',
+                    provider_metadata={
+                        'pydantic_ai': {
+                            'citations': [
+                                {'sources': [source], 'anchor': {'start': 6, 'end': 9, 'kind': 'marker'}},
+                                {'sources': [source], 'anchor': {'start': 6, 'end': 500, 'kind': 'marker'}},
+                            ]
+                        }
+                    },
+                )
+            ],
+        )
+    ]
+
+    assert VercelAIAdapter.load_messages(ui_messages)[0].parts == snapshot(
+        [
+            TextPart(
+                content='Hello [1]',
+                citations=[
+                    Citation(
+                        sources=[WebCitationSource(url='https://example.com')],
+                        anchor=MarkerCitationAnchor(start=6, end=9),
+                    )
+                ],
+            )
+        ]
+    )
+
+
+def _anthropic_web_search_parts() -> list[TextPart]:
+    """Text parts shaped like an Anthropic web search answer: plain and cited parts alternate, and each citation covers
+    the whole part it's on."""
+
+    def cited(text: str, url: str, excerpt: str) -> TextPart:
+        raw_citation = {
+            'type': 'web_search_result_location',
+            'url': url,
+            'title': 'Pydantic AI',
+            'cited_text': excerpt,
+            'encrypted_index': 'EpIBCioIBhgC',
+        }
+        source = WebCitationSource(url, title='Pydantic AI', excerpts=[excerpt])
+        return TextPart(
+            text,
+            provider_name='anthropic',
+            provider_details={'citations': [raw_citation]},
+            citations=[Citation([source], anchor=ContentCitationAnchor(start=0, end=len(text)))],
+        )
+
+    return [
+        TextPart('I found the docs. '),
+        cited('Pydantic AI is a Python agent framework', 'https://pydantic.dev/docs/ai/', 'a Python agent framework'),
+        TextPart(', and '),
+        cited('its source is on GitHub', 'https://github.com/pydantic/pydantic-ai', 'pydantic/pydantic-ai'),
+        TextPart('.'),
+    ]
+
+
+def _bedrock_document_parts() -> list[TextPart]:
+    """Text parts shaped like a Bedrock document answer: a cited part has one citation covering all of its text."""
+    excerpt = 'Refunds are accepted within 30 days.'
+    raw_citation = {
+        'title': 'policy',
+        'sourceContent': [{'text': excerpt}],
+        'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': len(excerpt)}},
+    }
+    source = DocumentCitationSource(title='policy', excerpts=[excerpt])
+    return [
+        TextPart('Per the policy: '),
+        TextPart(
+            'Thirty days.',
+            provider_name='bedrock',
+            provider_details={'citations': [raw_citation]},
+            citations=[Citation([source], anchor=ContentCitationAnchor(start=0, end=12))],
+        ),
+    ]
+
+
+def _openai_responses_parts() -> list[TextPart]:
+    """Text parts shaped like two OpenAI Responses messages: each annotation's range covers the link in its own text."""
+
+    def cited(text: str, url: str, message_id: str) -> TextPart:
+        start = text.index('([')
+        raw_citation = {
+            'type': 'url_citation',
+            'url': url,
+            'title': 'Source',
+            'start_index': start,
+            'end_index': len(text),
+        }
+        return TextPart(
+            text,
+            id=message_id,
+            provider_name='openai',
+            provider_details={'citations': [raw_citation, {'type': 'file_citation', 'file_id': 'file-1', 'index': 0}]},
+            citations=[
+                Citation(
+                    [WebCitationSource(url, title='Source')], anchor=MarkerCitationAnchor(start=start, end=len(text))
+                )
+            ],
+        )
+
+    return [
+        cited('Shipping is fast ([a.com](https://a.com))', 'https://a.com', 'msg-1'),
+        cited(' and returns are easy ([b.com](https://b.com))', 'https://b.com', 'msg-2'),
+    ]
+
+
+def _joined_raw_citations(parts: list[TextPart]) -> list[dict[str, Any]]:
+    return [raw for part in parts for raw in (part.provider_details or {}).get('citations', [])]
+
+
+@pytest.mark.parametrize(
+    'parts,expected_raw_citations',
+    [
+        pytest.param(
+            _anthropic_web_search_parts(), _joined_raw_citations(_anthropic_web_search_parts()), id='anthropic'
+        ),
+        pytest.param(_bedrock_document_parts(), _joined_raw_citations(_bedrock_document_parts()), id='bedrock'),
+        pytest.param(
+            _openai_responses_parts(),
+            # The second message's annotations move by the first message's length, 41.
+            [
+                {'type': 'url_citation', 'url': 'https://a.com', 'title': 'Source', 'start_index': 17, 'end_index': 41},
+                {'type': 'file_citation', 'file_id': 'file-1', 'index': 0},
+                {'type': 'url_citation', 'url': 'https://b.com', 'title': 'Source', 'start_index': 63, 'end_index': 87},
+                {'type': 'file_citation', 'file_id': 'file-1', 'index': 41},
+            ],
+            id='openai',
+        ),
+    ],
+)
+async def test_merged_text_parts_round_trip(parts: list[TextPart], expected_raw_citations: list[dict[str, Any]]):
+    """Consecutive text parts are shown as one UI text part and load back as one text part with every citation,
+    whether the message was dumped or streamed.
+
+    Our citations' anchors and OpenAI's raw positions are moved onto the merged text, so each still selects the text
+    it did before; other providers' raw citations point into the cited document and are joined unchanged.
+
+    Unit test: merging is the adapter's own transformation, and no recorded response has merged text parts with both
+    providers' citation shapes.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='What is Pydantic AI?')]),
+        ModelResponse(parts=parts),
+    ]
+    dumped = VercelAIAdapter.dump_messages(messages)
+    [text_ui_part] = [part for part in dumped[1].parts if isinstance(part, TextUIPart)]
+    [loaded] = VercelAIAdapter.load_messages(dumped)[1].parts
+    assert isinstance(loaded, TextPart)
+
+    merged = ''.join(part.content for part in parts)
+    assert loaded.content == merged
+    # The first part may have no provider name; the cited parts' provider is the one replay sends citations back to.
+    assert loaded.provider_name == next(part.provider_name for part in parts if part.citations)
+    assert loaded.id == parts[0].id
+    assert (loaded.provider_details or {})['citations'] == expected_raw_citations
+
+    expected_selections = [
+        part.content[citation.anchor.start : citation.anchor.end]
+        for part in parts
+        for citation in part.citations or []
+        if citation.anchor
+    ]
+    assert [merged[c.anchor.start : c.anchor.end] for c in loaded.citations or [] if c.anchor] == expected_selections
+
+    async def event_generator():
+        for index, part in enumerate(parts):
+            yield PartStartEvent(index=index, part=part, previous_part_kind='text' if index else None)
+            yield PartEndEvent(index=index, part=part, next_part_kind='text' if index < len(parts) - 1 else None)
+
+    event_stream = VercelAIEventStream()
+    chunks = [chunk async for chunk in event_stream.transform_stream(event_generator())]
+    [text_end] = [chunk for chunk in chunks if isinstance(chunk, TextEndChunk)]
+    assert text_end.provider_metadata == text_ui_part.provider_metadata
 
 
 async def test_tool_call_delta_dict_args_are_serialized_compactly():
@@ -12109,13 +12520,13 @@ async def test_request_scoped_reminder_is_not_streamed(manage_system_prompt: Lit
 
 
 @pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
-async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt: Literal['server', 'client']) -> None:
+async def test_enqueued_messages_stream(manage_system_prompt: Literal['server', 'client']) -> None:
     """Enqueued messages reach a client that rebuilds history from the stream, without becoming chat messages.
 
     They ride in a `data-enqueued-messages` part, which the AI SDK keeps on the assistant message without
-    rendering it, and load back as their own requests at the position they were delivered in. An enqueued
-    system prompt is only sent when the frontend owns the system prompt, since it would otherwise be
-    stripped on the way back in.
+    rendering it. An enqueued system prompt is only sent when the frontend owns the system prompt, since it
+    would otherwise be stripped on the way back in. That they load back as their own requests, at the
+    position they were delivered in, is checked with the real AI SDK client in `tests/ui_roundtrip`.
     """
 
     async def stream_function(
@@ -12142,12 +12553,9 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
         sdk_version=6,
         manage_system_prompt=manage_system_prompt,
     )
-    server_history: list[ModelMessage] = []
     chunks = [
         json.loads(encoded.removeprefix('data: '))
-        async for encoded in adapter.encode_stream(
-            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
-        )
+        async for encoded in adapter.encode_stream(adapter.run_stream())
         if '[DONE]' not in encoded
     ]
 
@@ -12186,34 +12594,6 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
     types = [chunk['type'] for chunk in chunks]
     assert types.index('tool-output-available') < types.index('data-enqueued-messages') < types.index('text-start')
 
-    client_ui = [user, _reduce_assistant_message(chunks, 'assistant-1')]
-    reloaded = VercelAIAdapter(
-        agent,
-        SubmitMessage(id='chat-1', messages=client_ui),
-        manage_system_prompt=manage_system_prompt,
-    )
-    loaded = reloaded.sanitize_messages(reloaded.messages)
-    if manage_system_prompt == 'server':
-        # Server history keeps the enqueued system prompt (#10389), which the frontend was never sent.
-        with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
-            expected = sanitize_messages(server_history)
-    else:
-        expected = sanitize_messages(server_history, strip_system_prompts=False)
-    # Server history has the enqueued parts in the tool's request, right after its return. The client loads
-    # them back as their own request after it, which renders the same once the two are merged for the model.
-    assert _model_visible(_clean_message_history(loaded)) == _model_visible(_clean_message_history(expected))
-    assert _model_visible(loaded) == [
-        ('request', [('user-prompt', 'Go')]),
-        ('response', [('tool-call', {})]),
-        ('request', [('tool-return', 'started')]),
-        ('request', [('user-prompt', 'Background result: 42')]),
-        *([('request', [('system-prompt', 'Announcement')])] if manage_system_prompt == 'client' else []),
-        # An enqueued response stays its own message: the model's next text doesn't extend it.
-        ('response', [('text', 'Synthetic reply')]),
-        ('request', [('user-prompt', 'Synthetic follow-up')]),
-        ('response', [('text', 'done')]),
-    ]
-
 
 async def test_enqueued_messages_stream_strips_server_owned_system_prompts() -> None:
     """A standalone stream defaults to a server-owned system prompt and keeps it off the wire.
@@ -12235,6 +12615,40 @@ async def test_enqueued_messages_stream_strips_server_owned_system_prompts() -> 
         for chunk in chunks
         if isinstance(chunk, DataChunk)
     ] == [[('assistant', 'synthetic'), ('user', 'visible')]]
+
+
+def test_enqueued_messages_after_tool_result_load_after_it() -> None:
+    """Enqueued messages the stream delivered after a step's tool result load after that result.
+
+    This is the shape the AI SDK builds from the stream; `tests/ui_roundtrip` checks it with the real client.
+    """
+    ui_messages = [
+        UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Go')]),
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                StepStartUIPart(),
+                ToolOutputAvailablePart(type='tool-work', tool_call_id='work-1', input={}, output='started'),
+                DataUIPart(
+                    type='data-enqueued-messages',
+                    data={
+                        'messages': [{'id': 'bg', 'role': 'user', 'parts': [{'type': 'text', 'text': 'Background'}]}]
+                    },
+                ),
+                StepStartUIPart(),
+                TextUIPart(text='done'),
+            ],
+        ),
+    ]
+
+    assert _model_visible(VercelAIAdapter.load_messages(ui_messages)) == [
+        ('request', [('user-prompt', 'Go')]),
+        ('response', [('tool-call', {})]),
+        ('request', [('tool-return', 'started')]),
+        ('request', [('user-prompt', 'Background')]),
+        ('response', [('text', 'done')]),
+    ]
 
 
 def test_enqueued_messages_keep_their_own_message_ids() -> None:

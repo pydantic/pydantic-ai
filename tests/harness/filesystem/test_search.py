@@ -234,9 +234,9 @@ async def test_posix_oversized_line_keeps_later_matches(tmp_path: Path, no_rg_gi
 
 
 async def test_posix_output_cap_reports_truncation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # A smaller cap stands in for `_MAX_OUTPUT_BYTES`; the file still overflows it and the pipe buffer
+    # A smaller cap stands in for `MAX_OUTPUT_BYTES`; the file still overflows it and the pipe buffer
     # many times over, so `head` closes the pipe while the search is still writing.
-    monkeypatch.setattr('pydantic_ai_harness.filesystem._command_search._MAX_OUTPUT_BYTES', 50_000)
+    monkeypatch.setattr('pydantic_ai_harness.filesystem._command_search.MAX_OUTPUT_BYTES', 50_000)
     bin_dir, scratch, root = tmp_path / 'bin', tmp_path / 'scratch', tmp_path / 'ws'
     path = tools_path(bin_dir, exclude=frozenset({'rg', 'mktemp'}))
     # Put the search's temp files in a known directory: BSD mktemp ignores TMPDIR here.
@@ -257,8 +257,8 @@ async def test_posix_output_cap_reports_truncation(tmp_path: Path, monkeypatch: 
 async def test_posix_output_cap_drops_the_match_line_it_cuts(
     tmp_path: Path, no_rg_git_path: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A smaller cap stands in for `_MAX_OUTPUT_BYTES`, so it lands inside the second file's long line cheaply.
-    monkeypatch.setattr('pydantic_ai_harness.filesystem._command_search._MAX_OUTPUT_BYTES', 50_000)
+    # A smaller cap stands in for `MAX_OUTPUT_BYTES`, so it lands inside the second file's long line cheaply.
+    monkeypatch.setattr('pydantic_ai_harness.filesystem._command_search.MAX_OUTPUT_BYTES', 50_000)
     (tmp_path / 'a.txt').write_text('needle\n')
     (tmp_path / 'b.txt').write_text('needle' + 'x' * 100_000 + '\n')
     backend = CountingBackend(tmp_path, no_rg_git_path)
@@ -463,7 +463,7 @@ async def test_include_glob_with_a_slash_keeps_rg_to_its_directories(
         (tmp_path / 'aaa' / f'{n}.py').write_text('needle\n' * 20)
     (tmp_path / 'src' / 'pkg').mkdir(parents=True)
     (tmp_path / 'src' / 'pkg' / 'm.py').write_text('needle\n')
-    monkeypatch.setattr('pydantic_ai_harness.filesystem._ripgrep._MAX_OUTPUT_BYTES', 2_000)
+    monkeypatch.setattr('pydantic_ai_harness.filesystem._ripgrep.MAX_OUTPUT_BYTES', 2_000)
     tools = FileSystem[None]().get_toolset()
     assert isinstance(tools, FileSystemToolset)
     workspace = LocalWorkspaceBackend(tmp_path)

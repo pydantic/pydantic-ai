@@ -64,28 +64,16 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
         return result.output
     ```
 
-    Search is conversation-scoped by default, so reaching a past run requires both
-    runs to share a `conversation_id`. pydantic-ai resolves one per run: an explicit
-    `conversation_id=` wins, otherwise the most recent `conversation_id` on
-    `message_history` is inherited, otherwise a fresh one is generated. Threading
-    `message_history` through follow-up runs keeps them in one conversation; runs
-    sharing neither an explicit id nor a history chain are separate.
+    Search is conversation-scoped by default (see `scope`), so reaching a past run
+    requires both runs to share a `conversation_id`. A run inherits the id from
+    `message_history`, so threading history through follow-up runs keeps them in one
+    conversation. History a run inherits is indexed under the run that first
+    persisted it, except a request a later run adds an instruction change to, which is
+    indexed again with that change.
 
-    `scope` defaulted to `all` in earlier releases and now defaults to `conversation`.
-    Upgrading raises nothing -- a store-wide caller keeps working with a narrower corpus
-    -- so leaving `scope` unset emits a `HarnessDeprecationWarning` once per instance.
-    Pass `scope='all'` to restore the old behavior or `scope='conversation'` to keep the
-    new one; both are supported and neither is deprecated. The transitional warning will
-    be removed in the next breaking release; the conversation-scoped default will remain.
-
-    Some compaction strategies persist their edits into the run's durable message
-    history (`SummarizingCompaction` replaces summarized prefixes for good; a
-    `SlidingWindowCompaction` trim only narrows what each request sends). Either way,
-    `StepPersistence` snapshots each step boundary before the next compaction runs,
-    so the union of a run's snapshots still holds the originals --
-    `SnapshotHistorySource` recovers them. No ordering or hook coordination between
-    the capabilities is required; the search tool reads the store lazily at call
-    time.
+    `StepPersistence` snapshots each step boundary before the next compaction runs, so
+    the union of a run's snapshots still holds messages a compaction later replaced.
+    The capabilities can be listed in any order: the tool reads the store when called.
     """
 
     source: HistorySource
@@ -101,13 +89,11 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
     run the source enumerates and must only be used when the store is already isolated
     to one principal.
 
-    `None` means the caller did not choose, which resolves to `conversation` and emits a
-    `HarnessDeprecationWarning` once per instance: this default was `all` in earlier
-    releases, and the change is otherwise silent because a store-wide caller keeps working
-    and simply stops seeing other conversations. Set the option explicitly to opt out of
-    the warning; both values are supported and neither is deprecated. The transitional
-    warning will be removed in the next breaking release; the conversation-scoped default
-    will remain.
+    `None` means the caller did not choose. It resolves to `conversation` and emits a
+    `HarnessDeprecationWarning` once per instance, because this default was `all` in
+    earlier releases and a store-wide caller would otherwise get a narrower corpus with no
+    error. Pass either value to silence it; neither is deprecated. The warning will be
+    removed in the next breaking release; the conversation-scoped default will remain.
     """
 
     tool_id: str = 'conversation-search'
@@ -117,7 +103,7 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
     """Maximum number of matching excerpts the search tool returns. Must be non-negative."""
 
     context_lines: int = 5
-    """Number of surrounding lines shown around each search match. Must be non-negative."""
+    """Number of surrounding messages shown around each search match, within the match's run. Must be non-negative."""
 
     bm25_k1: float = 1.5
     """BM25 term-frequency saturation, non-negative. This capability's default; Lucene's
