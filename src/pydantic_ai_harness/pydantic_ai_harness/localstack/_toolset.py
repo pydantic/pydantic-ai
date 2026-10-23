@@ -1,18 +1,21 @@
-"""LocalStack toolset — gives agents access to an emulated AWS environment."""
+"""LocalStack toolset that gives agents access to an emulated AWS environment."""
 
 from __future__ import annotations
 
 import os
 import shlex
+import subprocess
 import tempfile
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
-from typing import Any, Self
-from urllib.parse import urlsplit
+from typing import IO, Annotated, Any, Self
 
 import anyio
+import anyio.to_thread
 import httpx
+from pydantic import Field
 
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
@@ -20,10 +23,15 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai_harness._durable import RetryRequest, raise_retry
 from pydantic_ai_harness._output import truncate_tail
-from pydantic_ai_harness.localstack._container import LocalStackContainer
+from pydantic_ai_harness.localstack._container import (
+    LocalStackContainer,
+    endpoint_port,
+    managed_endpoint_url,
+    validate_host_address,
+)
 
 _HEALTH_PATH = '/_localstack/health'
-_DEFAULT_EDGE_PORT = 4566
+_UTF8_MAX_BYTES_PER_CHAR = 4
 _AWS_GLOBAL_OPTIONS_WITH_VALUE = {
     '--ca-bundle',
     '--cli-binary-format',
@@ -36,12 +44,53 @@ _AWS_GLOBAL_OPTIONS_WITH_VALUE = {
     '--query',
     '--region',
 }
+_AWS_GLOBAL_FLAGS = {
+    '--cli-auto-prompt',
+    '--debug',
+    '--no-cli-auto-prompt',
+    '--no-cli-pager',
+    '--no-paginate',
+    '--no-sign-request',
+    '--no-verify-ssl',
+    '--version',
+}
+_AWS_GLOBAL_OPTIONS = _AWS_GLOBAL_OPTIONS_WITH_VALUE | _AWS_GLOBAL_FLAGS
 _FORBIDDEN_MODEL_GLOBAL_OPTIONS = {
     '--endpoint-url',
     '--no-sign-request',
     '--profile',
     '--region',
 }
+
+
+def validate_settings(
+    *, allowed_services: Sequence[str], denied_services: Sequence[str], max_output_chars: int
+) -> None:
+    """Reject settings that `LocalStack` and `LocalStackToolset` cannot run with."""
+    if allowed_services and denied_services:
+        raise ValueError('Specify `allowed_services` or `denied_services`, not both.')
+    if max_output_chars <= 0:
+        raise ValueError('`max_output_chars` must be a positive integer.')
+
+
+def _resolve_global_option(name: str) -> str | None:
+    """Return the AWS CLI global option `name` selects, or None when it selects none.
+
+    Matches the CLI's argparse parsing: an exact name wins, otherwise a prefix
+    selects the one global option it starts (`--out` selects `--output`), and an
+    ambiguous or unknown prefix selects none.
+    """
+    if name in _AWS_GLOBAL_OPTIONS:
+        return name
+    matches = [option for option in _AWS_GLOBAL_OPTIONS if option.startswith(name)]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _read_tail(file: IO[bytes], max_chars: int) -> str:
+    """Decode the end of `file`, reading at most the bytes `max_chars` characters can take."""
+    size = file.seek(0, os.SEEK_END)
+    file.seek(max(0, size - max_chars * _UTF8_MAX_BYTES_PER_CHAR))
+    return file.read().decode('utf-8', errors='replace')
 
 
 @dataclass(frozen=True)
@@ -63,7 +112,9 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
     `localstack_health` reports which emulated services are available.
 
     Commands are executed as an argument vector (no shell), so shell operators
-    and redirection in the command string have no effect.
+    and redirection in the command string have no effect. Each command runs with
+    stdin closed and with its own empty AWS config and credentials files in place
+    of `~/.aws/config` and `~/.aws/credentials`.
 
     `LocalStack` passes `operations` so that each command and health check runs
     as one of its durable operations, whose result durable execution records
@@ -95,12 +146,18 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         operations: LocalStackOperations | None = None,
     ) -> None:
         super().__init__(id=id)
-        if allowed_services and denied_services:
-            raise ValueError('Specify allowed_services or denied_services, not both.')
-        if max_output_chars <= 0:
-            raise ValueError('max_output_chars must be a positive integer.')
+        validate_settings(
+            allowed_services=allowed_services, denied_services=denied_services, max_output_chars=max_output_chars
+        )
+        self._host_port = endpoint_port(endpoint_url) if manage_container else None
+        if manage_container:
+            validate_host_address(host_address)
 
-        self._endpoint_url = endpoint_url
+        # A managed container's endpoint depends only on where it is published, so every instance
+        # sharing these settings, and any tool bound to one of them, names the same endpoint.
+        self._endpoint_url = (
+            endpoint_url if self._host_port is None else managed_endpoint_url(host_address, self._host_port)
+        )
         self._region = region
         self._access_key_id = access_key_id
         self._secret_access_key = secret_access_key
@@ -119,19 +176,30 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         self._docker_path = docker_path
         self._startup_timeout = startup_timeout
         self._container: LocalStackContainer | None = None
+        self._entered_count = 0
         self._operations = operations
 
         self.add_function(self.aws_cli, name='aws_cli')
         self.add_function(self.localstack_health, name='localstack_health')
 
-    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        """Return a fresh instance per run so a managed container is isolated and torn down.
+    @cached_property
+    def _enter_lock(self) -> anyio.Lock:
+        # Created on first entry so the lock binds to the loop that enters the toolset.
+        return anyio.Lock()
 
-        `get_toolset` builds one shared instance at agent construction. When this
-        toolset manages a Docker container it holds per-run lifecycle state, so each
-        run gets its own instance (and its own container) that `__aexit__` can stop.
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        """Return the instance this run enters: a fresh one when it needs its own container.
+
+        `get_toolset` builds one shared instance at agent construction. A toolset
+        that does not manage a container holds no per-run state, so every run
+        shares it. A managed toolset gives each run its own instance (and its own
+        container) that `__aexit__` can stop, unless the shared instance already
+        runs a container, as it does inside `async with agent:`. Runs then share
+        that container, which stops when the agent context exits.
         """
-        return LocalStackToolset[AgentDepsT](
+        if not self._manage_container or self._container is not None:
+            return self
+        toolset = LocalStackToolset[AgentDepsT](
             endpoint_url=self._endpoint_url,
             region=self._region,
             access_key_id=self._access_key_id,
@@ -153,6 +221,10 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
             id=self.id,
             operations=self._operations,
         )
+        # Carry over tools added after construction; the built-in ones stay bound to the new instance.
+        for name, tool in self.tools.items():
+            toolset.tools.setdefault(name, tool)
+        return toolset
 
     async def call_tool(
         self,
@@ -161,45 +233,60 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
     ) -> Any:
-        """Enforce the model-visible output cap at the tool dispatch seam.
+        """Cap every `str` tool result at the dispatch seam, as a backstop.
 
-        Only `str` results are capped; a future tool returning rich content
-        (e.g. `ToolReturn`) needs this seam extended.
+        `aws_cli` and `localstack_health` already cap their own output so durable
+        records stay bounded; this seam also covers tools added after
+        construction. A tool returning rich content (e.g. `ToolReturn`) needs
+        this seam extended.
         """
         result = await super().call_tool(name, tool_args, ctx, tool)
         if not isinstance(result, str):
             return result
         return truncate_tail(result, self._max_output_chars)
 
-    def _host_port(self) -> int:
-        """Host port to bind the container's edge port to, parsed from `endpoint_url`."""
-        return urlsplit(self._endpoint_url).port or _DEFAULT_EDGE_PORT
-
     async def __aenter__(self) -> Self:
-        """Start the managed LocalStack container, if configured, before tools run."""
-        if self._manage_container:
-            container = LocalStackContainer(
-                image=self._image,
-                host_port=self._host_port(),
-                host_address=self._host_address,
-                service_port_range=self._service_port_range,
-                mount_docker_socket=self._mount_docker_socket,
-                container_name=self._container_name,
-                environment=self._container_env,
-                docker_path=self._docker_path,
-                startup_timeout=self._startup_timeout,
-            )
-            await container.__aenter__()
-            self._container = container
-            self._endpoint_url = container.endpoint_url
+        """Start the managed LocalStack container, if configured, before tools run.
+
+        Entering is reentrant: only the first entry starts the container and only
+        the matching last exit stops it.
+        """
+        host_port = self._host_port
+        if host_port is None:
+            return self
+        async with self._enter_lock:
+            if self._entered_count == 0:
+                if self._container is not None:
+                    # The last exit failed to stop it; stop it now rather than start another on its port.
+                    await self._container.__aexit__(None, None, None)
+                    self._container = None
+                container = LocalStackContainer(
+                    image=self._image,
+                    host_port=host_port,
+                    host_address=self._host_address,
+                    service_port_range=self._service_port_range,
+                    mount_docker_socket=self._mount_docker_socket,
+                    container_name=self._container_name,
+                    environment=self._container_env,
+                    docker_path=self._docker_path,
+                    startup_timeout=self._startup_timeout,
+                )
+                await container.__aenter__()
+                self._container = container
+            self._entered_count += 1
         return self
 
     async def __aexit__(self, *args: object) -> None:
-        """Stop the managed LocalStack container, if one was started."""
-        if self._container is not None:
-            container = self._container
-            self._container = None
-            await container.__aexit__(*args)
+        """Stop the managed LocalStack container once the last entry exits."""
+        if self._host_port is None:
+            return
+        # Shielded so a cancelled run still releases its entry and stops the container.
+        with anyio.CancelScope(shield=True):
+            async with self._enter_lock:
+                self._entered_count -= 1
+                if self._entered_count == 0 and self._container is not None:
+                    await self._container.__aexit__(*args)
+                    self._container = None
 
     def _normalize_command(self, command: str) -> list[str]:
         """Split the command into tokens, dropping a redundant leading `aws`.
@@ -219,18 +306,20 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         return tokens
 
     def _service_name(self, tokens: Sequence[str]) -> str | None:
-        """Return the first non-flag token, which is the AWS service name."""
+        """Return the first token that is neither a global option nor its value: the AWS service name.
+
+        A global option is recognized by any prefix the CLI accepts for it, so
+        the value of `--out text` or `--quer s3` is skipped like that of
+        `--output text` instead of being taken for the service.
+        """
         index = 0
         while index < len(tokens):
             token = tokens[index]
             if token == '--':
                 return tokens[index + 1] if index + 1 < len(tokens) else None
             if token.startswith('--'):
-                name = token.split('=', 1)[0]
-                if '=' not in token and name in _AWS_GLOBAL_OPTIONS_WITH_VALUE:
-                    index += 2
-                else:
-                    index += 1
+                option = _resolve_global_option(token.split('=', 1)[0])
+                index += 2 if '=' not in token and option in _AWS_GLOBAL_OPTIONS_WITH_VALUE else 1
                 continue
             return token
         return None
@@ -270,9 +359,16 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         if self._allowed_services and service not in self._allowed_services:
             raise ModelRetry(f'AWS service {service!r} is not in the allowed list.')
 
-    def _build_env(self) -> dict[str, str]:
-        """Inherit non-AWS environment, then set only the intended LocalStack AWS settings."""
+    def _build_env(self, config_dir: str) -> dict[str, str]:
+        """Inherit non-AWS environment, then set only the intended LocalStack AWS settings.
+
+        The config and credentials files point into `config_dir`, so the CLI never
+        falls back to `~/.aws/config` and `~/.aws/credentials`, where `aws configure`
+        would read or overwrite the real AWS settings of the user running the agent.
+        """
         env = {key: value for key, value in os.environ.items() if not key.startswith('AWS_')}
+        env['AWS_CONFIG_FILE'] = os.path.join(config_dir, 'config')
+        env['AWS_SHARED_CREDENTIALS_FILE'] = os.path.join(config_dir, 'credentials')
         env['AWS_ACCESS_KEY_ID'] = self._access_key_id
         env['AWS_SECRET_ACCESS_KEY'] = self._secret_access_key
         env['AWS_DEFAULT_REGION'] = self._region
@@ -280,7 +376,9 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         env['AWS_ENDPOINT_URL'] = self._endpoint_url
         return env
 
-    async def aws_cli(self, command: str, *, timeout_seconds: float | None = None) -> str:
+    async def aws_cli(
+        self, command: str, *, timeout_seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)] | None = None
+    ) -> str:
         """Run an AWS CLI command against the emulated AWS environment.
 
         Pass the command without the leading `aws` and without `--endpoint-url`;
@@ -289,7 +387,7 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
 
         Args:
             command: The AWS CLI command to run (e.g. `s3 ls`).
-            timeout_seconds: Maximum seconds to wait (default: the configured timeout).
+            timeout_seconds: Maximum seconds to wait, greater than zero (default: the configured timeout).
 
         Returns:
             Labelled stdout/stderr output, with an exit code on non-zero exit.
@@ -310,65 +408,71 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         return await self._run(argv, timeout)
 
     async def _run(self, argv: list[str], timeout: float) -> str:
-        """Execute the AWS CLI argument vector and format its output.
+        """Execute the AWS CLI argument vector and format its output, capped at `max_output_chars`.
 
         Output is captured to temp files rather than pipes: on a timeout the
         process is killed mid-run, and leftover pipe transports would otherwise
         leak (a `ResourceWarning` under cancellation-strict runtimes). Files have
         no transport to leak and the same approach works on every async backend.
+        Only the tail that fits the cap is read back, and the cap applies here
+        rather than only at dispatch, so a durable record of the command is
+        bounded too.
         """
-        stdout_file = tempfile.NamedTemporaryFile(mode='w+b', prefix='harness_aws_out_', delete=False)
-        stderr_file = tempfile.NamedTemporaryFile(mode='w+b', prefix='harness_aws_err_', delete=False)
-        try:
-            try:
-                proc = await anyio.open_process(
-                    argv,
-                    env=self._build_env(),
-                    stdout=stdout_file,
-                    stderr=stderr_file,
-                )
-            except FileNotFoundError:
-                return (
-                    f'[error: AWS CLI {self._aws_cli_path!r} not found. Install the AWS CLI to use LocalStack tools.]'
-                )
-
-            try:
+        with tempfile.TemporaryDirectory(prefix='harness_aws_') as work_dir:
+            with (
+                Path(work_dir, 'stdout').open('w+b') as stdout_file,
+                Path(work_dir, 'stderr').open('w+b') as stderr_file,
+            ):
                 try:
-                    with anyio.fail_after(timeout):
-                        await proc.wait()
-                except TimeoutError:
-                    proc.kill()
-                    with anyio.CancelScope(shield=True):
-                        await proc.wait()
-                    return f'[command timed out after {timeout}s]'
-            finally:
-                await proc.aclose()
+                    proc = await anyio.open_process(
+                        argv,
+                        env=self._build_env(work_dir),
+                        stdin=subprocess.DEVNULL,
+                        stdout=stdout_file,
+                        stderr=stderr_file,
+                    )
+                except FileNotFoundError:
+                    return (
+                        f'[error: AWS CLI {self._aws_cli_path!r} not found. '
+                        'Install the AWS CLI to use LocalStack tools.]'
+                    )
 
-            stdout = Path(stdout_file.name).read_text(encoding='utf-8', errors='replace')
-            stderr = Path(stderr_file.name).read_text(encoding='utf-8', errors='replace')
+                try:
+                    try:
+                        with anyio.fail_after(timeout):
+                            await proc.wait()
+                    except TimeoutError:
+                        proc.kill()
+                        with anyio.CancelScope(shield=True):
+                            await proc.wait()
+                        return f'[command timed out after {timeout}s]'
+                finally:
+                    await proc.aclose()
 
-            parts: list[str] = []
-            if stdout:
-                parts.append(f'[stdout]\n{stdout}')
-            if stderr:
-                parts.append(f'[stderr]\n{stderr}')
-            output = '\n'.join(parts) if parts else '(no output)'
+                stdout, stderr = await anyio.to_thread.run_sync(
+                    lambda: (
+                        _read_tail(stdout_file, self._max_output_chars),
+                        _read_tail(stderr_file, self._max_output_chars),
+                    )
+                )
 
-            exit_code = proc.returncode
-            if exit_code:
-                output = f'{output}\n[exit code: {exit_code}]'
-            return output
-        finally:
-            stdout_file.close()
-            stderr_file.close()
-            os.unlink(stdout_file.name)
-            os.unlink(stderr_file.name)
+        parts: list[str] = []
+        if stdout:
+            parts.append(f'[stdout]\n{stdout}')
+        if stderr:
+            parts.append(f'[stderr]\n{stderr}')
+        output = '\n'.join(parts) if parts else '(no output)'
+
+        exit_code = proc.returncode
+        if exit_code:
+            output = f'{output}\n[exit code: {exit_code}]'
+        return truncate_tail(output, self._max_output_chars)
 
     async def localstack_health(self) -> str:
         """Report the health and availability of the emulated AWS services.
 
         Queries LocalStack's health endpoint and returns the raw JSON, which maps
-        each service (s3, dynamodb, sqs, …) to its state (available, running, …).
+        each service (s3, dynamodb, sqs, etc.) to its state (available, running, etc.).
 
         Returns:
             The health JSON, or an error message if LocalStack is unreachable.
@@ -380,7 +484,7 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
             async with httpx.AsyncClient(timeout=self._default_timeout) as client:
                 response = await client.get(url)
         except httpx.HTTPError as e:
-            return f'[error: could not reach LocalStack at {url}: {e}]'
+            return truncate_tail(f'[error: could not reach LocalStack at {url}: {e}]', self._max_output_chars)
         if response.status_code != 200:
             return f'[error: LocalStack health check returned HTTP {response.status_code}]'
-        return response.text
+        return truncate_tail(response.text, self._max_output_chars)

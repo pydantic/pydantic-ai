@@ -10,7 +10,9 @@ from __future__ import annotations
 import hashlib
 import sys
 import threading
-from collections.abc import Iterable, Mapping
+import uuid
+from collections.abc import Generator, Iterable, Mapping
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from types import ModuleType
 from typing import TYPE_CHECKING, TypeGuard
 
@@ -26,15 +28,6 @@ if TYPE_CHECKING:
 
 class CapabilityValidationError(Exception):
     """Raised when authored code cannot be imported, has the wrong shape, or fails to construct."""
-
-
-_LOAD_LOCK = threading.RLock()
-"""Serializes loads and their getter checks across threads.
-
-An authored module's classes resolve names through its `sys.modules` entry, so a concurrent load of the same
-file would swap the namespace a half-built class resolves against. Reentrant, so authored code that loads
-another authored file in the same thread does not deadlock.
-"""
 
 
 def _is_capability_subclass(obj: object) -> TypeGuard[type[AbstractCapability[object]]]:
@@ -101,31 +94,51 @@ def _check_serialization_name(value: object) -> None:
         )
 
 
-def _module_name(path: Path) -> str:
-    """The `sys.modules` key for `path`, derived from its resolved path so a reload replaces its entry."""
-    resolved = str(path.resolve())
-    return f'_authored_capability_{path.stem}_{hashlib.sha256(resolved.encode()).hexdigest()[:12]}'
+def _module_name(path: Path, code: bytes) -> str:
+    """The `sys.modules` key for `code` loaded from `path`, derived from its resolved path and the code."""
+    digest = hashlib.sha256(str(path.resolve()).encode() + b'\0' + code).hexdigest()[:12]
+    return f'_authored_capability_{path.stem}_{digest}'
 
 
-def _load_module(path: Path, name: str) -> ModuleType:
-    """Execute `path` as a fresh module registered under `name`.
+_LOAD_LOCKS: dict[str, threading.RLock] = {}
+_LOAD_LOCKS_GUARD = threading.Lock()
 
-    The source is compiled directly instead of through the import system, so no
-    bytecode cache is read or written: re-authoring under the same name always
-    runs the new source. `dont_inherit` keeps this module's `__future__` imports
-    out of the authored code.
 
-    The module is registered in `sys.modules` because `dataclasses` and Pydantic look
-    up a class's module there to resolve string annotations (as under
-    `from __future__ import annotations`), during the class body and later. The
-    caller undoes the registration if the load fails.
+def _load_lock(name: str) -> threading.RLock:
+    """The lock that loads registering the module `name` take turns on.
+
+    Two loads of the same source would otherwise swap each other's module in
+    `sys.modules` while it runs, and could leave a failed one behind. Loads of
+    other sources do not wait for each other. The lock is reentrant, so authored
+    code that loads its own source runs that load instead of waiting on itself.
     """
-    module = ModuleType(name)
-    module.__file__ = str(path.resolve())
-    code = compile(path.read_bytes(), str(path), 'exec', dont_inherit=True)
+    with _LOAD_LOCKS_GUARD:
+        return _LOAD_LOCKS.setdefault(name, threading.RLock())
+
+
+@contextmanager
+def _registered(module: ModuleType, *, keep: bool) -> Generator[None]:
+    """Register `module` in `sys.modules` for the block, and keep it only when `keep` is set and the block succeeds.
+
+    `dataclasses` and Pydantic look up a class's module there to resolve string
+    annotations (as under `from __future__ import annotations`), during the class
+    body and later. When the module is not kept, the entry it replaced is put
+    back, unless something else has replaced the module meanwhile.
+    """
+    name = module.__name__
+    # The entry itself, not `.get()`, so an entry holding `None` is put back too.
+    previous = {name: sys.modules[name]} if name in sys.modules else None
     sys.modules[name] = module
-    exec(code, module.__dict__)
-    return module
+    kept = False
+    try:
+        yield
+        kept = keep
+    finally:
+        if not kept and sys.modules.get(name) is module:
+            if previous is None:
+                del sys.modules[name]
+            else:
+                sys.modules.update(previous)
 
 
 def _find_capability_class(module: ModuleType) -> type[AbstractCapability[object]]:
@@ -150,6 +163,45 @@ def _find_capability_class(module: ModuleType) -> type[AbstractCapability[object
     return found[0]
 
 
+def _construct(source: Path, file: Path, *, keep: bool) -> AbstractCapability[object]:
+    """Load `source` as the module saved at `file` and run the checks of `load_capability_instance`.
+
+    The source is compiled directly instead of through the import system, so no
+    bytecode cache is read or written: re-authoring under the same name always
+    runs the new source. `dont_inherit` keeps this module's `__future__` imports
+    out of the authored code. `__file__` and error messages name `file`, which
+    differs from `source` only while a staged copy is validated.
+
+    With `keep`, a module that passes stays in `sys.modules` under a key derived
+    from `file` and the source, so loading unchanged source again replaces its
+    entry, while classes loaded from an earlier version keep resolving names
+    through theirs, and loads of the same source take turns. Without it, the
+    module gets a key of its own and is removed again. A module that fails is
+    never kept.
+    """
+    try:
+        code = source.read_bytes()
+        name = _module_name(file, code) if keep else f'_authored_capability_validation_{uuid.uuid4().hex}'
+        module = ModuleType(name)
+        module.__file__ = str(file.resolve())
+        compiled = compile(code, str(file), 'exec', dont_inherit=True)
+        turn: AbstractContextManager[object] = _load_lock(name) if keep else nullcontext()
+        with turn, _registered(module, keep=keep):
+            exec(compiled, module.__dict__)
+            cls = _find_capability_class(module)
+            instance = cls()
+            _check_instruction_items(normalize_instructions(instance.get_instructions()))
+            _check_toolset_return(instance.get_toolset())
+            _check_native_tool_items(instance.get_native_tools())
+            _check_model_settings_return(instance.get_model_settings())
+            _check_serialization_name(cls.get_serialization_name())
+    except (CapabilityValidationError, KeyboardInterrupt):
+        raise
+    except BaseException as exc:
+        raise CapabilityValidationError(f'{type(exc).__name__}: {exc}') from exc
+    return instance
+
+
 def load_capability_instance(path: Path) -> AbstractCapability[object]:
     """Import, construct, and check the authored capability, returning the instance.
 
@@ -160,40 +212,38 @@ def load_capability_instance(path: Path) -> AbstractCapability[object]:
     lifecycle hooks need a live `RunContext` and are not invoked. Anything else the
     authored code raises, `SystemExit` and other `BaseException` subclasses included,
     is reported as a validation error rather than ending the process; only
-    `KeyboardInterrupt` propagates. Loads from different threads run one at a time.
+    `KeyboardInterrupt` propagates. Loads of the same source from different threads
+    run one at a time. Loads of different sources run concurrently, so authored
+    code that loads a second authored file while it is itself loading can deadlock
+    against a second thread loading the same two files in the opposite order.
 
     Returns an `AbstractCapability[object]`; `AgentDepsT` is contravariant, so the
     instance is accepted by any agent's `capabilities=` parameter.
 
-    The module stays in `sys.modules` under a key derived from `path`, so loading
-    the file again replaces its entry. A load that fails at any step, the checks
-    included, puts back the entry it replaced, or removes its own, as the import
-    system does for a failed import.
+    The module stays in `sys.modules`, where its classes resolve string annotations,
+    under a key derived from `path` and its source. Loading unchanged source again
+    replaces that entry; an instance loaded from an earlier version keeps its own,
+    so each version loaded from `path` stays registered for the life of the
+    process. A load that fails leaves `sys.modules` as it was.
     """
-    name = _module_name(path)
-    with _LOAD_LOCK:
-        # The entry itself, not `.get()`, so an entry holding `None` is put back too.
-        previous = {name: sys.modules[name]} if name in sys.modules else None
-        try:
-            module = _load_module(path, name)
-            cls = _find_capability_class(module)
-            instance = cls()
-            _check_instruction_items(normalize_instructions(instance.get_instructions()))
-            _check_toolset_return(instance.get_toolset())
-            _check_native_tool_items(instance.get_native_tools())
-            _check_model_settings_return(instance.get_model_settings())
-            _check_serialization_name(cls.get_serialization_name())
-        except BaseException as exc:
-            if previous is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules.update(previous)
-            if isinstance(exc, (CapabilityValidationError, KeyboardInterrupt)):
-                raise
-            raise CapabilityValidationError(f'{type(exc).__name__}: {exc}') from exc
-    return instance
+    return _construct(path, path, keep=True)
 
 
 def validate_capability_file(path: Path) -> str:
-    """Run the checks of `load_capability_instance` and return the capability class name."""
-    return type(load_capability_instance(path)).__name__
+    """Run the checks of `load_capability_instance` and return the capability class name.
+
+    Nothing from the module is kept: it is validated under a `sys.modules` key of
+    its own and removed again, so an instance already loaded from `path` keeps its
+    entry.
+    """
+    return validate_capability_source(path, file=path)
+
+
+def validate_capability_source(source: Path, *, file: Path) -> str:
+    """Validate the source at `source` as if it were saved at `file`, returning the class name.
+
+    The store validates a staged copy before it replaces `file`; the authored code
+    sees `file` as its `__file__`, as it will once loaded. Nothing from the module
+    is kept in `sys.modules`.
+    """
+    return type(_construct(source, file, keep=False)).__name__

@@ -79,9 +79,13 @@ from ._utils import (
     apply_message_metadata,
     dump_message_metadata,
     dump_provider_metadata,
+    dump_text_metadata,
+    iter_citation_source_chunks,
     iter_metadata_chunks,
     iter_tool_approval_responses,
     load_provider_metadata,
+    load_text_part,
+    merged_text_citations,
     tool_return_output,
 )
 from .request_types import (
@@ -485,15 +489,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         pending_enqueued = []
 
                     if isinstance(part, TextUIPart):
-                        provider_meta = load_provider_metadata(part.provider_metadata)
-                        builder.add(
-                            TextPart(
-                                content=part.text,
-                                id=provider_meta.get('id'),
-                                provider_name=provider_meta.get('provider_name'),
-                                provider_details=provider_meta.get('provider_details'),
-                            )
-                        )
+                        builder.add(load_text_part(part.text, load_provider_metadata(part.provider_metadata)))
                     elif isinstance(part, ReasoningUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         builder.add(
@@ -715,11 +711,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     elif isinstance(part, DataUIPart):  # pragma: no cover
                         # Contains custom data that shouldn't be sent to the model
                         pass
-                    elif isinstance(part, SourceUrlUIPart):  # pragma: no cover
-                        # TODO: Once we support citations: https://github.com/pydantic/pydantic-ai/issues/3126
-                        pass
-                    elif isinstance(part, SourceDocumentUIPart):  # pragma: no cover
-                        # TODO: Once we support citations: https://github.com/pydantic/pydantic-ai/issues/3126
+                    elif isinstance(part, SourceUrlUIPart | SourceDocumentUIPart):
+                        # Sources are listed for display; citations load from the text part's provider metadata.
                         pass
                     elif isinstance(part, StepStartUIPart):
                         # Step boundaries are handled above, by flushing the held-back tool returns
@@ -850,6 +843,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     ) -> list[UIMessagePart]:
         """Convert a ModelResponse into a UIMessage."""
         ui_parts: list[UIMessagePart] = []
+        # Consecutive text parts merge into one UI text part, so the text parts in each are kept by its index.
+        text_runs: dict[int, list[TextPart]] = {}
 
         # For builtin tools, returns can be in the same ModelResponse as calls
         local_builtin_returns: dict[str, NativeToolReturnPart] = {
@@ -863,13 +858,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 # Combine consecutive text parts
                 if ui_parts and isinstance(ui_parts[-1], TextUIPart):
                     ui_parts[-1].text += part.content
+                    text_runs[len(ui_parts) - 1].append(part)
                 else:
-                    provider_metadata = dump_provider_metadata(
-                        id=part.id,
-                        provider_name=part.provider_name,
-                        provider_details=part.provider_details,
-                    )
-                    ui_parts.append(TextUIPart(text=part.content, state='done', provider_metadata=provider_metadata))
+                    text_runs[len(ui_parts)] = [part]
+                    ui_parts.append(TextUIPart(text=part.content, state='done'))
             elif isinstance(part, ThinkingPart):
                 provider_metadata = dump_provider_metadata(
                     id=part.id,
@@ -1011,7 +1003,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             else:
                 assert_never(part)
 
-        return ui_parts
+        return _with_text_citations(ui_parts, text_runs)
 
     @staticmethod
     def _dump_tool_call_part(
@@ -1154,6 +1146,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         re-sends the same request bytes. The request's metadata rides on the last `role='user'` one, or
         on the last one when there is none, so a frontend that drops system messages keeps it.
 
+        Consecutive `TextPart`s come back as one, with the first part's `id` and `provider_details` and all of
+        their citations, anchored in the merged text.
+
         Tool calls lose one thing too: `ToolCallPart.args` that don't parse as a JSON object are
         rewritten to `{'INVALID_JSON': '<raw args>'}` (see
         [`args_as_dict`][pydantic_ai.messages.BaseToolCallPart.args_as_dict]), so the raw string is
@@ -1235,6 +1230,25 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 assert_never(msg)
 
         return result
+
+
+def _with_text_citations(ui_parts: list[UIMessagePart], text_runs: dict[int, list[TextPart]]) -> list[UIMessagePart]:
+    """Set each UI text part's provider metadata, with its citations, and list its web sources after it.
+
+    Sources follow their text part as `source-url` parts, matching the event stream.
+    """
+    result: list[UIMessagePart] = []
+    source_urls: set[str] = set()
+    for index, ui_part in enumerate(ui_parts):
+        result.append(ui_part)
+        if isinstance(ui_part, TextUIPart):
+            text_parts = text_runs[index]
+            ui_part.provider_metadata = dump_text_metadata(text_parts)
+            result.extend(
+                SourceUrlUIPart(source_id=chunk.source_id, url=chunk.url, title=chunk.title)
+                for chunk in iter_citation_source_chunks(merged_text_citations(text_parts), source_urls)
+            )
+    return result
 
 
 def _convert_user_prompt_part(

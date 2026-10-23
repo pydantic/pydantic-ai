@@ -32,6 +32,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import TextOutput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
@@ -57,7 +58,6 @@ from pydantic_ai_harness.compaction._shared import (
     is_realtime_model,
     record_compaction_reclaim,
     resolve_token_trigger,
-    tool_return_text,
     validate_token_trigger,
 )
 
@@ -303,15 +303,7 @@ def _harness_data_element(origin: str, content: str, max_chars: int | None) -> s
 
 def user_prompt_text(part: UserPromptPart) -> str:
     """Extract text content from a user prompt part."""
-    if isinstance(part.content, str):
-        return part.content
-    texts: list[str] = []
-    for item in part.content:
-        if isinstance(item, str):
-            texts.append(item)
-        elif isinstance(item, TextContent):
-            texts.append(item.content)
-    return ' '.join(texts) if texts else ''
+    return ' '.join(user_prompt_texts(part))
 
 
 def _extract_system_prompts(messages: list[ModelMessage]) -> list[SystemPromptPart]:

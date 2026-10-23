@@ -5,7 +5,8 @@ launches of `SPECULATIVE_TOOLS` and the guidance that teaches the snippet shape 
 
 Every tool the run has, plugin and MCP tools included, becomes a function inside harness
 `CodeMode`'s `run_code` except `write_file` and `edit_file`, which stay native so their diffs
-render as usual. `shell` folds in too, as Code Puppy's shell tool does: harness `CodeMode` keeps
+render as usual, and, in a run that prompts a task for the user (`task_prompts`), the delegate tool its
+scripted model calls. `shell` folds in too, as Code Puppy's shell tool does: harness `CodeMode` keeps
 tools marked with `code_arg_name` metadata native by default, so `SpeculativeExecution` clears
 that marker on `shell` only (`FOLDED_CODE_TOOLS`). Without it, a coding turn is all native `shell` calls
 and eager execution never starts a build or test while the model is still writing.
@@ -52,7 +53,7 @@ from pydantic_ai_harness.code_mode import (
 )
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.guardrails import ToolGuardrail
-from pydantic_ai_harness.subagents import DelegationTasks, SubAgents
+from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.customization import CustomizationGuide, read_clai_customization_guide
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL, EagerExecutionCompletedEvent, EagerTiming
 from pydantic_clai2.runtime.repl_state import ReplStates
@@ -62,6 +63,7 @@ from pydantic_clai2.runtime.sandbox_calls import (
     SandboxCallStartedEvent,
 )
 from pydantic_clai2.runtime.speculation import SpeculationCounters
+from pydantic_clai2.runtime.task_prompts import is_delegate_tool, is_task_prompt
 
 if TYPE_CHECKING:
     # Typing only: `pydantic_ai.models.anthropic` loads the Anthropic SDK.
@@ -335,7 +337,10 @@ class WorkspaceCodeMode(CodeMode[AgentDepsT]):
 
 
 def _sandboxed(ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> bool:
-    return tool_def.name not in NATIVE_TOOLS
+    """Every tool except `NATIVE_TOOLS` and, in a run that prompts a task, the delegate tool its script calls."""
+    if tool_def.name in NATIVE_TOOLS:
+        return False
+    return not (is_task_prompt(ctx) and is_delegate_tool(ctx, tool_def))
 
 
 def _declarations(ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> dict[str, object]:
@@ -446,8 +451,7 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
         if not speculative:
             event_type = (
                 DelegationCallStartedEvent
-                if DelegationTasks.current() is not None
-                and isinstance(ctx.capabilities.get(tool_def.capability_id or ''), SubAgents)
+                if DelegationTasks.current() is not None and is_delegate_tool(ctx, tool_def)
                 else SandboxCallStartedEvent
             )
             await ctx.emit(event_type(tool_call_id=call.tool_call_id, call=call))

@@ -119,7 +119,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     """
 
     client: ExaClient | None = None
-    """Exa client to use; when `None`, an `exa_py.AsyncExa` is built from `EXA_API_KEY`.
+    """Exa client to use; when `None`, a default client wrapping `exa_py.AsyncExa` is built from `EXA_API_KEY`.
 
     Any object satisfying the `ExaClient` protocol works: use it to pass an API
     key explicitly, point at a different base URL, or substitute a fake in tests.
@@ -245,7 +245,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
         """Construct the capability from serializable spec options.
 
         The `client` field is not spec-serializable, so spec-loaded instances
-        always build the default `exa_py.AsyncExa` from `EXA_API_KEY`.
+        always build the default client, which wraps `exa_py.AsyncExa`, from `EXA_API_KEY`.
         """
         return cls(
             num_results=num_results,
