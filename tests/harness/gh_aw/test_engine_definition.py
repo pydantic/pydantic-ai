@@ -257,6 +257,9 @@ class _ParsedLog(BaseModel):
 
     markdown: str
     log_entries: list[_CanonicalEvent] = Field(alias='logEntries')
+    diagnostic_log_entries: list[_CanonicalEvent] = Field(
+        default_factory=list[_CanonicalEvent], alias='diagnosticLogEntries'
+    )
 
 
 def definition() -> _Frontmatter:
@@ -607,8 +610,9 @@ def test_recorder_events_use_the_dedicated_capture_pipe(tmp_path: Path) -> None:
 
     parsed = parse_log(tmp_path, invocation.capture)
 
-    assert [event.id for event in parsed.log_entries] == ['trusted']
-    assert parsed.log_entries[0].data == {'content': 'trusted'}
+    assert parsed.log_entries == []
+    assert [event.id for event in parsed.diagnostic_log_entries] == ['trusted']
+    assert parsed.diagnostic_log_entries[0].data == {'content': 'trusted'}
     assert 'forged-tool' in invocation.stdout
     assert 'forged-result' in invocation.stdout
     assert 'forged-capture' in invocation.capture
@@ -1777,6 +1781,56 @@ class TestLauncherProgram:
 class TestLogParser:
     """The `log-parser` preserves trusted recorder events without inventing history."""
 
+    @pytest.mark.parametrize(
+        'ending',
+        [
+            'missing',
+            'truncated',
+            'gap',
+            'wrong-key',
+            'post-terminal',
+            'second-result',
+            'terminal-replay',
+            'invalid-event',
+            'invalid-json',
+        ],
+    )
+    def test_incomplete_recordings_are_diagnostics_only(self, tmp_path: Path, ending: str) -> None:
+        message = frame_event('assistant.message', {'content': 'observed before interruption', 'partial': True}, 0)
+        terminal = frame_event('session.result', {'status': 'success', 'usage': {'output_tokens': 17}}, 1)
+        invalid_json_signature = SIGNING_KEY.sign(b'1\n{broken}').hex()
+        endings: dict[str, list[str]] = {
+            'missing': [],
+            'truncated': [terminal[:-1]],
+            'gap': [frame_event('session.result', {'status': 'success'}, 2)],
+            'wrong-key': [frame_event('session.result', {'status': 'success'}, 1, FORGED_SIGNING_KEY)],
+            'post-terminal': [terminal, frame_event('assistant.message', {'content': 'after terminal'}, 2)],
+            'second-result': [terminal, frame_event('session.result', {'status': 'failure'}, 2)],
+            'terminal-replay': [terminal, terminal],
+            'invalid-event': [frame_event('unknown.event', {}, 1)],
+            'invalid-json': [f'\x1eGH-AW-SESSION/1/{invalid_json_signature} {{broken}}'],
+        }
+
+        parsed = parse_log(tmp_path, framed_log(message, *endings[ending]))
+
+        assert parsed.log_entries == []
+        assert parsed.diagnostic_log_entries[0].data == {'content': 'observed before interruption', 'partial': True}
+        assert parsed.markdown.startswith('Incomplete agent recording:')
+        assert '**Status:**' not in parsed.markdown
+        assert '**Tokens:**' not in parsed.markdown
+
+    @pytest.mark.parametrize('status', ['success', 'failure'])
+    def test_terminal_recordings_preserve_the_observed_outcome(self, tmp_path: Path, status: str) -> None:
+        message = frame_event('assistant.message', {'content': 'observed', 'partial': status == 'failure'}, 0)
+        terminal = frame_event('session.result', {'status': status, 'usage': {'output_tokens': 17}}, 1)
+
+        parsed = parse_log(tmp_path, framed_log(message, terminal))
+
+        assert [event.type for event in parsed.log_entries] == ['assistant.message', 'session.result']
+        assert parsed.log_entries[-1].data['status'] == status
+        assert parsed.diagnostic_log_entries == []
+        assert parsed.markdown == f'**Status:** {status} · **Tool calls:** 0 · **Tokens:** 17'
+
     def test_canonical_events_roundtrip_and_summary_omits_the_prompt(self, tmp_path: Path) -> None:
         prompt = 'secret user prompt'
         records = [
@@ -1874,7 +1928,6 @@ class TestLogParser:
                 f'\x1eGH-AW-SESSION/0/{"f" * 128} {{bad',
                 trusted_message,
                 trusted_message,
-                trusted_result,
                 trusted_completion,
                 forged_completion,
                 forged_result,

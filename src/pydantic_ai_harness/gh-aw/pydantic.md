@@ -826,6 +826,8 @@ engine:
         ]);
         const header = lines.find(line => /^\x1eGH-AW-SESSION-PUBKEY:[0-9a-f]{88}\x1e$/.test(line));
         const records = [];
+        let complete = false;
+        let invalid = false;
         if (header) {
           let publicKey;
           try {
@@ -839,19 +841,37 @@ engine:
           let expectedSequence = 0;
           for (const line of lines) {
             const frame = line.match(/^\x1eGH-AW-SESSION\/(0|[1-9][0-9]*)\/([0-9a-f]{128}) (\{.*\})$/);
-            if (!publicKey || !frame || Number(frame[1]) !== expectedSequence) continue;
+            if (!publicKey || !frame) continue;
             try {
               if (!verify(null, Buffer.from(`${frame[1]}\n${frame[3]}`), publicKey, Buffer.from(frame[2], 'hex'))) continue;
+              if (complete || Number(frame[1]) > expectedSequence) {
+                invalid = true;
+                break;
+              }
+              if (Number(frame[1]) < expectedSequence) continue;
               const event = JSON.parse(frame[3]);
               if (event && canonicalTypes.has(event.type) && event.data && typeof event.data === 'object' && !Array.isArray(event.data)) {
                 records.push(event);
                 expectedSequence += 1;
+                complete = event.type === 'session.result';
+              } else {
+                invalid = true;
+                break;
               }
-            } catch { /* a malformed record does not discard adjacent events */ }
+            } catch {
+              invalid = true;
+              break;
+            }
           }
         }
         // Unauthenticated pipe bytes and signed model content are data, not
         // workflow commands that can select masks for canonical event fields.
+        if (invalid || (records.length && !complete)) {
+          return {
+            markdown: `Incomplete agent recording: ${records.length} authenticated events; no canonical session published.`,
+            logEntries: [], diagnosticLogEntries: records, mcpFailures: [], maxTurnsHit: false,
+          };
+        }
         const logEntries = records;
         const result = logEntries.findLast(event => event.type === 'session.result');
         const usage = result?.data?.usage || {};

@@ -93,7 +93,11 @@ gh-aw parses only that protected stderr capture; the shared terminal log is neve
 to the session parser. The AWF command wrapper must replace any same-user shell before tools
 run, so the non-dumpable Python recorder is the only tool-UID process holding the protected
 pipe. A surviving parent would let a tool replace the public-key header through `/proc`.
-The parser also verifies Ed25519 signatures and contiguous frame numbers. Repository
+The parser also verifies Ed25519 signatures, contiguous frame numbers, and a terminal
+`session.result`. A missing terminal, authenticated sequence gap, or authenticated event
+after the terminal prevents canonical publication. Authenticated prefixes remain separate
+parser diagnostics, without authoritative status or usage. A complete failure recording,
+including partial content observed before interruption, retains its failure result. Repository
 `PAI_AGENT` and any caller-supplied `PYTHONPATH` are trusted engine configuration.
 Python can import from `PYTHONPATH` before the recorder starts, and `PAI_AGENT` runs in
 the recorder interpreter. Point either setting only at code you trust.
