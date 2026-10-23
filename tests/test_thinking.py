@@ -3363,7 +3363,7 @@ _CROSS_SCOPE_SUMMARY_CASES = [
         ),
         lambda: OpenRouterModelSettings(openrouter_reasoning={'effort': 'low'}),
         True,
-        lambda p: (p['body'].get('reasoning') or {}).get('exclude'),
+        lambda p: p['body'].get('reasoning', {}).get('exclude'),
         overrides=False,
         marks=_SKIP_WITHOUT_OPENAI,
     ),
