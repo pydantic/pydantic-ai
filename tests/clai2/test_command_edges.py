@@ -18,6 +18,23 @@ from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 
 
+def test_relative_paths_complete_in_the_workspace(tmp_path: Path) -> None:
+    """`@` paths complete in the session's directory, which need not be the process's."""
+    (tmp_path / 'notes.md').touch()
+    (tmp_path / 'docs').mkdir()
+    (tmp_path / 'docs' / 'guide.md').touch()
+    commands = Commands(workspace=lambda: tmp_path)
+
+    def completed(text: str) -> list[str]:
+        return [completion.text for completion in commands.get_completions(Document(text), CompleteEvent())]
+
+    assert (completed('@'), completed('@no'), completed('@docs/')) == (
+        ['docs/', 'notes.md'],
+        ['notes.md'],
+        ['guide.md'],
+    )
+
+
 def test_command_boundaries(tmp_path: Path) -> None:
     commands = Commands()
     commands.register(
@@ -66,7 +83,7 @@ def test_command_boundaries(tmp_path: Path) -> None:
 
 
 def test_plugins_command_toggles_never_saved_builtins(tmp_path: Path) -> None:
-    """`clai2 plugins enable aoe`, as the README says to run, saves the built-in declaration turned on."""
+    """`clai2 plugins enable aoe`, as the reference says to run, saves the built-in declaration turned on."""
     store = SettingsStore(tmp_path / 'config.db')
     plugins_command(store, ['enable', 'aoe'])
     plugins_command(store, ['disable', 'notifications'])

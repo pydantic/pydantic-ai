@@ -42,6 +42,7 @@ from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import UsageLimits
 
 from ..conftest import try_import
+from ..realtime_connections import InferredConnection
 from .conftest import (
     REAL_SDP_OFFER,
     _scrub_ephemeral_secret,  # pyright: ignore[reportPrivateUsage]
@@ -158,6 +159,15 @@ async def test_agent_realtime_signaling_resolves_bound_configuration() -> None:
         assert tools is not None
         assert [tool.name for tool in tools] == ['agent_tool', 'accessor_tool']
         assert settings == RealtimeModelSettings(max_tokens=100, output_modality='text')
+
+
+async def test_agent_realtime_signaling_includes_system_prompt() -> None:
+    """The agent's system prompt opens the instructions baked into a WebRTC call, as it opens a session's."""
+    model = _SignalingModel()
+    realtime = Agent(system_prompt='System prompt.', instructions='Instructions.').realtime(model)
+    await realtime.answer_webrtc_offer(SAMPLE_SDP_OFFER)
+    await realtime.create_client_secret()
+    assert [instructions for instructions, _, _ in model.calls] == ['System prompt.\n\nInstructions.'] * 2
 
 
 async def test_agent_realtime_offer_carries_the_bound_history() -> None:
@@ -794,17 +804,17 @@ def test_openai_family_webrtc_profiles() -> None:
 # --- hanging up -----------------------------------------------------------------------------------
 
 
-class _OpenCall(RealtimeConnection):
+class _OpenCall(InferredConnection):
     """A sideband connection that stays open until it is closed, like one attached to a live call."""
 
     def __init__(self, events: Sequence[RealtimeCodecEvent] = (), *, error: Exception | None = None) -> None:
         self._events = events
         self._error = error
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
         pass
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         for event in self._events:
             yield event
         if self._error is not None:

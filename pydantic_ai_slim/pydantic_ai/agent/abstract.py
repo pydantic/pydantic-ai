@@ -13,14 +13,8 @@ from collections.abc import (
     Sequence,
 )
 from concurrent.futures import Executor
-from contextlib import (
-    AbstractAsyncContextManager,
-    AbstractContextManager,
-    AsyncExitStack,
-    asynccontextmanager,
-    contextmanager,
-)
-from dataclasses import dataclass
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from dataclasses import dataclass, field
 from types import FrameType, TracebackType
 from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeAlias, cast, overload
 
@@ -496,6 +490,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -524,6 +519,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -551,6 +547,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -597,6 +594,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Token used to cancel this run from another task or thread. Single-use:
                 mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], keeping what it
+                completed. A run started inside another run (e.g. from a tool) inherits that run's deadline,
+                which `timeout` can shorten but not extend. See [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline].
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -633,6 +634,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings=model_settings,
             usage_limits=usage_limits,
             cancellation_token=cancellation_token,
+            timeout=timeout,
             usage=usage,
             metadata=metadata,
             retries=retries,
@@ -703,6 +705,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -731,6 +734,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -758,6 +762,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -808,6 +813,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Token used to cancel this run from another task or thread. Single-use:
                 mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], keeping what it
+                completed. A run started inside another run (e.g. from a tool) inherits that run's deadline,
+                which `timeout` can shorten but not extend. See [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline].
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -845,6 +854,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 model_settings=model_settings,
                 usage_limits=usage_limits,
                 cancellation_token=cancellation_token,
+                timeout=timeout,
                 usage=usage,
                 metadata=metadata,
                 retries=retries,
@@ -874,6 +884,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -902,6 +913,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -930,6 +942,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -983,6 +996,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Token used to cancel this run from another task or thread. Single-use:
                 mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], keeping what it
+                completed. A run started inside another run (e.g. from a tool) inherits that run's deadline,
+                which `timeout` can shorten but not extend. See [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline].
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -1024,6 +1041,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings=model_settings,
             usage_limits=usage_limits,
             cancellation_token=cancellation_token,
+            timeout=timeout,
             usage=usage,
             metadata=metadata,
             retries=retries,
@@ -1184,6 +1202,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     )
                 node = cast(_agent_graph.AgentNode[Any, Any], next_node)
 
+            # A model request hook (e.g. `after_model_request`) runs once the consumer is done with the
+            # stream, so its `ModelRetry` can only be seen here, after the response was already streamed.
+            if self.is_model_request_node(node) and isinstance(node._result, _agent_graph.ModelRequestNode):  # pyright: ignore[reportPrivateUsage]
+                raise exceptions.UnexpectedModelBehavior(
+                    'A model request hook rejected the streamed response with `ModelRetry`, and retries are not supported in `run_stream()`'
+                )
+
         if not yielded:
             raise exceptions.AgentRunError('Agent run finished without producing a final result')  # pragma: no cover
 
@@ -1203,6 +1228,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1230,6 +1256,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1256,6 +1283,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1321,6 +1349,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Token used to cancel this run from another task or thread. Single-use:
                 mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], keeping what it
+                completed. A run started inside another run (e.g. from a tool) inherits that run's deadline,
+                which `timeout` can shorten but not extend. See [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline].
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -1359,6 +1391,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 model_settings=model_settings,
                 usage_limits=usage_limits,
                 cancellation_token=cancellation_token,
+                timeout=timeout,
                 usage=usage,
                 metadata=metadata,
                 retries=retries,
@@ -1388,6 +1421,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1415,6 +1449,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1441,6 +1476,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1512,6 +1548,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Token used to cancel this run from another task or thread. Single-use:
                 mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], keeping what it
+                completed. A run started inside another run (e.g. from a tool) inherits that run's deadline,
+                which `timeout` can shorten but not extend. See [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline].
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -1547,6 +1587,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 model_settings=model_settings,
                 usage_limits=usage_limits,
                 cancellation_token=cancellation_token,
+                timeout=timeout,
                 usage=usage,
                 metadata=metadata,
                 retries=retries,
@@ -1577,6 +1618,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1604,6 +1646,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1632,6 +1675,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1726,6 +1770,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Token used to cancel this run from another task or thread. Single-use:
                 mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], keeping what it
+                completed. A run started inside another run (e.g. from a tool) inherits that run's deadline,
+                which `timeout` can shorten but not extend. See [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline].
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -1744,58 +1792,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """
         raise NotImplementedError
         yield
-
-    @asynccontextmanager
-    async def connect(self) -> AsyncGenerator[Self]:
-        """Use one persistent model connection for agent runs inside this context.
-
-        The configured model must support [`Model.connect()`][pydantic_ai.models.Model.connect],
-        such as [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
-        A model selected by a run-dependent capability cannot be connected outside a run, and a model
-        an agent capability contributes from `for_run()` is replaced by the connection.
-
-        Runs in the context that select no model of their own use the connected model; a run's
-        `model=`, a run `spec` model, and a run capability model are honored as usual. A run's model
-        selector receives the connected model as its lower-precedence `ctx.model`.
-        Under an active [`override(model=...)`][pydantic_ai.agent.AbstractAgent.override], the overriding
-        model is connected and its connection replaces the override for the context; an `override(model=...)`
-        entered inside the context still wins over the connection.
-        The connection closes when the context exits. Each context
-        opens an independent connection; concurrent tasks can open their own contexts on the same agent.
-        The model's connection context defines request concurrency and interruption behavior.
-
-        This context also manages the HTTP client for a source model created for the connection
-        from a model ID. Existing model instances and the agent's toolsets retain their lifetimes.
-
-        ```python {test="skip"}
-        from pydantic_ai import Agent
-
-        agent = Agent('openai-responses:gpt-6-astra')
-
-        async def main():
-            async with agent.connect():
-                result = await agent.run('What is the capital of France?')
-                print(result.output)
-        ```
-        """
-        selection = self._get_connection_model_selection()
-        async with AsyncExitStack() as stack:
-            if isinstance(selection, str):
-                model = models.infer_model(selection)
-                await stack.enter_async_context(model)
-            else:
-                model = selection
-            async with model.connect() as connected:
-                with self._use_connected_model(connected):
-                    yield self
-
-    def _get_connection_model_selection(self) -> models.Model | str:
-        """Resolve the model to connect: a model instance it borrows, or a model ID it infers and owns."""
-        raise exceptions.UserError(f'`{type(self).__name__}` does not support explicit connections.')
-
-    def _use_connected_model(self, model: models.Model) -> AbstractContextManager[None]:
-        """Use a connected model in place of the configured model selection for runs in this context."""
-        raise NotImplementedError
 
     @contextmanager
     @abstractmethod
@@ -2276,6 +2272,12 @@ class _RealtimeSessionResolution(Generic[AgentDepsT]):
     ) = None
     lifecycle: _RealtimeSessionLifecycle | None = None
     """Set only when the caller asked for run-lifecycle hooks, i.e. by `_open_realtime_session`."""
+    session_instructions: str | None = None
+    """What the provider session is configured with: the standing system prompt, then `instructions`."""
+    message_history: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
+    """The seeded history, with its dynamic system prompts re-evaluated."""
+    system_prompt: list[_messages.SystemPromptPart] = field(default_factory=list[_messages.SystemPromptPart])
+    """The agent's resolved system prompt, which a fresh session records first; empty when history was seeded."""
     short_circuited: bool = False
     """A `wrap_run` hook returned a result without opening the session; nothing below was resolved."""
 
@@ -2368,16 +2370,16 @@ class AgentRealtime(Generic[AgentDepsT]):
                 if self._message_history and _accepts_message_history(resolved.model.answer_webrtc_offer):
                     return await resolved.model.answer_webrtc_offer(
                         sdp_offer,
-                        instructions=resolved.instructions,
+                        instructions=resolved.session_instructions,
                         tools=resolved.model_request_parameters.function_tools,
                         model_settings=resolved.model_settings,
-                        message_history=self._message_history,
+                        message_history=resolved.message_history,
                     )
                 # The keyword is only passed when there is history and the model takes it, so a `RealtimeModel`
                 # written before it existed keeps working: its sideband seeds the history, as it always did.
                 return await resolved.model.answer_webrtc_offer(
                     sdp_offer,
-                    instructions=resolved.instructions,
+                    instructions=resolved.session_instructions,
                     tools=resolved.model_request_parameters.function_tools,
                     model_settings=resolved.model_settings,
                 )
@@ -2436,7 +2438,7 @@ class AgentRealtime(Generic[AgentDepsT]):
             message_history=self._message_history,
         ) as resolved:
             return await resolved.model.create_client_secret(
-                instructions=resolved.instructions,
+                instructions=resolved.session_instructions,
                 tools=resolved.model_request_parameters.function_tools,
                 model_settings=resolved.model_settings,
                 expires_after_seconds=expires_after_seconds,

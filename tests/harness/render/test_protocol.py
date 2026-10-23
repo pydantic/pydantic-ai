@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import TypeAdapter
@@ -470,6 +471,27 @@ async def test_context_snapshots_and_missing_field_guards(missing: str | None) -
 
     context = TaskBoundary(tamper_request=rewrite_tool_context(_drop(missing)) if missing else None)
     assert 'checked' in await run_agent_in_task(agent, runtime, context)
+
+
+@pytest.mark.parametrize('carried', [True, False])
+async def test_child_task_reads_the_run_deadline(carried: bool) -> None:
+    """The run's deadline crosses into a child task; a payload without it reads as a run without one."""
+    runtime = RenderWorkflows[None](Workflows())
+    agent = Agent(TestModel(), name='deadline', deps_type=type(None), capabilities=[runtime])
+    seen: list[datetime | None] = []
+
+    @agent.tool
+    async def inspect_deadline(ctx: RunContext[None]) -> str:
+        seen.append(ctx.deadline)
+        return 'checked'
+
+    context = TaskBoundary(tamper_request=None if carried else rewrite_tool_context(_drop('deadline')))
+    assert 'checked' in await run_agent_in_task(agent, runtime, context, timeout=60)
+    (deadline,) = seen
+    if carried:
+        assert deadline is not None and deadline > datetime.now(UTC)
+    else:
+        assert deadline is None
 
 
 async def test_run_context_serialization_is_exhaustive() -> None:

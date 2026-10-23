@@ -9,19 +9,6 @@ description: "Give a Pydantic AI agent a todo list it plans and updates itself, 
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/planning/)
 
-> This capability incorporates the task-list features of the standalone [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) library -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed:
->
-> | `pydantic-ai-todo` | `Planning` |
-> |---|---|
-> | `write_todos` | `write_plan` |
-> | `read_todos` | `read_plan` |
-> | `add_todo` | `add_task` |
-> | `update_todo_status` / `update_todo_statuses` | `update_task_status` / `update_task_statuses` |
-> | `remove_todo` | `remove_task` |
-> | `add_subtask`, `set_dependency`, `get_available_tasks` | unchanged |
->
-> Two differences to plan for: there is no connection-string convenience (`create_storage(backend=...)` and friends are gone -- you construct your own asyncpg pool or Redis client, which is what keeps the harness driver-free), and `PlanEvent` carries no `timestamp`, so a consumer that ordered or logged by it supplies its own clock.
-
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
 ## The problem
@@ -174,8 +161,9 @@ With a durable-execution capability attached, every plan store call is a journal
 operation: the plan read used to build that reminder, and each read and write the plan tools make.
 Replay reuses the recorded result instead of calling the store again, so recovering a run doesn't
 append a step to a persistent store a second time. Under an engine that runs function tools in workflow code,
-like DBOS, a plan tool call runs alone, without overlapping other tool calls, so its recorded store
-calls keep the same order on replay.
+like DBOS, a plan tool call runs alone, without overlapping other tool calls, and emits its run
+events after its last store call. So its recorded store calls keep the same order on replay,
+including relative to the steps an `event_stream_handler` runs for those events.
 `Planning` carries the stable default `id='planning'`, so durable recovery works without
 configuration.
 Engines that run tools and capability operations in a separate worker, like Temporal, don't
@@ -218,6 +206,21 @@ agent = Agent.from_file('agent.yaml', custom_capability_types=[Planning])
 result = agent.run_sync('...')
 print(result.output)
 ```
+
+## Relationship to `pydantic-ai-todo`
+
+`Planning` incorporates the task-list features of [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo), a community package by [Vstorm](https://vstorm.co/) -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed:
+
+| `pydantic-ai-todo` | `Planning` |
+|---|---|
+| `write_todos` | `write_plan` |
+| `read_todos` | `read_plan` |
+| `add_todo` | `add_task` |
+| `update_todo_status` / `update_todo_statuses` | `update_task_status` / `update_task_statuses` |
+| `remove_todo` | `remove_task` |
+| `add_subtask`, `set_dependency`, `get_available_tasks` | unchanged |
+
+Two differences to plan for: there is no connection-string convenience (`create_storage(backend=...)` and friends are gone -- you construct your own asyncpg pool or Redis client, which is what keeps the harness driver-free), and `PlanEvent` carries no `timestamp`, so a consumer that ordered or logged by it supplies its own clock.
 
 ## Further reading
 

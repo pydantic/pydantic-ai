@@ -12,6 +12,7 @@ from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ModelMessage, ModelResponse, models
+from pydantic_ai._instrumentation import model_request_telemetry_url_ids
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
@@ -25,6 +26,7 @@ from pydantic_ai.models import (
     parse_model_id,
 )
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
@@ -38,6 +40,7 @@ from ._durability import (
 )
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import model_response_payload_errors
+from ._transports import restore_telemetry_mcp_url_ids
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -100,6 +103,13 @@ class TemporalModel(WrapperModel):
         self._agent = agent
 
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
+            restore_telemetry_mcp_url_ids(
+                params.model_request_parameters,
+                params.telemetry_mcp_url_ids,
+                params.telemetry_mcp_url_toolset_ids,
+                params.telemetry_mcp_url_tool_names,
+                self._agent,
+            )
             run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -123,6 +133,13 @@ class TemporalModel(WrapperModel):
         async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
+            restore_telemetry_mcp_url_ids(
+                params.model_request_parameters,
+                params.telemetry_mcp_url_ids,
+                params.telemetry_mcp_url_toolset_ids,
+                params.telemetry_mcp_url_tool_names,
+                self._agent,
+            )
             run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -186,6 +203,12 @@ class TemporalModel(WrapperModel):
     def temporal_activities(self) -> list[Callable[..., Any]]:
         return [self.request_activity, self.request_stream_activity, self.cancel_suspended_response_activity]
 
+    def _refresh_http_client(self) -> None:
+        """Leave the wrapped models' HTTP clients alone.
+
+        Activities send the requests from the worker's event loop, not the workflow's.
+        """
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -216,6 +239,9 @@ class TemporalModel(WrapperModel):
                         messages=messages,
                         model_settings=cast(dict[str, Any] | None, model_settings),
                         model_request_parameters=model_request_parameters,
+                        telemetry_mcp_url_ids=model_request_telemetry_url_ids(model_request_parameters),
+                        telemetry_mcp_url_toolset_ids=model_request_parameters._telemetry_mcp_url_toolset_ids,  # pyright: ignore[reportPrivateUsage]
+                        telemetry_mcp_url_tool_names=model_request_parameters._telemetry_mcp_url_tool_names,  # pyright: ignore[reportPrivateUsage]
                         serialized_run_context=serialized_run_context,
                         model_id=model_id,
                     ),
@@ -262,6 +288,9 @@ class TemporalModel(WrapperModel):
                         messages=messages,
                         model_settings=cast(dict[str, Any] | None, model_settings),
                         model_request_parameters=model_request_parameters,
+                        telemetry_mcp_url_ids=model_request_telemetry_url_ids(model_request_parameters),
+                        telemetry_mcp_url_toolset_ids=model_request_parameters._telemetry_mcp_url_toolset_ids,  # pyright: ignore[reportPrivateUsage]
+                        telemetry_mcp_url_tool_names=model_request_parameters._telemetry_mcp_url_tool_names,  # pyright: ignore[reportPrivateUsage]
                         serialized_run_context=serialized_run_context,
                         model_id=model_id,
                     ),
@@ -429,6 +458,18 @@ class TemporalModel(WrapperModel):
             # A raw model ID carries no URL, and the default model's would name the wrong server.
             return None
         return current.base_url
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Report the native tool settings the currently active model can't apply.
+
+        A raw model string has no model class to ask, so this reports none, like `profile` reports the
+        string's inferred profile without intersecting it with the class's `supported_native_tools()`. The
+        activity resolves the concrete model, whose own `prepare_request` then rejects or swaps the tool.
+        """
+        current = self._current_model()
+        if isinstance(current, str):
+            return frozenset()
+        return current.unsupported_native_tool_settings(native_tool)
 
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         current = self._current_model()

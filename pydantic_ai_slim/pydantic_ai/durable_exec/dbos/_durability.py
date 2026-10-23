@@ -3,12 +3,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakKeyDictionary
 
 from dbos import DBOS
 from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
 
+from pydantic_ai._utils import now_utc
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapRunHandler
@@ -16,9 +18,8 @@ from pydantic_ai.durable_exec._base import BaseDurabilityCapability, conversatio
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import ToolsetKind
 from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
-from pydantic_ai.durable_exec._utils import StreamedActivityResult
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse
-from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters
+from pydantic_ai.messages import AgentStreamEvent
+from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 
@@ -238,6 +239,17 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     def _default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
+    async def _run_start_time(self, run_id: str) -> datetime | None:
+        if not self.in_durable_context:
+            return None
+
+        # Recorded as a step, so a recovered workflow counts the run's `timeout=` from when it first started.
+        # A coroutine function, so DBOS records the step without blocking the event loop.
+        async def run_start_time() -> datetime:
+            return now_utc()
+
+        return await DBOS.run_step_async({'name': f'{self.name}.run_start_time'}, run_start_time)
+
     def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
         # A DBOS step degrades to a plain inline call outside a workflow, where enqueueing is
         # safe, so only guard once actually inside a workflow.
@@ -253,19 +265,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     def _toolset_in_durable_context(self) -> bool:
         # DBOS steps degrade to inline calls outside a workflow, preserving the wrapper-era lifecycle.
         return True
-
-    async def _load_streamed_activity_result(
-        self, result: object, model_request_parameters: ModelRequestParameters
-    ) -> StreamedActivityResult:
-        if isinstance(result, ModelResponse):
-            # Legacy-history-only: `DBOSAgent` recorded a bare response for stream steps.
-            stream = CompletedStreamedResponse(
-                result,
-                model_request_parameters=model_request_parameters,
-                replay_events=True,
-            )
-            return StreamedActivityResult(response=result, events=[event async for event in stream])
-        return cast(StreamedActivityResult, result)
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         if self._in_legacy_workflow.get():

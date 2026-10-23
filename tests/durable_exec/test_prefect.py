@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 import os
-import re
 import threading
 import uuid
 import warnings
@@ -16,11 +16,12 @@ from collections.abc import (
 )
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, Self, cast
+from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
 
+import httpx
 import httpx2
 import pytest
 from opentelemetry.trace import get_tracer
@@ -48,8 +49,8 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
     RunContext,
+    RunTimedOut,
     TextPart,
     TextPartDelta,
     ToolCallPart,
@@ -69,6 +70,7 @@ from pydantic_ai.capabilities import (
     Instrumentation,
     ProcessEventStream,
     ResolveModelId,
+    SelectModel,
     Toolset,
     durable_operation,
 )
@@ -102,7 +104,13 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, ModelResolutionContext
+from pydantic_ai.models import (
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    ModelResolutionContext,
+    ModelSelectionContext,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -114,7 +122,6 @@ from pydantic_ai.realtime import (
     RealtimeSession,
     WebRTCSession,
 )
-from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
@@ -161,8 +168,11 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
+    from fastmcp import FastMCP
     from fastmcp.client.transports import StdioTransport
+    from fastmcp.server.dependencies import get_http_request
 
+    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
     from pydantic_ai.mcp import MCPToolset
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
@@ -174,9 +184,10 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsSameStr, IsStr
+from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
+from ..realtime_connections import InferredConnection
 from ..workspace_fakes import ref_workspace
 from ..wrapped_retry_toolsets import failing_toolset
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
@@ -686,7 +697,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -765,7 +776,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -785,7 +796,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -945,7 +956,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"final_result","content":"Final result processed\.","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","part_kind":"tool-return"\},"event_kind":"output_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"final_result","content":"Final result processed\.","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"event_kind":"output_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -1160,7 +1171,7 @@ async def test_capability_contributed_toolset_id_from_capability():
         toolset.apply(leaves.append)
     # The contributed MCP leaf carries the URL-derived id, so its durable Prefect wrapper is built
     # under a stable id; the `billing` function toolset carries the capability id.
-    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com-api' for ts in leaves)
+    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com' for ts in leaves)
     assert any(isinstance(ts, FunctionToolset) and ts.id == 'billing' for ts in leaves)
 
 
@@ -1350,10 +1361,10 @@ async def test_realtime_signaling_in_flow() -> None:
             await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
-class _FakeRealtimeConnection(RealtimeConnection):
-    async def send(self, content: Any) -> None: ...  # pragma: no cover
+class _FakeRealtimeConnection(InferredConnection):
+    async def send_input(self, content: Any) -> None: ...  # pragma: no cover
 
-    async def __aiter__(self) -> AsyncIterator[Any]:
+    async def codec_events(self) -> AsyncIterator[Any]:
         return
         yield  # pragma: no cover
 
@@ -1394,13 +1405,6 @@ async def test_realtime_session_outside_flow() -> None:
     async with simple_prefect_agent.realtime(_FakeRealtimeModel()).session() as session:
         assert isinstance(session, RealtimeSession)
         assert [event async for event in session] == []
-
-
-async def test_prefect_agent_rejects_connect() -> None:
-    """Runs use the Prefect model, so a connection would open a socket that no run uses."""
-    with pytest.raises(UserError, match='`PrefectAgent` does not support explicit connections'):
-        async with simple_prefect_agent.connect():
-            pytest.fail('PrefectAgent runs cannot use a connection')  # pragma: no cover
 
 
 async def test_iter_in_flow(allow_model_requests: None) -> None:
@@ -2124,7 +2128,7 @@ def test_cache_policy_normalizes_only_framework_tool_call_ids():
     mock_task_ctx = MagicMock()
 
     def key_for(tool_call_id: str) -> str | None:
-        part = RetryPromptPart(content='retry', tool_name='tool', tool_call_id=tool_call_id)
+        part = legacy_retry_prompt_part(content='retry', tool_name='tool', tool_call_id=tool_call_id)
         return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'messages': [part]}, flow_parameters={})
 
     assert key_for('pyd_ai_first') == key_for('pyd_ai_second')
@@ -2515,6 +2519,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
     }
     projected_only_when_set = {
         '_tool_name_path',  # so keys of toolsets listed outside a name-changing wrapper don't change
+        'deadline',  # so keys of runs without a `timeout=` don't change
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])
@@ -2528,6 +2533,10 @@ def test_cache_key_run_context_projection_is_exhaustive():
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to the `_replace_run_context` '
         'projection (if it should fork the cache key) or to `cache_irrelevant` (with a reason).'
     )
+    # A context that doesn't set them hashes as it did before they were projected.
+    assert projected.isdisjoint(projected_only_when_set)
+    deadline = datetime(2030, 1, 1, tzinfo=UTC)
+    assert _replace_run_context({'ctx': replace(ctx, deadline=deadline)})['ctx']['deadline'] == deadline
 
 
 async def test_repeated_run_hits_cache():
@@ -2698,6 +2707,187 @@ async def test_flow_retry_replays_tool_result() -> None:
     assert model_runs == 2
 
 
+async def test_flow_retry_keeps_run_deadline() -> None:
+    """The run's start time is a cached task, so a flow retry counts `timeout=` from the first attempt."""
+    agent = Agent(TestModel(), name='retry_deadline_agent', capabilities=[PrefectDurability[object]()])
+    deadlines: list[datetime | None] = []
+
+    @flow(retries=1)
+    async def flaky() -> str:
+        async with agent.iter('go', timeout=3600) as agent_run:
+            async for _node in agent_run:
+                pass
+        deadlines.append(agent_run.ctx.deps.deadline)
+        # Fail after the agent run, so the retry replays its recorded start time.
+        if len(deadlines) == 1:
+            raise RuntimeError('boom')
+        assert agent_run.result is not None
+        return agent_run.result.output
+
+    assert await flaky() == 'success (no tool calls)'
+    first, retried = deadlines
+    assert first is not None
+    assert retried == first
+
+
+async def test_flow_retry_selector_sees_run_ids_and_deadline() -> None:
+    """A model selector sees the run's flow-derived IDs and deadline on every step, and again on a flow retry."""
+    selections: list[tuple[int, str | None, str | None, datetime | None]] = []
+
+    def select(ctx: ModelSelectionContext[object]) -> Model:
+        selections.append((ctx.run_step, ctx.run_id, ctx.conversation_id, ctx.deadline))
+        assert ctx.model is not None
+        return ctx.model
+
+    agent = Agent(
+        TestModel(),
+        name='retry_selector_agent',
+        capabilities=[SelectModel(select), PrefectDurability[object]()],
+    )
+
+    @agent.tool_plain
+    def advance() -> str:
+        return 'advanced'
+
+    attempts: list[tuple[str, str, str]] = []
+
+    @flow(retries=1)
+    async def flaky() -> str:
+        context = FlowRunContext.get()
+        assert context is not None and context.flow_run is not None
+        result = await agent.run('go', timeout=3600)
+        attempts.append((str(context.flow_run.id), result.run_id, result.conversation_id))
+        if len(attempts) == 1:
+            raise RuntimeError('boom')
+        return result.output
+
+    await flaky()
+    [(flow_run_id, run_id, conversation_id)] = set(attempts)
+    assert run_id == f'{flow_run_id}:0'
+    deadline = selections[0][3]
+    assert deadline is not None
+    assert selections == [(step, run_id, conversation_id, deadline) for _ in attempts for step in (1, 2)]
+
+
+async def test_flow_retry_keeps_each_concurrent_run_deadline() -> None:
+    """Concurrent runs that reach their start time in a different order on a retry each keep their own deadline."""
+    agent = Agent(TestModel(), name='concurrent_deadline_agent', capabilities=[PrefectDurability[object]()])
+    attempts: list[dict[str, datetime | None]] = []
+
+    async def run_branch(run_id: str, deadlines: dict[str, datetime | None], after: asyncio.Event | None) -> None:
+        if after is not None:
+            await after.wait()
+        async with agent.iter('go', timeout=3600, run_id=run_id) as agent_run:
+            async for _node in agent_run:
+                pass
+        deadlines[run_id] = agent_run.ctx.deps.deadline
+
+    @flow(retries=1)
+    async def branches() -> None:
+        deadlines: dict[str, datetime | None] = {}
+        attempts.append(deadlines)
+        # The retry starts the runs in the opposite order.
+        first, second = ('left', 'right') if len(attempts) == 1 else ('right', 'left')
+        first_done = asyncio.Event()
+
+        async def run_first() -> None:
+            await run_branch(first, deadlines, None)
+            first_done.set()
+
+        await asyncio.gather(run_first(), run_branch(second, deadlines, first_done))
+        if len(attempts) == 1:
+            raise RuntimeError('boom')
+
+    await branches()
+    original, retried = attempts
+    assert original['left'] != original['right']
+    assert retried == original
+
+
+@pytest.mark.parametrize('retry_timeout', [3600, 1800])
+async def test_flow_retry_replays_tool_result_only_under_the_same_deadline(retry_timeout: int) -> None:
+    """A tool that can read the run's deadline replays its result on a flow retry only if the retry has the same deadline."""
+    tool_runs: list[datetime | None] = []
+
+    def model_fn(messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('budgeted_work')])
+
+    toolset = FunctionToolset[object](id='deadline_replay_toolset')
+
+    @toolset.tool
+    async def budgeted_work(ctx: RunContext[object]) -> str:
+        tool_runs.append(ctx.deadline)
+        return 'ok'
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name=f'deadline_replay_agent_{retry_timeout}',
+        toolsets=[toolset],
+        capabilities=[PrefectDurability[object]()],
+    )
+    attempts = 0
+
+    @flow(retries=1)
+    async def flaky() -> str:
+        nonlocal attempts
+        attempts += 1
+        result = await agent.run('go', run_id='budgeted-run', timeout=3600 if attempts == 1 else retry_timeout)
+        if attempts == 1:
+            raise RuntimeError('boom')
+        return result.output
+
+    assert await flaky() == 'done'
+    if retry_timeout == 3600:
+        # Same recorded start time and timeout: the retry replays the tool's result.
+        assert len(tool_runs) == 1
+    else:
+        # A shorter budget is a different deadline, so the tool runs again under it.
+        first, retried = tool_runs
+        assert first is not None and retried is not None
+        assert retried == first - timedelta(seconds=3600 - retry_timeout)
+
+
+async def test_timeout_in_flow() -> None:
+    def call_slow_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('slow_tool')])
+
+    agent = Agent(
+        FunctionModel(call_slow_tool), name='timed_out_flow_agent', capabilities=[PrefectDurability[object]()]
+    )
+
+    run_contexts: list[RunContext[object]] = []
+
+    @agent.instructions
+    def capture_run_context(ctx: RunContext[object]) -> str:
+        run_contexts.append(ctx)
+        return 'Call the tool.'
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        # The deadline passes once the tool is running: expire the run as its timer would, without racing one.
+        cancellation = run_contexts[-1]._cancellation  # pyright: ignore[reportPrivateUsage]
+        assert cancellation is not None
+        cancellation.expire()
+        await asyncio.Event().wait()
+        return 'never reached'  # pragma: no cover
+
+    @flow
+    async def timed_out() -> list[str]:
+        try:
+            await agent.run('go', timeout=3600)
+        except RunTimedOut as exc:
+            return [type(message).__name__ for message in exc.all_messages()]
+        return []  # pragma: no cover
+
+    assert await timed_out() == ['ModelRequest', 'ModelResponse', 'ModelRequest']
+
+    # Outside a flow the capability is transparent: the run's own clock starts the deadline.
+    with pytest.raises(RunTimedOut):
+        await agent.run('go', timeout=0)
+
+
 async def test_runs_in_one_flow_differing_in_metadata_do_not_share_results() -> None:
     """Two runs in one flow that differ only in `metadata` must not share cached results.
 
@@ -2860,36 +3050,6 @@ async def test_prefect_durability_simple_agent() -> None:
 
     output = await run_durable_agent()
     assert output == 'Echo: Hello Prefect'
-
-
-class _ConnectableDurabilityModel(FunctionModel):
-    """Connecting yields a distinct model, as a real connection does."""
-
-    @asynccontextmanager
-    async def connect(self) -> AsyncGenerator[Self]:
-        yield type(self)(_durability_model_fn, model_name='connected')
-
-
-async def test_prefect_durability_rejects_connect_in_flow() -> None:
-    """A connection can't be opened in flow code, so `connect()` is rejected inside a flow — but the same
-    durable-capable agent still uses one when run outside a flow."""
-    agent = Agent(
-        _ConnectableDurabilityModel(_durability_model_fn, model_name='source'),
-        name='durability_connect',
-        capabilities=[PrefectDurability()],
-    )
-
-    @flow
-    async def run_connected_agent() -> str:
-        async with agent.connect():
-            return (await agent.run('Hello')).output  # pragma: no cover
-
-    with pytest.raises(UserError, match=re.escape('`agent.connect()` is not supported inside a Prefect flow')):
-        await run_connected_agent()
-
-    async with agent.connect():
-        result = await agent.run('Hello')
-    assert result.response.model_name == 'connected'
 
 
 def test_resolve_tool_task_config_reads_metadata() -> None:
@@ -3812,7 +3972,7 @@ async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -
 
 
 async def test_prefect_durability_streaming_in_flow() -> None:
-    """`ProcessEventStream` receives captured model events in flow code."""
+    """`ProcessEventStream` receives model events replayed from the task's final response in flow code."""
     events_in_task: list[tuple[AgentStreamEvent, bool]] = []
 
     async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
@@ -3847,7 +4007,7 @@ async def _chunks_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> As
 
 
 async def test_prefect_durability_process_event_stream_fires_flow_side() -> None:
-    """`ProcessEventStream` sees the real captured events replayed in the flow."""
+    """`ProcessEventStream` sees the task's final response replayed in the flow, one event per part."""
     events_received: list[AgentStreamEvent] = []
 
     async def collect(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
@@ -3870,12 +4030,8 @@ async def test_prefect_durability_process_event_stream_fires_flow_side() -> None
     output = await run_durable_agent()
     assert output == 'Streamed response'
 
-    delta_events = [
-        e.delta.content_delta
-        for e in events_received
-        if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
-    ]
-    assert delta_events == ['ed ', 'response']
+    model_events = [e for e in events_received if isinstance(e, (PartStartEvent, PartDeltaEvent))]
+    assert model_events == snapshot([PartStartEvent(index=0, part=TextPart(content='Streamed response'))])
 
 
 async def test_prefect_durability_buffers_caller_streams_and_keeps_handlers_distinct() -> None:
@@ -3899,7 +4055,7 @@ async def test_prefect_durability_buffers_caller_streams_and_keeps_handlers_dist
     )
 
     @flow
-    async def run_durable_streams() -> tuple[list[str], str, list[str], int, int]:
+    async def run_durable_streams() -> tuple[list[str], str, list[PartStartEvent | PartDeltaEvent], int, int]:
         async with agent.run_stream('Hello') as stream:
             chunks = [chunk async for chunk in stream.stream_text(debounce_by=None)]
             output = await stream.get_output()
@@ -3908,19 +4064,11 @@ async def test_prefect_durability_buffers_caller_streams_and_keeps_handlers_dist
 
         async with agent.run_stream_events('Hello') as event_stream:
             events = [event async for event in event_stream]
-        deltas = [
-            event.delta.content_delta
-            for event in events
-            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta)
-        ]
-        return chunks, output, deltas, live_handler_calls, buffered_handler_calls
+        model_events = [event for event in events if isinstance(event, (PartStartEvent, PartDeltaEvent))]
+        return chunks, output, model_events, live_handler_calls, buffered_handler_calls
 
-    assert await run_durable_streams() == (
-        ['hello ', 'hello world'],
-        'hello world',
-        ['hello ', 'world'],
-        1,
-        1,
+    assert await run_durable_streams() == snapshot(
+        (['hello world'], 'hello world', [PartStartEvent(index=0, part=TextPart(content='hello world'))], 1, 1)
     )
 
 
@@ -4024,17 +4172,26 @@ async def test_prefect_durability_identical_events_are_dispatched_twice() -> Non
     assert calls == 2
 
 
-async def test_prefect_durability_identical_capability_operations_execute_twice_and_replay() -> None:
+@pytest.mark.parametrize(
+    ('capability_id', 'operation_name'),
+    [
+        pytest.param('side_effect', 'record', id='ordinary'),
+        pytest.param('workspace', 'call', id='workspace-operation-id'),
+    ],
+)
+async def test_prefect_durability_identical_capability_operations_execute_twice_and_replay(
+    capability_id: str, operation_name: str
+) -> None:
     calls = 0
 
     class SideEffectCapability(AbstractCapability[object]):
-        id = 'side_effect'
+        id = capability_id
 
         async def before_run(self, ctx: RunContext[object]) -> None:
             await self.record(ctx, 'same')
             await self.record(ctx, 'same')
 
-        @durable_operation('record')
+        @durable_operation(operation_name)
         async def record(self, ctx: RunContext[object], value: str) -> None:
             nonlocal calls
             calls += 1
@@ -4271,6 +4428,60 @@ async def test_prefect_task_wrapped_tool_rejects_cancel() -> None:
 
     with pytest.raises(RunCancelled):
         await agent.run('run')
+
+
+async def test_prefect_task_wrapped_sub_agent_self_cancel_is_a_failed_tool_return() -> None:
+    """A sub-agent that cancels itself inside a task-wrapped tool fails that tool call, as it does in-process.
+
+    The tool-execute hook around the task sees the `RunCancelled`, with its message only: run state
+    does not cross the durable boundary.
+    """
+    sub_agent = Agent(TestModel(), name='prefect_self_cancelling_sub_agent')
+
+    @sub_agent.tool
+    async def stop(ctx: RunContext[object]) -> str:
+        ctx.cancel()
+        return 'discarded'
+
+    hook_errors: list[str] = []
+
+    async def record(
+        ctx: RunContext[object],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        error: Exception,
+    ) -> Any:
+        assert isinstance(error, RunCancelled)
+        hook_errors.append(
+            f'{type(error).__name__}: run_id={error.run_id is not None}, '
+            f'messages={len(error.all_messages())}, requests={error.usage.requests}'
+        )
+        raise error
+
+    async def delegate() -> str:
+        return (await sub_agent.run('stop')).output
+
+    agent = Agent(
+        TestModel(),
+        name='prefect_sub_agent_cancel',
+        tools=[delegate],
+        capabilities=[Hooks(tool_execute_error=record), PrefectDurability()],
+    )
+
+    @flow
+    async def run_agent() -> list[str]:
+        result = await agent.run('delegate')
+        return [
+            f'{part.outcome}: {part.content}'
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+    assert await run_agent() == snapshot(['failed: The sub-agent run was cancelled: The agent run was cancelled.'])
+    assert hook_errors == snapshot(['RunCancelled: run_id=False, messages=0, requests=0'])
 
 
 async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4614,11 +4825,10 @@ def test_prefect_durability_without_handler_does_not_wrap_event_stream() -> None
     assert PrefectDurability().has_wrap_run_event_stream is False
 
 
-async def test_prefect_durability_runtime_handler_receives_buffered_events() -> None:
+async def test_prefect_durability_runtime_handler_receives_replayed_events() -> None:
     """A per-run `event_stream_handler` passed to `agent.run()` inside a flow receives events.
 
-    The buffered replay preserves real granular deltas — the per-run handler sees the same
-    multi-chunk stream the construction-time handler would see.
+    The task's live deltas stay out of the flow: the per-run handler sees each part once, complete.
     """
     events_received: list[AgentStreamEvent] = []
 
@@ -4637,12 +4847,8 @@ async def test_prefect_durability_runtime_handler_receives_buffered_events() -> 
     output = await run_durable_agent()
     assert output == 'Streamed response'
 
-    delta_events = [
-        e.delta.content_delta
-        for e in events_received
-        if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
-    ]
-    assert delta_events == ['ed ', 'response']
+    model_events = [e for e in events_received if isinstance(e, (PartStartEvent, PartDeltaEvent))]
+    assert model_events == snapshot([PartStartEvent(index=0, part=TextPart(content='Streamed response'))])
 
 
 # --- Continuation chains (suspended → complete) run one task per segment ---
@@ -4798,8 +5004,8 @@ async def test_prefect_cancellation_rejects_enqueue() -> None:
 async def test_prefect_durability_streaming_continuation_chain_in_flow() -> None:
     """A streamed suspended → complete chain is stitched across per-segment tasks.
 
-        `ProcessEventStream` receives each captured segment in flow code, and the
-    final response merges both segments' text with usage summed once.
+        `ProcessEventStream` receives each segment's final response in flow code, one event per
+    part, and the final response merges both segments' text with usage summed once.
     """
     model = ScriptedContinuationModel(
         segments=[
@@ -4848,9 +5054,7 @@ async def test_prefect_durability_streaming_continuation_chain_in_flow() -> None
         for event in events_received
         if isinstance(event, (PartStartEvent, PartDeltaEvent))
     ]
-    assert indices == snapshot(
-        [('PartStartEvent', 0), ('PartDeltaEvent', 0), ('PartStartEvent', 1), ('PartDeltaEvent', 1)]
-    )
+    assert indices == snapshot([('PartStartEvent', 0), ('PartStartEvent', 1)])
     assert model.request_stream_calls == 2
 
 
@@ -4889,9 +5093,11 @@ async def test_prefect_durability_continuation_resume_from_history() -> None:
     assert isinstance(response, ModelResponse)
     assert response.state == 'complete'
     assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
+    # The suspended response's 5 + 2 tokens were counted by the run that produced it, so this run counts only
+    # the continuation it requested; the completed response in history still reports the whole turn.
     assert result.usage.requests == 1
-    assert result.usage.input_tokens == 8
-    assert result.usage.output_tokens == 6
+    assert (result.usage.input_tokens, result.usage.output_tokens) == (3, 4)
+    assert (response.usage.input_tokens, response.usage.output_tokens) == (8, 6)
     # The continuation request ran inside the boundary — the seed wasn't re-generated.
     assert model.request_calls == 1
 
@@ -4910,6 +5116,52 @@ async def test_prefect_agent_run_sync_from_sync_tool_is_rejected():
 
     with pytest.raises(UserError, match=r'cannot be used inside a synchronous tool'):
         await outer_agent.run('delegate')
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_mcp_auth_function_connects_each_run_as_its_own_user(blockbuster_enabled: bool) -> None:
+    """An `MCPToolset` whose `auth` is a function of the run context gives each durable run its own session.
+
+    The run holds the per-run copy `MCPToolset.for_run` returns, not the toolset attached to the agent,
+    so the session its tasks share is opened with that run's credentials.
+    """
+    assert blockbuster_enabled is False
+    server: FastMCP[None] = FastMCP('auth_echo')
+
+    @server.tool
+    async def whoami() -> str:
+        return get_http_request().headers['authorization']
+
+    app = server.http_app(stateless_http=True, json_response=True)
+    # A `localhost` URL keeps the module's VCR cassettes from intercepting the in-process requests.
+    # Each run of the CI matrix installs one FastMCP generation, so it covers only one of the branches.
+    client: httpx.AsyncClient | httpx2.AsyncClient
+    if is_mcp_sdk_v2():
+        client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))  # pragma: lax no cover
+    else:
+        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))  # pragma: lax no cover
+    toolset = MCPToolset[str]('http://localhost/mcp', id='auth_mcp', http_client=client, auth=lambda ctx: ctx.deps)
+    agent = Agent(
+        TestModel(call_tools=['whoami']),
+        name='prefect_mcp_auth',
+        deps_type=str,
+        toolsets=[toolset],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow
+    async def run_flow() -> list[str]:
+        return [(await agent.run('who', deps=user)).output for user in ['alice', 'bob']]
+
+    try:
+        async with app.router.lifespan_context(app):
+            outputs = await run_flow()
+    finally:
+        await client.aclose()
+
+    assert outputs == ['{"whoami":"Bearer alice"}', '{"whoami":"Bearer bob"}']
+    # The toolset attached to the agent never connected: each run connected its own copy.
+    assert not toolset.is_running
 
 
 @pytest.mark.parametrize('blockbuster_enabled', [False])

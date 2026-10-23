@@ -159,13 +159,14 @@ async def run_agent_in_task(
     prompt: str = 'go',
     usage: RunUsage | None = None,
     model: str | None = None,
+    timeout: float | None = None,
 ) -> str:
     """Run an agent through the public Render entry-task decorator."""
 
     @runtime.task
     async def root(ctx: TaskContext) -> str:
         del ctx
-        return (await agent.run(prompt, usage=usage, model=model)).output
+        return (await agent.run(prompt, usage=usage, model=model, timeout=timeout)).output
 
     pending = root.func(context)
     assert inspect.isawaitable(pending)

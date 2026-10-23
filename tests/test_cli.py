@@ -22,7 +22,7 @@ from rich.text import Text
 from pydantic_ai import Agent, ModelMessage, ModelResponse, ModelRetry, TextPart, ToolCallPart, __version__, _display
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import FunctionToolset, WrapperToolset
@@ -521,18 +521,48 @@ async def test_streaming_ignores_output_tool_calls():
     assert 'Called tool' not in rendered
 
 
+async def test_streaming_ignores_skipped_tool_calls(live_frames: list[str]):
+    """A function tool skipped because an output tool already produced the final result is not reported.
+
+    Under `end_strategy='early'` the skipped call still streams `FunctionToolCallEvent(args_valid=None)` and
+    a `FunctionToolResultEvent` with its stub return, but the tool never ran.
+    """
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        yield {
+            0: DeltaToolCall(name='get_weather', json_args='{"city": "Lisbon"}', tool_call_id='call_1'),
+            1: DeltaToolCall(name='final_result', json_args='{"name": "Lisbon"}', tool_call_id='call_2'),
+        }
+
+    agent = Agent(FunctionModel(stream_function=stream_function), output_type=_City, end_strategy='early')
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        # Skipped: the output tool already produced the final result.
+        raise NotImplementedError  # pragma: no cover
+
+    console = Console(file=StringIO(), force_terminal=False, width=80)
+    await ask_agent(agent, 'name a city', stream=True, console=console, code_theme='monokai')
+
+    assert not any('Calling tool' in frame or 'Called tool' in frame for frame in _distinct_frames(live_frames))
+
+
 async def test_streaming_clears_indicator_for_retried_tool(live_frames: list[str]):
     """A call that comes back as a retry drops its in-flight indicator instead of pinning it.
 
-    `pending_calls` is popped for any `FunctionToolResultEvent`, not only a `ToolReturnPart`.
-    Popping on success alone left `> _Calling tool ...` on screen for the rest of the run. A retry
-    still renders no `Called tool` line — surfacing retries is a separate feature.
+    `pending_calls` is popped for any `FunctionToolResultEvent`. Popping on success alone left
+    `> _Calling tool ...` on screen for the rest of the run. The retried call reports `Called tool`
+    like any other: it is a call that ran and returned, and the run continues from there.
     """
 
     async def retrying_tool_stream(
         messages: list[ModelMessage], info: AgentInfo
     ) -> AsyncIterator[str | DeltaToolCalls]:
-        if any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts):
+        if any(
+            isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+            for message in messages
+            for part in message.parts
+        ):
             yield 'Recovered without the tool.'
         else:
             yield 'Trying a tool.'
@@ -556,9 +586,15 @@ Trying a tool.
 
 > _Calling tool `flaky`…_\
 """,
-            'Trying a tool.',
             """\
 Trying a tool.
+
+> Called tool `flaky`.\
+""",
+            """\
+Trying a tool.
+
+> Called tool `flaky`.
 
 Recovered without the tool.\
 """,
@@ -1564,9 +1600,21 @@ def _plain(output: str) -> str:
     return Text.from_ansi(output).plain
 
 
-def test_clai_intro_shows_banner(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, terminal_clai: None):
+@pytest.mark.parametrize(
+    ('uvx_path', 'expected'),
+    [('/usr/bin/uvx', 'uvx logfire-cli wizard --task pydantic-ai'), (None, 'https://pydantic.dev/ai-setup.md')],
+)
+def test_clai_intro_shows_banner(
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    env: TestEnv,
+    terminal_clai: None,
+    uvx_path: str | None,
+    expected: str,
+):
     env.set('OPENAI_API_KEY', 'test')
     mocker.patch('pydantic_ai._cli.ask_agent')
+    mocker.patch('pydantic_ai._cli.shutil.which', return_value=uvx_path)
 
     assert cli(['hello']) == 0
 
@@ -1579,6 +1627,7 @@ def test_clai_intro_shows_banner(capfd: CaptureFixture[str], mocker: MockerFixtu
     # The banner carries the observability pointer, so clai doesn't repeat its own header line.
     # Matched on the label, not the prose, which is the banner's to reword.
     assert 'observability:' in output
+    assert expected in output
     assert 'with openai:gpt-5' not in output
 
 

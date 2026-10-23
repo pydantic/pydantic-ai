@@ -6,11 +6,10 @@ import inspect
 import re
 import threading
 import time
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from traceback import extract_tb
-from typing import Any, Self, cast
+from typing import Any, cast
 
 import anyio
 import pytest
@@ -1880,7 +1879,7 @@ class TestHooksCapability:
         def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             for msg in messages:
                 for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
+                    if isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                         return make_text_response(f'got: {part.content}')
             if info.function_tools:
                 tool = info.function_tools[0]
@@ -1939,7 +1938,7 @@ class TestHooksCapability:
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             for msg in messages:
                 for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
+                    if isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                         return make_text_response(f'got: {part.content}')
             if info.function_tools:
                 return ModelResponse(
@@ -1973,7 +1972,7 @@ class TestHooksCapability:
             call_count += 1
             for msg in messages:
                 for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
+                    if isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                         return make_text_response(f'got: {part.content}')
             if info.function_tools:
                 tool = info.function_tools[0]
@@ -2518,8 +2517,10 @@ async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() 
     assert result.output == 'done'
     # The deferred capability is surfaced in the catalog under the wrapped capability's id.
     assert first_request_instructions == [
+        '<context id="capability:deferred_capabilities">\n'
         "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:\n"
-        '- refunds: Refund policy tools.'
+        '- refunds: Refund policy tools.\n</context>\n'
+        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
     ]
 
 
@@ -3669,16 +3670,10 @@ async def test_resolve_model_id_alias_unusable_outside_run() -> None:
     hook, so an alias only a capability can resolve raises an explanation asking for a
     concrete model rather than attempting deps-blind resolution.
     """
-
-    class ConnectableFunctionModel(FunctionModel):
-        @asynccontextmanager
-        async def connect(self) -> AsyncGenerator[Self, None]:
-            yield self
-
-    target = ConnectableFunctionModel(_resolve_dummy_model_fn, model_name='aliased')
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='aliased')
 
     def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> FunctionModel | None:
-        return target if model_id in {'alias', 'test'} else None
+        return target if model_id == 'alias' else None
 
     agent = Agent('alias', name='alias_outside_run', capabilities=[ResolveModelId(resolver)])
     with pytest.raises(UserError, match='requires run dependencies and cannot be used for MCP sampling'):
@@ -3688,34 +3683,15 @@ async def test_resolve_model_id_alias_unusable_outside_run() -> None:
     result = await agent.run('hi')
     assert result.output == 'ok'
 
-    recognized_agent = Agent('test', capabilities=[ResolveModelId(resolver)])
-    # `test` is a valid inferred model ID too, so this proves the capability's mapping wins.
-    result = await recognized_agent.run('hi')
-    assert result.output == 'ok'
-    assert result.response.model_name == 'aliased'
-
-    with recognized_agent.override(model='test'):
-        with pytest.raises(
-            UserError, match='The configured model ID is resolved by a capability using run dependencies'
-        ):
-            async with recognized_agent.connect():
-                pytest.fail('A capability-resolved model ID needs run dependencies')  # pragma: no cover
-
-    # A concrete model override remains available for callers that know the resolved model.
-    with recognized_agent.override(model=target):
-        async with recognized_agent.connect() as connected_agent:
-            assert connected_agent is recognized_agent
-            result = await connected_agent.run('hi')
-            assert result.response.model_name == 'aliased'
-
 
 def test_resolve_model_id_string_override_sets_mcp_sampling_model() -> None:
-    """MCP sampling setup infers a string override directly; only `connect()` rejects one a capability resolves.
+    """MCP sampling setup accepts a string model override with a resolver capability installed.
 
     Sync because `set_mcp_sampling_model()` imports the MCP module on first use.
     """
+    pytest.importorskip('fastmcp')
 
-    def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> FunctionModel | None:
+    def resolver(ctx: ModelResolutionContext[object], model_id: str) -> FunctionModel | None:
         return None  # pragma: no cover
 
     agent = Agent('test', capabilities=[ResolveModelId(resolver)])

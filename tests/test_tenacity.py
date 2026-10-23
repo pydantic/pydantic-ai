@@ -589,6 +589,31 @@ class TestWaitRetryAfter:
         assert result == 60.0
         fallback.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ('headers', 'max_wait', 'expected'),
+        [
+            pytest.param({'retry-after-ms': '1500'}, 300, 1.5, id='ms-only'),
+            pytest.param({'retry-after-ms': '1500', 'retry-after': '2'}, 300, 1.5, id='ms-preferred'),
+            pytest.param({'retry-after-ms': '90000'}, 60, 60.0, id='ms-capped'),
+            pytest.param({'retry-after-ms': 'invalid', 'retry-after': '2'}, 300, 2.0, id='invalid-ms-falls-through'),
+        ],
+    )
+    def test_retry_after_ms(self, headers: dict[str, str], max_wait: float, expected: float):
+        """`retry-after-ms`, as OpenAI and Anthropic send it, takes precedence over `Retry-After` like in their SDKs."""
+        fallback = Mock(return_value=8.0)
+        wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=max_wait)
+
+        request = httpx2.Request('POST', 'https://api.openai.com/v1/chat/completions')
+        response = httpx2.Response(429, headers=headers, request=request)
+        http_error = httpx2.HTTPStatusError('Rate limited', request=request, response=response)
+
+        retry_state = Mock(spec=RetryCallState)
+        retry_state.outcome = Mock()
+        retry_state.outcome.exception.return_value = http_error
+
+        assert wait_func(retry_state) == expected
+        fallback.assert_not_called()
+
     def test_retry_after_http_date_format(self):
         """Test parsing Retry-After header in HTTP date format."""
         fallback = Mock()

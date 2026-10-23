@@ -77,6 +77,8 @@ def isolated_environment(
     """Redirect default databases, including subprocesses, away from user data."""
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+    # State such as the web UI's orchestrator chat, which `XDG_STATE_HOME` would otherwise keep outside `HOME`.
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
     # Away from this repository's own files, such as the Agent Skills the `coder` plugin would load.
     monkeypatch.chdir(tmp_path_factory.mktemp('work'))
     monkeypatch.delenv('CLAI_MODEL', raising=False)

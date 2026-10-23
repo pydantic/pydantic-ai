@@ -28,6 +28,20 @@ upgrade-blocking bug class for users.
    upgrading", "broke in" to corroborate — but you must still reproduce it
    yourself.
 
+## Candidate Stop Rule
+
+After release-diff triage, choose one specific user-visible candidate. Use one
+minimal reproduction to compare `OLD` and `NEW`, then check whether the change
+was intentional and whether an issue already tracks it. Stop after that
+candidate. Do not switch providers, start another probe, or repair a broad probe
+when the evidence fails.
+
+If the candidate lacks sufficient evidence, or the five-minute remaining-time
+notice appears, call `mcp__safeoutputs__noop` with an honest summary of the
+inspected scope. Reserve the remaining time for publication and verification.
+Use `report_incomplete` only for tool or infrastructure failure, not ordinary
+inconclusive investigation.
+
 ## How to Verify — mandatory
 
 Write a **new** minimal test that exercises the behavior. Demonstrate it

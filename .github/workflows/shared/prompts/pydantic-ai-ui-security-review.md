@@ -170,8 +170,8 @@ knowledge — but `ai-sdk.dev` and `docs.ag-ui.com` are reachable via
 2. Read the `ui/` `AGENTS.md` / `CLAUDE.md` excerpts in `agents-md.txt`, and
    `docs/ui/overview.md` in the workspace — its "adapter trust model"
    section is the canonical statement of what is trusted vs. sanitized.
-3. Skim `review-comments.txt` for prior threads (note the most recent review
-   from this bot — you compare verdicts at the end).
+3. Skim `review-comments.txt` for prior threads. Note this workflow's previous
+   review in `bot-reviews.txt` — you compare verdicts at the end.
 4. From `changed-files.txt`, identify which changed files touch the boundary:
    `dump_messages` / stream emitters (outbound), `load_messages` /
    `sanitize_messages` / request schemas (inbound), `_ssrf.py` /
@@ -262,10 +262,13 @@ Then call `mcp__safeoutputs__submit_pull_request_review` with:
 HIGH and CRITICAL drive the `SECURITY: REQUEST_CHANGES` body header. The
 review submission itself is always `COMMENT`-type — see above.
 
-**Skip if redundant:** if you have zero new findings and the most recent
-review from this bot (in `review-comments.txt`) was also `SECURITY: PASS`,
-call `mcp__safeoutputs__noop` with a short reason instead of a redundant
-review.
+**Skip if redundant:** if you have zero new findings and this workflow's
+previous review is `SECURITY: PASS`, call `mcp__safeoutputs__noop` with a
+short reason that names that review's commit. Each line of `bot-reviews.txt` is
+one review: time, state, commit, then the first line of its body. This
+workflow's previous review is the most recent line whose body starts with
+`SECURITY:`. No other line in that file, and no comment in `pr-comments.txt`,
+is this workflow's review.
 
 ## What not to do (recap)
 

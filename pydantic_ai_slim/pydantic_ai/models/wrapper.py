@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from types import TracebackType
 from typing import Any, Self
 
-from .. import _utils
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..messages import ModelMessage, ModelResponse
+from ..native_tools import AbstractNativeTool
 from ..profiles import ModelProfile
 from ..providers import Provider
 from ..settings import ModelSettings
@@ -22,8 +22,10 @@ from . import (
     ModelRequestContext,
     ModelRequestParameters,
     StreamedResponse,
+    _SettingsLayer,  # pyright: ignore[reportPrivateUsage]
     infer_model,
 )
+from ._request_timeout import RequestDeadline
 
 __all__ = ['WrapperModel']
 
@@ -54,11 +56,8 @@ class WrapperModel(Model):
     ) -> bool | None:
         return await self.wrapped.__aexit__(exc_type, exc_val, exc_tb)
 
-    @asynccontextmanager
-    async def connect(self) -> AsyncGenerator[Self]:
-        """Connect the wrapped model while preserving this wrapper's behavior."""
-        async with self.wrapped.connect() as connected:
-            yield _utils.replace_no_init(self, wrapped=connected)
+    def _refresh_http_client(self) -> None:
+        self.wrapped._refresh_http_client()
 
     async def request(
         self,
@@ -113,12 +112,18 @@ class WrapperModel(Model):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return self.wrapped.prepare_request(model_settings, model_request_parameters)
 
+    def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
+        self.wrapped._warn_if_thinking_overridden(layers)
+
     def prepare_messages(
         self,
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters | None = None,
     ) -> list[ModelMessage]:
         return self.wrapped.prepare_messages(messages, model_request_parameters)
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        return self.wrapped.unsupported_native_tool_settings(native_tool)
 
     @property
     def provider(self) -> Provider[Any] | None:
@@ -160,6 +165,9 @@ class WrapperModel(Model):
         # `Model.resolve_cache_retention` is defined on the base class, so without this override normal
         # attribute lookup succeeds and `__getattr__` never forwards.
         return self.wrapped.resolve_cache_retention(model_settings)
+
+    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
+        return self.wrapped._start_request_deadline(model_settings)
 
     def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
         # Defined on the base class too, so it must forward explicitly, like `resolve_cache_retention`.

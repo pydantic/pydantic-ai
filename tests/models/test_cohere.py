@@ -14,23 +14,28 @@ import pytest
 from pydantic_ai import (
     Agent,
     CachePoint,
+    DocumentUrl,
     ImageUrl,
     ModelAPIError,
     ModelHTTPError,
     ModelRequest,
     ModelResponse,
     ModelRetry,
-    RetryPromptPart,
+    ModelTimeoutError,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import MultiModalContent
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.tools import RunContext
@@ -149,14 +154,14 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.0000')))
+    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.0000')))
+    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -167,7 +172,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=RequestUsage(cost=Decimal('0.0000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
@@ -185,7 +190,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=RequestUsage(cost=Decimal('0.0000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
@@ -358,7 +363,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                usage=RequestUsage(cost=Decimal('0.0000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
@@ -469,11 +474,13 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -518,7 +525,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=RequestUsage(cost=Decimal('0.0000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
@@ -538,6 +545,7 @@ async def test_request_tool_call(allow_model_requests: None):
             details={'input_tokens': 4, 'output_tokens': 2},
             tool_calls=1,
             cost=Decimal('6.375E-7'),
+            unmeasured_requests=1,
         )
     )
 
@@ -614,6 +622,26 @@ async def test_multimodal(allow_model_requests: None):
         )
 
 
+@pytest.mark.parametrize(
+    'file',
+    [
+        ImageUrl(url='https://example.com/image.png'),
+        DocumentUrl(url='https://example.com/document.pdf'),
+        UploadedFile(file_id='file-abc', provider_name='openai'),
+    ],
+)
+def test_multimodal_tool_return(file: MultiModalContent):
+    """A file in a tool return raises instead of being dropped from the tool message.
+
+    An agent run replaces an image, document, audio or video file with a note before mapping, but a direct
+    `Model.request` doesn't, and an `UploadedFile` reaches the mapping either way. The error is raised before
+    any request is made, so there is nothing to record.
+    """
+    req = ModelRequest(parts=[ToolReturnPart(tool_name='get_file', content=['Here it is.', file], tool_call_id='1')])
+    with pytest.raises(NotImplementedError, match='Files are not supported in Cohere tool returns'):
+        list(CohereModel._map_user_message(req))  # pyright: ignore[reportPrivateUsage]
+
+
 def test_model_status_error(allow_model_requests: None) -> None:
     mock_client = MockAsyncClientV2.create_mock(
         ApiError(
@@ -660,7 +688,8 @@ async def test_model_transport_error(allow_model_requests: None) -> None:
         with pytest.raises(ModelAPIError) as exc_info:
             await agent.run('hello')
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelTimeoutError
+    assert exc_info.value.phase == 'read'
     assert exc_info.value.message == 'timed out'
     assert isinstance(exc_info.value.__cause__, httpx.ReadTimeout)
 
@@ -856,7 +885,7 @@ async def test_cohere_model_builtin_tools(allow_model_requests: None, co_api_key
 async def test_cohere_empty_response_skipped_in_history(allow_model_requests: None):
     """An empty `ModelResponse(parts=[])` must not be sent back as an assistant message with
     neither content nor tool calls, which Cohere rejects with a 400. The agent graph retries
-    empty responses by emitting a `RetryPromptPart`, relying on the model adapter to omit the
+    empty responses by emitting a `RetryFeedbackPart`, relying on the model adapter to omit the
     empty response from the API payload.
     """
     completions = [
@@ -877,7 +906,7 @@ async def test_cohere_empty_response_skipped_in_history(allow_model_requests: No
     # self-correct.
     second_call_messages = cast(MockAsyncClientV2, mock_client).chat_kwargs[1]['messages']
     assert not any(message.role == 'assistant' for message in second_call_messages)
-    assert [message.role for message in second_call_messages] == snapshot(['user', 'user'])
+    assert [message.role for message in second_call_messages] == snapshot(['user', 'system'])
 
 
 @pytest.mark.parametrize(
@@ -925,8 +954,13 @@ async def test_zero_argument_tool_call(arguments: str | None, expected_args: str
 
     parts = [part for message in result.all_messages() for part in message.parts]
     assert ToolCallPart(tool_name='get_current_time', args=expected_args, tool_call_id='tc-1') in parts
-    assert any(isinstance(part, ToolReturnPart) and part.tool_name == 'get_current_time' for part in parts)
-    assert not any(isinstance(part, RetryPromptPart) for part in parts)
+    # `outcome == 'success'` is what says the tool actually ran: an args-validation failure answers
+    # the same call with a retried return carrying the same name.
+    assert any(
+        isinstance(part, ToolReturnPart) and part.tool_name == 'get_current_time' and part.outcome == 'success'
+        for part in parts
+    )
+    assert not any(isinstance(part, RetryFeedbackPart) for part in parts)
     assert result.output == 'it is noon'
 
 

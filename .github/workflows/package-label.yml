@@ -1,3 +1,4 @@
+# description: Fails a pull request until it carries exactly one pkg: label.
 name: Package Label
 
 # The release announcement groups PRs by package, so every PR needs exactly one of the six
@@ -58,3 +59,17 @@ jobs:
             echo "::error title=More than one package label::This PR has ${COUNT} package labels ($(jq -r 'join(", ")' <<<"$FOUND")). Keep only the one that fits it best, out of: ${PACKAGE_LABELS}."
           fi
           exit 1
+      - name: Require chore for infrastructure topics
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          LABELS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '[.labels[].name]')
+          if jq -e 'any(.[]; . == "github-actions" or . == "test-suite") and
+            (index("chore") == null or index("bug") != null)' <<<"$LABELS" > /dev/null; then
+            echo '::error title=Invalid infrastructure category::PRs labeled github-actions or test-suite require chore and must not have bug. Add chore and remove bug.'
+            exit 1
+          fi

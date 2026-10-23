@@ -5,7 +5,7 @@ from __future__ import annotations as _annotations
 import warnings
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, Required, cast
 from urllib.parse import urlencode, urlparse, urlunparse
 
@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from ..exceptions import UserError
+from ..messages import RealtimeSessionErrorEvent
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, openai_model_profile
 from ..providers import Provider, infer_provider
 from ..providers.azure import AzureProvider
@@ -315,8 +316,8 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     `input_transcription_model`, `output_modality`, `max_tokens`, `parallel_tool_calls`, `tool_choice`,
     and tools, plus the `azure_voice_live_*` settings.
 
-    The remaining inherited fields — `openai_output_speed` and `openai_truncation` — are **silently
-    ignored** under Voice Live; they still apply on the GA path.
+    The remaining inherited fields — `openai_output_speed`, `openai_truncation`, `openai_prune_tool_items` and
+    `openai_keep_tool_items` — are **silently ignored** under Voice Live; they still apply on the GA path.
     Voice Live's own `truncation_strategy` takes different values from `openai_truncation` (`'auto'` or
     `'last_messages'`, not a retention ratio), so the two don't map onto each other.
     """
@@ -508,7 +509,18 @@ class _VoiceLiveRealtimeConnection(AzureRealtimeConnection):
     """
 
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
-        return _map_voice_live_event(data)
+        event = _map_voice_live_event(data)
+        if isinstance(event, RealtimeSessionErrorEvent) and event.code == 'session_output_overflow':
+            # Voice Live closes the socket (`1008`) right after this error, so the session can't carry on
+            # on it. With a reconnect policy, that close re-dials and the session continues there.
+            event = replace(event, recoverable=self._can_reconnect)
+        return event
+
+    @property
+    def _prunes_tool_calls(self) -> bool:
+        # Voice Live's beta protocol isn't known to take `conversation.item.delete`: `openai_prune_tool_items` is
+        # one of the settings it ignores.
+        return False
 
 
 @dataclass(init=False)

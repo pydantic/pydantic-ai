@@ -17,10 +17,14 @@ See: https://docs.claude.com/en/docs/build-with-claude/structured-outputs
 from __future__ import annotations as _annotations
 
 import warnings
-from typing import Annotated, Any
+from enum import Enum, IntEnum
+from typing import Annotated, Any, Literal
 
 import pytest
 from pydantic import BaseModel, Field
+
+from pydantic_ai import BoolCriteria, Choices, UseEnumMemberDocstrings
+from pydantic_ai.tools import GenerateToolJsonSchema
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -135,6 +139,145 @@ def test_strict_true_nested_model():
             'properties': {'name': {'type': 'string'}, 'address': {'$ref': '#/$defs/Address'}},
             'additionalProperties': False,
             'required': ['name', 'address'],
+        }
+    )
+
+
+class Area(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
+    billing = 'billing'
+    """Charges and invoices."""
+    bug = 'bug'
+    """Something is broken."""
+
+
+class Priority(UseEnumMemberDocstrings, IntEnum):
+    low = 1
+    """Can wait a week."""
+    high = 2
+    """Needs attention today."""
+
+
+class Weight(UseEnumMemberDocstrings, Enum):
+    half = 0.5
+    """Half the usual weight."""
+    unknown = 'unknown'
+    """Not weighed yet."""
+
+
+def test_strict_true_described_options():
+    """With strict=True, untyped `const` options become typed one-value `enum`s.
+
+    Described enums, `Choices` and `BoolCriteria` all render their options this way. Anthropic's
+    `transform_schema()` raises on an option without a `type`, and moves a `const` into the description,
+    which would leave the option unconstrained. A unit test: `walk()` runs the SDK's `transform_schema()`
+    on the generated schema, which is where the error was raised, so no request is needed.
+    """
+
+    class Ticket(BaseModel):
+        area: Area
+        priority: Priority
+        weight: Weight
+        team: Annotated[str, Choices({'finance': 'Money matters.', 'eng': 'Engineering.'})]
+        urgent: Annotated[bool, BoolCriteria(true='The customer is blocked.', false='The customer can wait.')]
+
+    schema = Ticket.model_json_schema(schema_generator=GenerateToolJsonSchema)
+    transformer = AnthropicJsonSchemaTransformer(schema, strict=True)
+    transformed = transformer.walk()
+
+    assert transformed == snapshot(
+        {
+            '$defs': {
+                'Area': {
+                    'anyOf': [
+                        {'type': 'string', 'enum': ['billing'], 'description': 'Charges and invoices.'},
+                        {'type': 'string', 'enum': ['bug'], 'description': 'Something is broken.'},
+                    ]
+                },
+                'Priority': {
+                    'anyOf': [
+                        {'type': 'integer', 'enum': [1], 'description': 'Can wait a week.'},
+                        {'type': 'integer', 'enum': [2], 'description': 'Needs attention today.'},
+                    ]
+                },
+                'Weight': {
+                    'anyOf': [
+                        {'type': 'number', 'enum': [0.5], 'description': 'Half the usual weight.'},
+                        {'type': 'string', 'enum': ['unknown'], 'description': 'Not weighed yet.'},
+                    ]
+                },
+            },
+            'type': 'object',
+            'properties': {
+                'area': {'$ref': '#/$defs/Area'},
+                'priority': {'$ref': '#/$defs/Priority'},
+                'weight': {'$ref': '#/$defs/Weight'},
+                'team': {
+                    'anyOf': [
+                        {'type': 'string', 'enum': ['finance'], 'description': 'Money matters.'},
+                        {'type': 'string', 'enum': ['eng'], 'description': 'Engineering.'},
+                    ]
+                },
+                'urgent': {
+                    'anyOf': [
+                        {'type': 'boolean', 'enum': [True], 'description': 'The customer is blocked.'},
+                        {'type': 'boolean', 'enum': [False], 'description': 'The customer can wait.'},
+                    ]
+                },
+            },
+            'additionalProperties': False,
+            'required': ['area', 'priority', 'weight', 'team', 'urgent'],
+        }
+    )
+
+
+def test_strict_true_typed_const():
+    """With strict=True, a typed `const` becomes a one-value `enum`, keeping its declared `type`.
+
+    Pydantic emits a typed `const` for a single-value `Literal`, including a tagged union's discriminator.
+    Anthropic's `transform_schema()` moves a `const` into the description, which would leave the model free to
+    return any tag. A unit test: `walk()` runs the SDK's `transform_schema()`, which is where the constraint
+    was lost, and the request a recording would capture doesn't show whether the model was held to it.
+    """
+
+    class Cat(BaseModel):
+        kind: Literal['cat']
+
+    class Dog(BaseModel):
+        kind: Literal['dog']
+
+    class Pet(BaseModel):
+        pet: Annotated[Cat | Dog, Field(discriminator='kind')]
+        legs: Literal[4]
+
+    transformer = AnthropicJsonSchemaTransformer(Pet.model_json_schema(), strict=True)
+    transformed = transformer.walk()
+
+    assert transformed == snapshot(
+        {
+            '$defs': {
+                'Cat': {
+                    'type': 'object',
+                    'properties': {'kind': {'type': 'string', 'enum': ['cat']}},
+                    'additionalProperties': False,
+                    'required': ['kind'],
+                },
+                'Dog': {
+                    'type': 'object',
+                    'properties': {'kind': {'type': 'string', 'enum': ['dog']}},
+                    'additionalProperties': False,
+                    'required': ['kind'],
+                },
+            },
+            'type': 'object',
+            'properties': {
+                'pet': {
+                    'anyOf': [{'$ref': '#/$defs/Cat'}, {'$ref': '#/$defs/Dog'}],
+                    'description': "{discriminator: {'mapping': {'cat': '#/$defs/Cat', 'dog': '#/$defs/Dog'}, 'propertyName': 'kind'}}",
+                },
+                'legs': {'type': 'integer', 'enum': [4]},
+            },
+            'additionalProperties': False,
+            'required': ['pet', 'legs'],
         }
     )
 
@@ -462,6 +605,7 @@ def test_model_profile_fable_5_1():
     assert profile == snapshot(
         {
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,
             'anthropic_supports_fast_speed': False,
             'supports_thinking': True,
@@ -472,6 +616,7 @@ def test_model_profile_fable_5_1():
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_xhigh_effort': True,
+            'anthropic_supports_max_effort': True,
             'anthropic_disallows_budget_thinking': True,
             'anthropic_disallows_sampling_settings': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
@@ -541,6 +686,7 @@ def test_model_profile_opus_5():
     assert profile == snapshot(
         {
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,
             'anthropic_supports_fast_speed': True,
             'supports_thinking': True,
@@ -551,6 +697,7 @@ def test_model_profile_opus_5():
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_xhigh_effort': True,
+            'anthropic_supports_max_effort': True,
             'anthropic_disallows_budget_thinking': True,
             'anthropic_disallows_sampling_settings': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': True,

@@ -4,7 +4,7 @@ description: "Use your ChatGPT or Codex subscription with Pydantic AI instead of
 
 # OpenAI Codex
 
-Use your [ChatGPT/Codex subscription](https://chatgpt.com/codex) with Pydantic AI instead of a pay-per-token API key. The `openai-codex` provider logs in with the same OAuth flow as the official [Codex CLI](https://developers.openai.com/codex/cli/); for API keys, use the [`openai` provider](openai.md) instead. Your use of the Codex backend is governed by your agreement with OpenAI; check the applicable [usage policies](https://openai.com/policies/) for your subscription.
+Use your [ChatGPT/Codex subscription](https://chatgpt.com/codex) with Pydantic AI instead of a pay-per-token API key. The `openai-codex` provider logs in with the same OAuth flow as the official [Codex CLI](https://developers.openai.com/codex/cli/); for API keys, use the [`openai` provider](openai.md) instead, and to let the users of your app use their own ChatGPT plan, use [Sign in with ChatGPT](openai-chatgpt.md). Your use of the Codex backend is governed by your agreement with OpenAI; check the applicable [usage policies](https://openai.com/policies/) for your subscription.
 
 ## Install
 
@@ -138,7 +138,6 @@ The Codex backend caches prompts implicitly and rejects the explicit prompt cach
 
 ## Limitations
 
-- [`connect()`][pydantic_ai.models.openai_codex.OpenAICodexModel.connect] raises [`UserError`][pydantic_ai.exceptions.UserError] before opening a WebSocket. Codex session headers depend on the conversation, which is resolved when a request starts.
 - The Codex backend is streaming-only; for non-streaming runs the library transparently drains a stream, so `agent.run_sync()` and friends work as usual.
 - Unsupported generic settings (`max_tokens`, `temperature`, and `top_p`) are dropped before sending. The Codex profile leaves explicit `openai_top_logprobs`, `openai_truncation`, and `openai_user` settings to the standard OpenAI handling, so backend incompatibilities surface as errors. The usual reasoning-related restrictions on log probabilities still apply.
 - The backend requires `store=false`, so every request is sent with it and an explicit `openai_store=True` is silently overridden: responses are never persisted server-side. Consequently, resuming a suspended run raises [`UserError`][pydantic_ai.exceptions.UserError], since there is no stored response to continue from.
