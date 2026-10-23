@@ -42,7 +42,7 @@ ResultT = TypeVar('ResultT')
 
 
 registered_child_workflow_names: set[str] = set()
-"""Child workflow types that a worker was configured with, by name.
+"""Child workflow types that a worker in this process was configured with, by name.
 
 `worker_registrations` adds to it when a plugin configures a worker. It lives at module level, in a module the
 workflow sandbox passes through, because the sandbox re-imports the user's workflow module and so runs calls on
@@ -126,7 +126,11 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
         resolved_config = cast(TemporalOperationConfigValue, config or self._config)
         if 'child_workflow' in resolved_config:
             toolset_id = cast(Any, self._operation.operation_id).toolset_id
-            if self.child_workflow is None or self.child_workflow[1] not in registered_child_workflow_names:
+            # A replay re-issues what the original execution did, which already passed this check, and may run
+            # where no worker was configured (e.g. a `Replayer` in a fresh process), so only new execution checks.
+            if self.child_workflow is None or (
+                not workflow.unsafe.is_replaying() and self.child_workflow[1] not in registered_child_workflow_names
+            ):
                 raise UserError(
                     f'Toolset {toolset_id!r} has a tool configured to run as a Temporal child workflow, but its '
                     'child workflow was not registered with the worker, because no tool in the toolset had '

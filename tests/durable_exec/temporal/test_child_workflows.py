@@ -31,8 +31,9 @@ try:
         _Definition as WorkflowDefinition,
     )
 
-    from pydantic_ai.durable_exec.temporal import AgentPlugin, TemporalDurability
+    from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
     from pydantic_ai.durable_exec.temporal._durability import worker_registrations
+    from pydantic_ai.durable_exec.temporal._operation_backend import registered_child_workflow_names
 
     from ._shared import TASK_QUEUE, _workflow_failure_cause  # pyright: ignore[reportPrivateUsage]
 except ImportError:  # pragma: lax no cover
@@ -516,12 +517,14 @@ async def test_tool_call_runs_as_child_workflow(client: Client) -> None:
     ]
     assert nested_activity_types == ['nested_child_activity']
 
-    # Replaying pins the workflow-generated UUID: a non-deterministic child ID would mismatch history.
-    await Replayer(
-        workflows=[ChildWorkflowAgentWorkflow],
-        data_converter=pydantic_data_converter,
-        workflow_runner=UnsandboxedWorkflowRunner(),
-    ).replay_workflow(history)
+    # Replaying pins the workflow-generated UUID: a non-deterministic child ID would mismatch history. It also
+    # replays in a process where no worker was configured, as a standalone determinism check would.
+    registered = set(registered_child_workflow_names)
+    registered_child_workflow_names.clear()
+    try:
+        await Replayer(workflows=[ChildWorkflowAgentWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+    finally:
+        registered_child_workflow_names.update(registered)
 
 
 sub_agent = Agent(TestModel(), name='nested_sub_agent', capabilities=[TemporalDurability()])
