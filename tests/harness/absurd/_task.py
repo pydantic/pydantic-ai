@@ -3,13 +3,15 @@
 `running_task_context` spawns and claims a task and enters its `AsyncTaskContext`, so the agent
 runs as it would inside a handler. `reenter_running_task` fails that run and re-claims the task,
 as Absurd does on a retry: the new context is hydrated from the checkpoints in Postgres, so a
-replay is Absurd's own. `checkpoints` reads the checkpoint table back.
+replay is Absurd's own. `checkpoints` reads the checkpoint table back, and `claim_expires_at` the
+running run's claim.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 import pytest
 
@@ -92,3 +94,16 @@ async def checkpoints(absurd: AsyncAbsurd, task_id: str) -> dict[str, JsonValue]
         (task_id,),
     )
     return {name: state for name, state in await cursor.fetchall()}
+
+
+async def claim_expires_at(absurd: AsyncAbsurd, task_id: str) -> datetime:
+    """When the task's running run's claim expires."""
+    cursor = await _conn(absurd).execute(
+        sql.SQL('SELECT claim_expires_at FROM absurd.{} WHERE task_id = %s AND state = %s').format(
+            sql.Identifier(f'r_{_queue(absurd)}')
+        ),
+        (task_id, 'running'),
+    )
+    row = await cursor.fetchone()
+    assert row is not None
+    return row[0]

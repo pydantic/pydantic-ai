@@ -7,7 +7,8 @@ disambiguation and checkpoint storage are Absurd's own.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Callable
+from datetime import datetime
 from typing import Any
 
 import anyio
@@ -16,8 +17,10 @@ import pytest
 pytest.importorskip('absurd_sdk')
 pytest.importorskip('fastmcp')
 
+import psycopg
 from absurd_sdk import (
     AsyncAbsurd,
+    CancelledTask,
     JsonValue,
     TaskContext,
     _current_task_context,  # pyright: ignore[reportPrivateUsage]
@@ -46,13 +49,16 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, ExternalToolset, FunctionToolset
-from pydantic_ai_harness.absurd import AbsurdDurability
+from pydantic_ai_harness.absurd import AbsurdDurability, UnserializableStepResultError
 from pydantic_ai_harness.absurd._operation_backend import (
     _CONTROL_FLOW_KINDS,  # pyright: ignore[reportPrivateUsage]
     _RAW_RESULT_KINDS,  # pyright: ignore[reportPrivateUsage]
 )
 
-from ._task import checkpoints, reenter_running_task, running_task_context
+from .._unserializable import circular_dict
+from ._task import checkpoints, claim_expires_at, reenter_running_task, running_task_context
+
+READINESS_WAIT_TIMEOUT = 10
 
 
 def _make_model(counter: dict[str, int] | None = None, text: str = 'ok') -> FunctionModel:
@@ -181,6 +187,29 @@ class TestDurability:
         assert result.output == 'ok'
         assert counter['calls'] == 1
 
+    async def test_run_outside_task_keeps_parallel_tool_calls(self) -> None:
+        # `parallel_execution_mode` defaults to `'sequential'`, but applies only inside a task: each
+        # tool waits for the other to start, which only completes if they run concurrently.
+        toolset = FunctionToolset(id='tools')
+        started = {'a': anyio.Event(), 'b': anyio.Event()}
+
+        @toolset.tool_plain
+        async def wait_for(me: str, other: str) -> str:
+            started[me].set()
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await started[other].wait()
+            return me
+
+        agent = Agent(
+            _tool_calling_model(
+                ToolCallPart('wait_for', {'me': 'a', 'other': 'b'}), ToolCallPart('wait_for', {'me': 'b', 'other': 'a'})
+            ),
+            name='par',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability()],
+        )
+        assert (await agent.run('go')).output == 'done'
+
     async def test_replay_serves_cached_model_response(self, absurd: AsyncAbsurd) -> None:
         counter = {'calls': 0}
         agent = Agent(_make_model(counter), name='crash', capabilities=[AbsurdDurability()])
@@ -219,6 +248,46 @@ class TestDurability:
 
         assert tool_calls['calls'] == 1
         assert replayed.output == first.output == 'done'
+
+    async def test_redeployed_agent_gets_the_stored_steps(self, absurd: AsyncAbsurd) -> None:
+        # Steps match by name and encounter order, not by their inputs: a task re-entered after a
+        # deploy that changed the prompt, the tool, and the model still gets its stored results.
+        toolset = FunctionToolset[object](id='tools')
+
+        @toolset.tool_plain
+        def charge_card(amount: int) -> str:
+            return f'charged {amount}'
+
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('charge_card', {'amount': 42})),
+            name='billing',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability()],
+        )
+        async with running_task_context(absurd, 'billing') as ctx:
+            first = await agent.run('charge it')
+
+        model_calls = {'calls': 0}
+        redeployed_toolset = FunctionToolset[object](id='tools')
+
+        @redeployed_toolset.tool_plain(name='charge_card')
+        def charge_card_v2(amount: int) -> str:  # pragma: no cover
+            raise AssertionError('served from the checkpoint')
+
+        redeployed = Agent(
+            _tool_calling_model(ToolCallPart('charge_card', {'amount': 99}), counter=model_calls),
+            name='billing',
+            toolsets=[redeployed_toolset],
+            capabilities=[AbsurdDurability()],
+        )
+        async with reenter_running_task(absurd, ctx.task_id):
+            replayed = await redeployed.run('charge it twice')
+
+        def returned(messages: list[ModelMessage]) -> list[object]:
+            return [p.content for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
+
+        assert model_calls['calls'] == 0
+        assert returned(replayed.all_messages()) == returned(first.all_messages()) == ['charged 42']
 
     async def test_registered_model_selected_per_run(self, absurd: AsyncAbsurd) -> None:
         # The selected model checkpoints under its own id-scoped step name, and a replay serves it.
@@ -513,6 +582,37 @@ class TestToolResults:
         assert first.output == second.output == 'done'
         assert model_calls['calls'] == tool_calls['calls'] == 2
 
+    async def test_args_validator_model_retry_is_checkpointed(self, absurd: AsyncAbsurd) -> None:
+        # Unlike a tool call's `ModelRetry`, argument validation is its own step, so its retry is stored.
+        validations = {'calls': 0}
+        toolset = FunctionToolset(id='tools')
+
+        def positive(ctx: RunContext[object], amount: int) -> None:
+            validations['calls'] += 1
+            raise ModelRetry('amount must be positive')
+
+        @toolset.tool_plain(args_validator=positive)
+        def pay(amount: int) -> str:
+            raise AssertionError('unreachable')  # pragma: no cover
+
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('pay', {'amount': -1})),
+            name='val',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability()],
+        )
+
+        async with running_task_context(absurd) as ctx:
+            first = await agent.run('go')
+        assert list(await checkpoints(absurd, ctx.task_id)) == snapshot(
+            ['val__model.request', 'val__function_toolset__tools.validate_args', 'val__model.request#2']
+        )
+        async with reenter_running_task(absurd, ctx.task_id):
+            second = await agent.run('go')
+
+        assert first.output == second.output == 'done'
+        assert validations['calls'] == 1
+
     async def test_tool_return_object_round_trips_through_replay(self, absurd: AsyncAbsurd) -> None:
         toolset = FunctionToolset(id='tools')
 
@@ -564,8 +664,9 @@ class TestToolResults:
                     'result': {'kind': 'tool-return', 'return_value': 'x', 'content': 'y'},
                 }
             },
+            {'__pydantic_ai_harness_absurd_tool_result__': {'kind': 'unserializable', 'error': 'not mine'}},
         ],
-        ids=['tool-return-kind', 'reserved-key', 'envelope-shaped'],
+        ids=['tool-return-kind', 'reserved-key', 'envelope-shaped', 'unserializable-shaped'],
     )
     async def test_raw_dict_that_looks_encoded_round_trips(self, absurd: AsyncAbsurd, value: dict[str, object]) -> None:
         calls = {'calls': 0}
@@ -592,6 +693,57 @@ class TestToolResults:
             return [p.content for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
 
         assert returned(second.all_messages()) == returned(first.all_messages()) == [value]
+        assert calls['calls'] == 1
+
+    @pytest.mark.parametrize(
+        ('make_result', 'error'),
+        [
+            (
+                object,
+                snapshot(
+                    "Absurd stores each step result as JSON, and this one could not be serialized: Unable to serialize unknown type: <class 'object'>. If it is a tool result, return a JSON-serializable value from the tool."
+                ),
+            ),
+            (
+                circular_dict,
+                snapshot(
+                    'Absurd stores each step result as JSON, and this one could not be serialized: Circular reference detected (id repeated). If it is a tool result, return a JSON-serializable value from the tool.'
+                ),
+            ),
+        ],
+        ids=['unknown-type', 'circular'],
+    )
+    async def test_unserializable_result_fails_without_rerunning_the_tool(
+        self, absurd: AsyncAbsurd, make_result: Callable[[], object], error: str
+    ) -> None:
+        # The tool has already run when its result fails to serialize, so the failure is checkpointed
+        # and a retry raises it again instead of repeating the tool's side effect.
+        calls = {'calls': 0}
+        toolset = FunctionToolset(id='tools')
+
+        @toolset.tool_plain
+        def charge() -> object:
+            calls['calls'] += 1
+            return make_result()
+
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('charge')),
+            name='opaque',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability()],
+        )
+
+        async with running_task_context(absurd) as ctx:
+            with pytest.raises(UnserializableStepResultError, match='could not be serialized'):
+                await agent.run('go')
+        stored = await checkpoints(absurd, ctx.task_id)
+        assert stored['opaque__function_toolset__tools.call_tool:charge'] == {
+            '__pydantic_ai_harness_absurd_tool_result__': {'kind': 'unserializable', 'error': error}
+        }
+        async with reenter_running_task(absurd, ctx.task_id):
+            with pytest.raises(UnserializableStepResultError, match='could not be serialized'):
+                await agent.run('go')
+
         assert calls['calls'] == 1
 
 
@@ -708,6 +860,8 @@ class TestMcpSessions:
         async with running_task_context(absurd) as ctx:
             await agent.run('go')
         after_first_run = dict(counts)
+        # The first run holds one session for all its steps.
+        assert after_first_run == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 1})
         async with reenter_running_task(absurd, ctx.task_id):
             result = await agent.run('go')
 
@@ -716,6 +870,160 @@ class TestMcpSessions:
         # The replayed run gets the server's instructions from their checkpoint.
         requests = [m for m in result.all_messages() if isinstance(m, ModelRequest)]
         assert requests[0].instructions is not None and 'Echo things.' in requests[0].instructions
+
+
+# Heartbeating every `claim_timeout / 2` would make these tests wait; they heartbeat back to back instead.
+_HEARTBEAT_INTERVAL = 'pydantic_ai_harness.absurd._operation_backend._heartbeat_interval'
+
+
+def _no_heartbeat_wait(task_ctx: object) -> float:
+    return 0
+
+
+class _Interrupted(BaseException):
+    pass
+
+
+class TestClaim:
+    async def test_long_step_extends_the_claim(self, absurd: AsyncAbsurd, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A step can outlast the worker's `claim_timeout`; the claim is extended while it runs, so no
+        # other worker claims the task and runs the step again.
+        monkeypatch.setattr(_HEARTBEAT_INTERVAL, _no_heartbeat_wait)
+        toolset = FunctionToolset(id='tools')
+        task: dict[str, str] = {}
+
+        @toolset.tool_plain
+        async def slow() -> str:
+            before = await claim_expires_at(absurd, task['id'])
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                while await claim_expires_at(absurd, task['id']) <= before:
+                    # Leave the shared connection to the heartbeat between polls. The heartbeat often
+                    # lands before the first poll, so this may not run.
+                    await anyio.sleep(0.01)  # pragma: lax no cover
+            return 'done slowly'
+
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('slow')),
+            name='slow',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability()],
+        )
+        async with running_task_context(absurd) as ctx:
+            task['id'] = ctx.task_id
+            result = await agent.run('go')
+
+        assert result.output == 'done'
+
+    async def test_step_extends_the_claim_before_its_body_runs(self, absurd: AsyncAbsurd) -> None:
+        # `begin_step` leaves the claim as it was, so a step that starts late in the claim window
+        # extends it first instead of waiting a heartbeat interval for its first heartbeat.
+        task: dict[str, str] = {}
+        claims: dict[str, datetime] = {}
+
+        async def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            claims['in_step'] = await claim_expires_at(absurd, task['id'])
+            return ModelResponse(parts=[TextPart(content='ok')])
+
+        agent = Agent(FunctionModel(model, model_name='fn'), name='late', capabilities=[AbsurdDurability()])
+        async with running_task_context(absurd) as ctx:
+            task['id'] = ctx.task_id
+            claims['claimed'] = await claim_expires_at(absurd, ctx.task_id)
+            await agent.run('go')
+
+        assert claims['in_step'] > claims['claimed']
+
+    async def test_lost_claim_cancels_the_step(self, absurd: AsyncAbsurd, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Once the run can't extend its claim (here, the task was cancelled), the step stops instead
+        # of running on alongside whichever worker owns the task now.
+        monkeypatch.setattr(_HEARTBEAT_INTERVAL, _no_heartbeat_wait)
+        toolset = FunctionToolset(id='tools')
+        task: dict[str, str] = {}
+
+        @toolset.tool_plain
+        async def slow() -> str:
+            await absurd.cancel_task(task['id'])
+            await anyio.sleep_forever()
+            raise AssertionError('unreachable')  # pragma: no cover
+
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('slow')),
+            name='slow',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability()],
+        )
+        async with running_task_context(absurd) as ctx:
+            task['id'] = ctx.task_id
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(CancelledTask) as exc_info:
+                await agent.run('go')
+
+        assert list(await checkpoints(absurd, ctx.task_id)) == ['slow__model.request']
+        # The SDK's own cause, the database error saying the task was cancelled, is kept.
+        assert isinstance(exc_info.value.__cause__, psycopg.Error)
+        assert exc_info.value.__cause__.sqlstate == 'AB001'
+
+    async def test_lost_claim_keeps_the_step_error_as_its_cause(
+        self, absurd: AsyncAbsurd, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A tool failing as the lost claim cancels it doesn't hide the `CancelledTask` the SDK's worker
+        # handles, and the tool's error isn't dropped either.
+        monkeypatch.setattr(_HEARTBEAT_INTERVAL, _no_heartbeat_wait)
+        toolset = FunctionToolset(id='tools')
+        task: dict[str, str] = {}
+
+        @toolset.tool_plain
+        async def slow() -> str:
+            await absurd.cancel_task(task['id'])
+            try:
+                await anyio.sleep_forever()
+            except anyio.get_cancelled_exc_class():
+                raise RuntimeError('cleanup failed') from None
+            raise AssertionError('unreachable')  # pragma: no cover
+
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('slow')),
+            name='slow',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability()],
+        )
+        async with running_task_context(absurd) as ctx:
+            task['id'] = ctx.task_id
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(CancelledTask) as exc_info:
+                await agent.run('go')
+
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+        assert str(exc_info.value.__cause__) == 'cleanup failed'
+
+    async def test_lost_claim_and_a_step_base_exception_are_both_raised(
+        self, absurd: AsyncAbsurd, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A tool raising a `BaseException` as the claim is lost fails the step twice at once; both
+        # errors are raised rather than either being dropped.
+        monkeypatch.setattr(_HEARTBEAT_INTERVAL, _no_heartbeat_wait)
+        toolset = FunctionToolset(id='tools')
+        task: dict[str, str] = {}
+
+        @toolset.tool_plain
+        async def slow() -> str:
+            await absurd.cancel_task(task['id'])
+            try:
+                await anyio.sleep_forever()
+            except anyio.get_cancelled_exc_class():
+                raise _Interrupted from None
+            raise AssertionError('unreachable')  # pragma: no cover
+
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('slow')),
+            name='slow',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability()],
+        )
+        async with running_task_context(absurd) as ctx:
+            task['id'] = ctx.task_id
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(BaseExceptionGroup) as exc_info:
+                await agent.run('go')
+
+        assert exc_info.group_contains(CancelledTask, depth=None)
+        assert exc_info.group_contains(_Interrupted, depth=None)
 
 
 class TestCheckpointFormat:

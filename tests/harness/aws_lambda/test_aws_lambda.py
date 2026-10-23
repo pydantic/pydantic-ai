@@ -49,6 +49,7 @@ from pydantic_ai_harness.aws_lambda import (
     run_durable,
 )
 
+from .._unserializable import circular_dict
 from .conftest import FakeDurableContext
 from .test_aws_lambda_mcp import FakeMCPToolset
 
@@ -380,11 +381,21 @@ class TestToolResultSerialization:
         assert result.output == 'done'
         assert ctx.failed == []
 
-    def test_non_serializable_tool_result_fails_without_retry(self) -> None:
-        agent = build_agent(lambda: object())
+    @pytest.mark.parametrize(
+        ('make_result', 'reason'),
+        [
+            (object, 'Unable to serialize unknown type'),
+            (circular_dict, 'Circular reference detected'),
+        ],
+        ids=['unknown-type', 'circular'],
+    )
+    def test_non_serializable_tool_result_fails_without_retry(
+        self, make_result: Callable[[], object], reason: str
+    ) -> None:
+        agent = build_agent(lambda: make_result())
         ctx = FakeDurableContext()
 
-        with pytest.raises(ExecutionError, match='Unable to serialize unknown type'):
+        with pytest.raises(ExecutionError, match=reason):
             run_durable(lambda: agent.run('go'), context=ctx)
 
         assert len(ctx.failed) == 1

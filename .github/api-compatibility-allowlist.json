@@ -137,6 +137,12 @@
       "fingerprint": "e3cbeaca4cd1a6c06b48a95afcd22e314cd2699e757a3c2b395dd659020b40ae",
       "reason": "The `iban` pattern in the harness `DEFAULT_PII_PATTERNS` gains a `(?=[A-Za-z]{2}\\d{2})` lookahead ahead of its country-code alternation; it matches exactly the same text and only skips the alternation at positions that cannot start an IBAN.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10841"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "76c8e5b469f66ad102b2cdd3261834ead76190074752af9a971cd8ac9e6c4c4e",
+      "reason": "Changes the value of `AbsurdDurability.engine_spec`, a class-level engine configuration: it adds a `serialization_failure` mapping and keeps one MCP session per run (`'enter-in-durable-unit'`). Users don't set or read it, so no code changes.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10732"
     }
   ]
 }
