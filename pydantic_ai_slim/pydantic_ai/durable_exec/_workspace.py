@@ -156,7 +156,7 @@ class WorkspaceCallParams:
 
 class WorkspaceCallCacheIdentity(CacheIdentity[WorkspaceCallParams]):
     def project(self, params: WorkspaceCallParams) -> tuple[object, ...]:
-        return (params.call, params.ref)
+        return (params.call, params.ref, params.run_context.run_id)
 
 
 _EXPECTED_ERRORS: tuple[type[Exception], ...] = (
