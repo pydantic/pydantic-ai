@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-import weakref
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import (
     AbstractContextManager,
@@ -291,12 +290,29 @@ def usage_beyond(usage: RequestUsage, baseline: RequestUsage) -> RequestUsage:
     return beyond
 
 
-_cancelled_responses: weakref.WeakValueDictionary[int, ModelResponse] = weakref.WeakValueDictionary()
-"""The suspended responses `cancel_suspended_job` has cancelled the jobs of, by identity, while they're still in use.
+_SUSPENDED_JOB_CANCELLED = '_pydantic_ai_suspended_job_cancelled'
 
-A model that cancels the job of a suspended response it gives up on, as `FallbackModel` does for a failed pinned
-continuation, can still raise to the continuation loop that sent it, which cancels the same response on its way out.
-"""
+
+def mark_suspended_job_cancelled(error: BaseException) -> None:
+    """Mark `error` as raised after the job of the suspended response being continued was already cancelled.
+
+    A model that gives up on a suspended response it was asked to continue, as `FallbackModel` does when the pinned
+    continuation fails before it moves on to its other models, cancels the job itself. If it then raises anyway, the
+    continuation loop the error reaches leaves that job alone instead of cancelling it a second time.
+    """
+    setattr(error, _SUSPENDED_JOB_CANCELLED, True)
+
+
+async def cancel_abandoned_job(model: Model, response: ModelResponse, error: BaseException) -> None:
+    """Cancel the job of the suspended response `error` made a continuation loop give up on, unless already done.
+
+    The marker only reaches the loop when the model raises it there directly. So the job may still be cancelled
+    twice when the model that cancelled it ran in a durable unit, whose error the workflow rebuilds without the
+    marker, or when what it cancelled was a rejected response that was still suspended, rather than the response
+    being continued, though that is usually the same job.
+    """
+    if getattr(error, _SUSPENDED_JOB_CANCELLED, False) is not True:
+        await cancel_suspended_job(model, response)
 
 
 async def cancel_suspended_job(model: Model, response: ModelResponse) -> None:
@@ -310,11 +326,8 @@ async def cancel_suspended_job(model: Model, response: ModelResponse) -> None:
     shielded wait, so the cancel is waited for again, until a second native cancellation gives up on it.
 
     Any error from the cancel itself is swallowed: a failing teardown must not replace the error (or
-    cancellation) that aborted the run. A response is cancelled once, however many layers give up on it.
+    cancellation) that aborted the run.
     """
-    if _cancelled_responses.get(id(response)) is response:
-        return
-    _cancelled_responses[id(response)] = response
     job = asyncio.ensure_future(model.cancel_suspended_response(response))
     cancelled: asyncio.CancelledError | None = None
     with anyio.CancelScope(shield=True):
@@ -506,9 +519,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
                         self.run_context,
                     )
                 )
-        except BaseException:
+        except BaseException as error:
             if seed is not None:
-                await cancel_suspended_job(self.model, seed)
+                await cancel_abandoned_job(self.model, seed, error)
             raise
         self._primed_segment = (stack, sub)
         # The segment is in flight from here, so a `cancel()` before iteration starts reaches its server-side
@@ -743,7 +756,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
             # Deliberate `aclose()` detach: tear the connection down without cancelling the
             # server-side job (that stays on the `cancel()`/`close_stream()` path). Re-raise as-is.
             raise
-        except BaseException:
+        except BaseException as error:
             # A later segment failed (transport error, `check_usage` raising, or the max-continuations
             # raise) with a suspended job in hand. The non-streaming continuation loop cancels the
             # server-side job on exactly this class of failure; mirror it so streaming doesn't leak the
@@ -755,7 +768,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 and response.state == 'suspended'
                 and not (self._cancelled or self._stopped or self._detached)
             ):
-                await cancel_suspended_job(self.model, response)
+                await cancel_abandoned_job(self.model, response, error)
                 self._job_cancelled = True
             raise
         finally:

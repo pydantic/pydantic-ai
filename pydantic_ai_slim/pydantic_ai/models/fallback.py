@@ -44,7 +44,7 @@ from . import (
     StreamedResponse,
     infer_model,
 )
-from ._continuation import cancel_suspended_job
+from ._continuation import cancel_suspended_job, mark_suspended_job_cancelled
 from ._request_timeout import (
     RequestDeadline,
     carried_deadline,
@@ -189,6 +189,7 @@ class FallbackModel(Model):
         # the chain then produces is fresh generation superseding the stale suspended turn, so it must
         # be stamped as a replace (see `_stamp_replace_previous`) rather than accumulated onto it.
         rewound = False
+        continued_job_cancelled = False
 
         if pinned := self._get_continuation_model(messages):
             # `_get_continuation_model` only returns a model when the last message is a suspended response.
@@ -227,11 +228,31 @@ class FallbackModel(Model):
             # and billing while the chain issues a duplicate request.
             if abandoned_response is not None:
                 await cancel_suspended_job(pinned, abandoned_response)
+                # When it's the job of the response this request continues, the continuation loop that a failure of
+                # the chain reaches mustn't cancel it again.
+                continued_job_cancelled = abandoned_response is suspended_response
             messages = _rewind_messages(messages)
             rewound = True
             self._record_failed_attempt(chain, pinned, failure, start)
             # Fall through to normal chain below
 
+        try:
+            return await self._request_chain(chain, messages, model_settings, model_request_parameters, rewound=rewound)
+        except BaseException as error:
+            if continued_job_cancelled:
+                mark_suspended_job_cancelled(error)
+            raise
+
+    async def _request_chain(
+        self,
+        chain: FallbackChain,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        *,
+        rewound: bool,
+    ) -> ModelResponse:
+        """Try each model in the chain in turn, after any pinned continuation `request` gave up on."""
         for model in self.models:
             prepared_parameters = model_request_parameters
             start = AttemptStart()
@@ -334,48 +355,60 @@ class FallbackModel(Model):
                         carry_deadline(streamed_response, deadline)
                     return
 
-        chain.warn_if_streamed_responses_unjudged()
+        try:
+            chain.warn_if_streamed_responses_unjudged()
 
-        for model in self.models:
-            async with AsyncExitStack() as stack:
-                prepared_parameters = model_request_parameters
-                start = AttemptStart()
-                try:
-                    with suppress_unsupported_setting_warnings():
-                        _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
-                    prepared_messages = model.prepare_messages(messages, model_request_parameters)
-                    deadline = start_request_deadline(model, model_settings)
-                    streamed_response = await stack.enter_async_context(
-                        request_stream_until_first_event(
-                            model, deadline, prepared_messages, model_settings, model_request_parameters, run_context
+            for model in self.models:
+                async with AsyncExitStack() as stack:
+                    prepared_parameters = model_request_parameters
+                    start = AttemptStart()
+                    try:
+                        with suppress_unsupported_setting_warnings():
+                            _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
+                        prepared_messages = model.prepare_messages(messages, model_request_parameters)
+                        deadline = start_request_deadline(model, model_settings)
+                        streamed_response = await stack.enter_async_context(
+                            request_stream_until_first_event(
+                                model,
+                                deadline,
+                                prepared_messages,
+                                model_settings,
+                                model_request_parameters,
+                                run_context,
+                            )
                         )
-                    )
-                except Exception as exc:
-                    if await chain.falls_back(exc):
-                        self._record_failed_attempt(chain, model, exc, start)
-                        continue
+                    except Exception as exc:
+                        if await chain.falls_back(exc):
+                            self._record_failed_attempt(chain, model, exc, start)
+                            continue
+                        self._set_span_attributes(model, prepared_parameters)
+                        raise exc
+
+                    # After a rewind, mark this fresh stream as replacing the abandoned suspended turn.
+                    # Unlike the continuation pin (stamped after `yield`, once the final `state` is known),
+                    # this must land on `metadata` *before* `yield`: the streamed composite resolves
+                    # `_segment_offset` (via `merge_mode`) on the first reindexable event, so a late stamp
+                    # would reindex against a stale `'accumulate'` verdict and misplace the parts. That this
+                    # stream supersedes the suspended turn is known the moment the rewound chain is entered.
+                    if rewound:
+                        _stamp_replace_previous(streamed_response)
+                    chain.log.attach_to_stream(streamed_response)
                     self._set_span_attributes(model, prepared_parameters)
-                    raise exc
+                    yield streamed_response
+                    # Stamp after `yield` (see the pinned path above): `state` is only final once the
+                    # caller has consumed the stream, so callers must call `get()` after the context exits.
+                    if streamed_response.state == 'suspended':
+                        _stamp_continuation(streamed_response, model)
+                        carry_deadline(streamed_response, deadline)
+                    return
 
-                # After a rewind, mark this fresh stream as replacing the abandoned suspended turn.
-                # Unlike the continuation pin (stamped after `yield`, once the final `state` is known),
-                # this must land on `metadata` *before* `yield`: the streamed composite resolves
-                # `_segment_offset` (via `merge_mode`) on the first reindexable event, so a late stamp
-                # would reindex against a stale `'accumulate'` verdict and misplace the parts. That this
-                # stream supersedes the suspended turn is known the moment the rewound chain is entered.
-                if rewound:
-                    _stamp_replace_previous(streamed_response)
-                chain.log.attach_to_stream(streamed_response)
-                self._set_span_attributes(model, prepared_parameters)
-                yield streamed_response
-                # Stamp after `yield` (see the pinned path above): `state` is only final once the
-                # caller has consumed the stream, so callers must call `get()` after the context exits.
-                if streamed_response.state == 'suspended':
-                    _stamp_continuation(streamed_response, model)
-                    carry_deadline(streamed_response, deadline)
-                return
-
-        chain.exhausted()
+            chain.exhausted()
+        except BaseException as error:
+            if rewound:
+                # The job of the response this request continued was cancelled when it was rewound, so the
+                # continuation loop the error reaches mustn't cancel it again.
+                mark_suspended_job_cancelled(error)
+            raise
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         """Cancel a suspended continuation on the underlying model holding the server-side job.

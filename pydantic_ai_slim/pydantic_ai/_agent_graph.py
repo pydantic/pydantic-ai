@@ -102,6 +102,7 @@ from .models._continuation import (
     MergeMode,
     _ContinuationStreamedResponse,
     billed_beyond,
+    cancel_abandoned_job,
     cancel_suspended_job,
     merge_mode,
     merge_responses,
@@ -1615,12 +1616,12 @@ async def model_request(  # noqa: C901
                     messages, request_context.model_settings, request_context.model_request_parameters
                 )
                 requested = True
-            except BaseException:
+            except BaseException as error:
                 # The broad catch is deliberate: `BaseException` also covers `CancelledError`,
                 # `KeyboardInterrupt`, and `SystemExit`, and we must cancel the server-side
                 # suspended/background job before letting any of them propagate so it doesn't leak.
                 if response is not None:
-                    await cancel_suspended_job(model, response)
+                    await cancel_abandoned_job(model, response, error)
                 raise
 
             new_response = _narrow_tool_call_parts(new_response, request_context.model_request_parameters)
