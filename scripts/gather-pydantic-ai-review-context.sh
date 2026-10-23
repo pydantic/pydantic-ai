@@ -729,9 +729,9 @@ what the diff changes; each rule carries its precedent and reason. In
 summarizes the structure rules, and the "Narrow a capability by client class"
 bullet holds the gating rule's gateway reasoning. The rules govern the code a
 diff adds. A PR that aligns existing code must also meet the guide's scope
-rules: flag as MEDIUM a structural alignment that shows no diff of request
-bodies captured on `main` and on the branch, and a behavioral one that doesn't
-name each change it makes. A violation is HIGH when it has a concrete trigger
+rules: flag as MEDIUM a structural alignment whose PR doesn't show the request
+bodies captured on `main` and on the branch to be byte-identical, and a
+behavioral one that doesn't name each change it makes. A violation is HIGH when it has a concrete trigger
 that changes a request or a replayed history, or that the user's `profile=`
 can't override. A violation of code shape alone is MEDIUM.
 
