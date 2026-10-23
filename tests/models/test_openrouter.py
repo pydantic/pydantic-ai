@@ -880,14 +880,14 @@ async def test_openrouter_streamed_reasoning_without_details_is_preserved(allow_
             }
         )
 
-    mock_client = MockOpenAI(
-        stream=[
+    mock_client = MockOpenAI.create_mock_stream(
+        [
             chunk({'content': '', 'reasoning': 'Adding '}),
             chunk({'content': '', 'reasoning': 'two and two.'}),
             chunk({'content': '4'}, finish_reason='stop'),
-        ],
+        ]
     )
-    model = OpenRouterModel('deepseek/deepseek-r1', provider=OpenRouterProvider(openai_client=cast(Any, mock_client)))
+    model = OpenRouterModel('deepseek/deepseek-r1', provider=OpenRouterProvider(openai_client=mock_client))
 
     async with model_request_stream(model, [ModelRequest.user_text_prompt('What is 2+2?')]) as stream:
         async for _ in stream:
