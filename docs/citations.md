@@ -40,7 +40,9 @@ A [`Citation`][pydantic_ai.messages.Citation] has:
 - `sources`: where the information came from. A [`WebCitationSource`][pydantic_ai.messages.WebCitationSource] has the
   page's `url`. A [`DocumentCitationSource`][pydantic_ai.messages.DocumentCitationSource] is any other source. Its
   `document_id` is the provider's ID, not a file path, and a document you sent in the prompt may have no ID or title.
-  Each source's `excerpts` are the passages the provider quoted as evidence.
+  Each source's `excerpts` are the passages the provider quoted as evidence. Several sources on one citation are the
+  ones the provider grouped together; they may copy each other, so their number says nothing about how well the text
+  is supported.
 - `anchor`: the part of the text the citation is about, as character positions: `part.content[anchor.start:anchor.end]`.
     - A [`ContentCitationAnchor`][pydantic_ai.messages.ContentCitationAnchor] covers the text the sources support.
       Some providers, such as Anthropic, cite whole text parts, so the anchor covers the whole part.
