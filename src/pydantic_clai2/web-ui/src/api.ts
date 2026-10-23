@@ -177,8 +177,10 @@ export const api = {
     call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/settings`, { changes, reset }),
   pluginMenu: (name: string) => call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/menu`),
   task: (id: string) => call<TaskTranscript>('GET', `/api/tasks/${id}`),
-  taskAction: (id: string, action: 'stop' | 'background' | 'resume') => call<void>('POST', `/api/tasks/${id}/${action}`),
+  taskAction: (id: string, action: 'stop' | 'background') => call<void>('POST', `/api/tasks/${id}/${action}`),
   steer: (id: string, text: string) => call<{ steered: boolean }>('POST', `/api/tasks/${id}/steer`, { text }),
+  /** Run a finished task again with `text` as your message, on its own; it answers once the task runs. */
+  promptTask: (id: string, text: string) => call<void>('POST', `/api/tasks/${id}/prompt`, { text }),
   panels: () => call<PanelInfo[]>('GET', '/api/panels'),
   workspaces: () => call<WorkspacesInfo>('GET', '/api/workspaces'),
   openWorkspace: (id: string) => call<{ url: string }>('POST', `/api/workspaces/${encodeURIComponent(id)}/open`),
