@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Collection, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
@@ -112,8 +112,10 @@ class WrapperModel(Model):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return self.wrapped.prepare_request(model_settings, model_request_parameters)
 
-    def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
-        self.wrapped._warn_if_thinking_overridden(layers)
+    def _warn_if_thinking_overridden(
+        self, layers: Sequence[_SettingsLayer], *, suppressed: Collection[str] = frozenset()
+    ) -> None:
+        self.wrapped._warn_if_thinking_overridden(layers, suppressed=suppressed)
 
     def prepare_messages(
         self,

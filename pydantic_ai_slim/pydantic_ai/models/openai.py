@@ -675,6 +675,20 @@ def _drop_sampling_params_for_reasoning(
         model_settings.pop(k, None)
 
 
+def _chat_extra_body(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> object:
+    """The request's `extra_body`, over the profile's fields that hide thinking when `thinking_summary` is `False`."""
+    extra_body = model_settings.get('extra_body')
+    if model_settings.get('thinking_summary') is not False or not (
+        omit_thinking := profile.get('openai_chat_omit_thinking_extra_body')
+    ):
+        return extra_body
+    if extra_body is None:
+        return dict(omit_thinking)
+    if _is_str_dict(extra_body):
+        return {**omit_thinking, **extra_body}
+    return extra_body
+
+
 def _with_profile_unsupported_settings(unsupported: frozenset[str], profile: OpenAIModelProfile) -> frozenset[str]:
     """Add what the profile says a model or OpenAI-compatible provider rejects, so a dropped guarantee still warns."""
     return unsupported | frozenset(profile.get('openai_unsupported_model_settings', ()))
@@ -1601,7 +1615,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                     prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
                     extra_headers=extra_headers,
-                    extra_body=model_settings.get('extra_body'),
+                    extra_body=_chat_extra_body(profile, model_settings),
                 )
             except APIStatusError as e:
                 if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
@@ -1877,6 +1891,20 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
         # `_translate_thinking` sends an explicit effort instead of the one unified `thinking` maps to.
         return ('openai_reasoning_effort',) if model_settings.get('openai_reasoning_effort') else ()
+
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_chat_extra_body` lets keys the request sets in `extra_body` win over the profile's fields that hide
+        # thinking for `thinking_summary=False`.
+        omit_thinking = self.profile.get('openai_chat_omit_thinking_extra_body')
+        extra_body = model_settings.get('extra_body')
+        if (
+            model_settings.get('thinking_summary') is False
+            and omit_thinking
+            and _is_str_dict(extra_body)
+            and any(key in extra_body for key in omit_thinking)
+        ):
+            return ('extra_body',)
+        return ()
 
     def _supports_tool_forcing(
         self, model_settings: OpenAIChatModelSettings, model_request_parameters: ModelRequestParameters
@@ -3746,6 +3774,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 reasoning['context'] = reasoning_context
         if reasoning_summary:
             reasoning['summary'] = reasoning_summary
+        elif model_settings.get('thinking_summary') and self._request_thinks(model_settings, model_request_parameters):
+            # Every reasoning model accepts `auto`, unlike `concise`. Summaries aren't requested by default because
+            # they may require organization verification.
+            reasoning['summary'] = 'auto'
         return reasoning or OMIT
 
     def _request_thinks(
@@ -3758,6 +3790,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
         # `_translate_thinking` sends an explicit effort instead of the one unified `thinking` maps to.
         return ('openai_reasoning_effort',) if model_settings.get('openai_reasoning_effort') is not None else ()
+
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_translate_thinking` sends an explicit summary instead of the one `thinking_summary` asks for.
+        return ('openai_reasoning_summary',) if model_settings.get('openai_reasoning_summary') else ()
 
     def _get_responses_tool_choice(
         self,

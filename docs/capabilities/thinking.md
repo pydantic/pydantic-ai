@@ -38,14 +38,45 @@ The [`Thinking.effort`][pydantic_ai.capabilities.Thinking.effort] value accepts:
 These are the same values accepted by the underlying `thinking` model setting.
 When omitted, the model uses its default behavior. Provider-specific settings (documented in the sections below) take precedence when both are set, except that `thinking=False` still disables reasoning on Cerebras and on Groq's qwen3 models. If the provider-specific setting comes from a broader scope than `thinking` (for example, the model's `settings` while `thinking` comes from this capability, `agent.run()` or a direct request), a `UserWarning` names both. Settings given as a callable ([dynamic model settings](../agent.md#dynamic-model-settings)) are not checked, and neither are capability settings, this capability's `thinking` included, once any capability's settings are a callable or are deferred with `defer_loading`.
 
+### Readable thinking {#thinking-summary}
+
+APIs return the model's thinking as a summary, as the raw reasoning on some open models, or not at all, and several only return it when asked. The [`Thinking.summary`][pydantic_ai.capabilities.Thinking.summary] field, or the underlying [`thinking_summary`][pydantic_ai.settings.ModelSettings.thinking_summary] model setting, asks for it portably:
+
+```python {title="thinking_summary.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Thinking
+
+agent = Agent('{{ anthropic:large }}', capabilities=[Thinking(effort='high', summary=True)])
+```
+
+- `True` — ask for readable thinking wherever the API has a switch for it, including on models that think without a `thinking` setting
+- `False` — ask the API not to return thinking content where it can. The model still thinks, and is billed for it, as configured by `thinking`
+- Unset — when `thinking` enables thinking, summaries are requested where that is safe to do by default: Anthropic, Claude on Bedrock, Google, and Groq. OpenAI's Responses API is left alone, because [reasoning summaries](https://platform.openai.com/docs/guides/reasoning#reasoning-summaries) may require organization verification; set `True` to request them there
+
+Provider-specific settings take precedence, with a `UserWarning` naming both when the provider-specific one comes from a broader scope, as for [`thinking`](#unified-thinking-settings). Thinking an API returns anyway is never stripped from the response:
+
+| Provider | Unset, with `thinking` enabled | `True` | `False` | Notes |
+|---|---|---|---|---|
+| Anthropic, Bedrock (Claude) | `thinking.display='summarized'` | `display='summarized'` | `display='omitted'` | A model that thinks without a `thinking` setting (Claude Opus 5 and later, Sonnet 5 and later, Haiku 5.5, Fable, and Mythos) gets an explicit `{'type': 'adaptive', 'display': ...}` when only `thinking_summary` is set. `False` still returns the signed thinking blocks, with empty content. `display` is never added to a `disabled` or `between_tools` block. [`anthropic_thinking_display`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thinking_display] and [`bedrock_thinking_display`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_thinking_display] take precedence |
+| Google | `include_thoughts=True` | `include_thoughts=True`, also on models that think by default | `include_thoughts=False`, keeping the level or budget | `google_thinking_config` takes precedence |
+| Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | `reasoning_format='hidden'` | Reasoning models only, with or without `thinking`. `groq_reasoning_format` takes precedence |
+| OpenAI Responses, Bedrock Mantle | Not sent | `reasoning.summary='auto'` when the request reasons | Not sent | There is no value that turns summaries off; leaving `summary` out does. `openai_reasoning_summary` takes precedence |
+| Bedrock (OpenAI GPT-5.6 and GPT-6) | Not sent | `reasoning.summary='auto'` unless thinking is off | Not sent | The Responses API shape these models take on Converse; the summary comes back as `reasoningText` |
+| Bedrock (OpenAI GPT-OSS) | Not sent | Not sent | `include_reasoning=False` | Any `include_reasoning` value, `True` included, drops the reasoning from the response |
+| Cerebras | Not sent | Not sent | `reasoning_format='hidden'` | `gpt-oss` only; Cerebras' other models reject `reasoning_format` |
+| vLLM | Not sent | Not sent | `include_reasoning=False` | Via `extra_body`, under any `extra_body` you set |
+| OpenRouter | Not sent | Not sent | `reasoning.exclude=True` | Anthropic routes still return the thinking in `reasoning_details`, which becomes a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart]. `openrouter_reasoning` takes precedence |
+
+The other providers have no such switch, so `thinking_summary` is ignored there: OpenAI's Chat Completions API, xAI, Mistral, Cohere, Ollama, DeepSeek, Moonshot AI, Z.AI, Hugging Face, GitHub Copilot, Snowflake Cortex, the Qwen, DeepSeek, Grok, and Magistral models on Bedrock, and [realtime](../realtime/overview.md) models.
+
 ### Provider translation
 
-The `Thinking` capability maps each effort value to the selected provider's native format:
+The `Thinking` capability maps each effort value to the selected provider's native format. On Anthropic and Claude on Bedrock, the `display` that comes with it follows [`thinking_summary`](#thinking-summary):
 
 | Provider | `Thinking()` / `Thinking(effort=True)` | `Thinking(effort='high')` | Notes |
 |---|---|---|---|
-| Anthropic (adaptive thinking) | `anthropic_thinking={'type': 'adaptive'}` | `{type: 'adaptive'}` + `effort='high'` | Claude Opus 4.7, 4.8, 5, 5.5, Sonnet 5 and 5.5, and Haiku 5.5 also support `effort='xhigh'`; `'max'` → `effort='max'` |
-| Anthropic (older) | `anthropic_thinking={'type': 'enabled', 'budget_tokens': 10000}` | `budget_tokens=16384` | Budget-based; `'low'` → 2048 tokens, `'xhigh'` and `'max'` → 32768. Claude Opus 4.5 also takes an effort up to `'high'`, so `'xhigh'` and `'max'` send `effort='high'` |
+| Anthropic (adaptive thinking) | `anthropic_thinking={'type': 'adaptive', 'display': 'summarized'}` | `{type: 'adaptive', display: 'summarized'}` + `effort='high'` | Claude Opus 4.7, 4.8, 5, 5.5, Sonnet 5 and 5.5, and Haiku 5.5 also support `effort='xhigh'`; `'max'` → `effort='max'` |
+| Anthropic (older) | `anthropic_thinking={'type': 'enabled', 'budget_tokens': 10000, 'display': 'summarized'}` | `budget_tokens=16384` | Budget-based; `'low'` → 2048 tokens, `'xhigh'` and `'max'` → 32768. Claude Opus 4.5 also takes an effort up to `'high'`, so `'xhigh'` and `'max'` send `effort='high'` |
 | OpenAI | `reasoning_effort='medium'` | `reasoning_effort='high'` | GPT-5.6 maps unified `'minimal'` to `'low'`. `'max'` → `reasoning_effort='max'` on the Responses API for GPT-5.6 and GPT-6, and `'xhigh'` everywhere else, including Codex and ChatGPT plan usage: the Chat Completions API rejects `'max'` |
 | Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | Unified efforts snap to the nearest documented level — e.g. `gemini-3.1-flash-lite-image` (levels: `minimal`, `high`) maps `'low'` to `'MINIMAL'` and `'medium'`/`'xhigh'`/`'max'` to `'HIGH'` — and models without `minimal` map unified `'minimal'` to `'LOW'`; `gemini-3.1-flash-image` applies its `minimal, high` set only on the Gemini API (see [Google](../models/google.md#configure-thinking)) |
 | Google (Gemini 2.5) | `include_thoughts=True` | `thinking_budget=24576` | |
@@ -61,8 +92,8 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 | Ollama | `reasoning_effort='medium'` | `reasoning_effort='high'` | Inherited from `OpenAIChatModel`, so it follows the resolved model profile: `deepseek-r1` reasons, `gpt-oss` on Ollama sends nothing. `thinking=False` → `'none'` only on profiles that accept it |
 | Z.AI | `thinking={'type': 'enabled'}` | `thinking={'type': 'enabled'}`, plus `reasoning_effort='high'` on GLM-5.2 and GLM-5.3 | Via `extra_body`; `thinking=False` → `type='disabled'`. GLM-5.3 always reasons and ignores `thinking=False` (dropped rather than sent as `type='disabled'`) and accepts only `low`/`high`/`max` (per Z.AI's docs and the error message returned when disabling thinking on it), mapping the other unified levels to the nearest one |
 | xAI | `reasoning_effort` omitted on Grok 4.3 (uses its default) | `reasoning_effort='high'` | Grok 4.3 supports `'none'`, `'low'`, `'medium'`, and `'high'`, and `thinking=True` omits the parameter so the model applies its own default; Grok 3 Mini only supports `'low'` and `'high'` (so `thinking=True` → `'high'`) and silently ignores `thinking=False`; Grok 4.5 supports `'low'`, `'medium'`, and `'high'` but not `'none'`, so it reasons always-on (`thinking=True` → `'medium'`) and silently ignores `thinking=False` |
-| Bedrock (Claude 4.6+ and Haiku 5.5) | `thinking.type='adaptive'` | `{type: 'adaptive'}` + `output_config.effort='high'` | Effort lives in the sibling `output_config` field per AWS docs; `xhigh` passes through on the models whose profile supports it (the same ones as the direct Anthropic API, e.g. Opus 4.7+, Sonnet 5, and Haiku 5.5) and maps to `max` on the others (Opus 4.6 and Sonnet 4.6 reject `xhigh`); `'max'` passes through |
-| Bedrock (Claude older) | `thinking.type='enabled'` | `budget_tokens=16384` | Budget-based |
+| Bedrock (Claude 4.6+ and Haiku 5.5) | `thinking={'type': 'adaptive', 'display': 'summarized'}` | `{type: 'adaptive', display: 'summarized'}` + `output_config.effort='high'` | Effort lives in the sibling `output_config` field per AWS docs; `xhigh` passes through on the models whose profile supports it (the same ones as the direct Anthropic API, e.g. Opus 4.7+, Sonnet 5, and Haiku 5.5) and maps to `max` on the others (Opus 4.6 and Sonnet 4.6 reject `xhigh`); `'max'` passes through |
+| Bedrock (Claude older) | `thinking.type='enabled'`, `display='summarized'` | `budget_tokens=16384` | Budget-based |
 | Bedrock (OpenAI GPT-OSS) | `reasoning_effort='medium'` | `reasoning_effort='high'` | Converse rejects `'none'`; `thinking=False` silently ignored |
 | Bedrock (OpenAI GPT-5.6 and GPT-6) | `reasoning={'effort': 'medium'}` | `reasoning={'effort': 'high'}` | The Responses API shape, which Converse expects for these models; `thinking=False` → `effort='none'`, silently ignored on GPT-6 Astra and GPT-6.1 Sol, which reject it; unified `'minimal'` → `'low'`, `'max'` → `'xhigh'` |
 | Bedrock (Qwen) | `reasoning_config='high'` | `reasoning_config='high'` | Only `'low'` and `'high'`; `thinking=False` silently ignored |
@@ -91,7 +122,7 @@ If your provider recommends sending these custom fields back unchanged for cachi
 ### OpenAI Responses
 
 The [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] can generate native thinking parts.
-Set [`OpenAIResponsesModelSettings.openai_reasoning_effort`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_effort] and [`OpenAIResponsesModelSettings.openai_reasoning_summary`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_summary] in the [model settings](../agent.md#model-run-settings) to enable native thinking parts.
+Set [`OpenAIResponsesModelSettings.openai_reasoning_effort`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_effort] and [`OpenAIResponsesModelSettings.openai_reasoning_summary`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_summary] in the [model settings](../agent.md#model-run-settings) to enable native thinking parts. The unified [`thinking_summary=True`](#thinking-summary) setting requests the `auto` summary portably, and `openai_reasoning_summary` takes precedence over it.
 Models that support it can additionally use a `pro` [reasoning mode](../models/openai.md#reasoning-mode), which is independent of the effort and never set by the unified `thinking` setting.
 
 By default, the unique IDs of reasoning, text, and function call parts from the message history are sent to the model, which can result in errors like `"Item 'rs_123' of type 'reasoning' was provided without its required following item."`
@@ -195,7 +226,7 @@ Claude Opus 5 and later, Claude Sonnet 5, Haiku 5.5, and the Claude Fable and My
 !!! note "Claude Sonnet 5.5 turns off up-front thinking with `between_tools`"
     Claude Sonnet 5.5 rejects `anthropic_thinking={'type': 'disabled'}`. Its lowest setting is `anthropic_thinking={'type': 'between_tools'}`, which skips up-front thinking and keeps only the short progress notes the model writes between tool calls. Anthropic accepts it at `low`, `medium`, and `high` effort only. The unified `thinking=False` setting sends no `thinking` field, so the model thinks adaptively at its default `high` effort; use `between_tools` where you previously disabled thinking.
 
-    Under adaptive thinking, Claude Sonnet 5.5 returns the notes it writes between tool calls as thinking blocks rather than text, and they arrive empty at Anthropic's default `display: 'omitted'`. To show them, set `anthropic_thinking={'type': 'adaptive', 'display': 'summarized'}`; `between_tools` returns them without it.
+    Under adaptive thinking, Claude Sonnet 5.5 returns the notes it writes between tool calls as thinking blocks rather than text, and they arrive empty at Anthropic's default `display: 'omitted'`. The unified `thinking` setting asks for summaries, which shows them, and [`thinking_summary=True`](#thinking-summary) does too when `thinking` is unset; `between_tools` returns them without either.
 
 ```python {title="anthropic_adaptive_thinking.py"}
 from pydantic_ai import Agent
@@ -214,6 +245,18 @@ The [`anthropic_effort`][pydantic_ai.models.anthropic.AnthropicModelSettings.ant
 
 !!! note
     Older models (`claude-sonnet-4-5`, `claude-opus-4-5`, etc.) do not support adaptive thinking and require `{'type': 'enabled', 'budget_tokens': N}` as shown [above](#anthropic).
+
+Anthropic's [`display`](https://platform.claude.com/docs/en/build-with-claude/extended-thinking#summarized-thinking) parameter controls whether the API returns a summary of the model's thinking (`'summarized'`) or only signatures (`'omitted'`). Claude Opus 4.7, Opus 4.8, and the 5-series models default to `'omitted'`, which returns the thinking blocks empty, so the unified `thinking` setting asks for summaries, and [`thinking_summary`](#thinking-summary) chooses portably, including on models that think without a `thinking` setting. To set it on the Anthropic request alone, use [`anthropic_thinking_display`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thinking_display], which takes precedence. Either way the model still thinks, and is billed for it:
+
+```python {title="anthropic_thinking_display.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+
+model = AnthropicModel('{{ anthropic:large.name }}')
+settings = AnthropicModelSettings(thinking=True, anthropic_thinking_display='omitted')
+agent = Agent(model, model_settings=settings)
+...
+```
 
 Thinking tokens count against Anthropic's loop-wide [task budgets](../models/anthropic.md#task-budgets-beta), so adaptive thinking naturally scales down as the budget depletes.
 
@@ -252,6 +295,8 @@ agent = Agent(model, model_settings=settings)
 ## Bedrock
 
 For Claude Sonnet 4.6+, Opus 4.6+, and Haiku 5.5, Pydantic AI's unified `thinking` setting translates to AWS's required [adaptive thinking](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html) shape automatically — set [`ModelSettings.thinking`][pydantic_ai.settings.ModelSettings.thinking] and you're done.
+
+Claude on Bedrock takes the same `display` parameter as the [direct Anthropic API](#adaptive-thinking-effort): the unified `thinking` setting asks for summaries, [`thinking_summary`](#thinking-summary) chooses portably, and [`bedrock_thinking_display`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_thinking_display] sets it on the Bedrock request alone, taking precedence.
 
 Claude served through Bedrock inherits the Anthropic model profile, so reasoning replayed from history follows [Carried-over thinking](#carried-over-thinking) here too.
 
@@ -321,7 +366,7 @@ Groq supports different formats to receive thinking parts:
 - `"hidden"`: The thinking part is not included in the text content.
 - `"parsed"`: The thinking part has its own structured part in the response which is converted into a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] object.
 
-The unified [`ModelSettings.thinking`][pydantic_ai.settings.ModelSettings.thinking] setting works across providers: it selects `reasoning_format='parsed'` so thinking parts are returned, and for the gpt-oss family its effort level also drives Groq's `reasoning_effort` (`minimal`/`low` → `'low'`, `medium` → `'medium'`, `high`/`xhigh`/`max` → `'high'`, `True` → `'medium'`).
+The unified [`ModelSettings.thinking`][pydantic_ai.settings.ModelSettings.thinking] setting works across providers: it selects `reasoning_format='parsed'` so thinking parts are returned, and for the gpt-oss family its effort level also drives Groq's `reasoning_effort` (`minimal`/`low` → `'low'`, `medium` → `'medium'`, `high`/`xhigh`/`max` → `'high'`, `True` → `'medium'`). The unified [`thinking_summary`](#thinking-summary) setting picks `'parsed'` or `'hidden'` on reasoning models, with or without `thinking`.
 
 Two composable [model settings](../agent.md#model-run-settings) give finer control: [`GroqModelSettings.groq_reasoning_format`][pydantic_ai.models.groq.GroqModelSettings.groq_reasoning_format] selects how thinking parts are returned (the formats above), and [`GroqModelSettings.groq_reasoning_effort`][pydantic_ai.models.groq.GroqModelSettings.groq_reasoning_effort] (sent to Groq as `reasoning_effort`) controls how much the model reasons, taking precedence over the unified `thinking` mapping:
 
@@ -359,6 +404,8 @@ agent = Agent(model, model_settings=settings)
     Truthy [`thinking`][pydantic_ai.settings.ModelSettings.thinking] values send both `effort` and `enabled: True` on the wire. The explicit `enabled: True` is a no-op for reasoning-by-default models but load-bearing for reasoning-optional routes (parts of the `google/gemma-*` family, for example) that otherwise leave reasoning disabled despite `effort` being set.
 
     [`thinking=False`][pydantic_ai.settings.ModelSettings.thinking] sends `reasoning={'effort': 'none'}` — the [documented OpenRouter disable signal](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) — on routes whose upstream can honor disable (e.g. `anthropic/claude-sonnet-4.5`, `z-ai/glm-4.6`). On routes whose upstream is always-on (e.g. `openai/o3`, `openai/gpt-5`, `mistralai/magistral-medium-*`, `deepseek/deepseek-r1`, `x-ai/grok-3-mini`), `thinking=False` is silently ignored at the model-profile gate, matching the same model's direct-route behavior. Set [`OpenRouterModelSettings.openrouter_reasoning`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_reasoning] directly when you want explicit per-route control.
+
+    [`thinking_summary=False`](#thinking-summary) adds `exclude: True` to the `reasoning` object (sending `reasoning={'exclude': True}` alone when `thinking` is unset, which doesn't turn reasoning on). OpenAI and Google routes then return no reasoning; Anthropic routes still return it in `reasoning_details`.
 
 ## Z.AI
 

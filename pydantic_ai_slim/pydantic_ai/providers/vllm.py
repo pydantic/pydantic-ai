@@ -108,6 +108,8 @@ class VLLMProvider(_OpenAICompatibleProvider):
         # - File content parts and native tool return schemas are not supported.
         # - Some chat templates served by vLLM reject more than one leading system message.
         #   See https://github.com/pydantic/pydantic-ai/issues/5812.
+        # - The `include_reasoning` field of vLLM's chat completion request (default `true`) drops the parsed
+        #   reasoning from the response when `false`.
         # The gpt-oss family opt-out for `supports_forced_tool_choice` survives the merge because
         # vLLM ignores `tool_choice='required'` for gpt-oss.
         # See https://github.com/vllm-project/vllm/issues/44216.
@@ -123,6 +125,7 @@ class VLLMProvider(_OpenAICompatibleProvider):
                 supports_json_schema_output=True,
                 supports_json_object_output=True,
                 native_output_requires_schema_in_instructions=True,
+                openai_chat_omit_thinking_extra_body={'include_reasoning': False},
             ),
         )
 
