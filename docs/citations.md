@@ -125,8 +125,9 @@ TextPart(
 
 ## Citations and structured output
 
-On Anthropic, and on Bedrock with Anthropic models, citations only work when your agent's output is text. With [structured output](output.md),
-`Citations()` doesn't ask Anthropic to cite your documents, because Anthropic can't attach citations to it:
+On Anthropic, and on Bedrock with Anthropic models, citations only work when your agent's output is text. With
+[structured output](output.md), `Citations()` doesn't ask the model to cite your documents, because it can't attach
+citations to it:
 
 - Tool output, the default, comes back as tool call arguments, which have no place for citations. With citations on,
   the model writes its citation markup into your fields instead, such as
