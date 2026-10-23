@@ -34,8 +34,9 @@ from complexipy import FunctionComplexity, code_complexity
 
 GUIDE = 'agent_docs/complexity.md'
 
-# complexipy drops a function on either marker, in any case and with any text after it. Only a `(reason)`
-# directly after the marker counts as a reason.
+# complexipy drops a function for either marker, in any case and with any text after it, on the line above
+# the function or on one of its decorator or signature lines. Only a `(reason)` directly after the marker
+# counts as a reason.
 _IGNORE = re.compile(
     r'#\s*(?:complexipy\s*:\s*ignore|noqa\s*:\s*complexipy)[^\s(]*\s*(?:\((?P<reason>[^)]*)\))?', re.IGNORECASE
 )
@@ -481,31 +482,40 @@ def _name_cases(offenders: list[_Offender], changes: list[_Change]) -> None:
         o.case = _case(_shape(o.path, o.function, node))
 
 
-def _ignore_comments(source: str | None) -> list[tuple[int, str, str]]:
-    """The comments that hold an ignore marker: their line, their text, and the reason the marker gives."""
-    # Tokenizing is the slow step, and most sources hold no marker at all.
+def _ignored(source: str | None) -> dict[str, FunctionComplexity]:
+    """The functions complexipy drops for an ignore marker, by name."""
     if not source or not _IGNORE.search(source):
-        return []
-    try:
-        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
-    except (tokenize.TokenError, SyntaxError):
-        return []
-    found: list[tuple[int, str, str]] = []
-    for token in tokens:
+        return {}
+    scored = _functions(source)
+    return {name: f for name, f in _functions(source, no_ignore=True).items() if name not in scored}
+
+
+def _marker_reasons(source: str) -> dict[int, str]:
+    """The reason each ignore comment gives, by line."""
+    reasons: dict[int, str] = {}
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
         marker = _IGNORE.search(token.string) if token.type == tokenize.COMMENT else None
         if marker:
-            found.append((token.start[0], token.string, (marker['reason'] or '').strip()))
-    return found
+            reasons[token.start[0]] = (marker['reason'] or '').strip()
+    return reasons
 
 
 def _added_ignores(change: _Change) -> list[tuple[str, int, str]]:
-    """The ignore comments this change adds, with the reason each one gives."""
-    before = {text for _, text, _ in _ignore_comments(change.old_source)}
-    return [
-        (change.new_path or '', line, reason)
-        for line, text, reason in _ignore_comments(change.new_source)
-        if text not in before
-    ]
+    """Each function this change makes complexipy drop, with the line and reason of its marker."""
+    before = _ignored(change.old_source)
+    added = [f for name, f in _ignored(change.new_source).items() if name not in before]
+    if not added:
+        return []
+    source = change.new_source or ''
+    reasons, definitions = _marker_reasons(source), _definitions(source)
+    found: list[tuple[str, int, str]] = []
+    for function in added:
+        node = definitions[(function.name, function.line_start)]
+        # From the line above the first decorator to the end of the signature.
+        header = range(function.line_start - 1, max(node.lineno, node.body[0].lineno - 1) + 1)
+        line = next((n for n in header if n in reasons), function.line_start)
+        found.append((change.new_path or '', line, reasons.get(line, '')))
+    return found
 
 
 def _escape(value: str, prop: bool = False) -> str:

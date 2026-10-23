@@ -4,7 +4,7 @@
 
 **When to check**: When pre-commit or CI reports a function's cognitive complexity, or before you add a branch to a function that is already over the limit
 
-`scripts/check_complexity.py` scores functions with [complexipy](https://github.com/rohaquinlop/complexipy) and compares each one with its version before the change. The limit is `max-complexity-allowed` in `[tool.complexipy]` in `pyproject.toml`, and the check covers the packages listed in `paths` there. A change fails when it adds a function over the limit, takes a function over the limit, or makes a function that is already over the limit more complex. Functions already over the limit pass until a change makes them worse. A moved or renamed function is compared with the function it replaces.
+`scripts/check_complexity.py` scores functions with [complexipy](https://github.com/rohaquinlop/complexipy) and compares each one with its version before the change. The limit is `max-complexity-allowed` in `[tool.complexipy]` in `pyproject.toml`, and the check covers the packages listed in `paths` there. A change fails when it adds a function over the limit, takes a function over the limit, or makes a function that is already over the limit more complex. Functions already over the limit pass until a change makes them worse. A function moved under the same name is compared with the function it replaces. A renamed function passes when its score is unchanged, and counts as new when it also grew. So does a function moved in from outside the checked packages.
 
 Pre-commit runs the check on the staged changes, and CI runs it on the pull request. To check what your uncommitted edits add, or what the whole branch adds:
 
@@ -159,7 +159,7 @@ C011. Move the inner `try` into its own method, so its `except` bodies are not n
 
 ## Ignoring a function
 
-Prefer a fix. When a function has to stay complex, mark its `def` line, or the comment line directly above it, with a reason in parentheses:
+Prefer a fix. When a function has to stay complex, mark its `def` line, or the comment line directly above the function and its decorators, with a reason in parentheses:
 
 ```python
 def _map_messages(self, messages: list[ModelMessage]) -> list[Message]:  # complexipy: ignore (one branch per content type the API accepts)

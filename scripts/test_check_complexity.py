@@ -321,6 +321,43 @@ def test_a_marker_in_a_file_that_does_not_tokenize_is_skipped(repo: Path, capsys
     assert _check(capsys, '--staged') == (0, '')
 
 
+def test_a_marker_in_a_function_body_is_not_an_ignore(repo: Path, capsys: pytest.CaptureFixture[str]):
+    # complexipy still scores the function, so the marker ignores nothing.
+    body_marker = _ifs('debt', 5).replace('    if x == 0:', '    if x == 0:  # complexipy: ignore')
+    _write(repo, 'pkg/debt.py', body_marker + '\n\n' + _ifs('small', 2))
+    _stage(repo)
+
+    assert _check(capsys, '--staged') == (0, '')
+
+
+def test_a_copied_marker_on_a_new_function_is_reported(repo: Path, capsys: pytest.CaptureFixture[str]):
+    marker = '  # complexipy: ignore (one branch per value)'
+    _write(repo, 'pkg/debt.py', _ifs('debt', 5, marker=marker) + '\n\n' + _ifs('small', 2))
+    _commit(repo)
+    _write(
+        repo,
+        'pkg/debt.py',
+        _ifs('debt', 5, marker=marker) + '\n\n' + _ifs('small', 2) + '\n\n' + _ifs('added', 5, marker=marker),
+    )
+    _stage(repo)
+
+    code, out = _check(capsys, '--staged')
+
+    assert code == 0
+    assert out == f'pkg/debt.py:23: complexipy ignored: one branch per value, see {GUIDE}#ignoring-a-function\n'
+
+
+def test_a_marker_above_the_decorators_is_reported_on_its_own_line(repo: Path, capsys: pytest.CaptureFixture[str]):
+    decorated = '# complexipy: ignore (one branch per value)\n@staticmethod\n' + _ifs('added', 5)
+    _write(repo, 'pkg/added.py', decorated)
+    _stage(repo)
+
+    code, out = _check(capsys, '--staged')
+
+    assert code == 0
+    assert out == f'pkg/added.py:1: complexipy ignored: one branch per value, see {GUIDE}#ignoring-a-function\n'
+
+
 def test_an_ignore_that_was_already_there_is_not_reported(repo: Path, capsys: pytest.CaptureFixture[str]):
     marker = '  # complexipy: ignore (one branch per value)'
     _write(repo, 'pkg/debt.py', _ifs('debt', 6, marker=marker) + '\n\n' + _ifs('small', 2))
