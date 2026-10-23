@@ -191,7 +191,7 @@ from pydantic_ai import Agent
 perception = Agent(instructions='You are the perception module of a robot.')
 
 
-async def main(frames):
+async def main(frames=()):
     async with perception.realtime('google:gemini-robotics-er-2-streaming-preview').session() as session:
         for frame in frames:
             await session.send(frame)  # a `BinaryImage` per camera frame
