@@ -1159,6 +1159,7 @@
     },
     "RunContext.run_id": {
       "engines": [
+        "durable_exec",
         "render",
         "temporal"
       ],
@@ -1166,6 +1167,7 @@
         "attribute_read"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::WorkspaceCallCacheIdentity.project",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::TemporalRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::TemporalRunContext._expose_field",
