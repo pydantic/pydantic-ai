@@ -93,7 +93,12 @@ from ..capabilities import (
     ModelSelector,
     ToolSearch as ToolSearchCap,
 )
-from ..capabilities._dynamic import wrap_capability_funcs
+from ..capabilities._dynamic import (
+    DynamicCapability,
+    ResolvedDynamicCapability,
+    called_factories,
+    wrap_capability_funcs,
+)
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.abstract import (
@@ -2012,14 +2017,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # instrumentation-settings resolution above, the deferred loader (`inject_deferred_loader=True`),
         # the output toolset below, and the layered `get_model_settings` closure. Keep those in sync
         # with the realtime call site.
-        resolved_caps = await self._resolve_run_capabilities(
-            initial_ctx,
-            base_capability=base_capability,
-            extra_capabilities=extra_capabilities,
-            instrumentation_cap=instrumentation_cap,
-            inject_deferred_loader=True,
-            base_is_override=base_is_override,
-        )
+        # With no workspace selected yet, a capability function may still supply one: call them now and
+        # ask what they return, so `for_run` can use that workspace too. Each `DynamicCapability.for_run`
+        # below takes its factory's result instead of calling it again.
+        called: dict[int, AbstractCapability[AgentDepsT] | None] = {}
+        if selected is None:
+            selected, called = await _select_capability_function_workspace(
+                initial_ctx, base_capability, extra_capabilities, ref=offered_ref
+            )
+        with called_factories(called):
+            resolved_caps = await self._resolve_run_capabilities(
+                initial_ctx,
+                base_capability=base_capability,
+                extra_capabilities=extra_capabilities,
+                instrumentation_cap=instrumentation_cap,
+                inject_deferred_loader=True,
+                base_is_override=base_is_override,
+            )
         run_capability = resolved_caps.run_capability
         # Read back off the resolved tree, which also sees an `Instrumentation` that only a `for_run`
         # contributed, so every later step's `RunContext` describes what the run's spans use.
@@ -2040,8 +2054,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             resolved_layers[model_layer_start + index] is layer for index, layer in enumerate(model_layers)
         )
 
-        # A workspace capability that exists only after `for_run` (a capability function's) is asked now.
-        # One selected before `for_run` is final: `for_run` may have used it.
+        # A workspace capability that exists only after `for_run` (one a `for_run` returns, or a capability
+        # function's the run couldn't call first) is asked now. One selected before `for_run` is final:
+        # `for_run` may have used it.
         initial_ctx.root_capability = run_capability
         if explicit is None and not model_layers_unchanged and run_capability._has_get_workspace:  # pyright: ignore[reportPrivateUsage]
             candidate = select_workspace(
@@ -5069,6 +5084,57 @@ def _compose_run_capabilities(
         return agent, None, agent
     run = combine(run_layer)
     return agent, run, _combine_duplicate_capabilities(CombinedCapability([agent, run]), [[agent], [run]])
+
+
+async def _select_capability_function_workspace(
+    ctx: RunContext[AgentDepsT],
+    base_capability: AbstractCapability[AgentDepsT],
+    extra_capabilities: Sequence[AbstractCapability[AgentDepsT]],
+    *,
+    ref: WorkspaceRef | None,
+) -> tuple[Workspace | None, dict[int, AbstractCapability[AgentDepsT] | None]]:
+    """Call the run's capability functions and select the workspace their capabilities supply, if any.
+
+    Attaches it to `ctx` and returns it, with each `DynamicCapability`'s result keyed by its `id`, for
+    `called_factories`. A capability function a wrapper hides from `apply` is left to its `for_run`.
+    """
+    factories: dict[int, DynamicCapability[AgentDepsT]] = {}
+
+    def collect(capability: AbstractCapability[AgentDepsT]) -> None:
+        if isinstance(capability, DynamicCapability):
+            factories[id(capability)] = capability
+
+    for layer in (base_capability, *extra_capabilities):
+        layer.apply(collect)
+    if not factories:
+        return None, {}
+    called = dict(
+        zip(factories, await _utils.gather(*(factory._call(ctx) for factory in factories.values())))  # pyright: ignore[reportPrivateUsage]
+    )
+    # The other capabilities supplied no workspace before, so only a returned one can.
+    if not any(capability is not None and capability._has_get_workspace for capability in called.values()):  # pyright: ignore[reportPrivateUsage]
+        return None, called
+
+    def resolved(capability: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        # What the run's tree will hold once `for_run` has run, so selection walks the same structure.
+        if isinstance(capability, DynamicCapability) and (returned := called.get(id(capability))) is not None:
+            return ResolvedDynamicCapability(wrapped=returned, dynamic_toolset=capability.get_toolset())
+        return capability
+
+    def substituted(capability: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        replaced = capability.visit_and_replace(resolved)
+        assert replaced is not None, 'nothing is removed'
+        return replaced
+
+    # Composed like the run's tree, as for the selection before them.
+    _, run_root, root = _compose_run_capabilities(
+        [substituted(base_capability)], [substituted(capability) for capability in extra_capabilities]
+    )
+    selection_ctx = replace(ctx, root_capability=root)
+    selected = select_workspace(root, selection_ctx, ref=ref, run_layer=run_root)
+    if selected is not None:
+        ctx.workspace = root._prepare_workspace(selection_ctx, selected, explicit=False)  # pyright: ignore[reportPrivateUsage]
+    return selected, called
 
 
 def _raise_for_unresolved_workspace(

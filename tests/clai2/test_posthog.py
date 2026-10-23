@@ -47,7 +47,6 @@ from pydantic_clai2.mcp import OAuthSignIn, SignIn as MCPSignIn, TokenStore
 from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader, PluginSettingsError
 from pydantic_clai2.plugins.menus import Option, SettingsMenu
-from pydantic_clai2.runtime._session import WorkspacelessCapability
 from pydantic_clai2.ui.menus import dialogs
 from pydantic_clai2.ui.menus.field_menu import CUSTOM
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
@@ -127,7 +126,7 @@ class Shell:
         assert entry.loaded is not None
         plugin = entry.loaded.plugin
         assert isinstance(plugin, posthog.PostHogPlugin)
-        assert self.loader.capabilities() == [WorkspacelessCapability(plugin.for_run)]
+        assert self.loader.capabilities() == [plugin.for_run]
         return await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
 
 

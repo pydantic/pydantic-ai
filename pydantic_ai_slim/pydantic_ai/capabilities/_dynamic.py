@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Generator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import UserError
@@ -24,8 +26,10 @@ CapabilityFunc: TypeAlias = Callable[
 class DynamicCapability(AbstractCapability[AgentDepsT]):
     """A capability that builds another capability dynamically using a function that takes the run context.
 
-    The factory is called once per agent run from
-    [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]. The returned
+    The factory is called once per agent run, and the returned capability's
+    [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] is called from this one's.
+    When nothing else supplies the run's workspace, the run calls the factory before any
+    `for_run`, so a workspace capability it returns is attached in time for `for_run`. The returned
     capability's instructions, model settings, native tools, and hooks flow through
     normally; its toolset is exposed through a stable dynamic toolset contributed at
     agent construction time, which reuses the run's resolved capability instance.
@@ -86,26 +90,32 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
         # No resolved instance to reuse: the toolset is being used standalone, or inside a
         # durable unit (activity) whose deserialized context carries no capability registry —
         # re-resolve the factory there, where its I/O is allowed.
-        capability = await self._resolve_capability(ctx)
+        capability = await self._call(ctx)
         if capability is None:
             return None
+        capability = await capability.for_run(ctx)
         return await _evaluate_agent_toolset(capability.get_toolset(), ctx)
 
-    async def _resolve_capability(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
+    async def _call(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
+        """Call the factory and bind what it returns to the agent, without calling its `for_run`."""
         capability = self.capability_func(ctx)
         if inspect.isawaitable(capability):
             capability = await capability
         if capability is None:
             return None
         assert ctx.agent is not None, 'CapabilityFunc requires an agent run context'
-        capability = capability.for_agent(ctx.agent)
-        return await capability.for_run(ctx)
+        return capability.for_agent(ctx.agent)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        capability = await self._resolve_capability(ctx)
+        called = _called_factories.get()
+        if called is not None and id(self) in called:
+            # The run called the factory before selecting its workspace; see `called_factories`.
+            capability = called.pop(id(self))
+        else:
+            capability = await self._call(ctx)
         if capability is None:
             return self
-        return ResolvedDynamicCapability(wrapped=capability, dynamic_toolset=self.get_toolset())
+        return ResolvedDynamicCapability(wrapped=await capability.for_run(ctx), dynamic_toolset=self.get_toolset())
 
 
 @dataclass
@@ -139,6 +149,26 @@ async def _evaluate_agent_toolset(
     if inspect.isawaitable(resolved):
         resolved = await resolved
     return resolved
+
+
+_called_factories: ContextVar[dict[int, AbstractCapability[Any] | None] | None] = ContextVar(
+    '_called_factories', default=None
+)
+
+
+@contextmanager
+def called_factories(called: dict[int, AbstractCapability[Any] | None]) -> Generator[None]:
+    """Have each `DynamicCapability` keyed (by `id`) in `called` take its factory's result from it, once.
+
+    The run calls the factories before selecting its workspace, so a workspace one returns is attached
+    before any `for_run`; the `for_run` calls inside this block then reuse those results, keeping
+    the factory's once-per-run contract.
+    """
+    token = _called_factories.set(called)
+    try:
+        yield
+    finally:
+        _called_factories.reset(token)
 
 
 def wrap_capability_funcs(

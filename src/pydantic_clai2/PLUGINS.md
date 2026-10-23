@@ -1072,11 +1072,8 @@ folder is skipped, a folder that is a file or a single skill package is skipped
 with a notice, and the earlier of two skills with one name wins. It reads the
 folders once when it loads, in `prepare`, for the `/skill-name` commands and the
 startup notices, and harness reads them again at the start of every turn for the
-model's catalog. With a plugin's capability function in the run, the run's
-workspace is chosen after `Skills` reads its catalog, so `coder` reads the
-catalog from the project directory. A `/skill-name` command reads them again
-when it runs, so it sends the current `SKILL.md`, and fails with a message when
-the skill is gone.
+model's catalog. A `/skill-name` command reads them again when it runs, so it
+sends the current `SKILL.md`, and fails with a message when the skill is gone.
 Only skills with `user_invocable` (no `user-invocable: false`) get a command;
 harness leaves skills with `disable-model-invocation: true` out of the model's
 catalog. Frontmatter fields harness ignores, such as `allowed-tools`, belong to

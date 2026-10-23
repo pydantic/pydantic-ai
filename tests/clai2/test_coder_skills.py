@@ -491,11 +491,11 @@ class TestSkillCatalog:
     async def test_skills_load_beside_a_plugin_capability_function(
         self, tmp_path: Path, project: Path, supplies_workspace: bool
     ) -> None:
-        # Such a plugin may supply a sandbox, so CLAI attaches the project directory only once the run's
-        # capability functions resolve: after `Skills` reads its catalog.
+        # Such a plugin may supply a sandbox, so CLAI attaches the project directory from a capability
+        # function of its own, which core asks before `Skills` reads its catalog in `for_run`.
         write_skill(project / '.agents' / 'skills', 'review', description='Project review.')
         sandbox = tmp_path / 'sandbox'
-        sandbox.mkdir()
+        write_skill(sandbox / '.agents' / 'skills', 'review', description='Sandbox review.')
 
         class PerRun(Plugin[NoSettings, None]):
             def get_capabilities(self) -> Sequence[AgentCapability[None]]:
@@ -518,8 +518,10 @@ class TestSkillCatalog:
 
         request = result.all_messages()[0]
         assert isinstance(request, ModelRequest)
-        assert '- review: Project review.' in (request.instructions or '')
-        # A sandbox the capability function supplies still wins over the project directory.
+        # A sandbox the capability function supplies still wins over the project directory, and the
+        # catalog is read from it, as from a sandbox a plugin supplies up front.
+        description = 'Sandbox review.' if supplies_workspace else 'Project review.'
+        assert f'- review: {description}' in (request.instructions or '')
         expected = (sandbox if supplies_workspace else project).resolve()
         assert result.response.workspace_ref == WorkspaceRef(provider='local', id=str(expected))
 

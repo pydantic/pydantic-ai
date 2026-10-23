@@ -854,10 +854,51 @@ async def test_a_run_workspace_capability_overrides_the_agents(tmp_path: Path) -
     assert result.workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path))
 
 
-async def test_a_capability_function_supplies_the_workspace_after_for_run(tmp_path: Path) -> None:
-    agent = Agent(TestModel(), deps_type=Path, capabilities=[lambda ctx: LocalWorkspace(ctx.deps)])
+async def test_for_run_sees_the_workspace_a_capability_function_supplies(tmp_path: Path) -> None:
+    (tmp_path / 'catalog.txt').write_text('from the workspace')
+    seen: list[str] = []
+    calls: list[Path] = []
+
+    class ReadsInForRun(AbstractCapability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            seen.append(await ctx.workspace.read_text('catalog.txt'))
+            return self
+
+    def workspace_for(ctx: RunContext[Path]) -> AbstractCapability[Path]:
+        calls.append(ctx.deps)
+        return CombinedCapability([LocalWorkspace(ctx.deps), ReadsInForRun()])
+
+    agent = Agent(TestModel(), deps_type=Path, capabilities=[ReadsInForRun(), workspace_for])
 
     result = await agent.run('go', deps=tmp_path)
+
+    # The function's own capabilities see it too, and the function is still called once per run.
+    assert seen == ['from the workspace', 'from the workspace']
+    assert calls == [tmp_path]
+    assert result.workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path))
+
+
+async def test_a_capability_function_sees_a_workspace_passed_to_the_run(tmp_path: Path) -> None:
+    (tmp_path / 'catalog.txt').write_text('from the workspace')
+    seen: list[tuple[str, dict[str, Any] | None]] = []
+
+    async def reads_the_run(ctx: RunContext[Any]) -> AbstractCapability[Any] | None:
+        seen.append((await ctx.workspace.read_text('catalog.txt'), ctx.metadata))
+        return None
+
+    agent = Agent(TestModel(), capabilities=[reads_the_run], metadata={'tenant': 'acme'})
+
+    await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
+
+    assert seen == [('from the workspace', {'tenant': 'acme'})]
+
+
+async def test_a_workspace_capability_only_for_run_returns_is_asked_after_for_run(tmp_path: Path) -> None:
+    class PerRunWorkspace(AbstractCapability[Path]):
+        async def for_run(self, ctx: RunContext[Path]) -> AbstractCapability[Path]:
+            return LocalWorkspace(ctx.deps)
+
+    result = await Agent(TestModel(), deps_type=Path, capabilities=[PerRunWorkspace()]).run('go', deps=tmp_path)
 
     assert result.workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path))
 
@@ -1109,13 +1150,14 @@ async def test_a_run_workspace_capability_is_asked_before_the_agents(tmp_path: P
     assert [result.workspace.backend] == run_level.supplied
 
 
-async def test_a_run_workspace_capability_function_is_asked_before_the_agents_after_for_run(tmp_path: Path) -> None:
+async def test_a_run_workspace_capability_function_is_asked_before_the_agents(tmp_path: Path) -> None:
     agent = Agent(TestModel(), capabilities=[lambda ctx: LocalWorkspace(tmp_path)])
     run_level = ProviderWorkspaceCapability('run')
 
     result = await agent.run('go', capabilities=[lambda ctx: run_level])
 
-    assert [result.workspace.backend] == run_level.supplied
+    # Asked again after `for_run`, to check that it did not change the workspace.
+    assert result.workspace.backend is run_level.supplied[0]
 
 
 async def test_an_unrecognized_history_ref_is_an_error_when_the_agent_has_workspace_capabilities() -> None:

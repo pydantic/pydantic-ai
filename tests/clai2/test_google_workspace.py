@@ -14,6 +14,7 @@ from termflow.tui.textinput import TextInputResult
 from typing_extensions import TypeIs
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -33,7 +34,6 @@ from pydantic_clai2.ui.menus import dialogs
 from pydantic_clai2.ui.menus.plugin_menu import Configure, PluginMenu
 from tests.clai2.dialog_script import Asked, Back, Confirm, Pick, ScriptedDialogs, Type
 from tests.clai2.menu_script import Script, pick, typed
-from tests.clai2.test_workspace_defaults import per_run
 
 
 class Redraw:
@@ -51,7 +51,8 @@ def context() -> RunContext[None]:
 
 def loaded(plugin: PluginHost[None]) -> GoogleWorkspace[None]:
     [factory] = load_plugin(google_workspace.GoogleWorkspacePlugin, plugin).capabilities
-    capability = per_run(factory)(context())
+    assert not isinstance(factory, AbstractCapability)
+    capability = factory(context())
     assert is_workspace(capability)
     return capability
 
@@ -390,7 +391,8 @@ def test_declared_as_a_disabled_builtin_that_enables_from_the_menu(tmp_path: Pat
     assert menu.notice is None
     assert 'on' in menu.items()[0].description and 'press c to configure' in menu.details(item)
     [factory] = plugins.capabilities()
-    assert isinstance(per_run(factory)(context()), GoogleWorkspace)
+    assert not isinstance(factory, AbstractCapability)
+    assert isinstance(factory(context()), GoogleWorkspace)
     redraw = Redraw()
     assert menu.toggle(redraw, item) is None
     assert redraw.items[0].label.startswith('○ google_workspace')
