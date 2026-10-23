@@ -20,7 +20,8 @@ START = dt.datetime(2026, 10, 20, 7, 23, tzinfo=dt.UTC)
 UNION = 'TypeError in pydantic_ai_slim/pydantic_ai/models/anthropic.py::_map_message'
 SDK_CREATE = 'TypeError in pydantic_ai_slim/pydantic_ai/models/anthropic.py::_messages_create (raised in anthropic)'
 SDK_MAP = 'TypeError in pydantic_ai_slim/pydantic_ai/models/anthropic.py::_map_message (raised in anthropic)'
-PREFECT = 'TypeError in tests/conftest.py (raised in prefect)'
+PREFECT = 'TypeError in tests/conftest.py::prefect_test_server (raised in prefect)'
+DBOS = 'ImportError in tests/conftest.py::dbos_fixture'
 SETTINGS = 'AssertionError in tests/models/test_model_settings_support.py'
 COHERE = 'ImportError in pydantic_ai_slim/pydantic_ai/models/cohere.py'
 REPO_FILES = (
@@ -130,6 +131,19 @@ E   TypeError: Body() got an unexpected keyword argument 'min_items'
 """
 
 
+# A second cause in the same `conftest.py`, raised by its own fixture.
+DBOS_TEXT = """
+    @pytest.fixture
+    def dbos_fixture():
+>       from dbos import _logger
+E       ImportError: cannot import name '_logger' from 'dbos'
+
+tests/conftest.py:523: ImportError
+"""
+
+CRASHED_WORKER = "worker 'gw3' crashed while running 'tests/models/test_anthropic.py::test_request'"
+
+
 def assertion_text(line: int) -> str:
     return f"""
     def test_case():
@@ -167,12 +181,14 @@ def write_leg(
     install: str = 'success',
     resolve: str = 'success',
     legs: int = 2,
+    pytest_exit: int | None = None,
     cases: list[Case] | None = None,
     moved: str | None = None,
 ) -> None:
     leg = reports / f'latest-versions-canary-{python}'
     leg.mkdir(parents=True)
-    outcome = {'resolve': resolve, 'install': install, 'test': test, 'legs': legs}
+    status = pytest_exit if pytest_exit is not None else {'failure': 1, 'success': 0}.get(test)
+    outcome = {'resolve': resolve, 'install': install, 'test': test, 'legs': legs, 'pytest_exit': status}
     (leg / 'outcome.json').write_text(json.dumps(outcome))
     if cases is not None:
         suite = ElementTree.Element('testsuites')
@@ -289,6 +305,7 @@ def test_one_cause_is_one_signature_across_modules_and_interpreters(tmp_path: Pa
             case('tests/models/test_anthropic.py', 'test_container', SDK_CREATE_TEXT),
             case('tests/models/test_anthropic.py', 'test_blocks', SDK_MAP_TEXT),
             case('tests/conftest.py', 'test_flow', PREFECT_TEXT, tag='error', message='failed on setup'),
+            case('tests/conftest.py', 'test_workflow', DBOS_TEXT, tag='error', message='failed on setup'),
             case('tests/models/test_model_settings_support.py', 'test_max_retries', assertion_text(1100)),
             case('tests/models/test_model_settings_support.py', 'test_wire', assertion_text(1180)),
             case('tests/models/test_cohere.py', '', COHERE_TEXT, tag='error', message='collection failure'),
@@ -303,6 +320,7 @@ def test_one_cause_is_one_signature_across_modules_and_interpreters(tmp_path: Pa
         SDK_CREATE: ['3.11'],
         SDK_MAP: ['3.11'],
         PREFECT: ['3.11'],
+        DBOS: ['3.11'],
         SETTINGS: ['3.11'],
         COHERE: ['3.11'],
     }
@@ -341,6 +359,33 @@ def test_stage_failures_and_missing_reports(tmp_path: Path, root: Path):
         'test step times out or is cancelled on Python 3.12',
     ]
     assert not observation.complete
+
+
+def test_a_failure_that_stops_a_leg_files_before_test_failures(tmp_path: Path, root: Path):
+    reports = tmp_path / 'reports'
+    write_leg(reports, '3.11', cases=[case('tests/models/test_anthropic.py', 'test_request', UNION_311)])
+    write_leg(reports, '3.15', install='failure', test='skipped')
+    assert list(report.collect(reports, root).failures) == ['install fails on Python 3.15', UNION]
+
+
+def test_a_session_that_stopped_short_is_incomplete(tmp_path: Path, root: Path):
+    union = case('tests/models/test_anthropic.py', 'test_request', UNION_311)
+    interrupted = tmp_path / 'interrupted'
+    write_leg(interrupted, '3.11', pytest_exit=3, cases=[union])
+    write_leg(interrupted, '3.15', pytest_exit=2, cases=[union])
+    crashed = tmp_path / 'crashed'
+    write_leg(crashed, '3.11', cases=[union])
+    write_leg(crashed, '3.15', cases=[case('tests/models/test_anthropic.py', 'test_request', '', message=CRASHED_WORKER)])
+
+    assert list(report.collect(interrupted, root).failures) == [UNION]
+    assert not report.collect(interrupted, root).complete
+    assert not report.collect(crashed, root).complete
+
+    # An open issue for a signature the stopped session never reached is not told it passes.
+    client = FakeClient()
+    run(client, root, failing_reports(tmp_path, 'prefect', [case('tests/conftest.py', 'test_flow', PREFECT_TEXT)]), 1)
+    assert run(client, root, interrupted, 2) == [f'#101: filed `{UNION}`']
+    assert client.posted == []
 
 
 def test_a_missing_leg_makes_the_run_incomplete(tmp_path: Path, root: Path):
@@ -405,8 +450,7 @@ def test_known_signature_is_commented_once_per_run_and_never_relabeled(tmp_path:
     assert comment == (
         '<!-- pydantic-ai-latest-versions-canary:v1 {"run_id":2,"status":"failing"} -->\n'
         f'Still fails in the scheduled [canary run](https://github.com/{REPO}/actions/runs/2) at '
-        f'[`000000000000`](https://github.com/{REPO}/commit/{2:040x}): '
-        f'`{UNION}` (Python 3.11, 3.15; 1 failing test).\n'
+        f'[`000000000000`](https://github.com/{REPO}/commit/{2:040x}) (Python 3.11, 3.15; 1 failing test).\n'
     )
     assert 'labels' not in json.dumps(client.posted)
 
@@ -467,6 +511,20 @@ def test_recovery_then_recurrence_files_a_linked_issue(tmp_path: Path, root: Pat
     assert 'This recurs after #100 was closed and a later canary run passed it.' in str(client.created[-1]['body'])
 
 
+def test_a_recovery_long_after_the_close_still_counts(tmp_path: Path, root: Path):
+    reports = failing_reports(tmp_path, 'reports', [case('tests/models/test_anthropic.py', 'test_request', UNION_311)])
+    client = FakeClient()
+    run(client, root, reports, 1)
+    client.now = START + 1.5 * DAY
+    client.close(100)
+    for run_id in range(2, 21):
+        run(client, root, reports, run_id)
+
+    assert run(client, root, reports, 21, green=True) == [f'#100: recorded that `{UNION}` passes']
+    assert run(client, root, reports, 40) == [f'#101: filed `{UNION}`']
+    assert [number for number, _ in client.posted] == [100, 100]
+
+
 def test_a_pass_in_a_red_but_complete_run_counts_as_recovery(tmp_path: Path, root: Path):
     union = failing_reports(tmp_path, 'union', [case('tests/models/test_anthropic.py', 'test_request', UNION_311)])
     other = failing_reports(tmp_path, 'other', [case('tests/conftest.py', 'test_flow', PREFECT_TEXT, tag='error')])
@@ -501,6 +559,8 @@ def test_a_close_as_not_planned_keeps_the_signature_quiet(tmp_path: Path, root: 
     client.close(100, 'not_planned')
 
     assert run(client, root, reports, 2) == [f'`{UNION}`: #100 was closed as not_planned; not refiled']
+    assert run(client, root, reports, 3, green=True) == []
+    assert run(client, root, reports, 4) == [f'`{UNION}`: #100 was closed as not_planned; not refiled']
     assert len(client.created) == 1
     assert client.posted == []
 

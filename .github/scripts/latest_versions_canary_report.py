@@ -7,8 +7,9 @@ moved past `uv.lock`. This script reduces those reports to failure signatures
 and reconciles them with the issues it filed before, one issue per signature:
 
 - A signature that no open issue carries gets a new issue labeled for priority
-  and Pydanty triage. A run files at most `_NEW_ISSUE_LIMIT`, those with the most
-  failing tests first; the rest are logged and wait for a later run.
+  and Pydanty triage. A run files at most `_NEW_ISSUE_LIMIT`: failures that stopped a
+  leg's suite first, then those with the most failing tests. The rest are logged
+  and wait for a later run.
 - A signature that an open issue carries gets one comment on that issue per run.
 - A run in which every leg reached its test report shows which signatures pass.
   Each issue records a pass once; closing stays a maintainer decision.
@@ -61,9 +62,8 @@ _BODY_LIMIT = 60_000
 _REPORT_FILE_LIMIT = 50_000_000
 _OPEN_PAGE_LIMIT = 10
 _CLOSED_SEARCH_LIMIT = 30
-# Closed issues still waiting for a recorded pass. One the canary cannot pass within this window
-# falls back to a notice, rather than a new issue, if its signature fails again.
-_RECOVERY_WINDOW = dt.timedelta(days=14)
+# A maintainer decided these closes; the canary neither refiles them nor reports their passes.
+_SETTLED_CLOSES = frozenset({'not_planned', 'duplicate'})
 _LEG = re.compile(r'latest-versions-canary-(3\.\d{1,2})')
 # pytest's traceback location lines: `path:line: ` closing a long entry's source, `path:line: in function`
 # opening a short one, and `path:line: ExceptionName` closing the last entry of each chained traceback.
@@ -72,7 +72,9 @@ _RAISED = re.compile(r'^E +(([A-Za-z_][\w.]{0,99}):.*)$', re.MULTILINE)
 _EXCEPTION_NAME = re.compile(r'[A-Za-z_][\w.]{0,99}')
 _SHORT_ENTRY = re.compile(r'in ([A-Za-z_]\w{0,99})')
 _DEFINITION = re.compile(r'^\s*(?:async\s+)?def ([A-Za-z_]\w{0,99})\(', re.MULTILINE)
-_TEST_MODULE = re.compile(r'test_\w*\.py|conftest\.py')
+_TEST_MODULE = re.compile(r'test_\w*\.py')
+# How pytest-xdist reports a worker it lost, after which the suite may stop short.
+_CRASHED_WORKER = re.compile(r"^worker '[^']*' crashed while running ")
 _PACKAGE = re.compile(r'/site-packages/([A-Za-z_][\w-]{0,99})')
 
 StepOutcome = Literal['success', 'failure', 'cancelled', 'skipped']
@@ -87,6 +89,8 @@ class LegOutcome(BaseModel):
     test: StepOutcome
     # `strategy.job-total`: how many legs the run had, so a missing one is noticed.
     legs: int
+    # pytest's exit status, when the test step ran: 1 means tests failed and the session finished.
+    pytest_exit: int | None = None
 
 
 class Marker(BaseModel):
@@ -139,7 +143,7 @@ class Failure:
 class Observation:
     """What one run showed."""
 
-    # Most failing tests first, so a capped run files the most widespread signatures.
+    # Failures that stopped a leg's suite first, then most failing tests first: the order a capped run files.
     failures: dict[str, Failure]
     # Every leg reached its test report, so a signature missing from `failures` passed.
     complete: bool
@@ -203,7 +207,15 @@ def collect(reports: Path, root: Path) -> Observation:
         except (OSError, ValidationError):
             outcome = None
         found = _leg_failures(leg, python, outcome, root)
-        tested = outcome is not None and (outcome.test == 'success' or all(test for _, test, _ in found))
+        # A failed session counts only if it finished: an interrupted, internally failed or worker-starved
+        # one writes JUnit for just the tests it reached, and the absent rest must not read as passes.
+        tested = outcome is not None and (
+            outcome.test == 'success'
+            or (
+                outcome.pytest_exit == 1
+                and all(test and not _CRASHED_WORKER.match(message) for _, test, message in found)
+            )
+        )
         complete = complete and tested
         totals.add(outcome.legs if outcome else 0)
         for signature, test, message in found:
@@ -211,7 +223,10 @@ def collect(reports: Path, root: Path) -> Observation:
             failure.pythons.add(python)
             if test:
                 failure.tests.setdefault(test, message)
-    ranked = sorted(failures, key=lambda signature: (-len(failures[signature].tests), signature))
+    ranked = sorted(
+        failures,
+        key=lambda signature: (bool(failures[signature].tests), -len(failures[signature].tests), signature),
+    )
     return Observation(
         failures={signature: failures[signature] for signature in ranked},
         complete=complete and totals == {len(legs)},
@@ -366,11 +381,11 @@ def _by_bot(item: Issue | Comment) -> bool:
     return item.user is not None and item.user.login == _BOT
 
 
-def _summary(signature: str, failure: Failure) -> str:
+def _counts(failure: Failure) -> str:
     pythons = ', '.join(sorted(failure.pythons))
     count = len(failure.tests)
     tests = f'; {count} failing test{"" if count == 1 else "s"}' if count else ''
-    return f'`{signature}` (Python {pythons}{tests})'
+    return f'Python {pythons}{tests}'
 
 
 def _track(client: attention.GitHubClient, repo: str, issue: Issue) -> Tracked | None:
@@ -412,13 +427,12 @@ def reconcile(
         log.extend(_record_recoveries(client, run, observation, closed))
     filed: list[str] = []
     for signature in new:
-        last = next((tracked for tracked in closed if tracked.signature == signature), None)
-        if last is None:
+        if (last := closed.get(signature)) is None:
             filed.append(signature)
             continue
         marker, posted_at = last.markers[0]
         number, reason, closed_at = last.issue.number, last.issue.state_reason, last.issue.closed_at
-        if reason in ('not_planned', 'duplicate'):
+        if reason in _SETTLED_CLOSES:
             log.append(f'`{signature}`: #{number} was closed as {reason}; not refiled')
         elif marker.status == 'passing':
             filed.append(signature)
@@ -432,7 +446,7 @@ def reconcile(
                 run,
                 last,
                 'failing',
-                f'This issue was closed, but the {run.link} still fails: {_summary(signature, failures[signature])}.'
+                f'This issue was closed, but the {run.link} still fails ({_counts(failures[signature])}).'
                 '\n\nNo canary run has passed it since its last failure, so no new issue is filed. '
                 'Reopen this issue if the fix is incomplete.',
             )
@@ -464,7 +478,7 @@ def _update_open(client: attention.GitHubClient, run: Run, observation: Observat
         return [f'#{number}: already updated for this run']
     if failure is not None:
         verb = 'Fails again after passing' if marker.status == 'passing' else 'Still fails'
-        _comment(client, run, tracked, 'failing', f'{verb} in the {run.link}: {_summary(signature, failure)}.')
+        _comment(client, run, tracked, 'failing', f'{verb} in the {run.link} ({_counts(failure)}).')
         return [f'#{number}: noted that `{signature}` {verb.lower()}']
     if marker.status == 'passing':
         return []
@@ -474,28 +488,26 @@ def _update_open(client: attention.GitHubClient, run: Run, observation: Observat
     return [f'#{number}: noted that `{signature}` passes']
 
 
-def _closed_issues(client: attention.GitHubClient, repo: str) -> list[Tracked]:
-    """Recently closed canary issues, most recently closed first."""
+def _closed_issues(client: attention.GitHubClient, repo: str) -> dict[str, Tracked]:
+    """The most recently closed canary issue of each signature among the latest closed ones."""
     query = f'repo:{repo} is:issue is:closed author:app/github-actions in:title "{_TITLE_PREFIX}"'
     params = urllib.parse.urlencode({'q': query, 'sort': 'created', 'order': 'desc', 'per_page': _CLOSED_SEARCH_LIMIT})
     result = _SearchResult.model_validate(client.get(f'/search/issues?{params}'))
-    closed = [
-        tracked
-        for issue in result.items
-        if issue.closed_at is not None and (tracked := _track(client, repo, issue)) is not None
-    ]
-    return sorted(closed, key=lambda tracked: tracked.issue.closed_at or dt.datetime.min, reverse=True)
+    closed: dict[str, Tracked] = {}
+    for issue in sorted(result.items, key=lambda issue: issue.closed_at or dt.datetime.min):
+        if issue.closed_at is not None and (tracked := _track(client, repo, issue)) is not None:
+            closed[tracked.signature] = tracked
+    return closed
 
 
 def _record_recoveries(
-    client: attention.GitHubClient, run: Run, observation: Observation, closed: list[Tracked]
+    client: attention.GitHubClient, run: Run, observation: Observation, closed: Mapping[str, Tracked]
 ) -> list[str]:
     log: list[str] = []
-    for tracked in closed:
-        closed_at = tracked.issue.closed_at
-        if closed_at is None or closed_at < run.tested_at - _RECOVERY_WINDOW:
+    for signature, tracked in closed.items():
+        if signature in observation.failures or tracked.issue.state_reason in _SETTLED_CLOSES:
             continue
-        if tracked.signature in observation.failures or tracked.markers[0][0].status == 'passing':
+        if tracked.markers[0][0].status == 'passing':
             continue
         _comment(client, run, tracked, 'passing', f'Passes in the {run.link}. A later failure files a new issue.')
         log.append(f'#{tracked.issue.number}: recorded that `{tracked.signature}` passes')
@@ -503,16 +515,16 @@ def _record_recoveries(
 
 
 def _issue_body(
-    run: Run, signature: str, failure: Failure, closed: list[Tracked], moved: Mapping[str, list[str]]
+    run: Run, signature: str, failure: Failure, closed: Mapping[str, Tracked], moved: Mapping[str, list[str]]
 ) -> str:
     sections = [
         _hidden(Marker(run_id=run.run_id, status='failing', signature=signature)),
-        f'The {run.link} failed on `main`: {_summary(signature, failure)}.',
+        f'The {run.link} failed on `main`: `{signature}` ({_counts(failure)}).',
         'The canary installs the newest versions our declared dependency ranges allow, so a fresh install of our '
         'packages hits this today. Migrate and raise the floor, or cap the affected requirement until the '
         'migration lands. Do not skip or suppress the failing tests.',
     ]
-    if (last := next((tracked for tracked in closed if tracked.signature == signature), None)) is not None:
+    if (last := closed.get(signature)) is not None:
         sections.append(f'This recurs after #{last.issue.number} was closed and a later canary run passed it.')
     if failure.tests:
         listed = [f'{test}\n    {message}' for test, message in list(failure.tests.items())[:_LISTED_TEST_LIMIT]]

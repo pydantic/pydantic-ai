@@ -293,10 +293,14 @@ jobs:
       # out-of-band HF cache warming.
       #
       # `xunit1` because only that JUnit family records each test's file, which the report needs.
+      # Its exit status tells the report whether a failed session finished or stopped short.
       - id: test
-        run: >-
-          uv run --no-sync pytest --durations=100 -n logical --dist=loadgroup
-          --junit-xml="${RUNNER_TEMP}/canary-report/junit.xml" -o junit_family=xunit1
+        run: |
+          status=0
+          uv run --no-sync pytest --durations=100 -n logical --dist=loadgroup \
+            --junit-xml="${RUNNER_TEMP}/canary-report/junit.xml" -o junit_family=xunit1 || status=$?
+          echo "exit=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
         env:
           # The docs examples are type-checked against the locked dependencies, in `ci.yml`.
           TYPECHECK_EXAMPLES: false
@@ -310,10 +314,11 @@ jobs:
           INSTALL: ${{ steps.install.outcome }}
           TEST: ${{ steps.test.outcome }}
           LEGS: ${{ strategy.job-total }}
+          PYTEST_EXIT: ${{ steps.test.outputs.exit }}
         run: |
           mkdir -p "${RUNNER_TEMP}/canary-report"
-          printf '{"resolve": "%s", "install": "%s", "test": "%s", "legs": %s}\n' \
-            "$RESOLVE" "$INSTALL" "$TEST" "$LEGS" > "${RUNNER_TEMP}/canary-report/outcome.json"
+          printf '{"resolve": "%s", "install": "%s", "test": "%s", "legs": %s, "pytest_exit": %s}\n' \
+            "$RESOLVE" "$INSTALL" "$TEST" "$LEGS" "${PYTEST_EXIT:-null}" > "${RUNNER_TEMP}/canary-report/outcome.json"
 
       - name: Upload the report
         if: always()
