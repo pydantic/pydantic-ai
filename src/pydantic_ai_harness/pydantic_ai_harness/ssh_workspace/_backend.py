@@ -122,6 +122,8 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         # askpass helper. `BatchMode=yes` comes first so it wins over `ssh_args`, and keys or
         # `ssh-agent` (via `SSH_AUTH_SOCK`) authenticate instead.
         self._ssh = ['ssh', '-T', '-o', 'BatchMode=yes', *ssh_args, '--', destination]
+        # Until `ssh` turns out not to forward its input, which `-n`, `-f` and `StdinNull` stop.
+        self._script_on_stdin = True
         # A local subprocess runner: it owns timeouts, output limits and killing `ssh` on cancellation.
         self._runner = LocalWorkspaceBackend(
             '/', env={name: os.environ[name] for name in _CLIENT_ENV if name in os.environ}
@@ -209,14 +211,18 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
             'exit "$__pydantic_ai_status"\n'
             '} < /dev/null\n'
         )
-        # The script reaches the remote `sh` on stdin, so the remote command line stays short whatever the
-        # command's size: as an argument, its quoted form could pass the operating system's limit on one, on
-        # either host. A local `printf` builtin feeds it, in arguments small enough for any host.
         # `ssh` hands the command to the remote login shell. `/bin/sh` is absolute so a writable `PATH` entry
-        # cannot supply the shell that interprets this script.
-        ssh = shlex.join([*self._ssh, f'/bin/sh -s {tag}'])
-        chunks = [script[start : start + _SCRIPT_CHUNK] for start in range(0, len(script), _SCRIPT_CHUNK)]
-        argv = ['/bin/sh', '-c', f'printf %s "$@" | {ssh}', 'sh', *chunks]
+        # cannot supply the shell that interprets this script. Either way the tag is an argument of that `sh`.
+        if self._script_on_stdin:
+            # The script reaches the remote `sh` on stdin, so the remote command line stays short whatever the
+            # command's size: as an argument, its quoted form could pass the operating system's limit on one, on
+            # either host. A local `printf` builtin feeds it, in arguments small enough for any host.
+            ssh = shlex.join([*self._ssh, f'/bin/sh -s {tag}'])
+            chunks = [script[start : start + _SCRIPT_CHUNK] for start in range(0, len(script), _SCRIPT_CHUNK)]
+            argv = ['/bin/sh', '-c', f'printf %s "$@" | {ssh}', 'sh', *chunks]
+        else:
+            argv = [*self._ssh, f'/bin/sh -c {shlex.quote(script)} {tag}']
+        started = anyio.current_time()
         try:
             result = await self._runner.run(argv, timeout=timeout)
         except anyio.get_cancelled_exc_class():
@@ -238,16 +244,15 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
             ) from error
         before, ready, stderr = result.stderr.partition(_READY)
         if not ready:
-            output = before.strip()
-            if result.exit_code == 0:
-                # A script that runs prints the marker or exits 1, so the remote `sh` read none: `-n`, `-f` and
-                # `StdinNull` give `ssh` an empty input. What the login printed is kept, as it may say otherwise.
-                raise WorkspaceUnavailableError(
-                    f'SSH workspace {self._ref.id} is unavailable: the command never reached the host, as `ssh` '
-                    'did not forward its input; remove `-n` or `-f` from `ssh_args` and `StdinNull` from your SSH '
-                    'configuration' + (f'\n{output}' if output else '')
-                )
-            reason = output or f'`ssh` exited with code {result.exit_code}'
+            if result.exit_code == 0 and self._script_on_stdin:
+                # A script that runs prints the marker or exits 1, so the remote `sh` read none and nothing ran:
+                # `-n`, `-f` and `StdinNull` give `ssh` an empty input. From now on the script goes on the remote
+                # command line, which caps how long a command can be, within the time this attempt left.
+                self._script_on_stdin = False
+                if timeout is not None:
+                    timeout = max(timeout - (anyio.current_time() - started), 0.001)
+                return await self._remote(directory, line, env=env, timeout=timeout)
+            reason = before.strip() or f'`ssh` exited with code {result.exit_code}'
             raise WorkspaceUnavailableError(f'SSH workspace {self._ref.id} is unavailable: {reason}')
         # The marker carries the status because `ssh` uses exit 255 for a lost connection, and a command can too.
         # Any other process exit is the command's: a child can print a marker after the wrapper has written its own.

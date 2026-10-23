@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -237,18 +238,32 @@ async def test_a_command_reading_stdin_sees_eof_not_the_rest_of_the_script(tools
     assert (result.exit_code, result.stdout, result.stderr) == (0, 'after', '')
 
 
-@pytest.mark.parametrize(('destination', 'login_output'), [('box', ''), ('chatty', '\nLast login: yesterday')])
-async def test_an_ssh_that_does_not_forward_its_input_is_unavailable(
-    tools: FakeRemoteTools, destination: str, login_output: str
+@pytest.mark.parametrize(('destination', 'timeout'), [('box', None), ('chatty', 10.0)])
+async def test_an_ssh_that_does_not_forward_its_input_gets_the_script_as_an_argument(
+    tools: FakeRemoteTools, destination: str, timeout: float | None
 ) -> None:
-    """The script travels on `ssh`'s input, which `-n` (as `-f` and `StdinNull` do) replaces with an empty one."""
-    with pytest.raises(WorkspaceUnavailableError) as unavailable:
-        await SSHWorkspaceBackend(destination, ssh_args=['-n']).working_dir()
+    """`-n` (as `-f` and `StdinNull` do) gives `ssh` an empty input, so the script goes on the command line, as before."""
+    backend = SSHWorkspaceBackend(destination, ssh_args=['-n'])
 
-    assert str(unavailable.value) == (
-        f'SSH workspace {destination} is unavailable: the command never reached the host, as `ssh` did not forward '
-        f'its input; remove `-n` or `-f` from `ssh_args` and `StdinNull` from your SSH configuration{login_output}'
-    )
+    first = await backend.run('printf first', shell=True, timeout=timeout)
+    second = await backend.run('printf second', shell=True, timeout=timeout)
+
+    assert (first.stdout, second.stdout) == ('first', 'second')
+    # Only the first attempt, which resolved the working directory and ran nothing, went on the input. The tag
+    # stays an argument of the remote `sh`, where a stop finds it.
+    tag = r'__pydantic_ai_ssh_job_[0-9a-f]{16}'
+    on_input, *as_argument = tools.ssh_commands
+    assert re.fullmatch(rf'/bin/sh -s {tag}', on_input)
+    assert len(as_argument) == 3
+    assert all(re.fullmatch(rf"/bin/sh -c '.*' {tag}", command, re.DOTALL) for command in as_argument)
+
+
+async def test_a_login_that_runs_nothing_and_exits_0_is_unavailable(tools: FakeRemoteTools) -> None:
+    """As before stdin carried the script: a host whose login ignores the command (a `ForceCommand`) runs none."""
+    with pytest.raises(
+        WorkspaceUnavailableError, match=r'^SSH workspace ignoring is unavailable: `ssh` exited with code 0$'
+    ):
+        await SSHWorkspaceBackend('ignoring').working_dir()
 
 
 async def test_a_timeout_used_up_while_connecting_never_starts_the_command(

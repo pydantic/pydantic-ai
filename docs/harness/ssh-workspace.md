@@ -44,7 +44,7 @@ Logging in needs a key; passwords aren't supported. `ssh` runs with `BatchMode=y
 
 Every operation opens an SSH connection, and file operations run as shell commands on the host, so the host needs a POSIX `sh` and the usual file utilities. Turn on connection sharing in your SSH configuration (`ControlMaster auto` with a `ControlPersist` time) to make them fast.
 
-The script that runs each command reaches the host's `sh` on the connection's input rather than on its command line, and the command itself reads an empty input, as it would locally. So a command, however many quotes it holds, can be as long as the host allows one program argument to be: 128 KiB on Linux. It also means `ssh` must forward its input: don't pass `-n` or `-f` in `ssh_args`, or set `StdinNull` in your SSH configuration.
+The script that runs each command reaches the host's `sh` on the connection's input rather than on its command line, and the command itself reads an empty input, as it would locally. So a command, however many quotes it holds, can be as long as the host allows one program argument to be: 128 KiB on Linux. If `ssh` doesn't forward its input (`-n` or `-f` in `ssh_args`, or `StdinNull` in your SSH configuration), the script goes on the host's command line instead, where a long command full of quotes can be too long to start.
 
 A host that can't be reached, a missing working directory, or a connection lost mid-command raises `WorkspaceUnavailableError`. The exit code is the command's own, even when it is 255, which `ssh` also uses for its own errors.
 
