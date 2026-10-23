@@ -15,7 +15,6 @@ from opentelemetry.trace import get_current_span
 from pydantic import TypeAdapter
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
-from ..computer_use import computer_tool
 from .._context_size import mark_context_input_tokens, marked_context_input_tokens
 from .._http import to_httpx2_timeout
 from .._run_context import RunContext
@@ -23,6 +22,7 @@ from .._thinking_part import render_replayed_thinking
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ..capabilities.abstract import AbstractCapability
+from ..computer_use import computer_tool
 from ..exceptions import (
     ModelAPIError,
     ModelContextWindowExceededError,
@@ -1497,9 +1497,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
-        system_prompt, anthropic_messages = await self._map_message(
-            messages, model_request_parameters, model_settings, computer_toolset_sent=_sends_computer_toolset(tools)
-        )
+        system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         request_scoped_texts = _request_scoped_tail_texts(messages)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages, request_scoped_texts)
         self._apply_explicit_message_caching(model_settings, anthropic_messages, request_scoped_texts)
@@ -1898,9 +1896,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         _append_revealed_tool_params(tools, revealed_tool_order)
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
-        system_prompt, anthropic_messages = await self._map_message(
-            messages, map_parameters, model_settings, computer_toolset_sent=_sends_computer_toolset(tools)
-        )
+        system_prompt, anthropic_messages = await self._map_message(messages, map_parameters, model_settings)
         request_scoped_texts = _request_scoped_tail_texts(messages)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages, request_scoped_texts)
         self._apply_explicit_message_caching(model_settings, anthropic_messages, request_scoped_texts)
@@ -2454,11 +2450,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
-        *,
-        computer_toolset_sent: bool = False,
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         messages = self._trim_before_compaction(messages)
+        declared_tools = self._tool_choice_declarations(model_settings, model_request_parameters)[0]
+        native_computer = self._native_computer_tool(model_request_parameters)
         map_context = _MapMessagesContext(
             model_request_parameters=model_request_parameters,
             # Whenever this request withholds a tool's schema, render any local-shape `search_tools`
@@ -2501,9 +2497,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # wire regardless, rather than silently dropping a block whenever the two sets diverge.
             # Read after the `tool_choice` restriction, which leaves tools out of the request: a reveal naming
             # one of those would be just as unknown as one naming a tool that's gone.
-            declared_tool_names=set(self._tool_choice_declarations(model_settings, model_request_parameters)[0]),
+            declared_tool_names=set(declared_tools),
             tool_defs_by_name={tool.name: tool for tool in model_request_parameters.function_tools},
-            computer_toolset_sent=computer_toolset_sent,
+            # The same test `_prepare_tools_and_tool_choice` uses to send the toolset.
+            computer_toolset_sent=native_computer is not None and native_computer.name in declared_tools,
         )
         leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
         for m in messages:
@@ -5001,10 +4998,6 @@ def _is_computer_member(
 ) -> TypeGuard[BetaToolUseBlock]:
     """Whether a block is a computer toolset call that the `computer` tool answers."""
     return computer_def is not None and isinstance(block, BetaToolUseBlock) and block.toolset_name == 'computer'
-
-
-def _sends_computer_toolset(tools: list[BetaToolUnionParam]) -> bool:
-    return any(tool.get('type') == 'computer_toolset_20260801' for tool in tools)
 
 
 def _computer_block(item: BetaToolUseBlock) -> dict[str, Any]:

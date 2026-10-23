@@ -29,7 +29,6 @@ from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
-from ..computer_use import COMPUTER_KIND, SAFETY_CHECKS, computer_tool
 from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, TEXT_DOCUMENT_MEDIA_TYPES
 from .._http import to_httpx2_timeout
 from .._instrumentation import get_instructions
@@ -45,6 +44,7 @@ from .._utils import (
     number_to_datetime,
 )
 from ..capabilities.abstract import AbstractCapability
+from ..computer_use import COMPUTER_KIND, SAFETY_CHECKS, computer_tool
 from ..exceptions import (
     ModelConnectionError,
     SuspendedResponseExpired,
@@ -3786,7 +3786,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """
         openai_profile = self.profile
         # The `computer` tool is sent as OpenAI's native computer tool, whose calls `_map_computer_call` maps back.
-        native_computer = self._native_computer_tool(model_request_parameters)
+        native_computer = self._nativecomputer_tool(model_request_parameters)
         native_computer_name = native_computer.name if native_computer is not None else None
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
@@ -3854,7 +3854,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tools.append(responses.ComputerToolParam(type='computer'))
         return tools, tool_choice
 
-    def _native_computer_tool(self, model_request_parameters: ModelRequestParameters) -> ToolDefinition | None:
+    def _nativecomputer_tool(self, model_request_parameters: ModelRequestParameters) -> ToolDefinition | None:
         """The `computer` tool when this model takes it as OpenAI's native computer tool."""
         if not self.profile.get('openai_supports_computer_tool', False):
             return None
@@ -4170,7 +4170,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # plus a replayed search return), and one declaration per request is enough.
         rendered_additional_tools: set[str] = set()
         # Computer calls replayed as `computer_call` items, whose results must be `computer_call_output`s.
-        native_computer = self._native_computer_tool(model_request_parameters) is not None
+        native_computer = self._nativecomputer_tool(model_request_parameters) is not None
         computer_calls: dict[str, ToolCallPart] = {}
         replayed_call_ids: set[str] = set()
         openai_messages: list[responses.ResponseInputItemParam] = []
