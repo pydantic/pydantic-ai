@@ -4444,11 +4444,11 @@ async def test_prefect_task_wrapped_sub_agent_self_cancel_is_a_failed_tool_retur
         args: dict[str, Any],
         error: Exception,
     ) -> Any:
-        if isinstance(error, RunCancelled):
-            hook_errors.append(
-                f'{type(error).__name__}: run_id={error.run_id is not None}, '
-                f'messages={len(error.all_messages())}, requests={error.usage.requests}'
-            )
+        assert isinstance(error, RunCancelled)
+        hook_errors.append(
+            f'{type(error).__name__}: run_id={error.run_id is not None}, '
+            f'messages={len(error.all_messages())}, requests={error.usage.requests}'
+        )
         raise error
 
     async def delegate() -> str:

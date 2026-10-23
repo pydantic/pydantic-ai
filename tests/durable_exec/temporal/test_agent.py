@@ -4509,11 +4509,11 @@ async def _record_sub_agent_cancel(
     args: dict[str, Any],
     error: Exception,
 ) -> Any:
-    if isinstance(error, RunCancelled):
-        _sub_agent_cancel_hook_errors.append(
-            f'{type(error).__name__}: run_id={error.run_id is not None}, '
-            f'messages={len(error.all_messages())}, requests={error.usage.requests}'
-        )
+    assert isinstance(error, RunCancelled)
+    _sub_agent_cancel_hook_errors.append(
+        f'{type(error).__name__}: run_id={error.run_id is not None}, '
+        f'messages={len(error.all_messages())}, requests={error.usage.requests}'
+    )
     raise error
 
 
