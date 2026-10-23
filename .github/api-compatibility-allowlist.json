@@ -147,13 +147,13 @@
     {
       "against": "v2.60.0",
       "fingerprint": "9da17be8f0bf4110e9adf7e58a971569a42f53d8c1d8bc401f3126667963a92d",
-      "reason": "clai2 web UI internals, not an SDK: `WorkspaceTools` takes the `WebService` instead of the host and publish callback, so it can run workspace sessions in this process.",
+      "reason": "clai2 web UI internals, not an SDK: `WorkspaceTools` takes the `WebService` instead of the plugin host, so it can run workspace sessions in this process.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
     },
     {
       "against": "v2.60.0",
       "fingerprint": "67c2c0d8b89503cc200c930f1ddcd24ffc65baa03625e4004fa726de4c3290e6",
-      "reason": "clai2 web UI internals, not an SDK: `WorkspaceTools` takes the `WebService` instead of the host and publish callback, so it can run workspace sessions in this process.",
+      "reason": "clai2 web UI internals, not an SDK: `WorkspaceTools` takes the `WebService` instead of the plugin host, so it can run workspace sessions in this process.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
     },
     {
@@ -183,7 +183,7 @@
     {
       "against": "v2.60.0",
       "fingerprint": "f56328ab28f0a55850ae197682fa71af93c36502b7c092eb395b2f43b5e038cf",
-      "reason": "clai2 web UI internals, not an SDK: the orchestrator's instructions now say a workspace's session runs in this CLAI rather than in its own process.",
+      "reason": "clai2 web UI internals, not an SDK: the orchestrator's instructions reword how a workspace's session is described: `session_start` now starts its session rather than its CLAI.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
     },
     {
@@ -219,13 +219,13 @@
     {
       "against": "v2.60.0",
       "fingerprint": "acf1c7063fe4b64859039291de1578a14bcff2574909b89e2a63b5499248bf59",
-      "reason": "clai2 web UI internals, not an SDK: `open_workspace` takes the `WebService` to start the workspace's session in this process instead of the plugin list for a new process.",
+      "reason": "clai2 web UI internals, not an SDK: `open_workspace` takes the `WebService`, to start the workspace's session in this process, instead of the plugin catalog it used to find and start the workspace's own CLAI.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
     },
     {
       "against": "v2.60.0",
       "fingerprint": "8977aad8f3a653426c3dd46b06b7380ba9b11313e0de29e3706f41a45b508b38",
-      "reason": "clai2 web UI internals, not an SDK: `open_workspace` takes the `WebService` to start the workspace's session in this process instead of the plugin list for a new process.",
+      "reason": "clai2 web UI internals, not an SDK: `open_workspace` takes the `WebService`, to start the workspace's session in this process, instead of the plugin catalog it used to find and start the workspace's own CLAI.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
     },
     {
