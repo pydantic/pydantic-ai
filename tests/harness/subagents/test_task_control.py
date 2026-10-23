@@ -1632,10 +1632,6 @@ class TestTaskControlTelemetry:
     async def test_a_created_agents_name_and_description_are_content(self, include_content: bool) -> None:
         gate = Gate()
 
-        async def poem(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            await gate.opened.wait()
-            return text('A poem.')
-
         async def streamed(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
             await gate.opened.wait()
             yield 'A poem.'
@@ -1651,7 +1647,7 @@ class TestTaskControlTelemetry:
             ),
             capabilities=[
                 SubAgents(
-                    models={'slow': FunctionModel(poem, stream_function=streamed)},
+                    models={'slow': FunctionModel(stream_function=streamed)},
                     task_control=True,
                     max_running_tasks=1,
                     dynamic_agents=DynamicAgents(models=['slow']),
