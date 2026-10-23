@@ -22,6 +22,11 @@ The session exposes copy-on-read snapshots:
 | [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] | Seeded history plus messages recorded during this session. |
 | [`new_messages()`][pydantic_ai.realtime.RealtimeSession.new_messages] | Only messages recorded during this session. |
 
+As in a standard run, a session started without `message_history` records the agent's
+[system prompts](../agent.md#system-prompts) first, as a `ModelRequest` of
+[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s, so they carry over when the history is
+handed off or used to seed another session. The model receives them as part of the session instructions.
+
 ## Seeding a session
 
 Pass `message_history=` to seed a new session. Replayable text, speech transcripts, thinking text,
@@ -59,10 +64,11 @@ raises [`UserError`][pydantic_ai.exceptions.UserError] instead of being silently
 documents, uploaded-file references, and model-generated files cannot be seeded.
 
 !!! warning "Seeded history is trusted"
-    As in a standard run, `message_history` is treated as trusted server-side state: its system
-    prompts become session instructions, and its image URLs are downloaded by your server
-    according to the [download settings](../input.md#user-side-download-vs-direct-file-url) each URL
-    carries. Request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions] on
+    As in a standard run, `message_history` is treated as trusted server-side state: the system
+    prompt it opens with goes into the session instructions ahead of the agent's own (later system
+    prompts are replayed in place as `<system>`-tagged text), and its image URLs are downloaded by
+    your server according to the [download settings](../input.md#user-side-download-vs-direct-file-url)
+    each URL carries. Request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions] on
     seeded history are ignored in favor of the agent's own.
     If the history came from a browser or another untrusted client, pass it through
     [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] before seeding the session; see

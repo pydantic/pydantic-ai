@@ -39,7 +39,7 @@ def unsupported_file_input(item: SendableFile, profile: ModelProfile) -> str | N
     if isinstance(item, DocumentUrl) or (isinstance(item, BinaryContent) and item.is_document):
         if not profile.get('supports_document_input', True):
             return 'documents'
-        media_type = _media_type(item)
+        media_type = inferred_media_type(item)
         supported = profile.get('supported_document_media_types', KNOWN_DOCUMENT_MEDIA_TYPES)
         if media_type in KNOWN_DOCUMENT_MEDIA_TYPES and media_type not in supported:
             return f'{media_type} documents'
@@ -53,7 +53,7 @@ def unsupported_file_note(item: SendableFile, unsupported: str) -> str:
     and, for content held in memory, its size, so the model can tell the user which file it could not read.
     """
     details: list[str] = []
-    if media_type := _media_type(item):
+    if media_type := inferred_media_type(item):
         details.append(media_type)
     if isinstance(item, BinaryContent):
         details.append(f'{len(item.data):,} bytes')
@@ -61,7 +61,8 @@ def unsupported_file_note(item: SendableFile, unsupported: str) -> str:
     return f'File {item.identifier}{described} was not sent: this model cannot read {unsupported}.'
 
 
-def _media_type(item: SendableFile) -> str | None:
+def inferred_media_type(item: SendableFile) -> str | None:
+    """The media type of `item`, or `None` for a URL whose media type can't be inferred and wasn't given."""
     if isinstance(item, FileUrl):
         try:
             return item.media_type

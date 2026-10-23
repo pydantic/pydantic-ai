@@ -248,17 +248,39 @@ def _wire(value: DecisionQuestion | DecisionAnswer) -> dict[str, Any]:
     return wire
 
 
-def _probability_bounds(probabilities: Collection[float]) -> tuple[list[Decimal], list[Decimal]]:  # pyright: ignore[reportUnusedFunction]
-    """The bounded rounding intervals of the displayed probabilities, using at least two decimal places."""
+def _half_unit(value: Decimal, float_tolerance: Decimal) -> Decimal:
+    """How far a displayed value may be from the one it stands for.
+
+    Half a unit of its last decimal place, using at least two, as a value rounded for display may be off by. An
+    unrounded float prints all of its digits, which would make that interval far narrower than the error its own
+    arithmetic carries, so it is never narrower than `float_tolerance`.
+    """
+    return max(Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2, float_tolerance)
+
+
+def _probability_bounds(  # pyright: ignore[reportUnusedFunction]
+    probabilities: Collection[float], *, float_tolerance: Decimal = Decimal(0)
+) -> tuple[list[Decimal], list[Decimal]]:
+    """The bounded rounding intervals of the displayed probabilities, using at least two decimal places.
+
+    Each interval is at least `float_tolerance` either side of its probability, for a backend that sends unrounded
+    floats.
+    """
     values: list[Decimal] = [Decimal(str(probability)) for probability in probabilities]
-    half_units: list[Decimal] = [Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2 for value in values]
+    half_units: list[Decimal] = [_half_unit(value, float_tolerance) for value in values]
     lower: list[Decimal] = [max(Decimal(0), value - half_unit) for value, half_unit in zip(values, half_units)]
     upper: list[Decimal] = [min(Decimal(1), value + half_unit) for value, half_unit in zip(values, half_units)]
     return lower, upper
 
 
-def _score_fits(lower: Sequence[Decimal], upper: Sequence[Decimal], score: float) -> bool:  # pyright: ignore[reportUnusedFunction]
-    """Whether rounded probabilities can sum to one and produce the displayed score."""
+def _score_fits(  # pyright: ignore[reportUnusedFunction]
+    lower: Sequence[Decimal], upper: Sequence[Decimal], score: float, *, float_tolerance: Decimal = Decimal(0)
+) -> bool:
+    """Whether rounded probabilities can sum to one and produce the displayed score.
+
+    The score's own interval is at least `float_tolerance` either side of it, for a backend that sends unrounded
+    floats.
+    """
     remaining = Decimal(1) - sum(lower, Decimal(0))
     valid = 0 <= remaining <= sum((high - low for low, high in zip(lower, upper)), Decimal(0))
     if valid:
@@ -272,8 +294,7 @@ def _score_fits(lower: Sequence[Decimal], upper: Sequence[Decimal], score: float
                 rest -= taken
             bounds.append(mean)
         displayed_score = Decimal(str(score))
-        score_decimals = max(2, -int(displayed_score.as_tuple().exponent))
-        score_half_unit = Decimal(1).scaleb(-score_decimals) / 2
+        score_half_unit = _half_unit(displayed_score, float_tolerance)
         valid = displayed_score + score_half_unit >= bounds[0] and displayed_score - score_half_unit <= bounds[1]
     return valid
 
@@ -552,7 +573,8 @@ class DecisionModel(Model[InterfaceClient]):
 
         Images are read only when the class sets
         [`supports_image_input`][pydantic_ai.models.decision.DecisionModel.supports_image_input], and documents,
-        audio and video never are, so a file of those kinds that a tool returns is replaced by a note.
+        audio and video never are, so [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] describes
+        those files instead of letting them be refused, and a tool's file is otherwise replaced by a note.
         """
         return merge_profile(
             super().profile,
