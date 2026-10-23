@@ -2239,6 +2239,25 @@ EFFORT_MAPPINGS = [
     pytest.param(
         EffortMapping(
             lambda level: _bedrock_model(
+                BedrockModelProfile(bedrock_thinking_variant='openai_responses', supports_thinking=True)
+            )._build_additional_model_request_fields(
+                BedrockModelSettings(), ModelRequestParameters(thinking=level), []
+            ),
+            {
+                'minimal': {'reasoning': {'effort': 'low'}},
+                'low': {'reasoning': {'effort': 'low'}},
+                'medium': {'reasoning': {'effort': 'medium'}},
+                'high': {'reasoning': {'effort': 'high'}},
+                'xhigh': {'reasoning': {'effort': 'xhigh'}},
+                'max': {'reasoning': {'effort': 'xhigh'}},
+            },
+        ),
+        id='bedrock-openai-responses',
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    pytest.param(
+        EffortMapping(
+            lambda level: _bedrock_model(
                 BedrockModelProfile(bedrock_thinking_variant='xai', supports_thinking=True)
             )._build_additional_model_request_fields(
                 BedrockModelSettings(), ModelRequestParameters(thinking=level), []
