@@ -170,6 +170,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_supports_phase': False,
     'openai_supports_prompt_cache_breakpoints': False,
     'openai_responses_supports_prompt_cache_diagnostics': False,
+    'openai_responses_tool_choice_accepts_additional_tools': False,
     'openai_chat_supports_document_input': True,
     # AnthropicModelProfile subclass defaults
     'anthropic_supports_fast_speed': False,
@@ -416,6 +417,7 @@ def test_openai_gpt_5_6():
             'openai_responses_supports_reasoning_mode': True,
             'tool_addition_mode': 'with_definitions',
             'openai_supports_phase': True,
+            'openai_responses_tool_choice_accepts_additional_tools': True,
             'openai_responses_supports_max_reasoning_effort': True,
             'openai_supports_prompt_cache_breakpoints': True,
             'tool_deferral_mode': 'with_tool_search',
@@ -457,6 +459,7 @@ def test_openai_gpt_6_astra():
             'openai_responses_supports_reasoning_mode': True,
             'tool_addition_mode': 'with_definitions',
             'openai_supports_phase': True,
+            'openai_responses_tool_choice_accepts_additional_tools': True,
             'openai_responses_supports_max_reasoning_effort': True,
             'openai_supports_prompt_cache_breakpoints': True,
             'tool_deferral_mode': 'with_tool_search',
@@ -653,6 +656,7 @@ def test_openai_codex_gpt_5_6():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_phase': True,
             'openai_supports_minimal_reasoning_effort': False,
+            'openai_responses_tool_choice_accepts_additional_tools': True,
             'openai_responses_supports_max_reasoning_effort': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
@@ -2834,6 +2838,7 @@ def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
     """
     profile = openai_model_profile('gpt-5.6')
     assert profile.get('tool_addition_mode') is None
+    assert profile.get('openai_responses_tool_choice_accepts_additional_tools') is None
 
 
 @pytest.mark.skipif(not (anthropic_imports() and openai_imports() and bedrock_imports()), reason='extras not installed')
