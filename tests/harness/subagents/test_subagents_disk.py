@@ -69,6 +69,8 @@ class TestClampEffort:
         assert clamp('high') == 'high'
         assert clamp('low', floor='high') == 'high'
         assert clamp('xhigh', floor='high') == 'xhigh'
+        assert clamp('max', floor='xhigh') == 'max'
+        assert clamp('xhigh', floor='max') == 'max'
         with pytest.raises(AttributeError, match="has no attribute 'missing'"):
             subagents.__getattr__('missing')
 

@@ -600,10 +600,18 @@ def _merge_leading_system_messages(
     return [merged, *openai_messages[leading_count:]]
 
 
-def _resolve_openai_thinking_effort(thinking: ThinkingLevel, profile: OpenAIModelProfile) -> ReasoningEffort:
-    """Map unified thinking to the closest reasoning effort the model supports."""
+def _resolve_openai_thinking_effort(
+    thinking: ThinkingLevel, profile: OpenAIModelProfile, *, supports_max: bool
+) -> ReasoningEffort:
+    """Map unified thinking to the closest reasoning effort the model supports.
+
+    `supports_max` says whether the API the request goes to accepts `'max'` for the model, which differs
+    between OpenAI's Chat Completions and Responses APIs.
+    """
     if thinking == 'minimal' and not profile.get('openai_supports_minimal_reasoning_effort', True):
         return 'low'
+    if thinking == 'max' and supports_max:
+        return 'max'
     return OPENAI_REASONING_EFFORT_MAP[thinking]  # type: ignore[return-value]
 
 
@@ -1469,7 +1477,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return OMIT
-        return _resolve_openai_thinking_effort(thinking, self.profile)
+        return _resolve_openai_thinking_effort(
+            thinking,
+            self.profile,
+            supports_max=self.profile.get('openai_chat_supports_max_reasoning_effort', False),
+        )
 
     @asynccontextmanager
     async def request_stream(
@@ -3694,7 +3706,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         # Fall back to unified thinking when openai_reasoning_effort is not set
         if reasoning_effort is None and (thinking := model_request_parameters.thinking) is not None:
-            reasoning_effort = _resolve_openai_thinking_effort(thinking, self.profile)
+            reasoning_effort = _resolve_openai_thinking_effort(
+                thinking,
+                self.profile,
+                supports_max=self.profile.get('openai_responses_supports_max_reasoning_effort', False),
+            )
 
         reasoning: Reasoning = {}
         if reasoning_effort:
