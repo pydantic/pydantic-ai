@@ -438,6 +438,13 @@ await update_record(key='status', value='ready')
 await search(query='status')  # Runs after the update, not speculatively ahead of it.
 ```
 
+Code can also reach a tool that is not eligible without naming it, for example through a
+helper defined in an earlier snippet. A launch is not used if a call to a tool that is not
+eligible, native or inside `run_code`, starts or finishes after the launch. The dispatch runs
+the tool normally instead and counts as a miss; the launch is discarded as wasted work.
+Only tool calls move this boundary: writes the sandbox makes through `mount` or `os_access`
+do not, so do not make a tool eligible if it reads state those writes change.
+
 To overlap an earlier blocking read with later calls, that read must also be eligible.
 Streamed `run_code` parts following another model tool call wait for normal dispatch.
 Eligibility is a trust decision, not an analysis of arbitrary Python side effects.
@@ -474,8 +481,8 @@ after a slow statement). Statements that eager mode runs claim those launches to
 
 ### Check whether speculation helps
 
-`CodeMode.speculation_stats` is `None` when speculation is disabled. When enabled, its counters
-accumulate across runs using that capability instance; take before/after snapshots for a
+`CodeMode.speculation_stats` counts launches across every run using that capability instance,
+and its counters stay at zero when speculation is disabled. Take before/after snapshots for a
 per-run comparison. Successful `run_code` returns can also carry a `speculation` entry in
 history-only metadata, alongside `tool_calls` and `tool_returns`. Model-visible content is unchanged.
 
@@ -485,7 +492,7 @@ history-only metadata, alongside `tool_calls` and `tool_returns`. Model-visible 
 | `adopted` | Capability instance | Speculative outcomes consumed by actual dispatches, including tool errors. |
 | `evicted` | Capability instance | Unclaimed launches discarded or sent a cancellation request. |
 | `hits` | `run_code` return | Dispatches that consumed a speculative outcome. |
-| `misses` | `run_code` return | Dispatches to eligible tools that found no matching launch and ran normally. |
+| `misses` | `run_code` return | Dispatches to eligible tools that found no usable launch and ran normally. |
 | `wasted` | `run_code` return | Unclaimed launches discarded at this call's successful completion. |
 | `hidden_ms` | `run_code` return | Sum of launch-to-settlement durations for adopted calls. |
 
