@@ -490,7 +490,7 @@ async def test_only_a_capability_block_change_after_a_load_counts():
     ]
 
     def stray(ctx: RunContext[Counter], request: ModelRequestContext) -> ModelRequestContext:
-        # A part marked as delivered through history that no loaded capability owns is no change to any block.
+        # A part marked as delivered through history that no loaded capability owns stays in the prefix.
         params = request.model_request_parameters
         params.instruction_parts = [
             *(params.instruction_parts or []),
@@ -504,6 +504,7 @@ async def test_only_a_capability_block_change_after_a_load_counts():
     result = await agent.run('Again.', deps=Counter(), message_history=history)
     assert deltas(result.new_messages()) == []
     assert received.statements[-1] == []
+    assert 'Stray.' in (received.instructions[-1] or '')
 
 
 async def test_client_edited_load_return_never_reaches_the_system_voice():

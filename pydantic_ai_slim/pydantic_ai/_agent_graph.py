@@ -5,7 +5,16 @@ import dataclasses
 import inspect
 import time
 from collections import deque
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Generator,
+    Iterable,
+    Sequence,
+)
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import Context, ContextVar, copy_context
 from copy import copy, deepcopy
@@ -1008,15 +1017,20 @@ async def _get_loaded_instructions(
 
 
 def _split_loaded_instruction_parts(
-    params: models.ModelRequestParameters,
+    params: models.ModelRequestParameters, loaded_capability_ids: Collection[str]
 ) -> tuple[list[_messages.InstructionPart] | None, list[_messages.InstructionPart]]:
-    """Separate the parts delivered through history from the prefix, after the `before_model_request` hooks."""
+    """Separate the parts delivered through history from the prefix, after the `before_model_request` hooks.
+
+    A part marked `'via_history'` that no capability in `loaded_capability_ids` owns has no block to be delivered
+    in, so it stays in the prefix rather than being lost.
+    """
     if params.instruction_parts is None:
         return None, []
     prefix: list[_messages.InstructionPart] = []
     loaded: list[_messages.InstructionPart] = []
     for part in params.instruction_parts:
-        (loaded if params.instruction_visibility_of(part) == 'via_history' else prefix).append(part)
+        via_history = params.instruction_visibility_of(part) == 'via_history'
+        (loaded if via_history and loaded_part_capability_id(part) in loaded_capability_ids else prefix).append(part)
     return prefix, loaded
 
 
@@ -2139,7 +2153,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # anchor the prefix.
             # Loaded capabilities' instructions reach the model through history: changes to them are appended
             # after the prefix's, and they leave the parts the model is sent.
-            prefix_parts, loaded_parts = _split_loaded_instruction_parts(model_request_parameters)
+            prefix_parts, loaded_parts = _split_loaded_instruction_parts(
+                model_request_parameters, LoadedInstructionValues.of(messages).values
+            )
             # A capability whose parts a hook left out, as a hook that builds `instruction_parts` from scratch
             # does, is delivered as it resolved; a hook withdraws one by emptying its parts instead.
             kept = {loaded_part_capability_id(part) for part in loaded_parts}
