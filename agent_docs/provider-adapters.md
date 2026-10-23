@@ -52,7 +52,7 @@ Paths are relative to `pydantic_ai_slim/pydantic_ai/`.
 
 - Replay a part's provider data only when the part's `provider_name` is this adapter's `self.system`. When an adapter accepts more than one name, define that set once and read it at every replay site. Precedent: `models/google.py::GoogleModel._matching_provider_names`. — Each copy of an alias set drifts on its own.
 - Put an opaque payload the API checks on replay (a signature, an encrypted blob) in the part's `signature` field when the part has one. Put any other replay data in `provider_details`.
-- Read each replay field back through one function that validates it before use, with a Pydantic model or an explicit type check. Never read it through scattered, unvalidated `.get()` calls. Precedents: `models/_reasoning_details.py::into_reasoning_detail` and `models/anthropic.py::_get_anthropic_code_execution_tool_name`. — History comes back from storage and from UI clients, so a malformed value has to fail at the boundary.
+- Read each replay field back through one function that validates it before use, with a Pydantic model or an explicit type check. Never read it through scattered, unvalidated `.get()` calls. Precedents: `models/_reasoning_details.py::into_reasoning_detail` and `models/anthropic.py::_get_anthropic_code_execution_tool_name`. — History comes back from storage and from UI clients, so one function has to catch a malformed value, by raising or by falling back to a safe default, not each place that reads it.
 - Mark a variant of a part in `provider_details`, never with a sentinel `id`, for the same `pydantic_ai/AGENTS.md` rule.
 
 ### Thinking round-trips
