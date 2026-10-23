@@ -217,7 +217,9 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         )
         # `ssh` hands the command to the remote login shell. `/bin/sh` is absolute so a writable `PATH` entry
         # cannot supply the shell that interprets this script. Either way the tag is an argument of that `sh`.
-        if self._script_on_stdin:
+        # The mode is read once: a concurrent command can switch it while this one waits on `ssh`.
+        on_stdin = self._script_on_stdin
+        if on_stdin:
             # The script reaches the remote `sh` on stdin, so the remote command line stays short whatever the
             # command's size: as an argument, its quoted form could pass the operating system's limit on one, on
             # either host. A local `printf` builtin feeds it, in arguments small enough for any host.
@@ -248,7 +250,7 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
             ) from error
         before, ready, stderr = result.stderr.partition(_READY)
         if not ready:
-            if result.exit_code == 0 and self._script_on_stdin:
+            if result.exit_code == 0 and on_stdin:
                 # A script that runs prints the marker or exits 1, so the remote `sh` read none and nothing ran:
                 # `-n`, `-f` and `StdinNull` give `ssh` an empty input. From now on the script goes on the remote
                 # command line, which caps how long a command can be, within the time this attempt left.

@@ -260,6 +260,23 @@ async def test_an_ssh_that_does_not_forward_its_input_gets_the_script_as_an_argu
     assert all(re.fullmatch(rf"/bin/sh -c '.*' {tag}", command, re.DOTALL) for command in as_argument)
 
 
+async def test_concurrent_first_commands_over_an_ssh_that_does_not_forward_its_input_all_run(
+    tools: FakeRemoteTools,
+) -> None:
+    """Each falls back on its own: one finding out first doesn't make the others' empty attempts look like failures."""
+    backend = SSHWorkspaceBackend('box', ssh_args=['-n'])
+    outputs: list[str] = []
+
+    async def run(text: str) -> None:
+        outputs.append((await backend.run(f'printf {text}', shell=True)).stdout)
+
+    async with anyio.create_task_group() as group:
+        for text in ('a', 'b', 'c'):
+            group.start_soon(run, text)
+
+    assert sorted(outputs) == ['a', 'b', 'c']
+
+
 async def test_a_timeout_used_up_by_the_input_attempt_never_starts_the_command(
     tools: FakeRemoteTools, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
