@@ -4560,19 +4560,33 @@ def post_compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessag
     continue to use this conservative provider-agnostic window because they feed a future request
     whose provider may differ.
     """
+    if (boundary := _post_compaction_window_start(messages)) == (0, 0):
+        return list(messages)
+    message_index, part_index = boundary
+    message = messages[message_index]
+    # Indexed iteration rather than `messages[message_index + 1:]`: the runtime `Sequence` contract
+    # only requires integer `__getitem__`, so a minimal conforming implementation may reject slices.
+    # (`message.parts` is a list.)
+    return [
+        replace(message, parts=list(message.parts[part_index:])),
+        *(messages[i] for i in range(message_index + 1, len(messages))),
+    ]
+
+
+def _post_compaction_window_start(messages: Sequence[ModelMessage]) -> tuple[int, int]:
+    """Where [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] begins, as a message index and a part index.
+
+    That's the latest [`CompactionPart`][pydantic_ai.messages.CompactionPart], or `(0, 0)` without one. For code that
+    folds history state in place, with the positions of the messages it walks, and must agree with the window on
+    where that state starts.
+    """
     for message_index in range(len(messages) - 1, -1, -1):
         message = messages[message_index]
         if isinstance(message, ModelResponse):
             for part_index in range(len(message.parts) - 1, -1, -1):
                 if isinstance(message.parts[part_index], CompactionPart):
-                    # Indexed iteration rather than `messages[message_index + 1:]`: the runtime
-                    # `Sequence` contract only requires integer `__getitem__`, so a minimal
-                    # conforming implementation may reject slices. (`message.parts` is a list.)
-                    return [
-                        replace(message, parts=list(message.parts[part_index:])),
-                        *(messages[i] for i in range(message_index + 1, len(messages))),
-                    ]
-    return list(messages)
+                    return message_index, part_index
+    return 0, 0
 
 
 def _compaction_part_is_wire_boundary(

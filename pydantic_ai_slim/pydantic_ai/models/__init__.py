@@ -62,6 +62,7 @@ from .._http import (
 )
 from .._instructions import (
     InstructionValues,
+    LoadedInstructionValues,
     advance_instruction_window,
     instruction_window_start,
 )
@@ -115,6 +116,7 @@ from ..messages import (
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
     _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
+    _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
     _render_append_parts,  # pyright: ignore[reportPrivateUsage]
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
@@ -230,6 +232,18 @@ ToolVisibility = Literal['visible', 'deferred', 'withheld', 'via_history']
 Resolved per tool name into [`ModelRequestParameters.tool_visibility`][pydantic_ai.models.ModelRequestParameters.tool_visibility]."""
 
 
+InstructionVisibility = Literal['prefix', 'via_history']
+"""How an instruction part reaches the model.
+
+- `'prefix'`: in the instructions every request starts with.
+- `'via_history'`: in message history. That's the instructions of a loaded
+  [deferred capability](../capabilities/on-demand.md), stated after its `load_capability` tool return as an
+  [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] for the capability's block,
+  `capability:<id>`, holding all of its parts joined, and appended again whenever they change.
+
+Resolved per part id into [`ModelRequestParameters.instruction_visibility`][pydantic_ai.models.ModelRequestParameters.instruction_visibility]."""
+
+
 @dataclass(repr=False, kw_only=True)
 class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
@@ -313,6 +327,21 @@ class ModelRequestParameters:
 
     Models that support granular caching (e.g. Anthropic, Bedrock) use this to place cache
     boundaries at the static/dynamic instruction boundary.
+
+    While `before_model_request` hooks run, this also holds the instructions of the
+    [deferred capabilities](../capabilities/on-demand.md) the model has loaded, which
+    [`instruction_visibility`][pydantic_ai.models.ModelRequestParameters.instruction_visibility] marks
+    `'via_history'`. The agent takes those out before the model is called, so a model only sees the prefix.
+    """
+
+    instruction_visibility: dict[str, InstructionVisibility] | None = None
+    """Maps the ids of the parts in [`instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts] that don't reach the model in the prefix to how they do.
+
+    Keyed by the id as a string (`'capability:refunds'`), and set by the agent for its `before_model_request`
+    hooks; `None` when every part is in the prefix, as it is once the agent has taken the other parts out
+    before calling the model. A part with no id, or an id with no entry, is `'prefix'`: use
+    [`instruction_visibility_of`][pydantic_ai.models.ModelRequestParameters.instruction_visibility_of]
+    rather than reading the dict.
     """
 
     thinking: ThinkingLevel | None = None
@@ -336,6 +365,12 @@ class ModelRequestParameters:
     unified value: provider-specific cache settings take precedence in the model's request mapping
     without changing it.
     """
+
+    def instruction_visibility_of(self, part: InstructionPart) -> InstructionVisibility:
+        """The [`InstructionVisibility`][pydantic_ai.models.InstructionVisibility] of an instruction part."""
+        if part.id is not None and (visibility := (self.instruction_visibility or {}).get(str(part.id))):
+            return visibility
+        return 'prefix'
 
     def visibility_of(self, tool_name: str) -> ToolVisibility:
         """The resolved [`ToolVisibility`][pydantic_ai.models.ToolVisibility] for `tool_name`.
@@ -1314,7 +1349,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         Renders [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s as
         `SystemPromptPart`s for this model's delivery path, dropping deltas from before the latest
-        instruction baseline or compaction.
+        instruction baseline or compaction. A change to a loaded deferred capability's block is kept
+        until the latest compaction alone, since no baseline restates it.
 
         Where the profile's `supports_request_scoped_system_prompts` is `False`, leaves out every
         [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] `SystemPromptPart` whose request has been answered
@@ -3385,6 +3421,10 @@ def _project_instruction_state(
     for its block; only text earlier in `messages` goes into that fold, so each change renders the same on
     every later request.
 
+    A statement of a loaded capability's block, `capability:<id>`, is different: no baseline restates it, so its
+    statements are rendered until the compaction that ends the load, each change as a diff against the text an
+    earlier statement delivered.
+
     The baseline parts themselves are dropped. Every request in the current window was sent the same prefix,
     `prefix` (the request's instruction parts), so those requests get their `instructions` rendered from it,
     tagged, for the adapters that read a request's instructions from history rather than from the request
@@ -3394,24 +3434,39 @@ def _project_instruction_state(
     rendered_prefix = InstructionPart.join(_render_append_parts(prefix)) if prefix else None
     window: InstructionBaselinePart | None = None
     values = InstructionValues.at(None)
+    loaded = LoadedInstructionValues()
+    # Loads are folded over the post-compaction window alone, as everywhere else they're derived from history.
+    loads_start = _post_compaction_window_start(messages)
     projected: list[ModelMessage] = []
     for index, message in enumerate(messages):
         if (next_window := advance_instruction_window(window, message)) is not window:
             window = next_window
             values = InstructionValues.at(window)
         if isinstance(message, ModelResponse):
+            for part_index, part in enumerate(message.parts):
+                if (index, part_index) >= loads_start:
+                    loaded.observe(part)
             projected.append(message)
             continue
         parts: list[ModelRequestPart] = []
-        for part in message.parts:
-            if isinstance(part, InstructionDeltaPart):
+        for part_index, part in enumerate(message.parts):
+            in_loads_window = (index, part_index) >= loads_start
+            if in_loads_window and loaded.tracks(part):
+                # A statement of a loaded capability's block, which no instruction window restates, so it stays in
+                # effect until the compaction that ends the load.
+                text = part.render(inline_system=inline_system, previous=loaded.apply(part))
+                parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
+            elif isinstance(part, InstructionDeltaPart):
                 # A change a newer version wrote, which this one can't address, is superseded by the window
                 # the next request opens.
                 if index >= current_start and part.id is not None:
                     text = part.render(inline_system=inline_system, previous=values.apply(part))
                     parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
-            elif not isinstance(part, InstructionBaselinePart):
-                parts.append(part)
+            else:
+                if in_loads_window:
+                    loaded.observe(part)
+                if not isinstance(part, InstructionBaselinePart):
+                    parts.append(part)
         instructions = message.instructions
         if (
             window is not None

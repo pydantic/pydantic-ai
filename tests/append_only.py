@@ -374,12 +374,14 @@ with try_import() as provider_imports_successful:
         pass
 
 
-def _model(provider: Provider, transport: _ScriptedTransport) -> _RecordsParameters:
+def _model(provider: Provider, transport: _ScriptedTransport, model_name: str | None) -> _RecordsParameters:
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(transport.handle))
     if provider == 'anthropic':
-        return _RecordingAnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key='x', http_client=client))
+        return _RecordingAnthropicModel(
+            model_name or 'claude-opus-5-5', provider=AnthropicProvider(api_key='x', http_client=client)
+        )
     model_class = _RecordingResponsesModel if provider == 'openai-responses' else _RecordingChatModel
-    return model_class('gpt-5.6-sol', provider=OpenAIProvider(api_key='x', http_client=client))
+    return model_class(model_name or 'gpt-5.6-sol', provider=OpenAIProvider(api_key='x', http_client=client))
 
 
 # --- The scenario -----------------------------------------------------------------------------------
@@ -561,9 +563,12 @@ async def run_conversation(
     capabilities: Sequence[AbstractCapability[Any]],
     scenario: Scenario,
     clock: Clock,
+    *,
+    model_name: str | None = None,
 ) -> ConversationResult:
+    """Run `scenario`, on `model_name` if given rather than the provider's default model."""
     transport = _ScriptedTransport(provider, clock, script=scenario.script())
-    model = _model(provider, transport)
+    model = _model(provider, transport, model_name)
     agent = Agent(
         model,
         instructions='You are a helpful assistant.',

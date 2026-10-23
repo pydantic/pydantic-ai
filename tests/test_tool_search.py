@@ -42,6 +42,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     CompactionPart,
     InstructionBaselinePart,
+    InstructionDeltaPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -3114,6 +3115,8 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
                 part_info = {'type': 'load_capability_return', 'instructions': part.instructions}
             elif isinstance(part, ToolAvailabilityDeltaPart):
                 part_info = {'type': 'tool_availability_delta', 'added': part.tools_added}
+            elif isinstance(part, InstructionDeltaPart):
+                part_info = {'type': 'instruction_delta', 'id': str(part.id), 'content': part.content}
             elif isinstance(part, ToolCallPart):
                 # Normalize args from JSON string to dict so per-row snapshots don't
                 # pin on provider-specific whitespace or key ordering.
@@ -3152,9 +3155,14 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                 [
                     {
                         'type': 'load_capability_return',
-                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                        'instructions': None,
                     },
                     {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
+                    {
+                        'type': 'instruction_delta',
+                        'id': 'capability:refunds',
+                        'content': 'Use the refund policy tool before answering refund questions.',
+                    },
                 ],
             ),
             (
@@ -3183,9 +3191,14 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                 [
                     {
                         'type': 'load_capability_return',
-                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                        'instructions': None,
                     },
                     {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
+                    {
+                        'type': 'instruction_delta',
+                        'id': 'capability:refunds',
+                        'content': 'Use the refund policy tool before answering refund questions.',
+                    },
                 ],
             ),
             (
@@ -3214,9 +3227,14 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                 [
                     {
                         'type': 'load_capability_return',
-                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                        'instructions': None,
                     },
                     {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
+                    {
+                        'type': 'instruction_delta',
+                        'id': 'capability:refunds',
+                        'content': 'Use the refund policy tool before answering refund questions.',
+                    },
                 ],
             ),
             (
@@ -3245,9 +3263,14 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                 [
                     {
                         'type': 'load_capability_return',
-                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                        'instructions': None,
                     },
                     {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
+                    {
+                        'type': 'instruction_delta',
+                        'id': 'capability:refunds',
+                        'content': 'Use the refund policy tool before answering refund questions.',
+                    },
                 ],
             ),
             (
@@ -3276,9 +3299,14 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                 [
                     {
                         'type': 'load_capability_return',
-                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                        'instructions': None,
                     },
                     {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
+                    {
+                        'type': 'instruction_delta',
+                        'id': 'capability:refunds',
+                        'content': 'Use the refund policy tool before answering refund questions.',
+                    },
                 ],
             ),
             (
@@ -3512,6 +3540,8 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                 # the whole point of the part. If one ever shows up here again the `else` below names it.
                 elif isinstance(part, ToolAvailabilityDeltaPart):
                     part_info = {'type': 'tool_availability_delta', 'added': part.tools_added}
+                elif isinstance(part, InstructionDeltaPart):
+                    part_info = {'type': 'instruction_delta', 'id': str(part.id), 'content': part.content}
                 elif isinstance(part, ToolCallPart):
                     part_info = {'type': 'tool_call', 'tool_name': part.tool_name, 'args': part.args}
                 elif isinstance(part, ToolReturnPart):
@@ -3548,9 +3578,14 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                 [
                     {
                         'type': 'load_capability_return',
-                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                        'instructions': None,
                     },
                     {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
+                    {
+                        'type': 'instruction_delta',
+                        'id': 'capability:refunds',
+                        'content': 'Use the refund policy tool before answering refund questions.',
+                    },
                 ],
             ),
             (

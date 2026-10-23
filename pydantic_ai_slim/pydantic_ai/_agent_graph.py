@@ -5,7 +5,16 @@ import dataclasses
 import inspect
 import time
 from collections import deque
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Generator,
+    Iterable,
+    Sequence,
+)
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import Context, ContextVar, copy_context
 from copy import copy, deepcopy
@@ -70,7 +79,14 @@ from ._deferred_capabilities import (
 )
 from ._genai_prices import best_effort_price, fill_response_cost
 from ._history_mirroring import HistoryMirroringMessages
-from ._instructions import instruction_window, recorded_prefix, update_instruction_history
+from ._instructions import (
+    LoadedInstructionValues,
+    instruction_window,
+    loaded_part_capability_id,
+    recorded_prefix,
+    update_instruction_history,
+    update_loaded_instruction_history,
+)
 from ._run_context import (
     AnchoredEvidence,
     EventStreamBuffer,
@@ -114,6 +130,7 @@ from .tools import (
     RunContext,
     ToolDefinition,
 )
+from .toolsets._deferred_capability_loader import resolve_loaded_capability_instructions
 from .toolsets._instruction_collection import collect_toolset_instructions
 
 if TYPE_CHECKING:
@@ -978,6 +995,59 @@ async def _get_instructions(
     return parts or None
 
 
+async def _get_loaded_instructions(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+    run_context: RunContext[DepsT],
+) -> list[_messages.InstructionPart]:
+    """Resolve the instructions of the deferred capabilities the model has loaded, in the order it loaded them.
+
+    They reach the model through history, stated after the `load_capability` return, rather than in the
+    prefix: they go into `instruction_parts` so `before_model_request` hooks see them, marked `'via_history'`
+    in `instruction_visibility`, and `update_loaded_instruction_history` records their changes.
+    """
+    parts: list[_messages.InstructionPart] = []
+    for capability_id in LoadedInstructionValues.of(ctx.state.message_history).values:
+        capability = run_context.capabilities.get(capability_id)
+        if capability is not None and capability.defer_loading is True:
+            parts.extend(
+                await resolve_loaded_capability_instructions(capability_id, ctx.deps.tool_manager.toolset, run_context)
+            )
+    return parts
+
+
+def _split_loaded_instruction_parts(
+    params: models.ModelRequestParameters,
+    resolved: Sequence[_messages.InstructionPart],
+    loaded_capability_ids: Collection[str],
+) -> tuple[list[_messages.InstructionPart] | None, list[_messages.InstructionPart]]:
+    """Separate the parts delivered through history from the prefix, after the `before_model_request` hooks.
+
+    `resolved` are the loaded capabilities' parts as this request resolved them, before the hooks, and
+    `loaded_capability_ids` the capabilities the processed history still loads. A capability whose parts a hook
+    left out, as a hook that builds `instruction_parts` from scratch does, is delivered as it resolved; a hook
+    withdraws one by emptying its parts instead. A capability history processing unloaded is delivered nowhere,
+    and a part marked `'via_history'` that no resolved capability owns stays in the prefix rather than being lost.
+    """
+    if params.instruction_parts is None:
+        return None, []
+    resolved_ids = {loaded_part_capability_id(part) for part in resolved}
+    prefix: list[_messages.InstructionPart] = []
+    loaded: list[_messages.InstructionPart] = []
+    for part in params.instruction_parts:
+        capability_id = loaded_part_capability_id(part)
+        if params.instruction_visibility_of(part) != 'via_history' or capability_id not in resolved_ids:
+            prefix.append(part)
+        elif capability_id in loaded_capability_ids:
+            loaded.append(part)
+    kept = {loaded_part_capability_id(part) for part in loaded}
+    loaded.extend(
+        part
+        for part in resolved
+        if (capability_id := loaded_part_capability_id(part)) in loaded_capability_ids and capability_id not in kept
+    )
+    return prefix, loaded
+
+
 def _apply_instruction_parts(
     request: _messages.ModelRequest, instruction_parts: list[_messages.InstructionPart] | None
 ) -> None:
@@ -997,6 +1067,7 @@ def _apply_instruction_parts(
 async def _prepare_request_parameters(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     instruction_parts: list[_messages.InstructionPart] | None,
+    loaded_instruction_parts: Sequence[_messages.InstructionPart] = (),
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model."""
     output_schema = ctx.deps.output_schema
@@ -1074,7 +1145,11 @@ async def _prepare_request_parameters(
         prompted_output_template=prompted_output_template,
         allow_text_output=output_schema.allows_text,
         allow_image_output=output_schema.allows_image,
-        instruction_parts=instruction_parts,
+        instruction_parts=[*(instruction_parts or []), *loaded_instruction_parts]
+        if loaded_instruction_parts
+        else instruction_parts,
+        instruction_visibility={str(part.id): 'via_history' for part in loaded_instruction_parts if part.id is not None}
+        or None,
     )
 
 
@@ -1457,6 +1532,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     )
     _did_stream: bool = field(repr=False, init=False, default=False)
     last_request_context: ModelRequestContext | None = field(repr=False, init=False, default=None)
+    _resolved_loaded_parts: list[_messages.InstructionPart] = field(
+        repr=False, init=False, default_factory=list[_messages.InstructionPart]
+    )
+    """The loaded capabilities' instruction parts this request resolved, before the hooks ran."""
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -1927,7 +2006,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
-        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts)
+        loaded_instruction_parts = await _get_loaded_instructions(ctx, run_context)
+        self._resolved_loaded_parts = loaded_instruction_parts
+        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts, loaded_instruction_parts)
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
         run_context.model_settings = model_settings
 
@@ -2084,11 +2165,26 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # current step must still reflect what was actually sent. Append-on-change blocks are
             # resolved against the processed history: only a baseline that survived processing can
             # anchor the prefix.
+            # Loaded capabilities' instructions reach the model through history: changes to them are appended
+            # after the prefix's, and they leave the parts the model is sent.
+            prefix_parts, loaded_parts = _split_loaded_instruction_parts(
+                model_request_parameters, self._resolved_loaded_parts, LoadedInstructionValues.of(messages).values
+            )
+            recording_targets = _history_recording_targets(ctx, messages)
             model_request_parameters = replace(
                 model_request_parameters,
-                instruction_parts=update_instruction_history(
-                    messages, model_request_parameters.instruction_parts, _history_recording_targets(ctx, messages)
-                ),
+                instruction_parts=update_instruction_history(messages, prefix_parts, recording_targets),
+                instruction_visibility=None,
+            )
+            update_loaded_instruction_history(
+                messages,
+                loaded_parts,
+                recording_targets,
+                keep_without_parts={
+                    capability_id
+                    for capability_id, capability in ctx.deps.capabilities.items()
+                    if capability.defer_loading is not True
+                },
             )
             _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
 
