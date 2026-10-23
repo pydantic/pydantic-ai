@@ -18,10 +18,12 @@ from __future__ import annotations
 
 import argparse
 import ast
+import io
 import os
 import re
 import subprocess
 import sys
+import tokenize
 import tomllib
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
@@ -463,15 +465,31 @@ def _name_cases(offenders: list[_Offender], changes: list[_Change]) -> None:
         o.case = _case(_shape(o.path, o.function, node))
 
 
+def _ignore_comments(source: str | None) -> list[tuple[int, str, str]]:
+    """The comments that hold an ignore marker: their line, their text, and the reason the marker gives."""
+    # Tokenizing is the slow step, and most sources hold no marker at all.
+    if not source or not _IGNORE.search(source):
+        return []
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    except (tokenize.TokenError, SyntaxError):
+        return []
+    found: list[tuple[int, str, str]] = []
+    for token in tokens:
+        marker = _IGNORE.search(token.string) if token.type == tokenize.COMMENT else None
+        if marker:
+            found.append((token.start[0], token.string, (marker['reason'] or '').strip()))
+    return found
+
+
 def _added_ignores(change: _Change) -> list[tuple[str, int, str]]:
-    """The ignore markers this change adds, with the reason each one gives."""
-    before = {line.strip() for line in (change.old_source or '').splitlines()}
-    added: list[tuple[str, int, str]] = []
-    for n, line in enumerate((change.new_source or '').splitlines(), 1):
-        marker = _IGNORE.search(line)
-        if marker and line.strip() not in before:
-            added.append((change.new_path or '', n, (marker['reason'] or '').strip()))
-    return added
+    """The ignore comments this change adds, with the reason each one gives."""
+    before = {text for _, text, _ in _ignore_comments(change.old_source)}
+    return [
+        (change.new_path or '', line, reason)
+        for line, text, reason in _ignore_comments(change.new_source)
+        if text not in before
+    ]
 
 
 def _escape(value: str, prop: bool = False) -> str:

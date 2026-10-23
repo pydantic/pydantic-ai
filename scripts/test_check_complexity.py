@@ -292,6 +292,21 @@ def test_an_ignore_with_a_reason_passes_and_is_reported(repo: Path, capsys: pyte
     )
 
 
+def test_a_marker_outside_a_comment_is_not_an_ignore(repo: Path, capsys: pytest.CaptureFixture[str]):
+    docstring = 'def documented():\n    """Mark a function with `# complexipy: ignore`."""\n'
+    _write(repo, 'pkg/debt.py', _ifs('debt', 5) + '\n\n' + _ifs('small', 2) + '\n\n' + docstring)
+    _stage(repo)
+
+    assert _check(capsys, '--staged') == (0, '')
+
+
+def test_a_marker_in_a_file_that_does_not_tokenize_is_skipped(repo: Path, capsys: pytest.CaptureFixture[str]):
+    _write(repo, 'pkg/debt.py', 'def broken(x:  # complexipy: ignore\n')
+    _stage(repo)
+
+    assert _check(capsys, '--staged') == (0, '')
+
+
 def test_an_ignore_that_was_already_there_is_not_reported(repo: Path, capsys: pytest.CaptureFixture[str]):
     marker = '  # complexipy: ignore (one branch per value)'
     _write(repo, 'pkg/debt.py', _ifs('debt', 6, marker=marker) + '\n\n' + _ifs('small', 2))
