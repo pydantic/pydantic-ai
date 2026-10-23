@@ -17,7 +17,7 @@ from pydantic_ai import (
     Tool,
     durable_exec,
 )
-from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, SetToolMetadata, durable_operation
 from pydantic_ai.durable_exec import (
     IDENTITY_CODEC,
     JSON_CODEC,
@@ -167,6 +167,11 @@ TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__dynamic_toolset__dynamic__call_tool',
     'agent__compat__dynamic_toolset__dynamic__validate_args',
     'agent__compat__capability__compat__operation',
+}
+
+TEMPORAL_CHILD_WORKFLOW_NAMES = {
+    'agent__compat__toolset__<agent>__call_tool__child_workflow',
+    'agent__compat__toolset__functions__call_tool__child_workflow',
 }
 
 DBOS_OPERATION_NAMES = {
@@ -481,6 +486,7 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
 
     from pydantic_ai.durable_exec.temporal import TemporalDurability
+    from pydantic_ai.durable_exec.temporal._durability import worker_registrations
 
     agent = Agent(
         TestModel(),
@@ -496,6 +502,25 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
     }
     assert names == TEMPORAL_ACTIVITY_NAMES
 
+    from temporalio.workflow import ChildWorkflowConfig, _Definition as WorkflowDefinition
+
+    # Child workflow definitions are registered only for toolsets that can select one.
+    assert worker_registrations(durability)[1] == []
+    child_workflow_agent = Agent(
+        TestModel(),
+        name='compat',
+        toolsets=list(_synthetic_toolsets()),
+        capabilities=[
+            SetToolMetadata(temporal={'child_workflow': ChildWorkflowConfig()}),
+            TemporalDurability(event_stream_handler=_event_handler),
+        ],
+    )
+    child_workflow_durability = TemporalDurability.from_agent(child_workflow_agent)
+    assert child_workflow_durability is not None
+    workflow_names = {
+        WorkflowDefinition.must_from_class(item).name for item in worker_registrations(child_workflow_durability)[1]
+    }
+    assert workflow_names == TEMPORAL_CHILD_WORKFLOW_NAMES
     with_workspace = Agent(
         TestModel(),
         name='compat',
