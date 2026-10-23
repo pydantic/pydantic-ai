@@ -442,7 +442,7 @@ async def test_a_task_started_while_the_wrapper_is_entered_enters_the_wrapped_mo
 class _SingleUseModel(_ScopedModel):
     async def __aenter__(self) -> Self:
         if 'enter' in self.events:
-            raise RuntimeError('Entered twice')
+            raise RuntimeError('Entered twice')  # pragma: no cover
         return await super().__aenter__()
 
 
