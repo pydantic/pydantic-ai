@@ -15,8 +15,8 @@ Paths are relative to `pydantic_ai_slim/pydantic_ai/`.
 ### One method per part type, one dispatch per message kind
 
 - Map each part type in its own method. Call those methods from one exhaustive dispatch per message kind: an `isinstance` chain or a `match` over the part union, ending in `assert_never`. Precedent: `models/openai.py::OpenAIChatModel._MapModelResponseContext.map_assistant_message`. — A new part type then adds one flat arm and one method, not a branch nested inside the loop.
-- A per-part method with one call site is an arm of the dispatch. Keep it a method or a module function, never a `def` nested in the mapper. — A nested function counts toward the mapper's complexity, so it removes nothing.
-- Keep the request-wide state those methods share in a private dataclass that holds data only. Build it once before the loop: the facts each part is mapped against (resolved flags, tool definitions by name) and the wire lists being built. The per-part methods live on the model class, or at module level when they read nothing from `self`. — `_MapModelResponseContext` carries methods because `OpenRouterModel` and `SnowflakeModel` subclass it to override them; a context that nothing subclasses holds data only.
+- A per-part method with one call site is an arm of the dispatch. Make it a method on the model class, never a `def` nested in the mapper. An arm of one statement stays inline in the dispatch. — A nested function counts toward the mapper's complexity, so it removes nothing.
+- Keep the request-wide state those methods share in a private dataclass that holds data only. Build it once before the loop: the facts each part is mapped against (resolved flags, tool definitions by name) and the wire lists being built. The per-part methods live on the model class. — `_MapModelResponseContext` carries methods because `OpenRouterModel` and `SnowflakeModel` subclass it to override them; a context that nothing subclasses holds data only.
 - Map each wire item of a response in one function, and call it from both `_process_response` and the stream. Precedent: `models/anthropic.py::_map_server_tool_use_block` and its sibling `_map_*_block` functions. — `request()` and `request_stream()` must build the same parts, and two copies of a mapping drift.
 - In a stream, map each event type in its own sync method that returns an `Iterable` of events, and forward it from `_get_event_iterator` in one loop. Precedent: `models/openai.py::OpenAIStreamedResponse._map_part_delta`. — An async generator can't `yield from`, so every parts-manager call made directly in `_get_event_iterator` needs its own re-yield loop; a sync method can `yield from` each one.
 
@@ -28,8 +28,8 @@ Paths are relative to `pydantic_ai_slim/pydantic_ai/`.
 
 ### Gate a capability on a profile flag
 
-- Read only profile flags where a capability is used. Never check the client class, the model name, the provider name or the `base_url` there. — A use-site check keeps the fact out of the profile, so a user's `profile=` can't override it and every other use site needs its own copy.
-- A gate decides whether to send a feature. A branch that sends the same feature in each transport's own wire form is mapping, not a gate, and may check the client class: Vertex takes the service tier as headers, the Gemini API as a request field.
+- Where a capability is used, read only a profile flag or the adapter's own declaration, such as `_unsupported_file_inputs`. Never check the transport, the model name, the provider name or the `base_url` there. The transport is the client class, or the client's own mode, such as `genai.Client.vertexai` behind `GoogleModel._is_google_cloud`. — A use-site check keeps the fact out of the profile, so a user's `profile=` can't override it and every other use site needs its own copy.
+- A gate decides whether to send a feature. A branch that sends the same feature in each transport's own wire form is mapping, not a gate, and may branch on the transport: Vertex takes the service tier as headers, the Gemini API as a request field.
 - Set each flag where its fact lives:
   - a model-family fact in the family's `*_model_profile()` in `profiles/`;
   - an API fact in the provider's `Provider.model_profile()`;
@@ -37,12 +37,11 @@ Paths are relative to `pydantic_ai_slim/pydantic_ai/`.
   - a limit the client class can't get past, such as a native tool it can't send, in the model's `profile` property, which applies after the user's `profile=`.
 
   Precedents: `models/anthropic.py::AnthropicModel._instance_profile_defaults` and `AnthropicModel.profile`. — `Provider.model_profile()` is a static method that sees only the model name, so it can't hold a client-class fact. Those two model methods are the only places that see both.
-- Express a difference between model families as an enum-valued flag, never as a model-name prefix check in the adapter. Precedent: `bedrock_thinking_variant` in `providers/bedrock.py::BedrockModelProfile`.
+- Express a difference between model families as a `Literal`-valued flag, never as a model-name prefix check in the adapter. Precedent: `bedrock_thinking_variant` in `providers/bedrock.py::BedrockModelProfile`.
 
 ### Tool-call IDs
 
-- Store the provider's call ID in `tool_call_id` as the provider sent it. When the provider sends none, mint one with `_utils.generate_tool_call_id()`. Never encode another value into `tool_call_id`. — Other adapters replay the ID as-is (rule 264 in `pydantic_ai/AGENTS.md`).
-- When the provider's ID is not unique across a history, mint the `tool_call_id` and keep the provider's ID in `provider_details['call_id']`. Precedent: `models/openai.py::_map_tool_search_call`.
+- Store the provider's call ID in `tool_call_id` as the provider sent it. When the provider sends none, mint one with `_utils.generate_tool_call_id()`. Never encode another value into `tool_call_id`. — Other adapters replay the ID as-is, and [`pydantic_ai/AGENTS.md`](../pydantic_ai_slim/pydantic_ai/AGENTS.md) says to "Store provider-specific metadata in structured `provider_details` or `provider_metadata` fields, not in `id`, `content`, or `args`".
 - Fit IDs to an API's format only by setting the profile's `tool_call_id_length`. `Model.prepare_messages` then rewrites the outgoing copy of a call and its result together, with a hash of the original ID (`models/__init__.py::_fit_tool_call_ids`). — A remapped ID must be a pure function of the original, or the cached prefix moves (see "Canonicalize on send" in [Message History & Prompt Caching](message-history-and-caching.md)).
 - Recognize a minted ID by `_utils.TOOL_CALL_ID_PREFIX`, never by a string literal.
 
@@ -51,7 +50,7 @@ Paths are relative to `pydantic_ai_slim/pydantic_ai/`.
 - Replay a part's provider data only when the part's `provider_name` is this adapter's `self.system`. When an adapter accepts more than one name, define that set once and read it at every replay site. Precedent: `models/google.py::GoogleModel._matching_provider_names`. — Each copy of an alias set drifts on its own.
 - Put an opaque payload the API checks on replay (a signature, an encrypted blob) in the part's `signature` field when the part has one. Put any other replay data in `provider_details`.
 - Read replay data back through one function that validates it with a Pydantic model, never through bare `.get()` calls. Precedent: `models/_reasoning_details.py::into_reasoning_detail`. — History comes back from storage and from UI clients, so a malformed value has to fail at the boundary.
-- Mark a variant of a part in `provider_details`, never with a sentinel `id` (rule 264 in `pydantic_ai/AGENTS.md`).
+- Mark a variant of a part in `provider_details`, never with a sentinel `id`, for the same `pydantic_ai/AGENTS.md` rule.
 
 ### Thinking round-trips
 
@@ -83,5 +82,5 @@ Paths are relative to `pydantic_ai_slim/pydantic_ai/`.
 
 - Enforce the API's breakpoint limit with `models/_prompt_cache.py::excess_cache_points`. The adapter passes a wire accessor that recognizes a breakpoint, and strips the excess in its own format. Precedent: `models/anthropic.py::AnthropicModel._limit_cache_points`. — Breakpoint arithmetic written per adapter has already produced several copies of the same rule.
 - Put a new cache algorithm that two adapters need in `models/_prompt_cache.py`, with a public name and adapter-supplied wire accessors. Never copy it into a second adapter.
-- An adapter without prompt caching skips `CachePoint`s, as the `CachePoint` docstring states.
+- An adapter without prompt caching drops `CachePoint`s. The `CachePoint` docstring promises that models without caching filter them out.
 - Anchor every breakpoint by message identity: see the injection rule in `models/AGENTS.md` and [Message History & Prompt Caching](message-history-and-caching.md).

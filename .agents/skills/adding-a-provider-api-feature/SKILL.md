@@ -58,7 +58,7 @@ Detect support with a provider-prefixed **`ModelProfile` flag**, and read only t
 
 - **model/family** → a flag in the family's profile function (`google_supports_strict_tool_definition` in `profiles/google.py`);
 - **one provider's API** → a flag set in that provider's `Provider.model_profile()` (`bedrock_supports_prompt_caching` in `providers/bedrock.py`);
-- **SDK client class** (the Bedrock, Vertex and Foundry clients of one SDK) → a flag set in the model's `_instance_profile_defaults()`, or in its `profile` property when the client can't send the feature at all. `Provider.model_profile()` is static and sees only the model name (`models/AGENTS.md`, the client-class bullet);
+- **transport** (the Bedrock, Vertex and Foundry client classes of one SDK, or a client's own mode such as `genai.Client.vertexai`) → a flag set in the model's `_instance_profile_defaults()`, or in its `profile` property when the client can't send the feature at all. `Provider.model_profile()` is static and sees only the model name (`models/AGENTS.md`, the client-class bullet);
 - **per-schema** → the `JsonSchemaTransformer.is_strict_compatible` signal (default conservative unless the mode needs no rewrites);
 - **SDK version** → probe the SDK shape and degrade with a `UserWarning` ([#5580](https://github.com/pydantic/pydantic-ai/pull/5580), botocore strict param);
 - **unknowable client-side** → defer to the runtime API error.
