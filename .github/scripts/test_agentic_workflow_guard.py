@@ -18,6 +18,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent))
 
 import agentic_workflow_guard
+from agent_provider_health import AGENT_START_HEALTH_STEPS
 from agentic_workflow_guard import (
     Violation,
     changed_files,
@@ -34,6 +35,7 @@ from agentic_workflow_guard import (
     check_logfire_wiring,
     check_prompt_paths,
     check_provider_engine_config,
+    check_provider_health_agent_start,
     check_provider_health_identity,
     check_provider_health_monitor,
     check_provider_health_recovery_wiring,
@@ -1541,6 +1543,136 @@ Prompt
     ]
 
 
+_GATE_ENV: dict[str, str] = {
+    'GITHUB_TOKEN': '${{ github.token }}',
+    'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}',
+    'GITHUB_WORKFLOW': '${{ github.workflow }}',
+    'PYDANTIC_AI_RUN_ATTEMPT': '${{ github.run_attempt }}',
+    'PYDANTIC_AI_TASK_KEY': '${{ github.workflow }}:${{ github.event_name }}',
+}
+_RECHECK_RUN = (
+    "gh api -H 'Accept: application/vnd.github.raw+json' "
+    '"repos/${GITHUB_REPOSITORY}/contents/.github/scripts/agent_provider_health.py" '
+    '> "$RUNNER_TEMP/provider-health/agent_provider_health.py"\n'
+    'python3 "$RUNNER_TEMP/provider-health/agent_provider_health.py" check '
+    '--output "$RUNNER_TEMP/provider-health/provider-health.json"\n'
+)
+# The `CI Review` agent job's step order before agent-start rechecks, trimmed.
+_SHIPPED_AGENT_STEPS: list[dict[str, object]] = [
+    {'name': 'Restore inline skills from activation artifact', 'run': 'bash restore_inline_skills.sh'},
+    {'name': 'Stage Pydantic AI gh-aw shim launcher', 'run': 'install -m 755 launcher /tmp/gh-aw/bin/'},
+    {'name': 'Execute Claude Code CLI', 'id': 'agentic_execution', 'run': 'awf -- claude_harness.cjs'},
+]
+
+
+def _agent_start_steps(
+    *,
+    run: str = _RECHECK_RUN,
+    env: dict[str, str] = _GATE_ENV,
+    stop_continues: bool = False,
+    stop_name: str = AGENT_START_HEALTH_STEPS[2],
+) -> list[dict[str, object]]:
+    stop: dict[str, object] = {
+        'name': stop_name,
+        'if': "steps.agent_start_health.outputs.ready != 'true'",
+        'run': 'echo "::error::blocked"\nexit 1\n',
+    }
+    if stop_continues:
+        stop['continue-on-error'] = True
+    return [
+        {'name': AGENT_START_HEALTH_STEPS[0], 'id': 'agent_start_health', 'env': env, 'run': run},
+        {'name': AGENT_START_HEALTH_STEPS[1], 'uses': 'actions/upload-artifact', 'continue-on-error': True},
+        stop,
+    ]
+
+
+def _write_agent_start_workflow(workflows: Path, agent_steps: list[dict[str, object]]) -> Path:
+    source = _write(
+        workflows / 'pydantic-ai-mini.md', '---\nname: Z.AI\nimports:\n  - shared/engine-zai.md\n---\nPrompt\n'
+    )
+    jobs: dict[str, object] = {
+        'provider_health': {'steps': [{'id': 'health', 'env': _GATE_ENV, 'run': 'python3 controller check'}]},
+        'agent': {'needs': ['activation', 'provider_health'], 'steps': agent_steps},
+    }
+    return _write(source.with_suffix('.lock.yml'), yaml.safe_dump({'jobs': jobs}, sort_keys=False))
+
+
+def test_provider_health_agent_start_catches_the_queued_ci_review_defect(tmp_path: Path):
+    """An agent job that waited for its slot ran on a gate decision from workflow start.
+
+    Run 38967083667 passed its gate at 2026-10-16 21:07Z and started inference at
+    03:13Z the next day, after provider incident #10572 had opened.
+    """
+    workflows = tmp_path / '.github' / 'workflows'
+    lock = _write_agent_start_workflow(workflows, _SHIPPED_AGENT_STEPS)
+
+    assert [(violation.path, violation.check) for violation in check_provider_health_agent_start(workflows)] == [
+        (str(lock), 'provider-health-agent-start')
+    ]
+
+    _write_agent_start_workflow(workflows, [_SHIPPED_AGENT_STEPS[0], *_agent_start_steps(), *_SHIPPED_AGENT_STEPS[1:]])
+    assert check_provider_health_agent_start(workflows) == []
+
+
+@pytest.mark.parametrize(
+    'agent_steps',
+    [
+        pytest.param([*_SHIPPED_AGENT_STEPS, *_agent_start_steps()], id='after-engine-execution'),
+        pytest.param(
+            [*_agent_start_steps(run='python3 .github/scripts/agent_provider_health.py check'), *_SHIPPED_AGENT_STEPS],
+            id='workspace-controller',
+        ),
+        pytest.param(
+            [
+                *_agent_start_steps(
+                    run=_RECHECK_RUN.replace(
+                        'python3 "$RUNNER_TEMP/provider-health/agent_provider_health.py"',
+                        'python3 .github/scripts/agent_provider_health.py',
+                        1,
+                    )
+                ),
+                *_SHIPPED_AGENT_STEPS,
+            ],
+            id='fetched-but-runs-workspace-controller',
+        ),
+        pytest.param(
+            [
+                *_agent_start_steps(
+                    run=_RECHECK_RUN.replace('agent_provider_health.py"', 'agent_provider_health.py?ref=v1"', 1)
+                ),
+                *_SHIPPED_AGENT_STEPS,
+            ],
+            id='pinned-controller-ref',
+        ),
+        pytest.param(
+            [
+                *_agent_start_steps(env={key: value for key, value in _GATE_ENV.items() if key != 'ZAI_API_KEY'}),
+                *_SHIPPED_AGENT_STEPS,
+            ],
+            id='env-differs-from-gate',
+        ),
+        pytest.param([*_agent_start_steps(stop_continues=True), *_SHIPPED_AGENT_STEPS], id='stop-continues'),
+        pytest.param([*_agent_start_steps()[:2], *_SHIPPED_AGENT_STEPS], id='no-stop'),
+        pytest.param(
+            [
+                *_agent_start_steps(stop_name='Stop before inference when provider health is blocked'),
+                *_SHIPPED_AGENT_STEPS,
+            ],
+            id='renamed-stop-step',
+        ),
+    ],
+)
+def test_provider_health_agent_start_rejects_a_recheck_that_cannot_stop_inference(
+    tmp_path: Path, agent_steps: list[dict[str, object]]
+):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write_agent_start_workflow(workflows, agent_steps)
+
+    assert [violation.check for violation in check_provider_health_agent_start(workflows)] == [
+        'provider-health-agent-start'
+    ]
+
+
 def test_provider_health_readiness_must_be_required_in_every_or_branch(tmp_path: Path):
     workflows = tmp_path / '.github' / 'workflows'
     source = _write(
@@ -1723,17 +1855,57 @@ on:
   workflow_dispatch:
     inputs:
       recover_issue: {type: number, required: true}
-concurrency:
-  group: provider-health
-  cancel-in-progress: false
 jobs:
-  monitor:
+  triage:
     if: >-
       github.repository == 'pydantic/pydantic-ai' &&
-      (github.event_name != 'workflow_run' ||
-       github.event.workflow_run.event != 'pull_request' ||
+      github.event_name == 'workflow_run' &&
+      (github.event.workflow_run.event != 'pull_request' ||
        (github.event.workflow_run.head_repository.full_name == github.repository &&
         github.event.workflow_run.actor.login != 'dependabot[bot]'))
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      reconcile: ${{ steps.triage.outputs.reconcile }}
+    steps:
+      - uses: actions/checkout@sha
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts/agent_provider_health.py
+      - if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@sha
+        with:
+          name: agent
+          run-id: ${{ github.event.workflow_run.id }}
+      - if: github.event_name == 'workflow_run' && steps.agent-artifact.outcome != 'success'
+        run: |
+          mkdir -p agent
+          : > agent/agent-stdio.log
+      - if: github.event_name == 'workflow_run'
+        id: triage
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: >-
+          python3 .github/scripts/agent_provider_health.py triage
+          --repository "$GITHUB_REPOSITORY"
+          --run-id "$RUN_ID"
+          --run-attempt "$RUN_ATTEMPT"
+          --conclusion "$CONCLUSION"
+          --health-artifact provider-health/provider-health.json
+          --agent-artifact agent
+  monitor:
+    needs: triage
+    if: >-
+      !cancelled() &&
+      github.repository == 'pydantic/pydantic-ai' &&
+      (github.event_name != 'workflow_run' || needs.triage.outputs.reconcile == 'true')
+    concurrency:
+      group: provider-health
+      cancel-in-progress: false
     env:
       PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
     permissions:
@@ -1875,8 +2047,8 @@ jobs:
         # The ungated monitor that opened #9753 on a fork run.
         (
             "if: >-\n      github.repository == 'pydantic/pydantic-ai' &&\n"
-            "      (github.event_name != 'workflow_run' ||\n"
-            "       github.event.workflow_run.event != 'pull_request' ||\n"
+            "      github.event_name == 'workflow_run' &&\n"
+            "      (github.event.workflow_run.event != 'pull_request' ||\n"
             '       (github.event.workflow_run.head_repository.full_name == github.repository &&\n'
             "        github.event.workflow_run.actor.login != 'dependabot[bot]'))",
             "if: github.repository == 'pydantic/pydantic-ai'",
@@ -1902,6 +2074,105 @@ def test_provider_health_monitor_rejects_credentialless_runs(tmp_path: Path, gat
     _write(monitor, trusted_config.replace(gate, weakened_gate, 1))
     assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
         'provider-health-monitor-credential-gate'
+    ]
+
+
+def test_provider_health_monitor_serializes_only_triaged_incident_work(tmp_path: Path):
+    """A monitor that queues every completion must not pass CI policy checks."""
+    workflows = tmp_path / '.github' / 'workflows'
+    for source in WORKFLOWS_DIR.glob('pydantic-ai-*.md'):
+        _write(workflows / source.name, source.read_text(encoding='utf-8'))
+    trusted_config = (WORKFLOWS_DIR / 'agent-provider-health.yml').read_text(encoding='utf-8')
+    monitor = _write(workflows / 'agent-provider-health.yml', trusted_config)
+    assert check_provider_health_monitor(workflows) == []
+
+    job_group = (
+        '    concurrency:\n'
+        '      group: agent-provider-health-reconciliation\n'
+        '      cancel-in-progress: false\n'
+        '      queue: max\n'
+    )
+    assert job_group in trusted_config
+    # The workflow-level queue that cancelled new runs once 100 were pending, e.g. run 39816847357.
+    _write(
+        monitor,
+        trusted_config.replace(job_group, '', 1).replace(
+            'permissions: {}\n',
+            'permissions: {}\n\nconcurrency:\n  group: agent-provider-health-reconciliation\n'
+            '  cancel-in-progress: false\n  queue: max\n',
+            1,
+        ),
+    )
+    assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
+        'provider-health-monitor-concurrency',
+        'provider-health-monitor-queue',
+    ]
+    _write(
+        monitor,
+        trusted_config.replace(
+            'permissions: {}\n',
+            'permissions: {}\n\nconcurrency:\n  group: agent-provider-health-reconciliation\n'
+            '  cancel-in-progress: false\n  queue: max\n',
+            1,
+        ),
+    )
+    assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
+        'provider-health-monitor-concurrency'
+    ]
+    _write(monitor, trusted_config.replace('  triage:\n', '  triage:\n    concurrency: provider-health-triage\n', 1))
+    assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
+        'provider-health-monitor-concurrency'
+    ]
+
+    triage_handoff = "needs.triage.outputs.reconcile == 'true'"
+    assert triage_handoff in trusted_config
+    _write(monitor, trusted_config.replace(triage_handoff, 'true', 1))
+    assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
+        'provider-health-monitor-triage'
+    ]
+    # Triage that reads a different agent artifact than the monitor misclassifies typed failures as unclassified.
+    head, prefixed_pattern, tail = trusted_config.rpartition("pattern: '*-agent'")
+    assert head.count(prefixed_pattern) == 1
+    _write(monitor, head + "pattern: 'agent-*'" + tail)
+    assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
+        'provider-health-monitor-triage'
+    ]
+    # Triage without the source conclusion leaves a failed run unclassified that the monitor reconciles.
+    for triage_input in (
+        '          --conclusion "$CONCLUSION"\n',
+        '          CONCLUSION: ${{ github.event.workflow_run.conclusion }}\n',
+    ):
+        assert triage_input in trusted_config
+        _write(monitor, trusted_config.replace(triage_input, '', 1))
+        assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
+            'provider-health-monitor-triage'
+        ]
+    # Triage gated more narrowly than the monitor step drops completions the monitor would reconcile.
+    triage_condition = (
+        "if: github.event_name == 'workflow_run' && steps.health-artifact.outcome == 'success'\n        id: triage\n"
+    )
+    assert triage_condition in trusted_config
+    _write(
+        monitor,
+        trusted_config.replace(
+            triage_condition,
+            "if: github.event_name == 'workflow_run' && steps.health-artifact.outcome == 'success'"
+            " && github.event.workflow_run.conclusion == 'failure'\n        id: triage\n",
+            1,
+        ),
+    )
+    assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
+        'provider-health-monitor-triage'
+    ]
+
+    triage_permissions = '      contents: read\n    outputs:\n'
+    assert triage_permissions in trusted_config
+    _write(
+        monitor,
+        trusted_config.replace(triage_permissions, '      contents: read\n      issues: write\n    outputs:\n', 1),
+    )
+    assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
+        'provider-health-monitor-permissions'
     ]
 
 

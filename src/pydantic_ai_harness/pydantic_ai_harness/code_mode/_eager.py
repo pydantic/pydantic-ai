@@ -134,9 +134,11 @@ class EagerCoordinator(Generic[AgentDepsT]):
                 call.halted = True
                 self.drop_queued(call)
                 return False
+            previous_char = call.args_text[-1:]
             call.args_text += args
-            # A statement can only close on a newline, so deltas without one need no decoding.
-            return '\\n' in args
+            # A statement can only close on a newline, so deltas without one need no decoding. The
+            # previous character joins the check because a provider can split the `\n` escape.
+            return '\\n' in previous_char + args
         if isinstance(args, dict):
             code = args.get('code')
             if args.get('restart'):

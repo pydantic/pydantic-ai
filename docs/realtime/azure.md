@@ -90,9 +90,14 @@ Azure OpenAI supports the same browser WebRTC flow as OpenAI — the audio flows
 while your backend runs a control-plane **sideband**. See [Connecting a frontend](deployment.md#browser-webrtc-server-sideband)
 for the topology, and use
 [`AgentRealtime.answer_webrtc_offer`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer] /
-[`AgentRealtime.create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] exactly as on OpenAI.
-Azure relays the offer with `webrtcfilter=on`, which limits the events forwarded to the browser to a
-safe subset so the session instructions stay on the server's control connection.
+[`AgentRealtime.create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] as on OpenAI.
+One difference: ending the call from the server isn't supported yet, so
+[`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] raises
+[`UserError`][pydantic_ai.exceptions.UserError] and the call ends when the browser hangs up.
+`answer_webrtc_offer` relays the offer with `webrtcfilter=on`, which limits the events forwarded to the
+browser to a safe subset so the session instructions stay on the server's control connection. With
+`create_client_secret`, the browser posts its offer to Azure itself, so add `webrtcfilter=on` to the
+URL it posts to if you want the same filtering.
 
 !!! note "Capturing sideband transcripts needs a deployed transcription model"
     The server side of a WebRTC call never receives the user's audio (it flows browser ↔ Azure
@@ -156,10 +161,17 @@ model targets the Voice Live endpoint and beta session protocol.
 Voice Live is a distinct Azure resource with its own credentials, so set `AZURE_VOICELIVE_ENDPOINT`,
 `AZURE_VOICELIVE_API_KEY`, and `AZURE_VOICELIVE_API_VERSION`, or pass `voice_live_endpoint`,
 `voice_live_api_key`, and `voice_live_api_version` to
-[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider]. Each value resolves explicit argument
-first, then its own `AZURE_VOICELIVE_*` variable, then the Azure OpenAI endpoint/key — so a Voice Live
-user who only has one resource doesn't need to configure both, and one who has both never gets a
-mixture of the two.
+[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider]. Each value resolves the explicit argument
+first, then its own `AZURE_VOICELIVE_*` variable. A missing endpoint or key then falls back to the Azure
+OpenAI one, each on its own, so a single resource serving both needs configuring only once; the version
+falls back to a supported default instead. When the two resources are distinct, set both the Voice Live
+endpoint and key, or Voice Live is called with the other resource's value.
+
+The Voice Live values also stand in for the Azure OpenAI configuration, but only when none of it is
+set. Once any Azure OpenAI endpoint, key, or version is configured (a leftover `AZURE_OPENAI_ENDPOINT`,
+say), it has to be complete on its own: `azure_endpoint` in its `/openai/v1` form or with an
+`api_version` / `OPENAI_API_VERSION`, plus `api_key` / `AZURE_OPENAI_API_KEY`. Otherwise constructing the
+provider raises a [`UserError`][pydantic_ai.exceptions.UserError].
 
 ```python
 from pydantic_ai import Agent
@@ -197,7 +209,9 @@ Voice Live applies `thinking`, `openai_turn_detection`, and `openai_input_noise_
 On a [cascade model][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_voice_live_cascade],
 which can't take OpenAI's semantic VAD or near/far-field noise reduction, they become Voice Live's own
 semantic VAD and deep noise suppression. [`azure_voice_live_temperature`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_temperature]
-sets the sampling temperature. Voice Live ignores `openai_output_speed` and `openai_truncation`.
+sets the sampling temperature, except on a cascade model with reasoning enabled, where it's dropped
+for the session with a `UserWarning`. Set `thinking=False` to keep it on a model that can turn reasoning
+off; `gpt-5` can't. Voice Live ignores `openai_output_speed` and `openai_truncation`.
 
 ### Turn detection and audio processing
 
@@ -315,6 +329,7 @@ model = AzureRealtimeModel(
 | Interruption/truncation | Full feature support | [`interrupt(played_ms=...)`](turns.md#barge-in) records the heard cutoff |
 | Input transcription | Limited parameter support | Requires a [compatible transcription deployment](#input-transcription-deployment) in the Azure resource |
 | Native tools | Unsupported | The API offers remote MCP servers (plus Foundry tools and agents on Voice Live) but no web or file search; Pydantic AI doesn't expose the MCP support yet ([#9032](https://github.com/pydantic/pydantic-ai/issues/9032)), so configure [local fallbacks](tools.md#native-tools) |
+| Browser WebRTC | Limited parameter support | [GA only](#browser-webrtc-and-microsoft-entra-id); the server can't end the call, so `hang_up()` raises `UserError` and the call ends when the browser hangs up |
 | Usage | Full feature support | Token, audio, and cache breakdowns |
 | Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration); in-flight media is lost |
 
@@ -330,3 +345,9 @@ See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.
   resource and beta session protocol; browser WebRTC is GA-only for now.
 - Voice Live's informational `warning` events are raised as Python `UserWarning`s, so escalating
   warnings to errors ends the session.
+- Voice Live closes the connection right after a `session_output_overflow` error, which it can send
+  during a long spoken reply. Without a [reconnect policy](lifecycle.md#reconnecting), the error is
+  reported as a non-recoverable
+  [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] and the session raises a
+  [`RealtimeError`][pydantic_ai.realtime.RealtimeError]; with one, the error is recoverable and the
+  session reconnects.

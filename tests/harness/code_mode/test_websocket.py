@@ -14,6 +14,7 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import CodeMode
 
 
@@ -122,6 +123,15 @@ async def test_dial_failure_redacts_sandbox_url() -> None:
     (retry,) = _retries(result.all_messages())
     assert 'hunter2' not in str(retry.content)
     assert '<monty_sandbox_url>' in str(retry.content)
+
+
+def test_repr_hides_sandbox_url() -> None:
+    """The URL may carry credentials, so neither the capability nor its toolset shows it in `repr`."""
+    capability = CodeMode[None](monty_sandbox_url='wss://alice:s3cr3t@sandbox.example.com/monty?api_key=k-123')
+    toolset = capability.get_wrapper_toolset(FunctionToolset[None]())
+
+    assert 'sandbox.example.com' not in repr(capability)
+    assert 'sandbox.example.com' not in repr(toolset)
 
 
 @pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')

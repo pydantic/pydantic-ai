@@ -1,3 +1,4 @@
+# description: Builds the weekly maintainer digest each Monday and posts it to the triage Slack channel.
 name: Weekly maintainer digest
 
 on:

@@ -25,7 +25,7 @@ from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
     [
         ('openai-codex:gpt-6-astra', 'openai_reasoning_effort', ('low', 'medium', 'high', 'xhigh', 'max')),
         ('openai@work:gpt-5', 'openai_reasoning_effort', ('minimal', 'low', 'medium', 'high')),
-        ('anthropic:claude-sonnet-4-6', 'anthropic_effort', ('low', 'medium', 'high')),
+        ('anthropic:claude-sonnet-4-6', 'anthropic_effort', ('low', 'medium', 'high', 'max')),
         ('anthropic:claude-opus-4-6', 'anthropic_effort', ('low', 'medium', 'high', 'max')),
         ('vllm:glm-5.3', 'glm_reasoning_effort', ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')),
         ('test', None, ()),

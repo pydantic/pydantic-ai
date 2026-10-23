@@ -24,6 +24,9 @@ settings = OpenAIRealtimeModelSettings(
 model = OpenAIRealtimeModel('{{ openai:realtime.name }}', settings=settings)
 ```
 
+On ElevenLabs Agents and OpenAI GPT-Live, which own turn-taking server-side, a `TurnDetection` (or
+`turn_detection=False`) raises [`UserError`][pydantic_ai.exceptions.UserError] before connecting.
+
 Use provider-specific settings only when the shared controls are insufficient:
 `openai_turn_detection`, `xai_turn_detection`, and `google_vad` fully override `turn_detection`.
 Their accepted values, defaults, and limitations are documented on the
@@ -50,7 +53,8 @@ async def send_turns(session: RealtimeSession, image: BinaryImage) -> None:
 ```
 
 Images are context-only by default. Asking for a response to an image requires a model that supports
-manual turn control.
+manual turn control, except on OpenAI GPT-Live, which takes an image only with `respond=True` (see
+[Images](audio.md#images)).
 
 Do not call `create_response()` after `send('...')`: the text turn already asks for a response, so
 the pair asks twice and can make the model say the same thing twice.
@@ -109,7 +113,8 @@ doing nothing when the previous reply was heard in full, since the speech-start 
 on ordinary user turns. A reply that has not reached its first audio chunk is still stopped, so
 speaking over the model's thinking time works like speaking over its voice. Provider differences
 are absorbed: on a model without output truncation
-(xAI) the response is cancelled without a truncation point, and when the provider interrupts
+(xAI) the response is cancelled without sending the provider a truncation point (history still
+records where playback stopped), and when the provider interrupts
 itself without reporting speech onset (Gemini, ElevenLabs Agents) only the local flush is performed. The events still
 reach your iterator, already handled — react to them for UI state or to flush your audio layer's
 own in-flight block, the one buffer the session cannot reach. The truncation point is the last
@@ -119,11 +124,11 @@ playback position to attribute, and the flag stands down in favour of the manual
 
 As an alternative, handle barge-in yourself. The signals: providers whose profile declares
 [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]
-(OpenAI, Azure OpenAI, and xAI) emit
+(OpenAI gpt-realtime, Azure OpenAI, xAI, and Eleven Realtime) emit
 [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] when user speech begins.
 Gemini and ElevenLabs Agents emit [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent]
-when they interrupt model output instead. Read the flag rather than waiting on an event a provider never
-sends.
+when they interrupt model output instead, and OpenAI GPT-Live reports neither. Read the flag rather than
+waiting on an event a provider never sends.
 
 While playback keeps the single device-paced iterator, staying in control of the trigger costs one
 line: the session still tracks the playback position for you, as
@@ -196,9 +201,10 @@ unplayed audio before interrupting, and flush buffered playback yourself — `in
 
 On a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) there is a third buffer between those two: the
 provider generates audio well ahead of playback and keeps streaming what it already produced, so
-stopping the model is not enough to stop the voice. `interrupt()` drops that outbound buffer too,
-which is what actually ends the turn for the listener. The browser still owns its own playback buffer
-and should flush it on barge-in, as above.
+stopping the model is not enough to stop the voice. On gpt-realtime and Azure OpenAI, `interrupt()`
+drops that outbound buffer too, which is what actually ends the turn for the listener. GPT-Live
+handles barge-in itself and doesn't support `interrupt()`. The browser still owns its own playback
+buffer and should flush it on barge-in, as above.
 
 History records a known cutoff on
 [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms] and marks the
@@ -209,7 +215,8 @@ Models generate audio several times faster than it plays, so the reply the user 
 usually finished generating already. With `played_bytes` (or `handle_barge_in=True`), on a model whose
 profile sets `supports_output_truncation`, the session still truncates the provider's copy of that reply
 where playback stopped. Any reply generated after it, which the user never heard, is truncated at 0. The
-model then doesn't take either as heard.
+model then doesn't take either as heard. On a model without output truncation (xAI), the provider keeps
+its whole copy, so the model may take a reply as heard in full, but history still records the cut.
 
 History records each of those replies the same way as one cut off while it was being generated: as
 interrupted, with `interrupted_at_ms` on the speech part that was cut. A message you already have is never
@@ -295,8 +302,8 @@ async def main():
         await session.create_response()
 ```
 
-Gemini and ElevenLabs Agents do not expose manual turn verbs through Pydantic AI; `turn_detection=False` raises
-[`UserError`][pydantic_ai.exceptions.UserError] before connecting.
+Gemini, ElevenLabs Agents, and OpenAI GPT-Live do not expose manual turn verbs through Pydantic AI;
+`turn_detection=False` raises [`UserError`][pydantic_ai.exceptions.UserError] before connecting.
 
 ## Checking what the model supports
 

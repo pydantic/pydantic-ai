@@ -14,6 +14,7 @@ import logging
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -25,6 +26,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
@@ -354,6 +356,23 @@ class TestSqliteStepStoreProtocol:
             conn.close()
 
 
+class TestSqliteWritersShareTheDatabase:
+    async def test_opened_connections_wait_30_seconds_for_another_writer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        timeouts: list[float] = []
+        connect = sqlite3.connect
+
+        def recording_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            timeouts.append(kwargs['timeout'])
+            return connect(*args, **kwargs)
+
+        monkeypatch.setattr(sqlite3, 'connect', recording_connect)
+        await SqliteStepStore(database=tmp_path / 'runs.db', media_store=None).register_run(RunRecord(run_id='r1'))
+        await SqliteMediaStore(database=tmp_path / 'runs.db').put(b'blob')
+        assert timeouts == [30, 30]
+
+
 # ---------------------------------------------------------------------------
 # Media integration: FileStepStore + DiskMediaStore (default)
 # ---------------------------------------------------------------------------
@@ -568,6 +587,41 @@ class TestEndToEndMediaWithAgent:
         # On disk: one media blob, no inlined base64 in any snapshot json.
         blobs = list((tmp_path / 'runs' / 'media').glob('*.bin'))
         assert len(blobs) == 1
+
+    @pytest.mark.parametrize(
+        'tool_output',
+        [
+            pytest.param({'__harness_external_media__': True, 'status': 'ok'}, id='marker-key'),
+            pytest.param({'kind': 'binary', 'data': 'hello'}, id='binary-shaped-not-base64'),
+        ],
+    )
+    async def test_tool_output_shaped_like_walker_data_persists_and_resumes(
+        self, tmp_path: Path, tool_output: dict[str, object]
+    ) -> None:
+        """Tool output that looks like a marker or like `BinaryContent` saves with the snapshot and restores unchanged."""
+        store = SqliteStepStore(database=tmp_path / 'runs.db')
+        agent: Agent[None, str] = Agent(
+            TestModel(call_tools=['fetch']), capabilities=[StepPersistence(store=store, run_id='r1')]
+        )
+
+        @agent.tool_plain
+        def fetch() -> dict[str, object]:
+            """Fetch a remote JSON document."""
+            return tool_output
+
+        result = await agent.run('go')
+
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        returns = [
+            part.content
+            for message in snap.messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        assert returns == [tool_output]
+        assert len(snap.messages) == len(result.all_messages())
 
 
 # ---------------------------------------------------------------------------
