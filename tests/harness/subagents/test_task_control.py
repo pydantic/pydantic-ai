@@ -2511,10 +2511,14 @@ class TestTaskControlBoundaries:
         assert 'only the agent that started it can resume it' in result.output
 
     async def test_a_question_awaiting_delivery_is_listed_and_observed(self) -> None:
+        owner: DelegationTasks
         observed: list[DelegationTaskEvent] = []
+        pending = anyio.Event()
 
         async def observe(event: DelegationTaskEvent) -> None:
             observed.append(event)
+            if owner.pending_question(event.task.id) is not None:
+                pending.set()
 
         owner = DelegationTasks(observer=observe)
         async with owner.opened():
@@ -2533,8 +2537,7 @@ class TestTaskControlBoundaries:
             )
             task_id = task_id_in(receipt)
             with anyio.fail_after(WAIT):
-                while not owner.questions(conversation_id='root'):
-                    await anyio.sleep(0)
+                await pending.wait()
             [record] = owner.questions(conversation_id='root')
             assert record.id == task_id
             assert owner.questions(conversation_id='other') == []
@@ -2548,9 +2551,13 @@ class TestTaskControlBoundaries:
 
     async def test_a_failing_observer_does_not_fail_the_question(self, caplog: pytest.LogCaptureFixture) -> None:
         owner: DelegationTasks
+        pending, settled = anyio.Event(), anyio.Event()
 
         async def observe(event: DelegationTaskEvent) -> None:
-            if owner.pending_question(event.task.id) is not None:
+            if event.task.status == 'finished':
+                settled.set()
+            elif owner.pending_question(event.task.id) is not None:
+                pending.set()
                 raise RuntimeError('observer broke')
 
         owner = DelegationTasks(observer=observe)
@@ -2570,11 +2577,10 @@ class TestTaskControlBoundaries:
             )
             task_id = task_id_in(receipt)
             with anyio.fail_after(WAIT):
-                while owner.pending_question(task_id) is None:
-                    await anyio.sleep(0)
+                await pending.wait()
                 assert owner.answer(task_id, question_id='q1', answer='yes')
-                while owner.records[task_id].status == 'running':
-                    await anyio.sleep(0)
+                # The owner tells the observer once the task settled.
+                await settled.wait()
             assert owner.records[task_id].output == 'yes'
         assert 'Task question observer failed' in caplog.text
 
