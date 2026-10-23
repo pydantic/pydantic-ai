@@ -193,6 +193,10 @@ from pydantic_ai_harness import Planning
 agent = Agent.from_file('agent.yaml', custom_capability_types=[Planning])
 ```
 
+## Relationship to `pydantic-ai-todo`
+
+`Planning` incorporates the task-list features of Vstorm's standalone [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) library -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed (`write_todos` -`write_plan`, `read_todos` -`read_plan`, `add_todo` -`add_task`, `update_todo_status(es)` -`update_task_status(es)`, `remove_todo` -`remove_task`; subtask tools keep their names).
+
 ## Further reading
 
 - [Pydantic AI capabilities](https://ai.pydantic.dev/capabilities/)
