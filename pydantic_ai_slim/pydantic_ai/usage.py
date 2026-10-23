@@ -536,9 +536,11 @@ class UsageLimits:
     Unlike `input_tokens_limit` which is cumulative across the entire run, this
     limit is checked against each request's input token count independently —
     ahead of the request when `count_tokens_before_request=True`, otherwise against
-    the provider-reported `input_tokens` of the response. For a response a provider merged
-    from several requests ([Google long decode](../models/google.md#long-decode)), it is
-    checked against the first request's input tokens.
+    the provider-reported `input_tokens` of the response. For a response whose usage sums several
+    model requests, it is checked against the input tokens of the one that measures the context:
+    the first request of a [Google long decode](../models/google.md#long-decode), and the last
+    sampling pass of an [Anthropic response that reported its passes](../models/anthropic.md#server-side-tool-loops),
+    such as a server-side tool loop or a compaction.
 
     This provides a guard against oversized contexts (which hurt model performance
     and incur high costs on cache misses), complementing the runaway-loop

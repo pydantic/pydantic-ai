@@ -81,7 +81,7 @@ from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers.gateway import gateway_provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 
@@ -2661,6 +2661,20 @@ async def test_bedrock_opus_5_thinking_uses_native_output(
     assert result.output == 42
 
 
+async def test_bedrock_anthropic_unified_max_effort(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Sonnet 4.6 accepts `max` but not `xhigh`, so unified `thinking='max'` reaches Converse as `effort='max'`."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking='max'))
+
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result = await agent.run('What is 2+2? Reply with just the number.')
+
+    assert result.output
+    assert [sent['additionalModelRequestFields'] for sent in sent_requests] == snapshot(
+        [{'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'max'}}]
+    )
+
+
 async def test_bedrock_fable_5_thinking_offers_output_tool_unforced(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:
@@ -4081,6 +4095,85 @@ async def test_bedrock_thinking_false_openai_variant_silent_drop(
 
     sent = single_request_body(vcr)
     assert 'reasoning_effort' not in sent.get('additionalModelRequestFields', {})
+
+
+@pytest.mark.parametrize(
+    ('thinking', 'reasoning'),
+    [
+        (False, {'effort': 'none'}),
+        ('minimal', {'effort': 'low'}),
+        ('xhigh', {'effort': 'xhigh'}),
+    ],
+)
+async def test_bedrock_thinking_openai_responses_variant(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    vcr: Cassette,
+    thinking: ThinkingLevel,
+    reasoning: dict[str, str],
+) -> None:
+    """GPT-5.6 on Converse takes unified `thinking` as the Responses API `reasoning` object.
+
+    `thinking=False` sends `effort='none'` and the model answers without reasoning; `'minimal'`, which
+    GPT-5.6 rejects, maps to `'low'`.
+    """
+    model = BedrockConverseModel('us.openai.gpt-5.6-luna', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking=thinking))
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result = await agent.run(
+            'How many positive integers below 10000 have a digit sum of exactly 20? Reply with only the number.'
+        )
+
+    assert [sent['additionalModelRequestFields'] for sent in sent_requests] == [{'reasoning': reasoning}]
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert any(isinstance(part, ThinkingPart) for part in response.parts) is (thinking is not False)
+
+
+async def test_bedrock_thinking_openai_responses_variant_keeps_tool_output(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """GPT-5.6 and GPT-6 accept output tools while they reason, so `thinking` leaves Tool Output in place.
+
+    The guards for the other non-Anthropic variants would raise a `UserError` here or switch to prompted output. The
+    profile doesn't enable forced tool choice for these models, so the output tool is offered without forcing it.
+    """
+
+    class DigitCount(BaseModel):
+        count: int
+
+    model = BedrockConverseModel('us.openai.gpt-5.6-luna', provider=bedrock_provider)
+    agent = Agent(model, output_type=ToolOutput(DigitCount), model_settings=ModelSettings(thinking='low'))
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result = await agent.run('How many positive integers below 10000 have a digit sum of exactly 20?')
+
+    assert result.output == snapshot(DigitCount(count=633))
+    assert [
+        (
+            sent['additionalModelRequestFields'],
+            [tool['toolSpec']['name'] for tool in sent['toolConfig']['tools']],
+            sent['toolConfig'].get('toolChoice'),
+        )
+        for sent in sent_requests
+    ] == snapshot(
+        [
+            ({'reasoning': {'effort': 'low'}}, ['final_result'], None),
+            ({'reasoning': {'effort': 'low'}}, ['final_result'], None),
+        ]
+    )
+
+
+async def test_bedrock_thinking_false_openai_responses_variant_always_on(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """GPT-6 Astra rejects `effort='none'`, so `thinking=False` is dropped rather than sent."""
+    model = BedrockConverseModel('global.openai.gpt-6-astra', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking=False))
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        await agent.run('Reply with the single word: ok')
+
+    assert len(sent_requests) == 1
+    assert 'additionalModelRequestFields' not in sent_requests[0]
 
 
 async def test_bedrock_thinking_high_qwen_variant(
@@ -8575,6 +8668,26 @@ async def test_bedrock_openai_gpt_oss_keeps_sampling_settings(
     assert result.output.strip() == snapshot('4')
     sent = single_request_body(vcr)
     assert sent['inferenceConfig'] == snapshot({'maxTokens': 256, 'temperature': 0.2, 'topP': 0.3})
+
+
+@pytest.mark.parametrize('model_name', ['us.xai.grok-4.6', 'global.xai.grok-4.7'])
+def test_bedrock_xai_grok_drops_sampling_settings(bedrock_provider: BedrockProvider, model_name: str):
+    """Converse rejects `temperature`, `topP` and `top_k` on Grok 4.6 with a `ValidationException`, and Grok 4.7 is
+    assumed to match, so they're dropped for both.
+
+    Not a VCR test: the recording account has no Grok access on Converse.
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    settings = BedrockModelSettings(max_tokens=64, temperature=0.2, top_p=0.3, top_k=5)
+
+    with pytest.warns(UserWarning, match='Sampling parameters') as recorded:
+        prepared, _ = model.prepare_request(settings, ModelRequestParameters())
+
+    assert prepared == snapshot({'max_tokens': 64})
+    assert [str(w.message) for w in recorded] == [
+        f"Sampling parameters ['temperature', 'top_p', 'top_k'] are not supported by "
+        f"'{model_name}'. These settings will be ignored."
+    ]
 
 
 class _CountTokensCapturingClient:

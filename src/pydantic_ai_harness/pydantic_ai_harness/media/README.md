@@ -37,7 +37,9 @@ Every store implements the `MediaStore` protocol: `put`, `get`, `exists`, `publi
 | `MongoMediaStore(...)` | MongoDB (sha256-addressed manual chunking) | A MongoDB deployment; blobs larger than one BSON document, split so no chunk hits the 16 MiB cap |
 | `PostgresMediaStore(...)` | PostgreSQL (one `BYTEA` row per blob) | A PostgreSQL deployment; blobs up to 1 GB |
 
-`MongoMediaStore` needs the `mongodb` extra (which installs `pymongo>=4.17.0`) and is imported the same way (`from pydantic_ai_harness.media import MongoMediaStore`). It stores each blob as sha256-addressed chunks in a `media_chunks` collection, with a `media` manifest document per blob. The chunking bounds each BSON document, so a blob larger than MongoDB's 16 MiB document cap still stores and reads back; it does not bound memory, since `put` takes the whole payload as `bytes` and `get` reassembles every chunk into one `bytearray` (there is no streaming API). The manifest itself holds `MediaContext.metadata` inline and is not chunked, so keep per-blob metadata small. Manual chunking is used instead of GridFS: it keeps content-addressed dedup (GridFS keys files by `ObjectId` and does none) and stays fully testable in-memory.
+`SqliteMediaStore` accepts `connection=` instead of `database=` to share a `sqlite3.Connection`. On that connection, `put` commits its insert when no transaction is open and otherwise leaves the commit to you; a Python 3.12+ `autocommit=False` connection always has one open. The store's first call creates its table without committing, so inside your transaction the table lands when you commit. A connection the store opens from `database=` waits up to 30 seconds for another writer before raising `database is locked`; a `connection=` keeps whatever timeout the caller set.
+
+`MongoMediaStore` needs the `mongodb` extra (which installs `pymongo>=4.17.0`) and is imported the same way (`from pydantic_ai_harness.media import MongoMediaStore`). It stores each blob as sha256-addressed chunks in a `media_chunks` collection, with a `media` manifest document per blob. The chunking bounds each BSON document, so a blob larger than MongoDB's 16 MiB document cap still stores and reads back; it does not bound memory, since `put` takes the whole payload as `bytes` and `get` reassembles every chunk into one `bytearray` (there is no streaming API). Chunks are keyed by chunk size, so writers with different `chunk_size_bytes` (a retry after a crash, or two processes at once) never overwrite each other's chunks, and `get` checks the reassembled bytes against the URI's sha256, so a missing or corrupt chunk raises `ValueError`. The manifest itself holds `MediaContext.metadata` inline and is not chunked, so keep per-blob metadata small. Manual chunking is used instead of GridFS: it keeps content-addressed dedup (GridFS keys files by `ObjectId` and does none) and stays fully testable in-memory.
 
 uv:
 
@@ -82,27 +84,36 @@ async def build_media_store() -> tuple[PostgresMediaStore, asyncpg.Pool]:
 
 Close the returned pool during application shutdown. The store does not manage it.
 
-A `KeyStrategy` controls the on-store layout for `DiskMediaStore` and `S3MediaStore` (`SqliteMediaStore`, `MongoMediaStore`, and `PostgresMediaStore` key on the digest itself, so they take `table=` / `collection=` instead), and a `PublicUrlResolver` (or `make_static_public_url`) turns a stored URI into a public URL when the store is served over HTTP.
+A `KeyStrategy` controls the on-store layout for `DiskMediaStore` and `S3MediaStore` (`SqliteMediaStore`, `MongoMediaStore`, and `PostgresMediaStore` key on the digest itself, so they take `table=` / `collection=` instead), and a `PublicUrlResolver` (or `make_static_public_url`) turns a stored URI into a public URL when the store is served over HTTP. `DiskMediaStore` rejects a URI that is not `media+sha256://<hex>` before calling the strategy.
+
+`get_metadata(uri)` round-trips the user-supplied `metadata` mapping on all five stores (S3 lowercases keys) and raises `FileNotFoundError` for a blob that was never stored. On `DiskMediaStore` a later `put` of the same bytes with metadata replaces it; on `S3MediaStore` every `put` replaces it, so one without metadata clears it; the SQLite, MongoDB, and PostgreSQL stores keep the first. On Disk and S3 this holds for puts that resolve to the same key, which a custom `key_strategy` may not. `get_metadata` never returns `media_type`, which S3 sends as `Content-Type` and the database stores keep in a column.
 
 ## Walker helpers
 
-`externalize_media` and `restore_media` walk a message node and swap payloads for URIs and back.
+`externalize_media` and `restore_media` walk the JSON form of a message history and swap payloads for URIs and back. `externalize_media` raises `TypeError` for anything that is not a JSON tree, such as a message object or `bytes`.
 
 ```python
+from pydantic_ai import ModelMessagesTypeAdapter
+
+from pydantic_ai_harness.media import DiskMediaStore, externalize_media, restore_media
+
 store = DiskMediaStore(directory='./media')
 
 # Replace binary and text payloads at or above the threshold with media+sha256:// URIs.
-lean = await externalize_media(message, media_store=store, threshold_bytes=32_000)
+tree = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+lean = await externalize_media(tree, media_store=store, threshold_bytes=32_000)
 
 # Later, rehydrate the URIs back into the original parts.
-full = await restore_media(lean, media_store=store)
+messages = ModelMessagesTypeAdapter.validate_python(await restore_media(lean, media_store=store))
 ```
 
-`externalize_media` externalizes both large `BinaryContent` and large text: any message part whose string `content` is at least `threshold_bytes` UTF-8 bytes (`TextPart`, `ThinkingPart`, a string-returning `ToolReturnPart`, a string-valued `UserPromptPart`), plus any `TextContent` element travelling inside a `UserPromptPart.content` sequence or a `ToolReturn`. The same `threshold_bytes` governs both; there is no separate text knob. Payloads below the threshold stay inline, and `restore_media` re-inlines binary and text symmetrically. `media_uri_for` and `parse_media_uri` give you the raw URI round-trip if you need to key media yourself.
+`externalize_media` externalizes both large `BinaryContent` and large text: any message part whose string `content` is at least `threshold_bytes` UTF-8 bytes (`TextPart`, `ThinkingPart`, a string-returning `ToolReturnPart`, a string-valued `UserPromptPart`), plus any `TextContent` element travelling inside a `UserPromptPart.content` sequence or a `ToolReturn`. The same `threshold_bytes` governs both; there is no separate text knob. Payloads below the threshold stay inline, and `restore_media` re-inlines binary and text symmetrically. `BinaryContent` `data` that is not canonical base64 stays inline, since a tool can return a dict of the same shape. `media_uri_for` and `parse_media_uri` give you the raw URI round-trip if you need to key media yourself.
 
 The current reader restores binary markers written before text externalization. That compatibility is upgrade-only: a release that predates text externalization treats every marker as binary, so it cannot validate a snapshot containing an externalized text marker. Keep a current reader for persisted snapshots that contain those markers.
 
 If a payload uses the same namespaced keys as the marker format, the writer moves those values into a versioned reserved mapping and the current reader restores them. A marker written before this escaping format was added still restores. The reader treats the reserved keys as its own only when the reserved mapping has the shape the writer produces and the version key carries a stamp from the format's own namespace, so a payload that happened to carry either or both is left alone. A marker carrying both, stamped with a version this reader does not know, is rejected rather than restored with the reserved values stripped. Compatibility the other way is upgrade-only. A reader that predates the escaping format re-inlines the externalized field correctly, but it leaves the caller's values in the reserved mapping instead of restoring them to their own keys, and leaves the two reserved keys in the payload. Keep a current reader for persisted snapshots that contain escaped markers.
+
+A dict the walker leaves inline but which carries `__harness_external_media__` or `__harness_external_literal__`, such as a tool return, is written wrapped and unwrapped on restore, so it is never read back as a marker. A marker already in the input is wrapped the same way, so restore a lean tree before externalizing it again.
 
 ## API
 
@@ -114,5 +125,5 @@ If a payload uses the same namespaced keys as the marker format, the writer move
 | `MediaContext` | Per-call context (e.g. tenant) threaded through store operations |
 | `KeyStrategy`, `default_key_strategy` | On-store key layout |
 | `PublicUrlResolver`, `make_static_public_url` | Resolve a stored URI to a public URL |
-| `externalize_media`, `restore_media` | Walk a message node to externalize / rehydrate large binary and text payloads |
+| `externalize_media`, `restore_media` | Walk a JSON message tree to externalize / rehydrate large binary and text payloads |
 | `media_uri_for`, `parse_media_uri` | Compute and parse a `media+sha256://` URI |

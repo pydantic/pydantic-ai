@@ -247,7 +247,7 @@ def _zai_settings_to_openai_settings(
     if thinking_level is False:
         thinking_payload['type'] = 'disabled'
     elif thinking_level is not None:
-        # `True` and any effort level (`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`)
+        # `True` and any effort level (`'minimal'` through `'max'`)
         # enable thinking. Effort granularity is forwarded separately via `reasoning_effort`
         # on models that support it.
         thinking_payload['type'] = 'enabled'

@@ -673,6 +673,52 @@ interpreter; the reason names the process-boundary property under test. Also
 don't flag a launch in a `session`- or `module`-scoped fixture (shared cost,
 the recommended pattern) or a short real wait whose duration is the claim.
 
+### Example 6 — message history and prompt cache
+
+Trigger: the diff enqueues or edits messages, contributes instructions or
+tools, renders history in a model adapter, wraps content in tags, or converts
+history to or from a UI protocol. The rules, each with its reason, are in
+`agent_docs/message-history-and-caching.md`. A violation with a concrete
+trigger is HIGH: a moved prefix makes every later request re-process it uncached, with no error,
+and content in the wrong channel is a prompt injection.
+
+**Flag this (HIGH):**
+```python
+async def before_model_request(self, ctx, request_context):
+    report = await self._sub_agent_report()
+    ctx.enqueue(SystemPromptPart(f'Sub-agent finished:\n{report}'))
+```
+*Why:* The report is another agent's output, which can repeat anything it
+read, and here it is sent in operator voice. It belongs in the tool result
+channel, or in a framed and escaped data wrapper on a user turn. The same goes
+for a framework or harness hook that rewrites or strips earlier messages by
+default or on every request, for
+framework guidance enqueued as a plain `str` (it becomes a user message), for
+code that finds its own earlier parts by matching their text, and for a new
+wrapper with a hand-rolled escaper instead of `_framing.wrap()`, or one that escapes only the closing
+`</name>` spelling (`</NAME >`, `< / name>` or an opening `<name>` still gets
+through) or escapes only its own tag (a `</context>` or `<system>` in its
+body still gets through), uses a `kebab-case` tag name, or puts an
+untagged "Tool X completed." line in front of the frame. Likewise a summarizer or judge
+that renders a framework data part (a task report, a reminder) as a `user:` turn.
+
+**Don't flag this:**
+```python
+async def before_model_request(self, ctx, request_context):
+    ctx.enqueue(SystemPromptPart('Keep the answer under 100 words.', scope='request'))
+```
+*Why:* Fixed framework text in system voice, request-scoped, and added to
+history. On Anthropic it's sent natively with `clear_at`, so later requests
+send it unchanged; elsewhere it's sent at the tail of its own request, behind
+the cache breakpoint, and left out of later ones, a deliberate tail move that
+keeps the cached prefix. Also don't flag compaction
+moving the prefix once when it crosses its threshold, a history processor the
+user configures explicitly (`ProcessHistory`) whose docs say it costs the
+cached prefix, a request-only change
+to `request_context.messages` that every later request applies the same way
+(redacting a part from the first request that sends it), or code using today's
+mechanism where a rule is marked *(pending #N)*.
+
 ## Sub-agent finding format
 
 When a Task sub-agent returns findings, use this exact format (one block
