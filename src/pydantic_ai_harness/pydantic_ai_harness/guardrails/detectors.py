@@ -290,8 +290,12 @@ DEFAULT_PII_PATTERNS: Mapping[str, str] = {
     # list. A missing code means real IBANs from a new member pass through
     # unredacted, so add it and bump the date; if nothing changed, bump the date
     # alone.
+    #
+    # The lookahead is a cheap shape check ahead of the 89-way alternation, which the regex
+    # engine otherwise tries at every word boundary. It leaves the matches unchanged and makes
+    # the pattern about twenty times faster on text with many short words.
     'iban': (
-        r'\b(?i:AD|AE|AL|AT|AZ|BA|BE|BG|BH|BI|BR|BY|CH|CR|CY|CZ|DE|DJ|DK|DO|EE|EG|ES|FI|FK|FO|FR|GB|GE|GI|GL|GR'  # codespell:ignore fo
+        r'\b(?=[A-Za-z]{2}\d{2})(?i:AD|AE|AL|AT|AZ|BA|BE|BG|BH|BI|BR|BY|CH|CR|CY|CZ|DE|DJ|DK|DO|EE|EG|ES|FI|FK|FO|FR|GB|GE|GI|GL|GR'  # codespell:ignore fo
         r'|GT|HN|HR|HU|IE|IL|IQ|IS|IT|JO|KW|KZ|LB|LC|LI|LT|LU|LV|LY|MA|MC|MD|ME|MK|MN|MR|MT|MU|NI|NL|NO|OM|PK|PL'
         r'|PS|PT|QA|RO|RS|RU|SA|SC|SD|SE|SI|SK|SM|SO|ST|SV|TL|TN|TR|UA|VA|VG|XK)'
         r'\d{2}(?:[A-Za-z0-9]{10,30}|(?: [A-Za-z0-9]{4}){2,7}(?: [A-Za-z0-9]{1,3})?)\b'

@@ -1149,10 +1149,84 @@ def _rpc_error(status: str, details: str) -> grpc.RpcError:
             id='context-window',
         ),
         pytest.param(
+            'UNAVAILABLE',
+            # The server stopping mid-call; grpc-core's own transport failures below are worded differently.
+            'Cancelling all calls',
+            {ModelHTTPError, ModelUnavailableError},
+            {'status_code': 503, 'provider_error_code': 'UNAVAILABLE'},
+            id='server-shutdown',
+        ),
+        pytest.param(
+            'DEADLINE_EXCEEDED',
+            'Upstream request timed out',
+            {ModelHTTPError, ModelServerError},
+            {'status_code': 504, 'provider_error_code': 'DEADLINE_EXCEEDED'},
+            id='server-deadline-exceeded',
+        ),
+        # The rest are the gRPC client's own transport failures, worded as grpcio 1.84 and 1.72 (`xai-sdk`'s floor)
+        # report them.
+        pytest.param(
+            'UNAVAILABLE',
+            'failed to connect to all addresses; last error: UNKNOWN: ipv4:127.0.0.1:59585: '
+            'Failed to connect to remote host: Connection refused',
+            {ModelConnectionError},
+            {'phase': 'connect', 'provider_error_code': 'UNAVAILABLE', 'in_stream': False},
+            id='connection-refused',
+        ),
+        pytest.param(
+            'UNAVAILABLE',
+            'failed to connect to all addresses; last error: UNKNOWN: ipv4:127.0.0.1:38243: Tls handshake failed '
+            '(TSI_PROTOCOL_FAILURE): SSL_ERROR_SSL: error:100000f7:SSL routines:OPENSSL_internal:WRONG_VERSION_NUMBER',
+            {ModelConnectionError},
+            {'phase': 'connect'},
+            id='tls-handshake-failed',
+        ),
+        pytest.param(
+            'UNAVAILABLE',
+            'errors resolving api.x.invalid: [field:hostname lookup error:address lookup failed for api.x.invalid: '
+            'Domain name not found]',
+            {ModelConnectionError},
+            {'phase': 'connect'},
+            id='dns-failed',
+        ),
+        pytest.param(
+            'UNAVAILABLE',
+            'DNS resolution failed for api.x.invalid: C-ares status is not ARES_SUCCESS qtype=A name=api.x.invalid '
+            'is_balancer=0: Domain name not found',
+            {ModelConnectionError},
+            {'phase': 'connect'},
+            id='dns-failed-c-ares',
+        ),
+        pytest.param(
+            'UNAVAILABLE',
+            'Stream removed (recvmsg:Connection reset by peer (104))',
+            {ModelConnectionError},
+            {
+                'phase': None,
+                'provider_error_code': 'UNAVAILABLE',
+                'body': 'Stream removed (recvmsg:Connection reset by peer (104))',
+            },
+            id='connection-reset',
+        ),
+        pytest.param(
+            'UNAVAILABLE',
+            'recvmsg:Connection reset by peer',
+            {ModelConnectionError},
+            {'phase': None},
+            id='connection-reset-grpcio-1.72',
+        ),
+        pytest.param(
+            'UNAVAILABLE',
+            'Socket closed',
+            {ModelConnectionError},
+            {'phase': None},
+            id='connection-closed-grpcio-1.72',
+        ),
+        pytest.param(
             'DEADLINE_EXCEEDED',
             'Deadline Exceeded',
-            {ModelHTTPError},
-            {'status_code': 504, 'provider_error_code': 'DEADLINE_EXCEEDED'},
+            {ModelConnectionError, ModelTimeoutError},
+            {'phase': None, 'provider_error_code': 'DEADLINE_EXCEEDED', 'in_stream': False},
             id='deadline-exceeded',
         ),
     ],
@@ -1193,6 +1267,39 @@ async def test_xai_error_category_mid_stream(allow_model_requests: None):
     assert isinstance(exc, ModelHTTPError)
     assert exc.status_code == 503
     assert exc.in_stream is True
+    assert exc.__cause__ is error
+
+
+@pytest.mark.parametrize(
+    ('status', 'details', 'categories'),
+    [
+        pytest.param('UNAVAILABLE', 'Stream removed (Socket closed)', {ModelConnectionError}, id='connection-lost'),
+        pytest.param(
+            'DEADLINE_EXCEEDED',
+            'Stream removed (Deadline Exceeded)',
+            {ModelConnectionError, ModelTimeoutError},
+            id='deadline',
+        ),
+    ],
+)
+async def test_xai_transport_error_mid_stream(
+    allow_model_requests: None, status: str, details: str, categories: set[type[ModelAPIError]]
+):
+    """A transport failure after the stream started sending responses happened while reading the response."""
+    error = _rpc_error(status, details)
+    stream = cast(list[Any], [get_grok_text_chunk('Hello', ''), error])
+    model = XaiModel(
+        'grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=MockXai.create_mock_stream([stream]))
+    )
+    with pytest.raises(ModelConnectionError) as exc_info:
+        async with Agent(model).run_stream('hello') as result:
+            await result.get_output()
+
+    exc = exc_info.value
+    assert {cls for cls in _CATEGORIES if isinstance(exc, cls)} == categories
+    assert exc.phase == 'read'
+    assert exc.in_stream is True
+    assert exc.message == details
     assert exc.__cause__ is error
 
 
