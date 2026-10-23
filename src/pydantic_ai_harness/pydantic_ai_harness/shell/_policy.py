@@ -46,7 +46,9 @@ async def run_model_command(
     env: Mapping[str, str] | None,
     timeout: float | None,
 ) -> CommandResult:
-    """Run `build(command)`, the model's `command` in the toolset's own invocation, a string for the shell or argv.
+    """Run the model's `command` as `build` wraps it, sending an `E2BIG` back to the model only if it's to blame.
+
+    `build` returns the toolset's own invocation around the command: a string for the shell, or an argv.
 
     The OS refuses to start a command whose arguments and environment together are too large (`E2BIG`),
     so the errno alone does not say whether the model's command or the application's environment is to
