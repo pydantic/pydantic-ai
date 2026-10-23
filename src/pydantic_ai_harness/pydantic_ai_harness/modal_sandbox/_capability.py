@@ -5,14 +5,20 @@ from __future__ import annotations
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Never
+from typing import TYPE_CHECKING, Any, Literal, Never
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
-from pydantic_ai_harness._workspace_provider import Mounts, check_integer, check_working_dir, with_mounts
+from pydantic_ai_harness._workspace_provider import (
+    Mounts,
+    check_integer,
+    check_working_dir,
+    release_mounts,
+    with_mounts,
+)
 from pydantic_ai_harness.modal_sandbox._backend import (
     DEFAULT_APP_NAME,
     DEFAULT_SANDBOX_TIMEOUT,
@@ -24,6 +30,8 @@ from pydantic_ai_harness.modal_sandbox._backend import (
 
 if TYPE_CHECKING:
     import modal
+
+    from pydantic_ai.agent import AgentRunResult
 
 UPGRADE_DOCS_URL = 'https://pydantic.dev/docs/ai/harness/modal-sandbox/#upgrading-from-the-previous-modalsandbox'
 
@@ -177,6 +185,9 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     idle_timeout: int | None = None
     """Seconds without activity after which Modal terminates a newly created sandbox; `None` never does."""
 
+    runtime: Literal['gvisor', 'vm'] | None = None
+    """Runtime for a newly created sandbox, such as `'vm'`, which shell commands need to see mounted buckets; `None` lets Modal pick."""
+
     working_dir: str | None = None
     """Absolute directory commands start in and relative paths resolve against; when `None`, `/root` on the
     default image, otherwise the image's own working directory."""
@@ -213,6 +224,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         create_app_if_missing: bool = True,
         sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
         idle_timeout: int | None = None,
+        runtime: Literal['gvisor', 'vm'] | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
         mounts: Mounts = (),
@@ -257,6 +269,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         self.create_app_if_missing = create_app_if_missing
         self.sandbox_timeout = sandbox_timeout
         self.idle_timeout = idle_timeout
+        self.runtime = runtime
         self.working_dir = working_dir
         self.env = env
         self.mounts = mounts
@@ -266,7 +279,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
 
     def backend(self, ref: WorkspaceRef) -> ModalSandboxBackend:
         """Construct a backend for a stored Modal ref without opening the sandbox."""
-        return ModalSandboxBackend(ref=ref, working_dir=self.working_dir, env=self.env)
+        return ModalSandboxBackend(ref=ref, runtime=self.runtime, working_dir=self.working_dir, env=self.env)
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Terminate a sandbox by ID without running commands or restoring its workspace.
@@ -288,10 +301,17 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             create_app_if_missing=self.create_app_if_missing,
             sandbox_timeout=self.sandbox_timeout,
             idle_timeout=self.idle_timeout,
+            runtime=self.runtime,
             working_dir=self.working_dir,
             env=self.env,
         )
         return with_mounts(backend, self.mounts, ctx)
+
+    async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        try:
+            return await handler()
+        finally:
+            await release_mounts(ctx)
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         # The previous `ModalSandbox` registered its own tools, so `ModalSandbox(image=...)` on its

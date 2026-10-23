@@ -54,6 +54,7 @@ from __future__ import annotations
 
 # Native task cancellation can interrupt an AnyIO shield; the completion task below must stay independent.
 import hashlib
+import io
 import logging
 import math
 import os
@@ -62,9 +63,10 @@ import re
 import threading
 import time
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime
 
 import anyio
 import anyio.to_thread
@@ -75,8 +77,10 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
+    Mount,
     SupportsCommands,
     SupportsFilesystem,
+    SupportsMounts,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -86,6 +90,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai_harness import _mounts
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     command_argv,
@@ -367,7 +372,7 @@ async def _check_sprite_deleted(sprite: AsyncSprite, *, deadline: float) -> None
             pass
 
 
-class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
+class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsMounts):
     """A Fly.io Sprite behind the Pydantic AI `WorkspaceBackend` protocol.
 
     Pass `sandbox=` to wrap a `sprites.AsyncSprite` you already have, or `ref=` to reattach to one.
@@ -379,6 +384,9 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     plus `env`. A `working_dir` is created on a Sprite the backend creates; an attached or
     caller-supplied Sprite must already have it. File writes go through the Sprite's filesystem
     API; the other file operations run as shell commands.
+
+    Commands see a [mount](https://pydantic.dev/docs/ai/harness/cloud-storage/) with `commands=True`; the first such mount installs
+    `fuse3` and rclone in the Sprite if it lacks them.
     """
 
     def __init__(
@@ -399,6 +407,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             raise TypeError('env keys and values must be strings')
         self._sandbox = sandbox
         self._ref = ref if sandbox is None else WorkspaceRef(provider='sprites', id=sandbox.name)
+        # Attached to an existing sandbox, an earlier run's mounts may be there.
+        self._mounter = _mounts.Mounter(self._run_as_root, attached=self._ref is not None)
         self._new_sprite_name = f'pydantic-ai-{uuid.uuid4().hex}'
         self._uncertain_create = False
         self._runtime = runtime
@@ -642,13 +652,15 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         check_working_dir: bool = True,
         sandbox: AsyncSprite | None = None,
         cwd: str | None = None,
+        stdin: bytes | None = None,
     ) -> CommandResult:
         """`run` inside an operation, with the switches the backend's own commands need.
 
         `capture_stderr=False` skips reading a stopped command's stderr capture back, and
         `check_working_dir=False` skips confirming a missing `working_dir` on failure: both are for
         the backend's own commands, which must not recurse into another capture read or check. `sandbox` is for a
-        command run while `_lock` is held, and `cwd` replaces `working_dir` as the directory.
+        command run while `_lock` is held, `cwd` replaces `working_dir` as the directory, and `stdin` is the
+        command's input.
         """
         if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
             raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
@@ -657,13 +669,21 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         capture = f'/tmp/pydantic-ai-stderr-{uuid.uuid4().hex}'
         # `env` runs inside the wrapper: a `sh` such as dash drops variables whose names are not shell
         # identifiers from the environment it passes on.
-        args = _ending_with(marker, capture, _with_env(command_argv(command, shell), {**self._env, **(env or {})}))
+        args = _ending_with(
+            marker, capture, _with_env(command_argv(command, shell), {**self._env, **(env or {})}), stdin is not None
+        )
 
         # Acquiring the Sprite has its own bound; the command's deadline starts after it.
         if sandbox is None:
             sandbox = await self._get_sandbox()
         deadline = anyio.CancelScope(deadline=math.inf if timeout is None else anyio.current_time() + timeout)
-        exec_command = _ExecCommand(sandbox.command(*args, cwd=directory), marker)
+
+        def exec_command_for() -> _ExecCommand:
+            # A fresh stream for each attempt: a failed handshake sent none of it.
+            source = None if stdin is None else io.BytesIO(stdin)
+            return _ExecCommand(sandbox.command(*args, cwd=directory, stdin=source), marker)
+
+        exec_command = exec_command_for()
         code = -1
         interrupted = False
         try:
@@ -682,7 +702,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                         if delay is None:
                             raise NetworkError(f'Sprites exec handshake failed: {error}') from error
                         await anyio.sleep(delay)
-                        exec_command = _ExecCommand(sandbox.command(*args, cwd=directory), marker)
+                        exec_command = exec_command_for()
                 try:
                     code = await exec_command.wait()
                 except NetworkError as error:
@@ -724,6 +744,20 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             await self._check_working_dir(sandbox, directory, result, timeout=timeout, deadline=deadline.deadline)
         await _check_sprite_deleted(sandbox, deadline=deadline.deadline)
         return result
+
+    def check_mount(self, mount: Mount) -> None:
+        _mounts.check_mount(mount)
+
+    async def ensure_mounts(self, mounts: Sequence[Mount]) -> datetime | None:
+        if not self._mounter.needed(mounts):
+            return None
+        async with self._operation():
+            return await self._mounter.ensure(mounts, await self.working_dir())
+
+    async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
+        # Commands run as the Sprite's user, which has passwordless `sudo`. The keys go on stdin, never in argv: the
+        # exec API carries argv in its URL.
+        return await self._run(['sudo', '-n', '--', *argv], check_working_dir=False, cwd='/', stdin=stdin)
 
     async def _check_working_dir(
         self, sandbox: AsyncSprite, directory: str, failed: CommandResult, *, timeout: float | None, deadline: float
@@ -833,11 +867,12 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             return await _ShellFilesystem(self).exists(path)
 
 
-def _ending_with(marker: str, capture: str, args: list[str]) -> list[str]:
+def _ending_with(marker: str, capture: str, args: list[str], stdin: bool = False) -> list[str]:
     """`args` run under a `sh` that reports their stdout, a `marker` line, then their stderr, all on stdout.
 
     The `sh` first reads stdin to its EOF, which the client sends once its socket is open: output
-    printed before the client's stream attaches is lost, beyond a short replay.
+    printed before the client's stream attaches is lost, beyond a short replay. With `stdin`, `args` read the
+    stdin themselves, so they must read it before printing much.
 
     The live Sprite's stderr stream is not dependable: the same command's stderr arrived on the stderr
     stream in one run and on the stdout stream in the next, whole lines included (2026-09-25), while
@@ -847,8 +882,9 @@ def _ending_with(marker: str, capture: str, args: list[str]) -> list[str]:
     `/tmp`, but every command gets a fresh name, so no later command reads it. The exit status is the
     command's.
     """
+    wait = '' if stdin else 'cat >/dev/null; '
     script = (
-        'cat >/dev/null; err=$1; shift; : >"$err" || exit 125; '
+        f'{wait}err=$1; shift; : >"$err" || exit 125; '
         f'"$@" 2>"$err"; status=$?; printf "\\n%s\\n" {marker}; cat "$err"; rm -f "$err"; exit "$status"'
     )
     return ['sh', '-c', script, 'sh', capture, *args]

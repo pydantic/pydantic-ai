@@ -77,7 +77,7 @@ With `Mount('files', files, commands=True)`, the sandbox mounts the bucket with 
 
 That needs:
 
-- a sandbox that allows FUSE: [Docker](https://pydantic.dev/docs/ai/harness/docker-sandbox/) when its `docker_args` give the container `/dev/fuse`;
+- a sandbox that allows FUSE: [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/), [Sprites](https://pydantic.dev/docs/ai/harness/sprites-sandbox/), [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/) with `runtime='vm'`, and [Docker](https://pydantic.dev/docs/ai/harness/docker-sandbox/) when its `docker_args` give the container `/dev/fuse`;
 - Python 3 in the image; `fuse3` (with apt) and rclone are installed on first use if the image lacks them, which needs internet access;
 - an `S3Filesystem` or `AzureFilesystem` with `credentials=` that expire. Commands in the sandbox can read the keys a mount uses, so only keys with an `expires_at` are handed over, given directly or returned by a function, which is called again before they expire. Make them keys limited to the folder, so a command that reads them can't reach anything else: temporary AWS keys with a session policy, or an Azure SAS token for the container (`{'sas_token': ..., 'expires_at': ...}`). An Azure mount is mounted again to take a new SAS token, so a command still using the folder at that moment fails.
 

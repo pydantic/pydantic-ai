@@ -4,14 +4,24 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import Mounts, check_integer, check_working_dir, with_mounts
+from pydantic_ai_harness._workspace_provider import (
+    Mounts,
+    check_integer,
+    check_working_dir,
+    release_mounts,
+    with_mounts,
+)
 from pydantic_ai_harness.e2b_sandbox import _backend
 from pydantic_ai_harness.e2b_sandbox._backend import DEFAULT_SANDBOX_TIMEOUT, E2BSandboxBackend
+
+if TYPE_CHECKING:
+    from pydantic_ai.agent import AgentRunResult
 
 
 @dataclass(kw_only=True)
@@ -85,3 +95,9 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             env=self.env,
         )
         return with_mounts(backend, self.mounts, ctx)
+
+    async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        try:
+            return await handler()
+        finally:
+            await release_mounts(ctx)

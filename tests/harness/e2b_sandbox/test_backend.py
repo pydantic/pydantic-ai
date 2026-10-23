@@ -10,6 +10,7 @@ import shlex
 import shutil
 import sys
 import tempfile
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import IO, Any
@@ -21,6 +22,7 @@ from e2b.exceptions import (
     AuthenticationException,
     InvalidArgumentException,
     NotEnoughSpaceException,
+    NotFoundException,
     RateLimitException,
     SandboxException,
     SandboxNotFoundException,
@@ -28,7 +30,10 @@ from e2b.exceptions import (
     TimeoutException,
 )
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
+    Mount,
+    MountError,
     Workspace,
     WorkspaceError,
     WorkspaceOutputLimitError,
@@ -36,6 +41,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness.cloud_storage import S3Filesystem
 from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
 from .fake_e2b import FakeCommandHandle, FakeE2B, _HostCommandHandle  # pyright: ignore[reportPrivateUsage]
@@ -1128,6 +1134,63 @@ async def test_created_sandbox_id_is_logged_and_attached_one_is_not(
     assert [record.getMessage() for record in caplog.records if record.levelname == 'INFO'] == [
         f'Created E2B sandbox {created_ref.id}'
     ]
+
+
+_KEYS: Any = {
+    'access_key_id': 'a',
+    'secret_access_key': 'secret-b',
+    'token': 't',
+    'expires_at': datetime.now(UTC) + timedelta(hours=1),
+}
+
+
+def _mount() -> Mount:
+    return Mount('data', S3Filesystem('s3://acme/data', credentials=_KEYS), commands=True)
+
+
+async def _with_working_dir() -> E2BSandboxBackend:
+    """A backend that has looked up its working directory, so what a test answers next reaches only the helper."""
+    backend = E2BSandboxBackend()
+    await backend.working_dir()
+    return backend
+
+
+class TestMounts:
+    async def test_a_new_sandbox_with_nothing_to_mount_is_not_started(self, fake_e2b: FakeE2B) -> None:
+        assert await E2BSandboxBackend().ensure_mounts([]) is None
+        assert not fake_e2b.sandboxes
+
+    async def test_the_mounter_runs_as_root_with_the_keys_on_stdin(self, fake_e2b: FakeE2B) -> None:
+        backend = await _with_working_dir()
+        backend.check_mount(_mount())
+        fake_e2b.responder = lambda command, timeout: ('{"recovered": []}\n', '', 0)
+        await backend.ensure_mounts([_mount()])
+        commands = fake_e2b.sandboxes[0].commands
+        call, handle = commands.calls[-1], commands.handles[-1]
+        assert (call.user, call.stdin, shlex.split(call.command)[:2]) == ('root', True, ['python3', '-c'])
+        assert 'secret-b' not in call.command
+        line = commands.stdin[handle.pid]
+        assert line.endswith(b'\n') and line.count(b'\n') == 1 and b'secret-b' in line
+
+    async def test_a_mounter_that_exits_before_its_input_reports_why(self, fake_e2b: FakeE2B) -> None:
+        backend = await _with_working_dir()
+        fake_e2b.responder = lambda command, timeout: ('', 'python3: command not found', 127)
+        fake_e2b.stdin_error = NotFoundException('process not found')
+        with pytest.raises(MountError, match='python3: command not found'):
+            await backend.ensure_mounts([_mount()])
+
+    async def test_a_failed_mounter_is_killed(self, fake_e2b: FakeE2B) -> None:
+        backend = await _with_working_dir()
+        fake_e2b.wait_error = SandboxException('stream broke')
+        with pytest.raises(WorkspaceError, match='stream broke'):
+            await backend.ensure_mounts([_mount()])
+        assert fake_e2b.sandboxes[0].commands.handles[-1].killed
+
+    @pytest.mark.parametrize('anyio_backend', ['trio'])
+    async def test_mounting_needs_asyncio(self, fake_e2b: FakeE2B, anyio_backend: str) -> None:
+        with pytest.raises(UserError, match='need the asyncio event loop'):
+            await E2BSandboxBackend().ensure_mounts([_mount()])
+        assert not fake_e2b.sandboxes
 
 
 def _path_without_ps(tmp_path: Path) -> str:

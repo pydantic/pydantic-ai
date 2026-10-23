@@ -25,7 +25,8 @@ import sys
 import time
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from datetime import datetime
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 import anyio
@@ -35,8 +36,11 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
+    Mount,
+    MountError,
     SupportsCommands,
     SupportsFilesystem,
+    SupportsMounts,
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
@@ -45,6 +49,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness import _mounts
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_timeout,
@@ -151,7 +156,6 @@ def _translate(error: Exception, *, context: str, unavailable: str, path: str | 
             exc.ExecutionError,
             exc.RequestSizeError,
             exc.SandboxFilesystemError,
-            exc.FilesystemExecutionError,
         ),
     ):
         return WorkspaceError(f'{context}: {error}')
@@ -204,7 +208,7 @@ async def _file_entry(backend: ModalSandboxBackend, entry: modal.types.FileInfo,
     return FileEntry(name=entry.name, path=path, is_dir=is_dir, size=size)
 
 
-class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
+class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsMounts):
     """A Modal sandbox implementing Pydantic AI's `WorkspaceBackend` protocol.
 
     Construction performs no I/O. The first operation creates or attaches to a sandbox, and the
@@ -228,10 +232,15 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             Defaults to Modal's maximum, 24 hours.
         idle_timeout: Seconds without activity after which Modal terminates a newly created
             sandbox; `None` (the default) never terminates it for being idle.
+        runtime: Runtime for a newly created sandbox, such as `'vm'`; `None` (the default) lets Modal pick.
+            Needs Modal SDK 1.6 or later.
         working_dir: Absolute directory commands start in and relative paths resolve against,
             applied to every command, including in an attached sandbox. `None` (the default) is
             `/root` on the default image, otherwise the image's own working directory.
         env: Environment variables every command gets; a command's own `env` is layered on top.
+
+    Commands see a [mount](https://pydantic.dev/docs/ai/harness/cloud-storage/) with `commands=True` when the sandbox runs with
+    `runtime='vm'`: Modal's default runtime refuses FUSE.
     """
 
     def __init__(
@@ -244,6 +253,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         create_app_if_missing: bool = True,
         sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
         idle_timeout: int | None = None,
+        runtime: Literal['gvisor', 'vm'] | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
     ) -> None:
@@ -265,12 +275,15 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
             raise TypeError('env keys and values must be strings')
         self._ref = ref if sandbox is None else WorkspaceRef(provider='modal', id=sandbox.object_id)
+        # Attached to an existing sandbox, an earlier run's mounts may be there.
+        self._mounter = _mounts.Mounter(self._run_as_root, attached=self._ref is not None)
         self._sandbox: modal.Sandbox | None = sandbox
         self._image = image
         self._app_name = app_name
         self._create_app_if_missing = create_app_if_missing
         self._sandbox_timeout = sandbox_timeout
         self._idle_timeout = idle_timeout
+        self._runtime: Literal['gvisor', 'vm'] | None = runtime
         self._working_dir = absolute_path('working_dir', working_dir)
         self._env = dict(env) if env is not None else {}
         # `_working_dir` is what was configured (`None` for the image's); the protocol needs the
@@ -501,6 +514,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                     env=variables,
                     timeout=self._sandbox_timeout,
                     idle_timeout=self._idle_timeout,
+                    runtime=self._runtime,
                 )
         except Exception as error:
             if create_attempted and (recovered := await self._recover_create(name)) is not None:
@@ -792,6 +806,35 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                 f'working_dir {workdir!r} does not exist in Modal sandbox {sandbox.object_id!r}. '
                 'Create it there, or pass a working_dir that exists.'
             )
+        return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
+
+    def check_mount(self, mount: Mount) -> None:
+        # Modal's default runtime (gVisor) refuses FUSE; its VM runtime allows it.
+        if self._runtime != 'vm':
+            raise MountError("ModalSandbox can mount a filesystem for commands only with `runtime='vm'`; pass it.")
+        _mounts.check_mount(mount)
+
+    async def ensure_mounts(self, mounts: Sequence[Mount]) -> datetime | None:
+        if not self._mounter.needed(mounts):
+            return None
+        await self.get_sandbox()
+        return await self._mounter.ensure(mounts, await self.working_dir())
+
+    async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
+        import modal
+
+        # Modal has no per-exec user: commands run as the image's, which is root on the default image.
+        sandbox = await self.get_sandbox()
+        async with self._mapped_errors(sandbox, 'Could not mount storage in the sandbox'):
+            process = await sandbox.exec.aio(*argv, workdir='/', text=False)
+            process.stdin.write(stdin)
+            process.stdin.write_eof()
+            try:
+                await process.stdin.drain.aio()
+            except modal.exception.ConflictError:
+                # The command already exited without reading its input; its output says why.
+                pass
+            stdout, stderr, exit_code, _ = await _collect_output(process, ['', ''], anyio.Event())
         return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
 
     async def _dir_exists(self, sandbox: modal.Sandbox, path: str) -> bool:

@@ -41,6 +41,7 @@ from pydantic_ai_harness.e2b_sandbox import (
 )
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
+from .._mount_live import check_bucket_mounts
 from .._tool_calls import call_tools
 
 pytestmark = pytest.mark.e2b_live
@@ -302,6 +303,11 @@ class TestRealFilesystem:
             result = await backend.run(['cat', filename], timeout=30)
 
         assert result.stdout == 'from-relative-path\n'
+
+    async def test_commands_see_mounted_buckets(self) -> None:
+        """Validates the fake-encoded assumptions that a root command reads its stdin and that FUSE mounts work."""
+        async with _owned(sandbox_timeout=600) as backend:
+            await check_bucket_mounts(backend)
 
 
 class TestRealLifecycle:

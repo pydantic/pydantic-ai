@@ -87,13 +87,13 @@ jobs:
       # The provider SDK is an extra of the `pydantic-ai-harness` workspace member, so
       # `--package` selects that member and `--group dev` adds the root test tooling. Each
       # cloud provider's guide has a Temporal worker example, which the docs-example test runs;
-      # `code-mode` and `coder` are what the provider test modules import at collection.
+      # `code-mode`, `coder` and `cloud-storage` are what the provider test modules import at collection.
       # Docker has no extra: it drives the `docker` CLI that GitHub's Ubuntu runners ship with.
       - run: |
           provider_extra=(--extra "$PROVIDER")
           [ "$PROVIDER" != docker ] || provider_extra=()
           uv sync --locked --package pydantic-ai-harness --group dev \
-            "${provider_extra[@]}" --extra temporal --extra code-mode --extra coder
+            "${provider_extra[@]}" --extra temporal --extra code-mode --extra coder --extra cloud-storage
         env:
           PROVIDER: ${{ matrix.provider }}
 
