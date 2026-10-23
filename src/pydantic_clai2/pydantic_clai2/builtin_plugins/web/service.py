@@ -4,6 +4,7 @@ The browser names a session by the conversation it holds. Sessions open and clos
 and each one's channel is made when it is first seen and dropped once it is gone.
 """
 
+from collections import defaultdict
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial
@@ -54,6 +55,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 )
 from pydantic_clai2.builtin_plugins.web.sidebar import busy_elsewhere, session_entry, worktrees
 from pydantic_clai2.builtin_plugins.web.workers import task_entry
+from pydantic_clai2.builtin_plugins.web.workspaces import checkouts
 from pydantic_clai2.cli.self_update import installed
 from pydantic_clai2.config.theme_names import names as theme_names
 from pydantic_clai2.plugins import (
@@ -104,8 +106,10 @@ class WebService:
         """Asks the model's questions in the browsers watching the session asking."""
         self.dialogs = BrowserDialogs(publish=self.hub.publish)
         """Where the settings menus opened in this page ask their questions."""
-        self.orchestrator = Orchestrator(host=host, publish=self.hub.publish)
+        self.orchestrator = Orchestrator(service=self)
         """The orchestrator chat, a separate agent with its own conversation, beside the sessions."""
+        self.workspace_locks: defaultdict[str, Lock] = defaultdict(Lock)
+        """One per workspace, so the page and the orchestrator opening its session at once start one, not two."""
         self.frames = FrameCheck()
         """Which side panel pages this page can frame; each page's headers are read once."""
         self.version = installed().label
@@ -273,7 +277,7 @@ class WebService:
             default = self.default()
             default.session.send_input(f'/resume {conversation_id}')
             return default.id
-        return self._choose(session)
+        return self.choose(session)
 
     async def new(self, workspace: str | None = None) -> str:
         """Start a new live session in `workspace`, by default the default session's directory; its conversation ID.
@@ -296,9 +300,10 @@ class WebService:
             else:
                 default.session.send_input('/new')
             return default.id
-        return self._choose(session)
+        return self.choose(session)
 
-    def _choose(self, session: LiveSession) -> str:
+    def choose(self, session: LiveSession) -> str:
+        """Make `session` the default the legacy routes follow, and tell the browsers; its conversation ID."""
         self._chosen = session.id
         self.live_changed()
         self.hub.publish(SessionsChanged())
@@ -621,10 +626,14 @@ class WebService:
         return self.host.sessions
 
     async def projects(self, query: str = '', *, include_archived: bool = False) -> list[Project]:
-        """Saved sessions grouped by repository, then checkout, the current ones first and removed folders last."""
+        """Saved sessions grouped by repository, then checkout, the current ones first and removed folders last.
+
+        Without a search, each workspace's checkout is listed under its repository too, before any session runs there.
+        """
         entries = await self.catalog.listing(query=query, archived=None if include_archived else False)
         workspace = str(self.default().session.workspace)
-        workspaces = {entry.workspace for entry in entries} | {workspace}
+        empty = [] if query else await checkouts(self.host.plugins)
+        workspaces = {entry.workspace for entry in entries} | {workspace} | set(empty)
         known = dict(self._identities)
 
         def resolve() -> dict[str, ProjectIdentity]:
@@ -648,13 +657,16 @@ class WebService:
         places = placements(entries, identities=self._identities)
         here = places[workspace]
         default = self.default().id
-        checkouts: dict[str, dict[str, tuple[ProjectIdentity, list[SessionEntry]]]] = {}
+        grouped: dict[str, dict[str, tuple[ProjectIdentity, list[SessionEntry]]]] = {}
         for entry in entries:
             identity = places[entry.workspace]
-            _, sessions = checkouts.setdefault(identity.key, {}).setdefault(identity.root, (identity, []))
+            _, sessions = grouped.setdefault(identity.key, {}).setdefault(identity.root, (identity, []))
             sessions.append(
                 session_entry(entry, live=live.get(entry.id), busy=entry.id in busy, current=entry.id == default)
             )
+        for folder in empty:
+            if not (identity := places[folder]).missing:
+                grouped.setdefault(identity.key, {}).setdefault(identity.root, (identity, []))
         projects = [
             Project(
                 key=key,
@@ -662,7 +674,7 @@ class WebService:
                 current=key == here.key,
                 worktrees=worktrees(found, here=here),
             )
-            for key, found in checkouts.items()
+            for key, found in grouped.items()
         ]
         return sorted(projects, key=lambda project: (not project.current, project.key == MISSING))
 
