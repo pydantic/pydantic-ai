@@ -41,6 +41,8 @@ MoonshotAIModelName = Literal[
     'kimi-k2.7-code',
     'kimi-k2.7-code-highspeed',
     'kimi-k3',
+    'kimi-k3.1-pro',
+    'kimi-k3.1-pro-highspeed',
 ]
 
 
