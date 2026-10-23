@@ -1028,12 +1028,50 @@ class UploadedFile:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+_binary_content_ta = pydantic.TypeAdapter(BinaryContent)
+
+
+def _serialize_binary_content(
+    value: BinaryContent, handler: pydantic.SerializerFunctionWrapHandler, info: pydantic.SerializationInfo
+):
+    # Leave the return unannotated so the wrapper retains BinaryContent's serialization JSON schema.
+    if isinstance(value, BinaryContent) and type(value) is not BinaryContent and value.kind == 'binary':
+        # A fresh serialization context accepts subclasses without the outer union's strict retries,
+        # which eagerly repr the entire binary payload even when serialization ultimately succeeds.
+        # Use the original object so overridden computed fields stay lazy and subclass fields stay hidden.
+        try:
+            return _binary_content_ta.dump_python(
+                value,
+                mode='json' if info.mode_is_json() else 'python',
+                # Pydantic's recursive selector annotations disagree; forward the caller's selectors unchanged.
+                include=info.include,  # pyright: ignore[reportArgumentType]
+                exclude=info.exclude,  # pyright: ignore[reportArgumentType]
+                by_alias=info.by_alias,
+                exclude_unset=info.exclude_unset,
+                exclude_defaults=info.exclude_defaults,
+                exclude_none=info.exclude_none,
+                exclude_computed_fields=info.exclude_computed_fields,
+                round_trip=info.round_trip,
+                serialize_as_any=info.serialize_as_any,
+                context=info.context,
+                warnings='error',
+            )
+        except pydantic_core.PydanticSerializationError:
+            # Let the caller's serializer handle invalid values, warning settings and JSON fallbacks.
+            pass
+    return handler(value)
+
+
 MultiModalContent = Annotated[
     ImageUrl
     | AudioUrl
     | DocumentUrl
     | VideoUrl
-    | Annotated[BinaryContent, pydantic.AfterValidator(BinaryContent.narrow_type)]
+    | Annotated[
+        BinaryContent,
+        pydantic.AfterValidator(BinaryContent.narrow_type),
+        pydantic.WrapSerializer(_serialize_binary_content),
+    ]
     | UploadedFile,
     pydantic.Discriminator('kind'),
 ]
