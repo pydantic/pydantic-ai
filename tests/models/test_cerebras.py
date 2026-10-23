@@ -269,8 +269,6 @@ async def test_cerebras_thinking_false_by_model():
     """`thinking=False` turns reasoning off where Cerebras can (zai/GLM), and sends gpt-oss's lowest effort, since it
     can't stop reasoning. Not recorded (no Cerebras key at hand): the efforts come from
     https://inference-docs.cerebras.ai/capabilities/reasoning."""
-    from pydantic_ai.models import ModelRequestParameters
-
     provider = CerebrasProvider(api_key='mock-api-key')
     efforts = {
         model_name: (
