@@ -111,7 +111,6 @@ from ._lifecycle import AnswersRevised, InputId, LifecycleEvent, RealtimeFrame, 
 from ._openai_protocol import (
     AUTO_TRANSCRIPTION_MODEL,
     RealtimeHandshakeError,
-    _without_media as without_media,  # pyright: ignore[reportPrivateUsage]
     expect_event,
     map_connect_errors,
     openai_websocket_auth_headers,
@@ -127,6 +126,7 @@ from ._utils import (
     resolve_advertised_tools,
     seed_retry_feedback_text,
     session_instructions,
+    without_media,
     wrap_seeded_system_prompts,
 )
 from .codec import (
