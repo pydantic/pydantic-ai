@@ -5267,14 +5267,19 @@ def test_google_grounding_offsets_count_across_text_parts():
 
 
 @pytest.mark.parametrize(
-    ('text', 'expected'),
+    ('text', 'part_index', 'expected'),
     [
-        pytest.param('Mount Columbia is 3,747 m high.', ContentCitationAnchor(start=0, end=14), id='unique'),
-        pytest.param('Mount Columbia, or Mount Columbia.', None, id='repeated'),
-        pytest.param('Another mountain.', None, id='missing'),
+        pytest.param('Mount Columbia is 3,747 m high.', None, ContentCitationAnchor(start=0, end=14), id='unique'),
+        pytest.param(
+            'Mount Columbia is 3,747 m high.', 0, ContentCitationAnchor(start=0, end=14), id='unique-with-part-index'
+        ),
+        pytest.param('Mount Columbia, or Mount Columbia.', None, None, id='repeated'),
+        pytest.param('Another mountain.', None, None, id='missing'),
     ],
 )
-def test_google_grounding_offsets_a_byte_off_use_the_segment_text(text: str, expected: ContentCitationAnchor | None):
+def test_google_grounding_offsets_a_byte_off_use_the_segment_text(
+    text: str, part_index: int | None, expected: ContentCitationAnchor | None
+):
     """Offsets that don't select the segment text, which Gemini sometimes reports a byte off, fall back to the text.
 
     The text anchors the citation only when it occurs once in the part, which is its only text part here. Unit test: about 1 Gemini Web Fetch run in 5
@@ -5285,7 +5290,8 @@ def test_google_grounding_offsets_a_byte_off_use_the_segment_text(text: str, exp
         grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri=source.url))],
         grounding_supports=[
             GroundingSupport(
-                grounding_chunk_indices=[0], segment=Segment(start_index=1, end_index=15, text='Mount Columbia')
+                grounding_chunk_indices=[0],
+                segment=Segment(start_index=1, end_index=15, text='Mount Columbia', part_index=part_index),
             )
         ],
     )
