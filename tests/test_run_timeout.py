@@ -32,7 +32,6 @@ from pydantic_ai.models import ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .conftest import IsDatetime, IsNow, IsStr
@@ -127,8 +126,7 @@ async def test_timeout_during_model_request():
 
 
 @pytest.mark.parametrize('stop', ['timeout', 'cancel'])
-@pytest.mark.parametrize('fallback', [False, True], ids=['model', 'fallback_model'])
-async def test_stop_during_a_continuation_keeps_the_suspended_segment_usage(stop: str, fallback: bool):
+async def test_stop_during_a_continuation_keeps_the_suspended_segment_usage(stop: str):
     """A suspended response's usage counts when the run stops while the request continuing it is in flight."""
     contexts: list[RunContext[object]] = []
     calls = 0
@@ -146,8 +144,7 @@ async def test_stop_during_a_continuation_keeps_the_suspended_segment_usage(stop
             contexts[-1].cancel()
         return await _never_returns(messages, info)
 
-    model = FunctionModel(suspend_then_stop)
-    agent = Agent(FallbackModel(model, TestModel()) if fallback else model)
+    agent = Agent(FunctionModel(suspend_then_stop))
 
     @agent.instructions
     def capture_context(ctx: RunContext[object]) -> None:
@@ -158,43 +155,6 @@ async def test_stop_during_a_continuation_keeps_the_suspended_segment_usage(stop
     assert isinstance(exc_info.value, RunTimedOut) == (stop == 'timeout')
     assert calls == 2
     assert exc_info.value.usage == snapshot(RunUsage(input_tokens=10, output_tokens=2))
-
-
-@pytest.mark.parametrize('stop', ['timeout', 'cancel'])
-@pytest.mark.parametrize('wrapped', [False, True])
-async def test_stop_during_a_fallback_keeps_the_rejected_response_usage(stop: str, wrapped: bool):
-    """A `FallbackModel`-rejected response's usage counts when the run stops while the next model is running."""
-    contexts: list[RunContext[object]] = []
-
-    def rejected(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(input_tokens=1000, output_tokens=500))
-
-    async def stop_then_block(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if stop == 'timeout':
-            _expire(contexts[-1])
-        else:
-            contexts[-1].cancel()
-        return await _never_returns(messages, info)
-
-    def reject_primary(response: ModelResponse) -> bool:
-        return response.model_name == 'primary'
-
-    model = FallbackModel(
-        FunctionModel(rejected, model_name='primary'),
-        FunctionModel(stop_then_block, model_name='backup'),
-        fallback_on=reject_primary,
-    )
-    # A wrapper, like the one instrumentation adds, still lets the `FallbackModel` commit early.
-    agent = Agent(WrapperModel(model) if wrapped else model)
-
-    @agent.instructions
-    def capture_context(ctx: RunContext[object]) -> None:
-        contexts.append(ctx)
-
-    with pytest.raises(RunCancelled) as exc_info:
-        await agent.run('go', timeout=LONG_TIMEOUT)
-    assert isinstance(exc_info.value, RunTimedOut) == (stop == 'timeout')
-    assert exc_info.value.usage == snapshot(RunUsage(input_tokens=1000, output_tokens=500))
 
 
 async def test_timeout_during_tool_call_keeps_resumable_state():

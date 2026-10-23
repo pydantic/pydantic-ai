@@ -41,7 +41,6 @@ from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.messages import (
     AgentInstructionSource,
     AgentStreamEvent,
@@ -2128,90 +2127,6 @@ async def test_rejected_usage_counts_towards_token_limits() -> None:
 
     with pytest.raises(UsageLimitExceeded, match='Exceeded the input_tokens_limit of 100 \\(input_tokens=120\\)'):
         await Agent(model).run('test', usage_limits=UsageLimits(input_tokens_limit=100))
-
-
-async def test_rejected_usage_survives_an_error_fallback_on_does_not_cover() -> None:
-    """A rejected response's usage still counts when a later model raises an error that ends the run."""
-
-    def rejected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(input_tokens=1000, output_tokens=500))
-
-    def uncovered_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        raise ValueError('not a fallback error')
-
-    def reject_primary(response: ModelResponse) -> bool:
-        return response.model_name == 'primary'
-
-    model = FallbackModel(
-        FunctionModel(rejected, model_name='primary'),
-        FunctionModel(uncovered_error, model_name='backup'),
-        fallback_on=reject_primary,
-    )
-    usage = RunUsage()
-    with pytest.raises(ValueError, match='not a fallback error'):
-        await Agent(model).run('test', usage=usage)
-    assert usage == snapshot(RunUsage(input_tokens=1000, output_tokens=500))
-
-
-async def test_fallback_model_called_by_another_model_commits_nothing_to_the_run() -> None:
-    """A `FallbackModel` that another model calls itself doesn't count its rejected responses towards the run.
-
-    Only the response of the run's own model is counted: here the outer model reports its own usage, and
-    the inner request's rejected response isn't on it, so the run doesn't count it.
-    """
-
-    def rejected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(input_tokens=1000, output_tokens=500))
-
-    def accepted(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('accepted')], usage=RequestUsage(input_tokens=10, output_tokens=5))
-
-    def reject_primary(response: ModelResponse) -> bool:
-        return response.model_name == 'primary'
-
-    inner = FallbackModel(
-        FunctionModel(rejected, model_name='primary'),
-        FunctionModel(accepted, model_name='backup'),
-        fallback_on=reject_primary,
-    )
-
-    async def outer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        inner_response = await direct_model_request(inner, [ModelRequest.user_text_prompt('hi')])
-        assert inner_response.failed_attempts is not None
-        return ModelResponse(parts=[TextPart('outer')], usage=RequestUsage(input_tokens=7, output_tokens=3))
-
-    result = await Agent(FunctionModel(outer)).run('test')
-    assert result.usage == snapshot(RunUsage(input_tokens=7, output_tokens=3, requests=1))
-
-
-async def test_rejected_usage_is_not_counted_twice_before_a_continuation() -> None:
-    """The limit checked before a suspended response is continued counts a rejected response's usage once."""
-    backup_calls = 0
-
-    def rejected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(cost=Decimal('0.006')))
-
-    def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal backup_calls
-        backup_calls += 1
-        return ModelResponse(
-            parts=[TextPart(f'part {backup_calls}')],
-            usage=RequestUsage(cost=Decimal('0.001')),
-            state='suspended' if backup_calls == 1 else 'complete',
-        )
-
-    def reject_primary(response: ModelResponse) -> bool:
-        return response.model_name == 'primary'
-
-    model = FallbackModel(
-        FunctionModel(rejected, model_name='primary'),
-        FunctionModel(backup, model_name='backup'),
-        fallback_on=reject_primary,
-    )
-
-    result = await Agent(model).run('test', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
-    assert result.usage == snapshot(RunUsage(cost=Decimal('0.008'), requests=1))
-    assert backup_calls == 2
 
 
 @pytest.mark.parametrize('inner_outcome', ['answered', 'failed'])

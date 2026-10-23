@@ -574,7 +574,7 @@ A rejected response was still generated and billed, so its tokens and cost are a
 The rejected responses' usage counts when every model fails, too. If it exceeds a limit, [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] is raised with the `FallbackExceptionGroup` as its `__cause__`.
 
 !!! note
-    Under [Temporal](../durable_execution/temporal.md), the rejected responses' usage is not recorded when a later model raises an error that `fallback_on` doesn't cover, or when every model fails: the error reaches the workflow without its attempts.
+    The rejected responses' usage is not recorded when a later model raises an error that `fallback_on` doesn't cover, or, under [Temporal](../durable_execution/temporal.md), when every model fails: the exception group reaches the workflow without its attempts.
 
 ```python {title="fallback_model_attempts.py"}
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
