@@ -1202,6 +1202,10 @@ async def test_one_uncalled_hooks_warning_per_capability() -> None:
         pytest.param([_ToolHookCap()], id='supported-hooks'),
         pytest.param([Hooks(before_tool_execute=_before_tool_execute)], id='hooks-supported'),
         pytest.param([PrefixTools(wrapped=_ToolHookCap(), prefix='x')], id='wrapper-supported'),
+        pytest.param(
+            [PrefixTools(wrapped=CombinedCapability([_ToolHookCap(), Instrumentation()]), prefix='x')],
+            id='wrapper-over-combined-supported',
+        ),
     ],
 )
 async def test_capability_with_only_session_hooks_does_not_warn(capabilities: list[AbstractCapability[None]]) -> None:
