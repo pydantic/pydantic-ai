@@ -166,17 +166,6 @@ KNOWN: dict[str, tuple[Known, ...]] = {
     'agent:dynamic_system_prompt': (
         Known('prefix', 'https://github.com/pydantic/pydantic-ai/issues/10521', 'system', 'system-prompt'),
     ),
-    # Chat Completions has no deferred-tool channel, so the loaded capability's tools join `tools`.
-    'Capability(defer_loading=True)': tuple(
-        Known(
-            'prefix',
-            'https://github.com/pydantic/pydantic-ai/issues/11087',
-            'tools',
-            f'tool:{name}',
-            providers=('openai-chat',),
-        )
-        for name in ('write_note', 'read_note', 'delete_note')
-    ),
 }
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
 
@@ -199,6 +188,12 @@ ALLOWED: dict[str, Allowed] = {
         )
         for name in ('tool-retry', 'output-validation-retry')
     },
+    'Capability(defer_loading=True)': Allowed(
+        'docs/capabilities/on-demand.md: Chat Completions has no deferred-tool channel, so a load adds the '
+        "capability's tools to `tools`, like #9405's mid-run newcomers",
+        tuple(('tools', f'tool:{name}') for name in ('write_note', 'read_note', 'delete_note')),
+        providers=('openai-chat',),
+    ),
     # Since #10938, a `no_output` retry leaves out the request-scoped prompt no user message would clear, so
     # Anthropic drops it from the tail like the OpenAI APIs.
     'retry:no-output-retry+request-scoped': Allowed(
