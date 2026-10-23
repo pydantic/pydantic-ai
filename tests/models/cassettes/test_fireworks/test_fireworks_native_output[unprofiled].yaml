@@ -1,0 +1,92 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.fireworks.ai/inference/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "382"
+      content-type:
+      - application/json
+      host:
+      - api.fireworks.ai
+    body:
+      type: json
+      content:
+        model: accounts/fireworks/models/kimi-k3
+        stream: false
+        messages:
+        - role: user
+          content: Where is the Eiffel Tower? Reply in JSON.
+        response_format:
+          type: json_schema
+          json_schema:
+            name: City
+            schema:
+              properties:
+                city:
+                  type: string
+                country:
+                  type: string
+              required:
+              - city
+              - country
+              type: object
+              additionalProperties: false
+            strict: true
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "791"
+      content-type:
+      - application/json
+      fireworks-backend-server-time-to-first-token:
+      - "0.307"
+      fireworks-prompt-tokens:
+      - "190"
+      fireworks-server-processing-time:
+      - "2.037"
+      fireworks-server-time-to-first-token:
+      - "0.794"
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-f476a0f4
+        choices:
+        - index: 0
+          message:
+            content: "{\"city\":\"Paris\",\"country\":\"France\"}"
+            role: assistant
+            reasoning_content: >-
+              The user wants the location of the Eiffel Tower in JSON format. The schema
+              requires "city" and "country" fields. The Eiffel Tower is in Paris, France.
+          finish_reason: stop
+          logprobs: null
+          raw_output: null
+        created: 1792719833
+        model: accounts/fireworks/models/kimi-k3
+        service_tier: null
+        system_fingerprint: null
+        object: chat.completion
+        usage:
+          prompt_tokens: 190
+          completion_tokens: 58
+          total_tokens: 248
+          prompt_tokens_details:
+            cached_tokens: 189
+          completion_tokens_details:
+            accepted_prediction_tokens: null
+            reasoning_tokens: 36
+            rejected_prediction_tokens: null
+  recorded_at: 2026-10-23T01:43:54.857203+00:00

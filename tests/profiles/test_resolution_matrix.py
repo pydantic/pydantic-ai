@@ -2228,6 +2228,7 @@ def test_fireworks_gemma():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_tool_return_schema': True,
+            'supports_video_input': True,
             'google_supports_thinking_level': False,
             'google_web_search_billed_per_prompt': False,
         }
