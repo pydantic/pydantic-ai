@@ -125,25 +125,25 @@ TextPart(
 
 ## Citations and structured output
 
-On Anthropic, citations only work when your agent's output is text. With [structured output](output.md),
-`Citations()` doesn't ask Anthropic to cite your documents, because Anthropic can't attach citations to it:
+Citations are attached to text, so they only come back when your agent's output is text. With
+[structured output](output.md), the default [tool output](output.md#tool-output) comes back as tool call arguments,
+which can't carry citations.
 
-- Tool output, the default, comes back as tool call arguments, which have no place for citations. With citations on,
-  the model writes its citation markup into your fields instead, such as
-  `summary='<cite index="1-1">Items may be returned within 30 days.</cite>'`.
-- With `NativeOutput`, Anthropic rejects the request: "Citations cannot be enabled when output format is set".
-- With `PromptedOutput`, some models write the same markup into your fields.
+On Anthropic, asking for citations with structured output also makes the output worse: the model writes its citation
+markup into your fields, such as `summary='<cite index="1-1">Items may be returned within 30 days.</cite>'`, and
+`NativeOutput` is rejected. So `Citations()` only asks Anthropic for citations when your output is text. With
+structured output you get clean fields and no document citations. If you need the citations, use text output.
 
-So with structured output you get clean output and no document citations. If you need the citations, use text output.
-
-Anthropic always cites [web search](native-tools.md#web-search-tool) results, so with web search the markup can show
-up in structured output even without `Citations()`. The same goes for
+Anthropic always cites [web search](native-tools.md#web-search-tool) results, so with web search the markup can still
+show up in structured output, even without `Citations()`. The same goes for
 [web fetch](native-tools.md#web-fetch-tool) when you set `enable_citations=True` on the tool.
+
+On other providers, `Citations()` has no effect on structured output. With `NativeOutput` or `PromptedOutput` the
+output is JSON text, so web search citations can come back on it, with positions in the JSON text rather than in your
+fields.
 
 ## Good to know
 
-- Citations are only on text parts. If your output comes from a [tool call](output.md#output-modes), as structured
-  output does by default, the output itself has no citations.
 - When streaming, citations can arrive after their text: at the end of each text part on Anthropic, and at the end of
   the response on Google and OpenAI Chat. Read citations from the final response.
 - Citation URLs, titles and excerpts come from outside sources, so treat them as untrusted. Excerpts can also contain
