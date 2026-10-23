@@ -2638,8 +2638,8 @@ def _map_chat_content(
                 text_parts[0].citations = citations
                 text_parts[0].provider_name = provider_name
                 text_parts[0].provider_details = _chat_citations_provider_details(message.annotations)
-        # Annotation offsets address the unsplit provider text, so they are not safe to normalize after
-        # embedded thinking tags have been removed. Raw annotations remain available through the explicit opt-in.
+        # Annotation positions count into OpenAI's original text, so they can't be used once thinking tags are removed
+        # from it. `openai_include_raw_annotations` still keeps them.
         if include_raw_annotations and text_parts:
             text_parts[-1].provider_name = provider_name
             text_parts[-1].provider_details = {
@@ -5055,8 +5055,8 @@ class OpenAIStreamedResponse(StreamedResponse):
 
         part = self._parts_manager.get_part_by_vendor_id(text_part_ids[-1])
         assert isinstance(part, TextPart)
-        # Annotation offsets address the raw message text, so citations are only mapped onto a single text part that
-        # still equals it: not split by reasoning, and not changed by thinking-tag removal or whitespace normalization.
+        # Annotation positions count into the message's original text, so citations only go on a single text part that
+        # still equals it: not split by reasoning, and not changed by removing thinking tags or whitespace.
         citations = (
             _map_chat_citations(annotations, part.content)
             if len(text_part_ids) == 1 and part.content == self._raw_text_content
@@ -5841,11 +5841,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     pass  # content already accumulated via delta events
 
                 elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
-                    # The event types `annotation` as a model union declared in the event's own module,
-                    # whose members are distinct classes from the identically shaped ones
-                    # `ResponseOutputText.annotations` uses. That distinction is invisible in the payload
-                    # but fatal to `responses_output_text_annotations_ta`, so normalize to the wire dict
-                    # rather than serializing by type.
+                    # The event's `annotation` uses look-alike classes from another SDK module, which
+                    # `responses_output_text_annotations_ta` rejects, so it's turned into a plain dict first.
                     annotation = chunk.annotation
                     _annotations_by_item.setdefault((chunk.item_id, chunk.content_index), []).append(
                         annotation.model_dump(mode='json') if isinstance(annotation, BaseModel) else annotation
@@ -5894,8 +5891,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         provider_details['phase'] = phase
                         _phase_started_content.add(content_key)
                     existing_part = self._parts_manager.get_part_by_vendor_id(content_key)
-                    # Annotation offsets address the done text, so they can't be placed on streamed text that differs
-                    # from it.
+                    # Annotation positions count into the final text, so they can't go on streamed text that differs.
                     citations = (
                         _map_responses_citations(annotations, chunk.text)
                         if isinstance(existing_part, TextPart) and existing_part.content == chunk.text
