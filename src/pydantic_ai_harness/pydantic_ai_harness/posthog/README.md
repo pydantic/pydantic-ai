@@ -62,7 +62,7 @@ instead. To serve several users from one agent, pass a function instead (see
 | Not set, `None`, or `''` | `POSTHOG_PERSONAL_API_KEY`. If that is not set either, creating the agent raises an error. |
 | A personal API key or OAuth access token | That key, for every run. |
 | `'oauth'` | The account you sign in to through the browser. This only works on your own machine. |
-| A function | Called at the start of each run. The key it returns is used for that run. If it returns `None` or `''`, that run has no PostHog tools. A function never uses `POSTHOG_PERSONAL_API_KEY`, and must not return `'oauth'`. |
+| A function | Called at the start of each run, and can be async. The key it returns is used for that run. If it returns `None` or `''`, that run has no PostHog tools. A function never uses `POSTHOG_PERSONAL_API_KEY`, and must not return `'oauth'`. |
 
 A fixed key or `POSTHOG_PERSONAL_API_KEY` suits a script or an agent on your own
 machine, where every run is the same account.
@@ -96,8 +96,8 @@ Each run connects as its own user, so concurrent runs never share an account.
 Your app gets each user's key, stores it, and refreshes it if it is an OAuth
 token. For example, a settings page where each user pastes their own personal
 API key, or a "Connect PostHog" button that signs them in with PostHog OAuth and
-saves the access token to their account. Before each run, load it (this can be
-async) and put it in the deps; the function only reads it.
+saves the access token to their account. Before each run, put it in the deps, or
+load it in an async `auth` function.
 
 With durable execution such as Temporal, read the key from the run's deps rather
 than from a global, since the function may run in another process. The

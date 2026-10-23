@@ -878,6 +878,12 @@ class OpenAILiveConnection(RealtimeConnection):
         # delegates nothing more for the rest of the session (checked live).
         return True
 
+    @property
+    def _transcribes_all_output(self) -> bool:
+        # Live always transcribes its speech, but the transcript runs ahead of or behind the audio, so a delegated call
+        # arriving between the two splits a piece of audio from its words (checked live).
+        return True
+
     def _tool_call_unanswered(self, tool_call_id: str) -> None:
         self._open_calls.discard(tool_call_id)
         delegation_id = self._call_delegations.pop(tool_call_id, None)
@@ -1971,8 +1977,9 @@ def _backend_reasoning_effort(
 
     The backend is the model that reasons, so `thinking` is resolved against *its* profile, exactly as a
     direct Responses request to it would be: a backend that doesn't reason ignores it, `thinking=False`
-    leaves a backend that always reasons at its default, and `'minimal'` becomes `'low'` where the
-    backend has no minimal effort. `'max'` becomes `'xhigh'`: the delegation's effort levels stop at `'xhigh'`.
+    gives a backend that always reasons its lowest effort, and a level the backend doesn't accept
+    becomes the closest one it does (`'minimal'` becomes `'low'` where it has no minimal effort).
+    `'max'` becomes `'xhigh'`: the delegation's effort levels stop at `'xhigh'`.
     """
     if (effort := delegation_settings.get('reasoning_effort')) is not None:
         return effort
@@ -1980,10 +1987,7 @@ def _backend_reasoning_effort(
         return None
     # `openai_model_profile` builds an `OpenAIModelProfile`; its declared return type is the base one.
     profile = cast(OpenAIModelProfile, openai_model_profile(backend_model))
-    thinking_always_enabled = profile.get('thinking_always_enabled', False)
-    if not (profile.get('supports_thinking', False) or thinking_always_enabled):
-        return None
-    if thinking is False and thinking_always_enabled:
+    if not (profile.get('supports_thinking', False) or profile.get('thinking_always_enabled', False)):
         return None
     return _resolve_openai_thinking_effort(thinking, profile, supports_max=False)
 
