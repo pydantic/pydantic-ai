@@ -3430,6 +3430,15 @@ def test_openai_chat_extra_body_overriding_thinking_summary(extra_body: Any, exp
     assert model._settings_overriding_thinking_summary(settings) == expected
 
 
+async def test_thinking_summary_on_a_model_without_a_switch_is_silent(allow_model_requests: None):
+    """A model class with no readable-thinking switch names no setting, so nothing warns."""
+    model = FunctionModel(_echo, settings=ModelSettings(extra_body={'include_reasoning': True}))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        await Agent(model).run('Hi', model_settings=ModelSettings(thinking_summary=False))
+    assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == []
+
+
 def _mock_openai_chat(model_name: str, settings: ModelSettings) -> tuple[OpenAIChatModel, AsyncOpenAI]:
     client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='4', role='assistant')))
     return OpenAIChatModel(model_name, provider=OpenAIProvider(openai_client=client), settings=settings), client
