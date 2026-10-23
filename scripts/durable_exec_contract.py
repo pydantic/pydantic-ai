@@ -599,6 +599,9 @@ class _EngineWalker(ast.NodeVisitor):
     def visit_FunctionDef(self, node: FunctionNode) -> None:
         for decorator in node.decorator_list:
             self.visit(decorator)
+        for default in [*node.args.defaults, *node.args.kw_defaults]:
+            if default is not None:
+                self.visit(default)
         enclosing = self.scopes[-1]
         scope = _Scope(self.qualname(node.name), owner=enclosing.owner)
         arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]

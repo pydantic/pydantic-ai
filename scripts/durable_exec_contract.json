@@ -1531,6 +1531,21 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>"
       ]
     },
+    "UNSET": {
+      "engines": [
+        "dbos",
+        "prefect",
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent"
+      ]
+    },
     "Unset": {
       "engines": [
         "dbos",

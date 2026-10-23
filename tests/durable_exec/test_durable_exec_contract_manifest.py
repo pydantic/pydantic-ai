@@ -325,7 +325,9 @@ _FIXTURE: dict[str, str] = {
             RightAlias = Right
 
 
-        def typed(model: Left, response: profile_module.Response) -> 'Left':
+        def typed(
+            model: Left, response: profile_module.Response, *, label: str = Model.label, retries: int
+        ) -> 'Left':
             value: Left = model
             return value
         """,
@@ -399,7 +401,7 @@ def test_build_manifest_resolves_every_dependency_form(fixture_repo: Path):
             'models/__init__.py::Model.label': (
                 ['attribute_read'],
                 ['temporal'],
-                ['TemporalModel.stream', 'module_level', 'module_level.nested'],
+                ['<module>', 'TemporalModel.stream', 'module_level', 'module_level.nested'],
             ),
             'models/__init__.py::Model.profile': (
                 ['attribute_read'],
