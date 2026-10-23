@@ -129,4 +129,4 @@ async def test_azure_grok_tool_schema(
     if not inlined:
         expected['$defs'] = {'Replacement': replacement}
     assert parameters == expected
-    assert tool['strict'] == (strict is True)
+    assert tool.get('strict', False) == (strict is True)
