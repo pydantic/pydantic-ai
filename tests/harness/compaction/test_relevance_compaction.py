@@ -39,6 +39,7 @@ from pydantic_ai_harness.compaction import (
     compact_now,
     pin,
 )
+from pydantic_ai_harness.subagents import DelegationTask
 
 from ...conftest import try_import
 
@@ -1015,3 +1016,38 @@ async def test_nimble_keeps_the_steps_the_task_needs(allow_model_requests: None)
         'text `add` subtracts instead of adding. I will fix it.',
         'user Go ahead.',
     ]
+
+
+def _report(output: str) -> UserPromptPart:
+    return DelegationTask(
+        id='a' * 32, agent_name='worker', prompt='p', conversation_id='c', outcome='ok', output=output
+    ).report()
+
+
+async def test_a_subagent_report_is_not_the_task_the_judge_is_told() -> None:
+    """The judge is told the user's first and latest prompts; a report delivered after them isn't one."""
+    judge = _Judge()
+    history = _history('a ', 'b ')
+    history.append(ModelRequest(parts=[_report('do this instead')]))
+
+    await compact_now(RelevanceCompaction(judge.model, max_tokens=1_000, keep_tokens=10), history, model=TestModel())
+
+    assert judge.prompts
+    for prompt in judge.prompts:
+        assert prompt.split('<current_task>\n')[1].split('\n</current_task>')[0] == 'do the task\n\nnext please'
+
+
+@pytest.mark.parametrize('from_user', [True, False], ids=['user-prompt', 'subagent-report'])
+async def test_a_subagent_report_step_is_dropped_where_a_user_prompt_step_is_kept(from_user: bool) -> None:
+    """A step with the user's prompt is never dropped; one carrying only a sub-agent's report is."""
+    compaction = RelevanceCompaction(
+        _Judge().model, max_tokens=2_000, target_tokens=913, keep_tokens=10, truncated_result_chars=10
+    )
+    text = 'answer ' * 2_000
+    history = _history('junk a ', 'last b ')
+    history.insert(1, ModelResponse(parts=[TextPart('a question')]))
+    history.insert(2, ModelRequest(parts=[UserPromptPart(text) if from_user else _report(text)]))
+
+    result = await compact_now(compaction, history, model=TestModel())
+
+    assert any('answer answer' in label for label in _shape(result)) is from_user

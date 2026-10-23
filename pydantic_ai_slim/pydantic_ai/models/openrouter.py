@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Annotated, Any, Literal, TypeAlias, cast
@@ -83,7 +83,7 @@ _CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_f
 }
 
 # https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
-_OPENROUTER_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high', 'none']] = {
+_OPENROUTER_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high', 'max', 'none']] = {
     True: 'medium',
     False: 'none',
     'minimal': 'low',
@@ -91,6 +91,8 @@ _OPENROUTER_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high', 'no
     'medium': 'medium',
     'high': 'high',
     'xhigh': 'high',
+    # OpenRouter snaps `max` to the highest effort each routed model supports.
+    'max': 'max',
 }
 
 
@@ -271,7 +273,7 @@ class OpenRouterReasoning(TypedDict, total=False):
     token limits, but not both simultaneously.
     """
 
-    effort: Literal['xhigh', 'high', 'medium', 'low', 'minimal', 'none']
+    effort: Literal['max', 'xhigh', 'high', 'medium', 'low', 'minimal', 'none']
     """OpenAI-style reasoning effort level. Cannot be used with max_tokens."""
 
     max_tokens: int
@@ -1075,6 +1077,11 @@ class OpenRouterModel(OpenAIChatModel):
         return super()._request_thinks(model_settings, model_request_parameters)
 
     @override
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `openrouter_reasoning` replaces the unified mapping. `openai_reasoning_effort` is sent beside it instead.
+        return ('openrouter_reasoning',) if 'openrouter_reasoning' in model_settings else ()
+
+    @override
     def _supports_tool_forcing(
         self, model_settings: OpenAIChatModelSettings, model_request_parameters: ModelRequestParameters
     ) -> bool:
@@ -1455,7 +1462,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
                     provider_details=thinking_part.provider_details,
                 )
         else:
-            return super()._map_thinking_delta(choice)
+            yield from super()._map_thinking_delta(choice)
 
     @override
     def _map_provider_details(self, chunk: chat.ChatCompletionChunk) -> dict[str, Any] | None:
