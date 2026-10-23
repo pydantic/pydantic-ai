@@ -3311,7 +3311,7 @@ class _LateSidebandWebSocket(_FakeWebSocket):
 
     async def send(self, data: str) -> None:
         await super().send(data)
-        if json.loads(data)['type'] == 'session.update':
+        if json.loads(data)['type'] == 'session.update':  # pragma: no branch
             self._frames.append(_updated_frame(**self._session))
             self._arrived.set()
 
