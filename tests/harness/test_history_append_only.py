@@ -214,7 +214,7 @@ FIXTURES: dict[str, Fixture] = {
     'SmartSearch': _workspace(lambda: SmartSearch(model=TestModel())),
     'StackOne': lambda _: StackOne('account', client=_hosted_server()),
     'SummarizingCompaction': lambda _: SummarizingCompaction(TestModel(), max_messages=6, keep_messages=2),
-    'SystemReminders': lambda _: SystemReminders(dynamic_reminders=[_time_reminder]),
+    'SystemReminders': lambda _: SystemReminders(dynamic_reminders=[_time_reminder], cache_ttl=None),
     'TieredCompaction': lambda _: TieredCompaction(
         tiers=[ClearToolResults(max_messages=6, keep_pairs=1)], target_tokens=10
     ),
@@ -349,11 +349,12 @@ ALLOWED: dict[str, Allowed] = {
         providers=('openai-responses', 'openai-chat'),
     ),
     'SystemReminders': Allowed(
-        f'Request-only reminders at the end of each request, behind a cache breakpoint; moving to '
-        f'request-scoped system prompts in {_PULLS}9712',
-        (('messages', 'user-prompt'), ('messages', 'tool-return')),
+        f'Request-scoped system prompt ({_PULLS}9712): sent for one request, then left out. Anthropic clears it '
+        'natively with `clear_at`; elsewhere it is a request-only tail',
+        (('messages', 'system-prompt'),),
         tail=True,
-        records=('request-only user prompt',),
+        records=('request-scoped system prompt',),
+        providers=('openai-responses', 'openai-chat'),
     ),
 }
 """Documented prefix movers, checked exactly."""

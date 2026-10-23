@@ -9,6 +9,7 @@ from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Literal, TypeAlias
 
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
@@ -451,7 +452,8 @@ def _snapshot_index(history: list[ModelMessage], request: list[ModelMessage]) ->
 
     A block after tool results reads as a new user turn, so the snapshot stays with the user's prompt.
     The prompt is found in the persisted `history` because `wrap_model_request` hooks such as
-    `SystemReminders` add request-only user parts before this hook runs. Hooks that rewrite history,
+    `Planning` add request-only user parts before this hook runs. User-channel content a harness
+    capability added, such as an `LLMReminder` record, is not the user's prompt, so it doesn't count. Hooks that rewrite history,
     such as compaction, rewrite the request list too, so both lists share indexes; when they don't,
     the snapshot falls back to the last message.
     """
@@ -464,7 +466,27 @@ def _snapshot_index(history: list[ModelMessage], request: list[ModelMessage]) ->
 
 
 def _has_user_prompt(message: ModelMessage) -> bool:
-    return isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts)
+    return isinstance(message, ModelRequest) and any(
+        isinstance(part, UserPromptPart) and not _is_harness_data(part) for part in message.parts
+    )
+
+
+def _is_harness_data(part: UserPromptPart) -> bool:
+    """Whether a harness capability added this user part, rather than the user.
+
+    Matches how `SummarizingCompaction` recognizes harness data: the part opens with a `TextContent`
+    whose metadata names a `pydantic-ai-harness.` origin.
+    """
+    # TODO: switch to the core provenance field once it exists.
+    match part.content:
+        case [TextContent(metadata=metadata), *_] if (
+            is_str_dict(metadata)
+            and isinstance(origin := metadata.get('origin'), str)
+            and origin.startswith('pydantic-ai-harness.')
+        ):
+            return True
+        case _:
+            return False
 
 
 def _validate_positive(name: str, value: int) -> None:

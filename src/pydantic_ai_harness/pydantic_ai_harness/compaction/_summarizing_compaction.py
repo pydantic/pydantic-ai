@@ -238,7 +238,12 @@ def format_transcript(
                     continue
                 elif isinstance(part, UserPromptPart):
                     elements.append(_message_element('user', user_prompt_text(part)))
-                elif isinstance(part, SystemPromptPart) and not (skip_previous_summary and is_summary_part(part)):
+                elif (
+                    isinstance(part, SystemPromptPart)
+                    # A request-scoped prompt applied to its own request only, so it's no lasting context.
+                    and part.scope != 'request'
+                    and not (skip_previous_summary and is_summary_part(part))
+                ):
                     elements.append(_message_element('system', part.content))
                 elif isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                     elements.append(
@@ -375,7 +380,9 @@ def extract_previous_summary(messages: list[ModelMessage]) -> str | None:
         if not isinstance(msg, ModelRequest):
             continue
         for part in msg.parts:
-            if is_summary_part(part):
+            # A request-scoped prompt (such as a `SystemReminders` reminder) is never a summary, whatever its text.
+            # #10573 replaces this prefix detection with a typed `CompactionPart`.
+            if is_summary_part(part) and part.scope != 'request':
                 return _without_bridge_prefix(part.content[len(SUMMARY_PREFIX) :])
     return None
 

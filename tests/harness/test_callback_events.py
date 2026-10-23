@@ -88,7 +88,7 @@ async def test_reminder_event_and_legacy_callback() -> None:
         events.append(event)
 
     with pytest.warns(HarnessDeprecationWarning, match=r'SystemReminders\.on_fire.*ReminderFiredEvent.*on_event'):
-        capability = SystemReminders(reminders=[Reminder('focus', tag=None)], on_fire=legacy.append)
+        capability = SystemReminders(reminders=[Reminder('focus', tag=None)], on_fire=legacy.append, cache_ttl=None)
     await Agent(TestModel(), capabilities=[capability, hooks]).run('go')
 
     assert legacy == ['focus']
@@ -132,7 +132,7 @@ def test_new_construction_paths_do_not_warn() -> None:
         warnings.simplefilter('error', HarnessDeprecationWarning)
         SpendLimits()
         ReportContextUsage()
-        SystemReminders(reminders=[Reminder('focus')])
+        SystemReminders(reminders=[Reminder('focus', tag=None)], cache_ttl=None)
         InMemoryPlanStore()
 
 

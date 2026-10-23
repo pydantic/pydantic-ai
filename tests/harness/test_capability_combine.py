@@ -254,8 +254,8 @@ COMBINE_POLICY: dict[str, Policy] = {
     'SystemReminders': Combines(
         'reminders are additive, so both sides keep firing',
         lambda: (
-            SystemReminders[Any](reminders=[Reminder('first')]),
-            SystemReminders[Any](reminders=[Reminder('second')]),
+            SystemReminders[Any](reminders=[Reminder('first', tag=None)], cache_ttl=None),
+            SystemReminders[Any](reminders=[Reminder('second', tag=None)], cache_ttl=None),
         ),
         _check_system_reminders,
     ),
@@ -717,7 +717,10 @@ def test_system_reminders_keep_two_llm_reminders_whose_models_differ_only_in_set
     second = LLMReminder[Any](model=TestModel(settings={'temperature': 1.0}))
 
     merged = SystemReminders.combine(
-        [SystemReminders[Any](dynamic_reminders=[first]), SystemReminders[Any](dynamic_reminders=[second])]
+        [
+            SystemReminders[Any](dynamic_reminders=[first], cache_ttl=None),
+            SystemReminders[Any](dynamic_reminders=[second], cache_ttl=None),
+        ]
     )
 
     assert isinstance(merged, SystemReminders)
