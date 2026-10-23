@@ -671,7 +671,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             resumable, can_ask = sub_agent.resumable, sub_agent.can_ask_questions
         limit = self._max_running_tasks
         if limit is not None and (running := owner.running_count(conversation_id)) >= limit:
-            TaskTelemetry.of(ctx).decision(
+            self._telemetry(ctx).decision(
                 'task refused', agent_name=agent_name, attributes={'running_tasks': running, 'max_running_tasks': limit}
             )
             raise ModelRetry(
@@ -713,7 +713,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     transport=self._transport,
                     accept_timeout=self._accept_timeout,
                     usage=ctx.usage if self._forward_usage else None,
-                    telemetry=TaskTelemetry.of(ctx),
+                    telemetry=self._telemetry(ctx),
                 )
             assert sub_agent is not None
             return await self._run_controlled(ctx, owner, record, sub_agent, key=key, start=start)
@@ -768,7 +768,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     ) -> str:
         """Run a local task and report how it settled as task events."""
         link = LocalTaskLink(
-            owner=owner, record=record, can_ask=start.can_ask_questions, telemetry=TaskTelemetry.of(ctx)
+            owner=owner, record=record, can_ask=start.can_ask_questions, telemetry=self._telemetry(ctx)
         )
         await owner.publish(record, started(record))
         task_id, agent_name = record.id, record.agent_name
@@ -798,12 +798,17 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if _emits_events(ctx):
             await ctx.emit(event)
         if isinstance(event, ParentMessage) and event.vetoed:
-            TaskTelemetry.of(ctx).vetoed(event)
+            self._telemetry(ctx).vetoed(event)
         elif isinstance(event, TaskBackgroundedEvent):
-            TaskTelemetry.of(ctx).backgrounded(event)
+            self._telemetry(ctx).backgrounded(event)
         if record is not None:
             await owner.notify(record, event)
         return event
+
+    def _telemetry(self, ctx: RunContext[AgentDepsT]) -> TaskTelemetry:
+        # Read only when agents can be created: a durable activity's context may not carry `run_id`.
+        created = self._created.get(ctx.run_id or '', {}) if self._dynamic_agents is not None else {}
+        return TaskTelemetry.of(ctx, model_named=frozenset(created))
 
     def _owner(self) -> DelegationTasks:
         owner = DelegationTasks.current()
@@ -976,7 +981,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if _emits_events(ctx):
                 await ctx.emit(event)
             if event.vetoed:
-                TaskTelemetry.of(ctx).vetoed(event)
+                self._telemetry(ctx).vetoed(event)
                 return f'The sub-agent was not created: {event.veto_reason or "a policy refused it"}.'
             spec = DynamicAgentSpec(
                 name=name, description=event.description, instructions=event.instructions, model=model

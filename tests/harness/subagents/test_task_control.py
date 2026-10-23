@@ -1628,6 +1628,51 @@ class TestTaskControlTelemetry:
         name = {'sub_agents.agent_name': 'poet'} if include_content else {}
         assert decisions(exporter) == [('sub_agents vetoed', {'sub_agents.event': 'sub_agents.agent_created', **name})]
 
+    @pytest.mark.parametrize('include_content', [False, True])
+    async def test_a_created_agents_name_and_description_are_content(self, include_content: bool) -> None:
+        gate = Gate()
+
+        async def poem(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            await gate.opened.wait()
+            return text('A poem.')
+
+        async def streamed(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            await gate.opened.wait()
+            yield 'A poem.'
+
+        settings, exporter = traced(include_content, OpensOnWait(gate))
+        parent = Agent(
+            scripted(
+                call('create_agent', name='poet', description='private text', instructions='Write.'),
+                call('delegate_task', agent_name='poet', task='One.', background=True),
+                call('delegate_task', agent_name='poet', task='Two.', background=True),
+                text('Waiting.'),
+                text('Done.'),
+            ),
+            capabilities=[
+                SubAgents(
+                    models={'slow': FunctionModel(poem, stream_function=streamed)},
+                    task_control=True,
+                    max_running_tasks=1,
+                    dynamic_agents=DynamicAgents(models=['slow']),
+                )
+            ],
+        )
+        parent.instrument = settings
+        with anyio.fail_after(WAIT):
+            await parent.run('Go.')
+        name = {'sub_agents.agent_name': 'poet'} if include_content else {}
+        refused = {**name, 'sub_agents.running_tasks': 1, 'sub_agents.max_running_tasks': 1}
+        assert ('sub_agents task refused', refused) in decisions(exporter)
+        if not include_content:
+            # The model wrote both, so without content no span carries them, the created agent's run included.
+            recorded = [
+                text_
+                for span in exporter.get_finished_spans()
+                for text_ in (span.name, *map(str, (span.attributes or {}).values()))
+            ]
+            assert not [text_ for text_ in recorded if 'poet' in text_ or 'private text' in text_]
+
     async def test_a_remote_task_nobody_picks_up_is_a_span(self) -> None:
         parent, _ = remote_parent(
             InMemoryTransport(),

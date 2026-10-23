@@ -197,7 +197,7 @@ Nested model streaming from the child run is not an event concern; pass an `even
 
 `SubAgents` emits no OpenTelemetry spans for plain delegation: the child run is a core agent run with its own spans nested under the parent's tool-call span, and the events above carry the outcome a trace would only show as an exception or a tool result.
 
-Task control records its own decisions, which core's spans don't show, as zero-duration spans on the delegating run's tracer, with `sub_agents.`-prefixed attributes, including `sub_agents.agent_name` (for a vetoed created agent, only as content) and, for a task, `sub_agents.task_id`:
+Task control records its own decisions, which core's spans don't show, as zero-duration spans on the delegating run's tracer, with `sub_agents.`-prefixed attributes, including `sub_agents.agent_name` (for a created agent, whose name the model chose, only as content) and, for a task, `sub_agents.task_id`:
 
 | Span | When | Attributes |
 | --- | --- | --- |
@@ -328,7 +328,7 @@ from pydantic_ai_harness.subagents import DynamicAgents, SubAgents
 SubAgents(models={'fast': 'anthropic:claude-haiku-4-5'}, dynamic_agents=DynamicAgents(models=['fast'], max_agents=3))
 ```
 
-- A created agent is an `Agent` with the model-written instructions and no tools, on the `models` key it was created with, or on the delegating run's model when `DynamicAgents.models` is empty. Pass `DynamicAgents(factory=...)` to build it yourself from the `DynamicAgentSpec`.
+- A created agent is an `Agent` with the model-written instructions and no tools, on the `models` key it was created with, or on the delegating run's model when `DynamicAgents.models` is empty. It has no `name` or `description` of its own, since tracing records those even without content; the roster carries the model's. Pass `DynamicAgents(factory=...)` to build it yourself from the `DynamicAgentSpec`.
 - An `AgentCreatedEvent` is dispatched immediately before the agent is created: a listener can rewrite its `description` and `instructions`, or `veto()` it.
 - `max_agents` (default `5`) caps how many agents one run creates. Only one `SubAgents` on an agent can set `dynamic_agents`.
 

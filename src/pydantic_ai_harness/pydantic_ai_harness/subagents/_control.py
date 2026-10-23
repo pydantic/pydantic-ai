@@ -77,10 +77,12 @@ class TaskTelemetry:
 
     tracer: Tracer
     include_content: bool
+    model_named: frozenset[str] = frozenset()
+    """Agent names the model chose, by creating those agents, which are recorded only as content."""
 
     @classmethod
-    def of(cls, ctx: RunContext[AgentDepsT]) -> TaskTelemetry:
-        return cls(tracer=ctx.tracer, include_content=ctx.trace_include_content)
+    def of(cls, ctx: RunContext[AgentDepsT], *, model_named: frozenset[str] = frozenset()) -> TaskTelemetry:
+        return cls(tracer=ctx.tracer, include_content=ctx.trace_include_content, model_named=model_named)
 
     def decision(
         self,
@@ -94,7 +96,7 @@ class TaskTelemetry:
         """Record the span `sub_agents {name}`, with `sub_agents.`-prefixed attributes."""
         span = self.tracer.start_span(f'sub_agents {name}')
         if span.is_recording():
-            if agent_name is not None:
+            if agent_name is not None and (self.include_content or agent_name not in self.model_named):
                 span.set_attribute('sub_agents.agent_name', agent_name)
             if task_id is not None:
                 span.set_attribute('sub_agents.task_id', task_id)
@@ -219,12 +221,19 @@ class DynamicAgents(Generic[AgentDepsT]):
 
     factory: DynamicAgentFactory[AgentDepsT] | None = None
     """Builds the agent. The default is an `Agent` with the requested instructions and no tools, on the
-    model `SubAgents` routes the delegation to."""
+    model `SubAgents` routes the delegation to.
+
+    The model wrote the spec's name and description, which the roster carries. Tracing records an agent's
+    own `name` and `description` even without content, so the default agent has neither.
+    """
 
 
 def default_factory(spec: DynamicAgentSpec) -> AbstractAgent[object, str]:
-    """An agent with the requested instructions and no tools or model of its own."""
-    return Agent(deps_type=object, name=spec.name, description=spec.description, instructions=spec.instructions)
+    """An agent with the requested instructions and no tools or model of its own.
+
+    It takes no name or description from the spec: the model wrote them, and tracing records both.
+    """
+    return Agent(deps_type=object, instructions=spec.instructions)
 
 
 class TaskLink(AbstractCapability[Any], ABC):
