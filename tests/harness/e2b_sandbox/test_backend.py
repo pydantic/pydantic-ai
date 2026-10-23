@@ -1066,8 +1066,9 @@ async def test_filesystem_first_use_preserves_auth_error(fake_e2b: FakeE2B) -> N
 async def test_timeout_stops_a_command_run_with_a_different_locale(
     fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A `ps` whose start-time format follows the locale, as it does with LC_ALL=de_DE.UTF-8: only the launcher
-    # gets the user's env, so the recorded and checked times would differ unless both use LC_ALL=C.
+    # A `ps` whose start-time format follows the locale, as it does with LC_ALL=de_DE.UTF-8. A per-command
+    # env reaches only the launcher, so the recorded and checked times would differ unless both use LC_ALL=C.
+    # The backend's own `env` would not show this: a created sandbox passes it to every process, the stop included.
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
     fake_ps = bin_dir / 'ps'
@@ -1079,12 +1080,17 @@ async def test_timeout_stops_a_command_run_with_a_different_locale(
     fake_ps.chmod(0o755)
     monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
     fake_e2b.host_root = tmp_path
-    backend = await started(env={'LC_ALL': 'de_DE.UTF-8'})
+    backend = await started()
     marker = tmp_path / 'child-marker'
     try:
         with anyio.fail_after(5):
             with pytest.raises(WorkspaceTimeoutError):
-                await backend.run(f'(sleep 0.6; touch {shlex.quote(str(marker))}) & sleep 20', shell=True, timeout=0.1)
+                await backend.run(
+                    f'(sleep 0.6; touch {shlex.quote(str(marker))}) & sleep 20',
+                    shell=True,
+                    timeout=0.1,
+                    env={'LC_ALL': 'de_DE.UTF-8'},
+                )
         await anyio.sleep(0.7)
         assert not marker.exists()
     finally:
