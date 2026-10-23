@@ -6,9 +6,13 @@ import warnings
 from collections.abc import Generator, Iterable, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
+from typing import TYPE_CHECKING
 
 from .exceptions import UnsupportedSettingWarning
 from .settings import ModelSettingName
+
+if TYPE_CHECKING:
+    from .realtime.settings import RealtimeModelSettingName
 
 GUARANTEE_SETTINGS: dict[ModelSettingName, str] = {
     'timeout': ' Use `request_timeout` instead, which Pydantic AI enforces for every model.',
@@ -55,7 +59,7 @@ def warn_unsupported_settings(
     unsupported: Iterable[str],
     *,
     has_function_tools: bool,
-    guarantees: Mapping[str, str] = GUARANTEE_SETTINGS,
+    guarantees: Mapping[ModelSettingName, str] | Mapping[RealtimeModelSettingName, str] = GUARANTEE_SETTINGS,
     stacklevel: int = 3,
 ) -> None:
     """Warn about each set setting in `guarantees` that the model `model_id` ignores (`unsupported`).

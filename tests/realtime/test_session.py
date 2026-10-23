@@ -74,6 +74,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import (
+    AsyncToolCallMode,
     RealtimeError,
     RealtimeEvent,
     RealtimeInputSpeechEndEvent,
@@ -7954,6 +7955,12 @@ async def test_agent_realtime_session_warns_when_parallel_tool_calls_false_is_ig
     )
 
 
+def _async_profile(mode: AsyncToolCallMode) -> RealtimeModelProfile:
+    profile = _profile()
+    profile['async_tool_call_mode'] = mode
+    return profile
+
+
 def test_realtime_model_setting_name_lists_every_realtime_model_settings_field() -> None:
     assert set(get_args(RealtimeModelSettingName.__value__)) == set(get_type_hints(RealtimeModelSettings))
 
@@ -7968,7 +7975,7 @@ async def test_agent_realtime_session_warns_when_async_tool_calls_false_is_ignor
 
     always = FakeRealtimeModel(
         FakeRealtimeConnection([ResponseDone()]),
-        profile=RealtimeModelProfile(**_profile(), async_tool_call_mode='always'),
+        profile=_async_profile('always'),
     )
     with pytest.warns(UnsupportedSettingWarning, match='`async_tool_calls` setting .* always run asynchronously'):
         async with agent.realtime(always, model_settings=RealtimeModelSettings(async_tool_calls=False)).session():
@@ -7977,11 +7984,11 @@ async def test_agent_realtime_session_warns_when_async_tool_calls_false_is_ignor
     # A model that offers the choice honors it, and `True` on an always-async model asks for what it does anyway.
     optional = FakeRealtimeModel(
         FakeRealtimeConnection([ResponseDone()]),
-        profile=RealtimeModelProfile(**_profile(), async_tool_call_mode='optional'),
+        profile=_async_profile('optional'),
     )
     always = FakeRealtimeModel(
         FakeRealtimeConnection([ResponseDone()]),
-        profile=RealtimeModelProfile(**_profile(), async_tool_call_mode='always'),
+        profile=_async_profile('always'),
     )
     with warnings.catch_warnings():
         warnings.simplefilter('error', UnsupportedSettingWarning)
