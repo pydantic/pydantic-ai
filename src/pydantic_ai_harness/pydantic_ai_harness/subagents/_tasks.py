@@ -505,6 +505,16 @@ class DelegationTasks:
             and not r.delivered
         ]
 
+    def questions(self, *, conversation_id: str, parent_id: str | None = None) -> list[DelegationTask]:
+        """Running children whose question awaits delivery to their own parent, like `reports`."""
+        return [
+            record
+            for task_id, question in self._questions.items()
+            if not question.queued
+            and (record := self.records[task_id]).conversation_id == conversation_id
+            and record.parent_id == parent_id
+        ]
+
     def steer(self, task_id: str, text: str) -> bool:
         """Send a running child a user message, which its run reads at its next model request.
 
@@ -711,6 +721,11 @@ class DelegationTasks:
         self._wake()
         self.queue_reports(conversation_id=record.conversation_id, parent_id=record.parent_id)
         try:
+            try:
+                # The observer learns the task waits, so an application can start its idle parent's next run.
+                await self.notify(record)
+            except Exception:
+                logging.getLogger(__name__).exception('Task question observer failed for %s', record.id)
             return await pending.answer
         finally:
             if self._questions.get(task_id) is pending:

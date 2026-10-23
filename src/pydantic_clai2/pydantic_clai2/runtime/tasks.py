@@ -25,6 +25,7 @@ from pydantic_ai import (
 from pydantic_ai._context_size import context_tokens
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import FunctionToolCallEvent, ModelMessage, ModelResponse, ToolReturnPart
+from pydantic_ai.tools import AgentDepsT, ToolDefinition
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.step_persistence import StepStore
@@ -36,6 +37,7 @@ from pydantic_ai_harness.subagents import (
     DelegationTasks,
     SubAgent,
     SubAgents,
+    TaskQuestionEvent,
 )
 from pydantic_clai2.plugins import TaskEvent, TaskInfo
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
@@ -92,12 +94,26 @@ def task_row(event: AgentStreamEvent) -> Text | None:
         row.append(name, style=theme.color(theme.ACCENT))
         row.append(f' [{(event.task_id or "")[:8]}] {prompt}', style=theme.color(theme.MUTED))
         return row
+    if isinstance(event, TaskQuestionEvent):
+        return question_row(event)
     if isinstance(event, DelegationEndEvent) and event.outcome != 'ok':
         return Text(
             f'  └ {event.outcome} · {event.duration_seconds:.1f}s · /tasks to inspect',
             style=theme.color(theme.WARNING),
         )
     return None
+
+
+def question_row(event: AgentStreamEvent) -> Text | None:
+    """A task's question to its parent, which a run shows even without the task panel."""
+    if not isinstance(event, TaskQuestionEvent):
+        return None
+    name = _display_name(event.agent_name)
+    question = ' '.join(terminal_text(event.question).split())
+    row = Text('? ', style=theme.color(theme.WARNING), no_wrap=True, overflow='ellipsis')
+    row.append(name, style=theme.color(theme.ACCENT))
+    row.append(f' [{event.task_id[:8]}] asks: {question}', style=theme.color(theme.MUTED))
+    return row
 
 
 def resume_prompt(record: DelegationTask) -> str:
@@ -281,20 +297,29 @@ class Tasks:
         # It runs for every event of the child's stream, so build nothing that no plugin reads.
         if self.fire is not None and self.listening():
             await self.fire(TaskEvent(task=self.info(record), event=event))
-        if (
-            record.status == 'finished'
-            and record.background
-            and record.parent_id is None
-            and not record.delivered
-            and self.wake is not None
-        ):
+        if record.parent_id is None and self.wake is not None and self._for_main_run(record):
             self.wake()
-        if not isinstance(event, (DelegationStartEvent, DelegationEndEvent)):
+        if isinstance(event, TaskQuestionEvent) and event.task_id != record.id:
+            # The copy in a parent task's stream: it shows once, as the asking task's own event.
+            return
+        if not isinstance(event, (DelegationStartEvent, DelegationEndEvent, TaskQuestionEvent)):
             return
         if self.sink is not None:
             await self.sink(event)
         elif (row := task_row(event)) is not None:
             self.console.print(row)
+
+    def waiting(self, conversation_id: str) -> bool:
+        """Whether the main run of `conversation_id` has a task report to read, or a task question to answer."""
+        return bool(
+            self.owner.reports(conversation_id=conversation_id) or self.owner.questions(conversation_id=conversation_id)
+        )
+
+    def _for_main_run(self, record: DelegationTask) -> bool:
+        """Whether `record`, a task of a main run, has a report or a question that run has not received."""
+        if record.status == 'finished':
+            return record.background and not record.delivered
+        return any(asking is record for asking in self.owner.questions(conversation_id=record.conversation_id))
 
     def focused(self) -> Status | None:
         """The newest subagent the main run is waiting on, whose figures the status row shows until it settles.
@@ -397,6 +422,9 @@ class Tasks:
                 usage.tool_calls += sum(
                     isinstance(part, ToolReturnPart) and part.outcome != 'retried' for part in message.parts
                 )
+        activity = progress.activity if progress is not None else 'starting'
+        if record.status == 'running' and self.owner.pending_question(record.id) is not None:
+            activity = 'waiting for an answer'
         return TaskInfo(
             id=record.id,
             parent_id=record.parent_id,
@@ -409,7 +437,7 @@ class Tasks:
             finished_at=None if record.finished_at is None else datetime.fromtimestamp(record.finished_at, UTC),
             background=record.background,
             resumable=record.resumable,
-            activity=progress.activity if progress is not None else 'starting',
+            activity=activity,
             usage=usage,
         )
 
@@ -461,6 +489,15 @@ def _display_name(agent_name: str) -> str:
     return 'general-purpose' if agent_name == 'self' else agent_name
 
 
+def delegates(ctx: RunContext[AgentDepsT], definition: ToolDefinition) -> bool:
+    """Whether `definition` is the delegate tool of a `SubAgents`, rather than one of its task-control tools.
+
+    The delegate tool shows as its task's rows; the task-control tools show as tools.
+    """
+    owner = ctx.capabilities.get(definition.capability_id or '')
+    return isinstance(owner, SubAgents) and owner.tool_name == definition.name
+
+
 class TaskPresentation(AbstractCapability[object]):
     """Classify calls by their capability owner, not their configurable tool name."""
 
@@ -472,11 +509,13 @@ class TaskPresentation(AbstractCapability[object]):
     ) -> AsyncIterable[AgentStreamEvent]:
         try:
             async for event in stream:
-                if isinstance(event, FunctionToolCallEvent) and event.args_valid is not False:
-                    definition = ctx.tools.get(event.part.tool_name)
-                    owner = ctx.capabilities.get(definition.capability_id or '') if definition is not None else None
-                    if isinstance(owner, SubAgents):
-                        event = DelegationToolCallEvent(event.part, args_valid=event.args_valid)
+                if (
+                    isinstance(event, FunctionToolCallEvent)
+                    and event.args_valid is not False
+                    and (definition := ctx.tools.get(event.part.tool_name)) is not None
+                    and delegates(ctx, definition)
+                ):
+                    event = DelegationToolCallEvent(event.part, args_valid=event.args_valid)
                 yield event
         finally:
             await _utils.aclose_if_supported(stream)

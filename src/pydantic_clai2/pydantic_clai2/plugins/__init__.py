@@ -599,8 +599,9 @@ class TaskEvent:
     task: TaskInfo
     """The task as it is now."""
     event: AgentStreamEvent | None = None
-    """The event from the task's own run, or its `DelegationStartEvent` or `DelegationEndEvent`; `None` when
-    only the task changed, such as when it finished."""
+    """The event from the task's own run, its `DelegationStartEvent` or `DelegationEndEvent`, or one of its
+    `sub_agents` task events, such as `TaskQuestionEvent`; `None` when only the task changed, such as when it
+    started, finished, or began waiting for an answer."""
 
 
 UpdateStage = Literal['installing', 'output', 'failed', 'installed', 'restarting']

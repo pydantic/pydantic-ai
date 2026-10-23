@@ -575,6 +575,10 @@ A child waits for its own descendants and consumes their reports before its fina
 output settles. Reports are routed to the direct parent; an idle parent receives
 pending reports on its next explicitly started run. Enqueue delivery is acknowledged
 only when core emits `EnqueuedMessagesEvent`, and acknowledgements are persisted.
+With task control, a child's `ask_parent` question is routed the same way:
+`questions(conversation_id=...)` lists the children whose question awaits delivery, and
+the observer is notified when one starts waiting, so an application can start its idle
+parent's next run to answer it.
 
 `steer(task_id, text)` sends a running child a user message on its own run's queue
 with `priority='asap'`: the child reads it at its next model request, and one about to
