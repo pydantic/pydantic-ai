@@ -95,6 +95,18 @@
       "fingerprint": "481effa0702c0a046ac7a6eebbd1a1689f975c12ab516e981a6a000c3f6e6f1f",
       "reason": "Harness 0.x: the same `GitHub.description` default text change, reported on `GitHub.__init__`; calls that pass or omit `description` keep working.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10815"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "953e88def3e59bb46a780d71e7f68ec43d2091299deec34f7d0520f89f42a27f",
+      "reason": "False positive: only adds `repr=False` so the credential-bearing URL stays out of `repr`; the attribute's type, default, and constructor parameter are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "f5277165732c4c6ae79c0ff3e286f1fbccca262094e6dee75b26bfca7455c244",
+      "reason": "False positive: only adds `repr=False` so the credential-bearing URL stays out of `repr`; the attribute's type, default, and constructor parameter are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
     }
   ]
 }
