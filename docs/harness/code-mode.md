@@ -553,6 +553,64 @@ counted from each point the snippet starts or resumes after a tool call.
 With no duration limit (`resource_limits='unlimited'`, or inside a Temporal workflow), a server
 that stops responding is waited on indefinitely.
 
+### Logfire Agent Sandboxes and custom pools
+
+Set `monty_pool_factory` instead of `monty_sandbox_url` when the connection needs more than a URL,
+such as an `Authorization` header. Pass a function that returns a new, unentered `AsyncMonty` or
+`AsyncMontyWebsocket` pool. `CodeMode` calls it as each agent run starts, enters the pool on the
+first `run_code` call, and closes it when the run ends. Concurrent runs each get their own pool, so
+the function must build a new pool on every call. Do not return one pool that you share.
+
+Logfire Agent Sandboxes are Monty workers that Logfire hosts. `logfire.agent_sandboxes` returns a
+pool that connects to the Logfire region of your API key and sends the key as a bearer token, so
+you can pass the function itself:
+
+```python
+import logfire
+from pydantic_ai import Agent
+from pydantic_ai_harness import CodeMode
+
+logfire.configure()
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    capabilities=[CodeMode(monty_pool_factory=logfire.agent_sandboxes)],
+)
+```
+
+This needs the `logfire[agent-sandboxes]` extra and a Logfire API key with the
+`project:execute_agent_sandboxes` scope. The key comes from the `api_key` passed to
+`logfire.configure()`, or from the `LOGFIRE_API_KEY` environment variable.
+
+To send your own headers to another server, build the pool yourself:
+
+```python
+import os
+
+from pydantic_ai import Agent
+from pydantic_monty import AsyncMontyWebsocket
+from pydantic_ai_harness import CodeMode
+
+
+def sandbox_pool() -> AsyncMontyWebsocket:
+    token = os.environ['SANDBOX_TOKEN']
+    return AsyncMontyWebsocket(
+        'wss://sandbox.example.com/monty',
+        connect_headers=lambda: {'Authorization': f'Bearer {token}'},
+        request_timeout=40,
+    )
+
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(monty_pool_factory=sandbox_pool)])
+```
+
+The pool's own `request_timeout` applies, not the `max_duration_secs` plus 10 seconds that
+`monty_sandbox_url` derives. `AsyncMontyWebsocket` and `logfire.agent_sandboxes()` set it to
+10 seconds by default. So if a snippet computes for more than 10 seconds between tool calls, the
+connection closes before `max_duration_secs` (30 seconds by default) stops the snippet, and the
+model gets a crashed-worker retry instead of a time-limit error. Pass a larger value when your
+snippets need it, for example `lambda: logfire.agent_sandboxes(request_timeout=40)`.
+
 ## Temporal durability
 
 Install both integrations:

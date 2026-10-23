@@ -8,7 +8,7 @@ from typing import Any, Never
 
 import pytest
 import websockets
-from pydantic_monty import MountDir
+from pydantic_monty import AsyncMonty, AsyncMontyWebsocket, MountDir
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
@@ -167,3 +167,78 @@ async def test_disconnect_mid_snippet_reports_started_calls(websocket_relay_url:
     (retry,) = _retries(result.all_messages())
     assert 'MontyDisconnectError' in str(retry.content)
     assert 'drop_connection({}) did not finish' in str(retry.content)
+
+
+async def test_pool_factory_runs_code_on_a_pool_per_run() -> None:
+    """Each run builds its own pool from the factory, enters it for `run_code`, and closes it when the run ends."""
+    pools: list[AsyncMonty] = []
+
+    def pool_factory() -> AsyncMonty:
+        pools.append(AsyncMonty())
+        return pools[-1]
+
+    agent = Agent(
+        _snippets_model('x = 20', 'x + 1'),
+        capabilities=[CodeMode(monty_pool_factory=pool_factory)],
+    )
+
+    first, second = await asyncio.gather(agent.run('one'), agent.run('two'))
+
+    for result in (first, second):
+        assert [part.content for part in _parts(result.all_messages(), ToolReturnPart)] == [{}, 21]
+    assert len(pools) == 2
+    for pool in pools:
+        with pytest.raises(RuntimeError, match='not active'):
+            async with pool.checkout():
+                pass  # pragma: no cover
+
+
+async def test_pool_factory_sends_connect_headers() -> None:
+    """A factory's `AsyncMontyWebsocket` dials with its own `connect_headers`, such as a bearer token."""
+    headers: list[str | None] = []
+
+    async def reject(connection: websockets.ServerConnection) -> None:
+        assert connection.request is not None
+        headers.append(connection.request.headers.get('Authorization'))
+        await connection.close()
+
+    async with websockets.serve(reject, '127.0.0.1', 0) as server:
+        port: int = next(iter(server.sockets)).getsockname()[1]
+        agent = Agent(
+            _snippets_model('1 + 1'),
+            capabilities=[
+                CodeMode(
+                    monty_pool_factory=lambda: AsyncMontyWebsocket(
+                        f'ws://127.0.0.1:{port}', connect_headers=lambda: {'Authorization': 'Bearer pylf_test'}
+                    )
+                )
+            ],
+        )
+        result = await agent.run('dial with a key')
+
+    assert headers == ['Bearer pylf_test']
+    (retry,) = _retries(result.all_messages())
+    assert 'Code execution failed and the session was reset' in str(retry.content)
+
+
+async def test_pool_factory_not_called_until_run_starts() -> None:
+    """Constructing the capability does not build a pool; a run that never calls `run_code` builds one and never dials."""
+    calls: list[None] = []
+
+    def pool_factory() -> AsyncMontyWebsocket:
+        calls.append(None)
+        return AsyncMontyWebsocket('ws://127.0.0.1:1')
+
+    agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_pool_factory=pool_factory)])
+    assert calls == []
+
+    result = await agent.run('no run_code call, so nothing dials')
+
+    assert result.output == 'done'
+    assert calls == [None]
+
+
+def test_pool_factory_and_sandbox_url_are_exclusive() -> None:
+    """Two places to run sandboxed code is a configuration error, raised before any run."""
+    with pytest.raises(UserError, match='either `monty_sandbox_url` or `monty_pool_factory`'):
+        CodeMode[None](monty_sandbox_url='wss://sandbox.example.com/monty', monty_pool_factory=AsyncMonty)

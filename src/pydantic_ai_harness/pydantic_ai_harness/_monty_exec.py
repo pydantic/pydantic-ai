@@ -128,13 +128,16 @@ _OS_POLICY: OSPolicy = {'datetime': 'call_host', 'sleep': 'call_host', 'random_s
 class MontyRunState:
     """A Monty worker pool and its checked-out REPL session, opened lazily and closed together.
 
-    Workers are local subprocesses from `AsyncMonty`, or remote ones dialed through
-    `AsyncMontyWebsocket` when `monty_sandbox_url` is set. Inside a Temporal workflow every Monty
-    call goes through `portal`, opened with the pool and closed after it.
+    Workers are local subprocesses from `AsyncMonty`, remote ones dialed through
+    `AsyncMontyWebsocket` when `monty_sandbox_url` is set, or come from `pool_source`, a pool the
+    caller built for this run. Inside a Temporal workflow every Monty call goes through `portal`,
+    opened with the pool and closed after it.
     """
 
     monty_sandbox_url: str | None = field(default=None, repr=False)
     """May carry credentials, so it stays out of `repr`."""
+    pool_source: AsyncMonty | AsyncMontyWebsocket | None = field(default=None, repr=False)
+    """An unentered pool owned by this run state, entered on first use and again after a failed entry."""
     pool: AsyncMonty | AsyncMontyWebsocket | None = None
     session: AsyncMontySession | None = None
     portal: BlockingPortal | None = None
@@ -155,7 +158,9 @@ class MontyRunState:
             try:
                 if in_temporal_workflow:
                     self.portal = self._pool_stack.enter_context(start_blocking_portal())
-                if self.monty_sandbox_url is None:
+                if self.pool_source is not None:
+                    pool = self.pool_source
+                elif self.monty_sandbox_url is None:
                     pool = AsyncMonty()
                 else:
                     max_feed_duration_secs = limits.get('max_feed_duration_secs')
