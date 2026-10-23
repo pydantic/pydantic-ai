@@ -307,15 +307,30 @@ def _leaf(name: str) -> str:
     return name.rsplit('::', 1)[-1]
 
 
-def _predecessor(offender: _Offender, pool: list[_Removed]) -> _Removed | None:
-    """The removed function a new one continues: the most complex of the same name, else one of the same score."""
-    leaf, score = _leaf(offender.function.name), offender.function.complexity
-    same_name = sorted((r for r in pool if _leaf(r.name) == leaf), key=lambda r: -r.complexity)
-    same_score = [r for r in pool if r.complexity == score]
-    match = (same_name or same_score or [None])[0]
-    if match is not None:
-        pool.remove(match)
-    return match
+def _same_name(offender: _Offender, pool: list[_Removed]) -> _Removed | None:
+    """The most complex removed function of the same name: a move, or a rename of its class."""
+    leaf = _leaf(offender.function.name)
+    return max((r for r in pool if _leaf(r.name) == leaf), key=lambda r: r.complexity, default=None)
+
+
+def _same_score(offender: _Offender, pool: list[_Removed]) -> _Removed | None:
+    """A removed function of exactly the same complexity: a rename."""
+    return next((r for r in pool if r.complexity == offender.function.complexity), None)
+
+
+def _predecessors(offenders: list[_Offender], pool: list[_Removed]) -> dict[int, _Removed]:
+    """The removed function each new function continues, by offender index.
+
+    Names pair first, so a rename cannot take the predecessor of a move.
+    """
+    found: dict[int, _Removed] = {}
+    for match in (_same_name, _same_score):
+        for i, o in enumerate(offenders):
+            source = match(o, pool) if o.failure == 'new' and i not in found else None
+            if source is not None:
+                pool.remove(source)
+                found[i] = source
+    return found
 
 
 def _collect(changes: list[_Change], limit: int) -> list[_Offender]:
@@ -326,9 +341,10 @@ def _collect(changes: list[_Change], limit: int) -> list[_Offender]:
         found, removed = _offenders_in(change, limit)
         offenders += found
         pool += removed
+    predecessors = _predecessors(offenders, pool)
     kept: list[_Offender] = []
-    for o in offenders:
-        source = _predecessor(o, pool) if o.failure == 'new' else None
+    for i, o in enumerate(offenders):
+        source = predecessors.get(i)
         if source is not None:
             failure = _classify(source.complexity, o.function.complexity, limit)
             if failure is None:

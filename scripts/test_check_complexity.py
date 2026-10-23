@@ -143,6 +143,20 @@ def test_moving_a_function_into_a_class_without_growing_it_passes(repo: Path, ca
     assert 'note: pkg/owner.py Owner::debt replaces pkg/debt.py debt, so it is not counted' in out
 
 
+def test_a_move_keeps_its_predecessor_when_a_rename_could_take_it(repo: Path, capsys: pytest.CaptureFixture[str]):
+    # `alpha.py` is checked first, and its new function has the removed function's score.
+    _write(repo, 'pkg/debt.py', _ifs('small', 2))
+    _write(repo, 'pkg/alpha.py', _ifs('unrelated', 5))
+    _write(repo, 'pkg/beta.py', _ifs('debt', 5))
+    _stage(repo)
+
+    code, out = _check(capsys, '--staged')
+
+    assert code == 1
+    assert 'note: pkg/beta.py debt replaces pkg/debt.py debt, so it is not counted' in out
+    assert 'pkg/alpha.py:1: unrelated 5: new function over the limit' in out
+
+
 def test_a_moved_function_that_grows_is_judged_against_its_predecessor(repo: Path, capsys: pytest.CaptureFixture[str]):
     _write(repo, 'pkg/debt.py', _ifs('small', 2))
     _write(repo, 'pkg/other.py', _ifs('debt', 6))
