@@ -621,6 +621,8 @@ class TextContent:
     `ModelMessagesTypeAdapter` preserves this field, but as application-only data it is not
     guaranteed to survive a round-trip through the UI adapters; see
     [Storing and loading messages](../message-history.md#storing-and-loading-messages-to-json).
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] drops it from user prompts, since
+    a client that could set it could pass its text off as content the application added.
     """
 
     kind: Literal['text-content'] = 'text-content'
@@ -5124,6 +5126,11 @@ def sanitize_messages(
       `False` that aren't in `allowed_file_url_force_download`, resetting them to `False`. Both
       `True` and `'allow-local'` are reset by default. Applies to file URLs in user content and
       those nested in tool return parts.
+    - [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] on the text items of a
+      [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], resetting it to `None` and keeping the
+      text. Metadata is never sent to the model, but application code and capabilities read it to
+      recognize content they added themselves, such as a background task's report, so a client that
+      can set it could make its own text pass as theirs.
     - [`UploadedFile`][pydantic_ai.messages.UploadedFile] items unless `allow_uploaded_files=True`.
       Like a non-HTTP `FileUrl`, an `UploadedFile` references an object the model provider fetches
       using the server-side IAM role. Applies to uploaded files in user content and those nested in
@@ -5194,6 +5201,7 @@ def sanitize_messages(
     disallowed_url_schemes: set[str] = set()
     reset_force_download_values: set[ForceDownloadMode] = set()
     dropped_uploaded_file_providers: set[str] = set()
+    stripped_text_metadata: list[TextContent] = []
     dangling_tool_call_names: list[str] = []
 
     sanitized: list[ModelMessage] = []
@@ -5208,6 +5216,7 @@ def sanitize_messages(
                 disallowed_schemes=disallowed_url_schemes,
                 reset_force_download_values=reset_force_download_values,
                 dropped_uploaded_file_providers=dropped_uploaded_file_providers,
+                stripped_text_metadata=stripped_text_metadata,
             )
             stripped_system_prompt = stripped_system_prompt or request_stripped_system_prompt
             if new_request_parts:
@@ -5285,6 +5294,16 @@ def sanitize_messages(
             f'or service account, so it should only be accepted from trusted clients. To keep uploaded files '
             f'from the client, set `allow_uploaded_files=True`, or pass them on trusted server-side '
             f'`message_history` directly to `Agent.run`.',
+            UserWarning,
+            stacklevel=2,
+        )
+
+    if stripped_text_metadata:
+        warnings.warn(
+            f'`TextContent.metadata` was dropped from {len(stripped_text_metadata)} client-submitted user prompt '
+            f'item(s). Metadata is never sent to the model, but application code and capabilities read it to '
+            f'recognize content they added themselves, so it is not accepted from untrusted clients. Pass '
+            f'history that carries your own metadata as trusted server-side `message_history` instead.',
             UserWarning,
             stacklevel=2,
         )
@@ -5374,12 +5393,14 @@ def _sanitize_request_parts(
     disallowed_schemes: set[str],
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
+    stripped_text_metadata: list[TextContent],
 ) -> tuple[list[ModelRequestPart], bool]:
     """Sanitize the parts of an untrusted [`ModelRequest`][pydantic_ai.messages.ModelRequest].
 
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
     updated in place with any non-allowlisted file URL schemes, `force_download` values, and dropped
-    uploaded file providers encountered.
+    uploaded file providers encountered, and `stripped_text_metadata` with the user prompt
+    [`TextContent`][pydantic_ai.messages.TextContent] items whose metadata was dropped.
     Returns the kept parts and whether any part carrying the system voice
     ([`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or an instruction part) was
     stripped. Retry feedback is kept, in a form that can't carry client-written system text; see
@@ -5403,7 +5424,7 @@ def _sanitize_request_parts(
                 reset_force_download_values,
                 dropped_uploaded_file_providers,
             )
-            new_parts.append(replace(part, content=filtered_content))
+            new_parts.append(replace(part, content=_without_text_metadata(filtered_content, stripped_text_metadata)))
         elif isinstance(part, ToolReturnPart):
             new_parts.append(
                 _sanitize_tool_return_part(
@@ -5454,6 +5475,20 @@ def _filter_user_content(
             continue
         filtered.append(item)
     return filtered
+
+
+def _without_text_metadata(content: list[UserContent], stripped: list[TextContent]) -> list[UserContent]:
+    """Drop the metadata of untrusted user prompt [`TextContent`][pydantic_ai.messages.TextContent], keeping its text.
+
+    `stripped` is updated in place with the original items whose metadata was dropped.
+    """
+    kept: list[UserContent] = []
+    for item in content:
+        if isinstance(item, TextContent) and item.metadata is not None:
+            stripped.append(item)
+            item = replace(item, metadata=None)
+        kept.append(item)
+    return kept
 
 
 def _sanitize_file_url(

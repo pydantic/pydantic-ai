@@ -1,3 +1,4 @@
+# description: Compares a pull request's latest CI run with recent successful main and pull-request runs and updates one sticky comment when trigger:ci-duration-report is applied.
 name: CI Duration Report
 
 # Label-triggered CI duration report. Adding `trigger:ci-duration-report` to a

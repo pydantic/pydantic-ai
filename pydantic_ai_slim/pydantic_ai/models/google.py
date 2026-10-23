@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import base64
 import re
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -496,7 +496,9 @@ def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
         'low': 'LOW',
         'medium': 'MEDIUM',
         'high': 'HIGH',
-        'xhigh': 'HIGH',  # Gemini has no `xhigh`; map it to the highest level.
+        # Gemini has nothing above `HIGH`; map the higher levels to it.
+        'xhigh': 'HIGH',
+        'max': 'HIGH',
     }
     return level_by_effort[thinking]
 
@@ -1016,6 +1018,10 @@ class GoogleModel(Model[Client]):
         except (errors.APIError, httpx2.TransportError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
 
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # An explicit thinking config replaces the unified one in `_translate_thinking`.
+        return ('google_thinking_config',) if model_settings.get('google_thinking_config') else ()
+
     def _build_http_options(self, model_settings: GoogleModelSettings, headers: dict[str, str]) -> HttpOptionsDict:
         """The per-request HTTP options: headers, plus the `timeout` and `max_retries` settings."""
         http_options: HttpOptionsDict = {'headers': headers}
@@ -1070,6 +1076,7 @@ class GoogleModel(Model[Client]):
                 'medium': 8192,
                 'high': 24576,
                 'xhigh': 24576,  # max for Flash; Pro goes to 32768 but we use a safe common max
+                'max': 24576,
             }
             return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
 
@@ -2076,7 +2083,7 @@ def _can_echo_server_side_tool_part(tool_call_id: str, *, supports_tool_combinat
 
     1. The model doesn't support tool combination (pre-Gemini-3) — those models never emit
        `tool_call`/`tool_response` parts and reject them in request bodies.
-    2. The `tool_call_id` was synthesized by pydantic-ai (the `pyd_ai_` prefix from
+    2. The `tool_call_id` was synthesized by pydantic-ai (the `TOOL_CALL_ID_PREFIX` prefix from
        [`generate_tool_call_id`][pydantic_ai._utils.generate_tool_call_id]) — i.e. the part was
        reconstructed from `grounding_metadata` / `url_context_metadata` and never had a real
        Google id. Gemini rejects unknown ids, so message histories built before this round-trip
@@ -2084,7 +2091,7 @@ def _can_echo_server_side_tool_part(tool_call_id: str, *, supports_tool_combinat
     """
     if not supports_tool_combination:
         return False
-    return not tool_call_id.startswith('pyd_ai_')
+    return not tool_call_id.startswith(_utils.TOOL_CALL_ID_PREFIX)
 
 
 def _process_part(

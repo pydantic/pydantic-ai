@@ -14,7 +14,7 @@ from collections.abc import (
 )
 from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import FrameType, TracebackType
 from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeAlias, cast, overload
 
@@ -2272,6 +2272,12 @@ class _RealtimeSessionResolution(Generic[AgentDepsT]):
     ) = None
     lifecycle: _RealtimeSessionLifecycle | None = None
     """Set only when the caller asked for run-lifecycle hooks, i.e. by `_open_realtime_session`."""
+    session_instructions: str | None = None
+    """What the provider session is configured with: the standing system prompt, then `instructions`."""
+    message_history: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
+    """The seeded history, with its dynamic system prompts re-evaluated."""
+    system_prompt: list[_messages.SystemPromptPart] = field(default_factory=list[_messages.SystemPromptPart])
+    """The agent's resolved system prompt, which a fresh session records first; empty when history was seeded."""
     short_circuited: bool = False
     """A `wrap_run` hook returned a result without opening the session; nothing below was resolved."""
 
@@ -2364,16 +2370,16 @@ class AgentRealtime(Generic[AgentDepsT]):
                 if self._message_history and _accepts_message_history(resolved.model.answer_webrtc_offer):
                     return await resolved.model.answer_webrtc_offer(
                         sdp_offer,
-                        instructions=resolved.instructions,
+                        instructions=resolved.session_instructions,
                         tools=resolved.model_request_parameters.function_tools,
                         model_settings=resolved.model_settings,
-                        message_history=self._message_history,
+                        message_history=resolved.message_history,
                     )
                 # The keyword is only passed when there is history and the model takes it, so a `RealtimeModel`
                 # written before it existed keeps working: its sideband seeds the history, as it always did.
                 return await resolved.model.answer_webrtc_offer(
                     sdp_offer,
-                    instructions=resolved.instructions,
+                    instructions=resolved.session_instructions,
                     tools=resolved.model_request_parameters.function_tools,
                     model_settings=resolved.model_settings,
                 )
@@ -2432,7 +2438,7 @@ class AgentRealtime(Generic[AgentDepsT]):
             message_history=self._message_history,
         ) as resolved:
             return await resolved.model.create_client_secret(
-                instructions=resolved.instructions,
+                instructions=resolved.session_instructions,
                 tools=resolved.model_request_parameters.function_tools,
                 model_settings=resolved.model_settings,
                 expires_after_seconds=expires_after_seconds,
