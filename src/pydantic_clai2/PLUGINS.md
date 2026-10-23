@@ -1170,7 +1170,7 @@ the model the harness's `AskUser` capability: one tool, `ask_user_question`, for
 asking you one to ten multiple-choice questions when the task is ambiguous. Each
 question appears inline above a compact numbered picker, keeping the conversation
 visible. The question is pinned with its choices, so output streamed meanwhile (a
-delegated task's, say) lands above it instead of between it and the picker. Up/Down moves the highlight; Enter or an option's number selects it.
+delegated task's, say) lands above it instead of between it and the picker. Up/Down or Tab/Shift+Tab moves the highlight; Enter or an option's number selects it.
 For multi-select questions, Enter or a number toggles that choice; select `Done`
 to submit at least one choice. The title says `question 2 of 3` when there are
 several. Esc or Ctrl-C declines the whole request and lets the model continue.
