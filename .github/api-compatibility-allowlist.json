@@ -26,6 +26,36 @@
     },
     {
       "against": "v2.59.0",
+      "fingerprint": "01c743d24a50d95bf9e6e60708d8e18127f8162acb6c6eb7be934c07d4c76a31",
+      "reason": "Adds the 'max' effort level to unified thinking (#9993); existing values are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "d2843ec47262fc6f636d040aab3968f84f4a196040a6c4d80d1346117291581c",
+      "reason": "Adds the 'max' key for the new unified thinking effort level (#9993); existing keys are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "8d99eeaee298c23b0fd72e23c0a5412cbd02dcf80e141f40959631d764afd89e",
+      "reason": "Adds the 'max' key for the new unified thinking effort level (#9993); existing keys are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "7d58785ddbe7ca707bcc6ebf0914706ff6434552ecf3640b865ae4e1e3748080",
+      "reason": "Adds the 'max' key for the new unified thinking effort level (#9993); existing keys are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "30907d84b32362b61fa212732b1ad3fb8fda3160dcd968b37470a5f39863fd67",
+      "reason": "Adds the 'max' key for the new unified thinking effort level (#9993); existing keys are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
       "fingerprint": "1b295e087b0c5d9ce099eef747012b54cb660fed111f5b9c051942f8c5ed9d9f",
       "reason": "Adds `FileUnderstanding` to `CAPABILITY_TYPES`; every existing capability type is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8453"
