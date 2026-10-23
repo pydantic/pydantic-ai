@@ -599,11 +599,6 @@ _AGUI_EMPTY_RESPONSE = (
     'AG-UI `dump_messages()` drops an empty response, so the feedback after it loads into the question '
     'before it; no issue yet'
 )
-_DUPLICATE_IDS = (
-    "Vercel AI `dump_messages()` gives a request's system and user messages the same id once the request "
-    'carries the `ui_message_id` it was loaded with, so a hydrated client holds two messages with one id; '
-    'no issue yet'
-)
 _SERVER_SYSTEM_PROMPT = (
     'a system prompt enqueued in an earlier run is stripped from client history with the rest in '
     "`manage_system_prompt='server'`, and nothing restores it; #10389 kept only the ones of the current run"
@@ -623,7 +618,6 @@ SCENARIOS = [
         id='system_prompt_and_text_deltas',
         script=_text_script,
         agent_kwargs={'system_prompt': 'You are terse.', 'instructions': 'Answer in English.'},
-        gaps=_gaps(_DUPLICATE_IDS, ('ids', 'dump', 'vercel')),
     ),
     Scenario(
         id='client_owned_system_prompt',
@@ -633,7 +627,6 @@ SCENARIOS = [
         gaps={
             **_gaps(_AGUI_ACTIVITY, ('load', 'stream', 'agui'), ('wire', 'stream', 'agui')),
             **_gaps(_AGUI_SYSTEM_ORDER, ('load', 'dump', 'agui'), ('wire', 'dump', 'agui')),
-            **_gaps(_DUPLICATE_IDS, ('ids', 'dump', 'vercel')),
         },
         # The frontend owns the system prompt, so it's the one sending it.
         seed=[
