@@ -43,7 +43,7 @@ for a run on purpose, pass `workspace=UnavailableWorkspace(reason=...)`: its ope
 
 A workspace may have a graphical display: `ctx.workspace.has_display` says so without I/O, and
 `display_size()`, `screenshot()` (PNG bytes) and `act(action)` control it, with coordinates in screenshot
-pixels. A backend offers one by implementing `SupportsComputerUse`, deciding `has_display` per instance;
+pixels. A backend offers one by implementing `SupportsDisplay`, deciding `has_display` per instance;
 a Linux X server can be driven through `X11Computer`. `LocalWorkspace` has no display. `ComputerUse()`
 gives the model one `computer` tool over it, taking a list of actions and returning a screenshot; it
 fails a run whose workspace has no display, and a request to a model that can't take images.

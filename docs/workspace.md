@@ -525,7 +525,7 @@ symlinks should also implement `SupportsRealpath`; see [Resolving symlinks](#res
 ### Controlling a display
 
 A backend whose environments can have a graphical display implements
-[`SupportsComputerUse`][pydantic_ai.workspaces.SupportsComputerUse]: `has_display`, which says without I/O
+[`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]: `has_display`, which says without I/O
 whether this environment has one, `display_size`, `screenshot` (PNG bytes), and `act`, which performs one [`ComputerAction`][pydantic_ai.workspaces.ComputerAction]
 such as a click or a key press. Tools reach them as `ctx.workspace.screenshot()` and
 `ctx.workspace.act(...)`; under durable execution, calls from workflow code run as workspace
@@ -534,10 +534,10 @@ operations, like file calls. A Linux environment that runs an X server can deleg
 the backend's commands:
 
 ```python {test="skip" lint="skip"}
-from pydantic_ai.workspaces import ComputerAction, SupportsComputerUse, X11Computer
+from pydantic_ai.workspaces import ComputerAction, SupportsDisplay, X11Computer
 
 
-class MyDesktopSandbox(MySandbox, SupportsComputerUse):
+class MyDesktopSandbox(MySandbox, SupportsDisplay):
     @property
     def has_display(self) -> bool:
         return True

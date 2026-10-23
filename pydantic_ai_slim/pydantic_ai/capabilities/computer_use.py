@@ -144,7 +144,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     The model sends a list of mouse and keyboard actions; they run in order on `ctx.workspace`, and the tool
     returns a screenshot of the result. The workspace must have a display, such as a sandbox capability started
-    with a desktop; see [`SupportsComputerUse`][pydantic_ai.workspaces.SupportsComputerUse]. The model must accept
+    with a desktop; see [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]. The model must accept
     images.
 
     Under durable execution the tool runs in workflow code, so each action and screenshot is its own durable

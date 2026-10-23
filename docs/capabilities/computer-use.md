@@ -24,7 +24,7 @@ async def main():
 ```
 
 1. Any capability whose workspace has a display: its backend implements
-   [`SupportsComputerUse`][pydantic_ai.workspaces.SupportsComputerUse]. See
+   [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]. See
    [Controlling a display](../workspace.md#controlling-a-display) to give a sandbox one.
 
 The agent keeps the rest of the workspace, so it can mix desktop steps with commands and file tools on the same
@@ -58,7 +58,7 @@ OpenAI can attach safety checks to a call; they are acknowledged automatically w
 | Setting | Default | What it does |
 |---|---|---|
 | `require_approval` | `False` | Ask before any call that does more than look or wait; the run needs a [deferred tool handler](../deferred-tools.md#human-in-the-loop-tool-approval). Turn it on for anything you'd regret an agent clicking. |
-| `keep_screenshots` | `None` | The fewest recent screenshots each model request carries; older ones become a short note in the request, 25 at a time so the prompt cache keeps working in between. The run's history keeps them all. Use it to bound a long run; a short run costs the same either way. |
+| `keep_screenshots` | `None` | The fewest recent screenshots each model request carries; older ones become a short note in the request, 25 at a time so the prompt cache keeps working in between: `keep_screenshots=5` sends between 5 and 29. The run's history keeps them all. Use it to bound a long run; a short run costs the same either way. |
 | `settle_seconds` | `0.5` | Pause after acting before the screenshot, so animations and page loads can finish. |
 
 ## Limits
@@ -70,3 +70,5 @@ OpenAI can attach safety checks to a call; they are acknowledged automatically w
   workspace operation, so a retry repeats only that one, which may already have taken effect, such as a click.
   Every screenshot in the history rides in each model request's payload, so long runs can reach Temporal's payload
   size limit.
+- Inside a [`FallbackModel`](../models/overview.md#fallback-model), every model gets pixel coordinates, since the
+  fallback has no profile of its own. Gemini 3 models point less accurately in pixels than on their own grid.
