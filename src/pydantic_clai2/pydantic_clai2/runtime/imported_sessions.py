@@ -68,6 +68,36 @@ def import_source(name: str) -> ImportSource | None:
     return next((source for source in IMPORT_SOURCES if source == name), None)
 
 
+def source_label(source: ImportSource) -> str:
+    """The agent's name as CLAI shows it: `Claude Code` or `Codex`."""
+    return _SOURCES[source].label
+
+
+def source_tag(source: ImportSource) -> str:
+    """The tag an imported session keeps in `ConversationSummary.tags`.
+
+    Background naming only writes letters and digits, so it can neither make nor replace this tag.
+    """
+    return f'from:{source}'
+
+
+def _conversation_id(source: ImportSource, native_id: str) -> str:
+    return str(uuid5(_NAMESPACE, f'{source}:{native_id}'))
+
+
+def imported_from(summary: ConversationSummary) -> ImportSource | None:
+    """The agent a session came from, before or after importing it; `None` for CLAI's own sessions."""
+    for source, spec in _SOURCES.items():
+        if source_tag(source) in summary.tags:
+            return source
+        # Imported before imports were tagged: the copy keeps its import subtitle, which names the
+        # original, until background naming replaces it. Its ID is derived from that original's.
+        native_id = summary.subtitle.removeprefix(f'{spec.label} session ')
+        if native_id != summary.subtitle and summary.id == _conversation_id(source, native_id):
+            return source
+    return None
+
+
 @dataclass(frozen=True, kw_only=True)
 class ImportedSession:
     """A session on disk and the summary its CLAI copy starts with."""
@@ -104,12 +134,12 @@ def _imported(source: ImportSource, path: Path, *, modified: float, titles: dict
         source=source,
         path=path,
         summary=ConversationSummary(
-            id=str(uuid5(_NAMESPACE, f'{source}:{header.native_id}')),
+            id=_conversation_id(source, header.native_id),
             workspace=str(Path(header.cwd).resolve()),
             updated_at=datetime.fromtimestamp(modified, UTC),
             title=title or header.title,
             subtitle=f'{spec.label} session {header.native_id}',
-            tags=(source,),
+            tags=(source_tag(source),),
             # Names the other agent generated are kept until the conversation moves on.
             title_source='generated' if title or header.named else 'fallback',
         ),
@@ -202,12 +232,14 @@ async def save_import(store: SqliteConversationStore, imported: ImportedSession)
         raise ValueError(f'{imported.summary.subtitle} has no conversation to import')
     summary = imported.summary
     if saved is not None:
-        # Keep the names the user or the namer gave the copy.
+        # Keep the names the user or the namer gave the copy, and say where it came from: a copy saved
+        # before sources were tagged may have lost its subtitle to naming.
+        tag = source_tag(imported.source)
         summary = replace(
             summary,
             title=saved.title,
             subtitle=saved.subtitle,
-            tags=saved.tags,
+            tags=(tag, *(t for t in saved.tags if t != tag)),
             title_source=saved.title_source,
             naming_version=saved.naming_version,
             named_revision=saved.named_revision,

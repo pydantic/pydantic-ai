@@ -1248,7 +1248,8 @@ session's `conversation`. The sidebar lists `host.sessions`, the store `/resume`
 `/resume` groups them: by repository, then by checkout, with a session from a removed worktree
 under its repository by the checkout saved with it (`ConversationSummary.checkout`), archived ones
 left out unless its archive button is on (`GET /api/sessions?include_archived=true`;
-`POST /api/sessions/ID/archive` and `/unarchive`).
+`POST /api/sessions/ID/archive` and `/unarchive`). A session imported from Claude Code or Codex
+carries that agent's name (`source`), shown beside its title.
 
 Under `clai2 --web`, clicking a session opens it live (`POST /api/sessions/ID/open`, which calls
 `host.live.open`), even while other sessions run turns: it is resumed in a session of its own, in
@@ -1562,7 +1563,7 @@ workspace has an **Open** link to its page, as the sidebar's Workspaces section 
 | `session_wait(workspace, timeout=300)` | wait, up to an hour, until the turn ends (then its final answer) or the session asks something |
 | `session_interrupt(workspace)` | stop the running turn |
 | `session_answer(workspace, request, answers=None, value=None)` | answer a question request (`answers`, none declines) or a dialog (`value`) |
-| `sessions_find(query='', project='', older_than_days=None, include_archived=False, limit=50)` | saved sessions of every project, from `host.sessions`, as a table: ID, title, project, worktree, last active, archived |
+| `sessions_find(query='', project='', older_than_days=None, include_archived=False, limit=50)` | saved sessions of every project, from `host.sessions`, as a table: ID, title (with `(from Claude Code)` or `(from Codex)` for an imported one), project, worktree, last active, archived |
 | `sessions_archive(ids)` | archive them, reporting each one archived and each refused (the current session, running ones) with the reason |
 | `sessions_unarchive(ids)` | list them again |
 
@@ -2662,7 +2663,9 @@ prompt the keyboard does:
   from `listing` and `/resume` without deleting anything, refusing the same two, and returns its
   `ConversationSummary` (with `archived_at` set); `unarchive(ID)` lists it again, and so do
   resuming it (not `--fork-session`) and a new turn in it. `listing(archived=True)` lists only
-  archived sessions, and `archived=None` both. As in `/resume`, a fork gets its own copy of the session's
+  archived sessions, and `archived=None` both. A session imported from Claude Code or Codex has
+  the tag `from:claude` or `from:codex` in its `ConversationSummary.tags`, which background naming
+  keeps. As in `/resume`, a fork gets its own copy of the session's
   Monty state, and a deleted session's state is deleted with it. Like opening `/resume`, `listing`
   queues the newest untitled sessions for background naming, which calls the
   naming model. Renaming the current conversation fires `on_conversation_changed` at once, even

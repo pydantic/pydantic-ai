@@ -383,6 +383,8 @@ pre {
 }
 
 .worktree-tag {
+  flex: none;
+  white-space: nowrap;
   padding: 0 6px;
   border: 1px solid var(--border);
   border-radius: 999px;

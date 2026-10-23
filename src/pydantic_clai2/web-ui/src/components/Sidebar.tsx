@@ -54,6 +54,8 @@ interface Props {
   onPlugins: () => void
   onSettings: () => void
   onError: (message: string) => void
+  /** Told the agent each listed session was imported from, by conversation ID, for the top bar. */
+  onSources: (sources: Record<string, string>) => void
   /** The current session's delegated tasks, shown under it. */
   tasks: TaskEntry[]
   /** The worker open in the main pane. */
@@ -132,6 +134,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     onPlugins,
     onSettings,
     onError,
+    onSources,
     tasks,
     worker,
     onWorker,
@@ -171,11 +174,13 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     try {
       const found = await api.sessions(query, archived)
       if (id === loading.current) setProjects(found)
+      const sessions = found.flatMap((project) => project.worktrees.flatMap((worktree) => worktree.sessions))
+      onSources(Object.fromEntries(sessions.flatMap((session) => (session.source ? [[session.id, session.source]] : []))))
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) setUnsaved(true)
       else onError(error instanceof Error ? error.message : String(error))
     }
-  }, [query, archived, onError])
+  }, [query, archived, onError, onSources])
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), query ? 150 : 0)
@@ -248,6 +253,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
           <button className="session-main" onClick={() => onView(session)} title={session.workspace}>
             <StateDot state={state} />
             <span className="session-title">{session.title}</span>
+            {session.source && <span className="worktree-tag">{session.source}</span>}
             {session.archived && <span className="worktree-tag">archived</span>}
             {opening === session.id && <span className="spinner" aria-label="Opening" />}
             <span className="session-time">

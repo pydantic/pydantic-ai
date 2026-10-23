@@ -15,6 +15,7 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_clai2.builtin_plugins.web.protocol import ServerMessage, SessionsChanged
 from pydantic_clai2.builtin_plugins.web.workspace_tools import reported
 from pydantic_clai2.plugins import PluginHost, SessionCatalog
+from pydantic_clai2.runtime.imported_sessions import imported_from, source_label
 from pydantic_clai2.runtime.project_identity import ProjectIdentity, placements, project_identity
 
 SCAN = 5000
@@ -86,7 +87,7 @@ class SessionTools:
             '|---|---|---|---|---|---|',
         ]
         lines += [
-            f'| {entry.id} | {_cell(entry.title)}{" (current session)" if entry.id == current else ""} '
+            f'| {entry.id} | {_cell(entry.title)}{_from(entry)}{" (current session)" if entry.id == current else ""} '
             f'| {_cell(place.name)} | {_cell(place.checkout or entry.workspace)} | {_active(entry.updated_at, now)} '
             f'| {"yes" if entry.archived_at is not None else "no"} |'
             for entry, place in shown
@@ -136,6 +137,12 @@ class SessionTools:
 def _cell(text: str) -> str:
     """Text for one table cell: one line, without the column separator."""
     return ' '.join(text.split()).replace('|', '/')
+
+
+def _from(entry: ConversationSummary) -> str:
+    """What a title adds for a session imported from another agent."""
+    source = imported_from(entry)
+    return '' if source is None else f' (from {source_label(source)})'
 
 
 def _active(moment: datetime, now: datetime) -> str:

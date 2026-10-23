@@ -125,6 +125,9 @@ export function App() {
     }
   }, [])
   const sidebarRef = useRef<SidebarHandle>(null)
+  // The agent each session the sidebar listed was imported from, by conversation ID; a session's never changes.
+  const [sources, setSources] = useState<Record<string, string>>({})
+  const addSources = useCallback((found: Record<string, string>) => setSources((all) => ({ ...all, ...found })), [])
   const socket = useRef<Socket | null>(null)
   // What a new connection watches again, read when it opens.
   const watching = useRef(shown)
@@ -481,6 +484,7 @@ export function App() {
       ? preview.title
       : (chat.session?.title ?? 'New session')
   const workspace = preview ? preview.workspace : (chat.session?.workspace ?? '')
+  const source = workerTask ? undefined : sources[preview?.id ?? shown ?? '']
   const entries = preview ? preview.items : chat.entries
   const project = (chat.session?.workspace ?? '').split('/').filter(Boolean).pop() ?? ''
   const fresh = !preview && !workerTask && entries.length === 0 && chat.session !== null
@@ -538,6 +542,7 @@ export function App() {
           onPlugins={openPlugins}
           onSettings={openSettings}
           onError={showError}
+          onSources={addSources}
           tasks={chat.tasks}
           worker={workerTask?.id ?? null}
           onWorker={openWorker}
@@ -562,6 +567,7 @@ export function App() {
               )}
               <div className="topbar-title">
                 <span className="title">{title}</span>
+                {source && <span className="worktree-tag">{source}</span>}
                 <span className="workspace" title={workspace}>
                   {workspace.replace(/^\/Users\/[^/]+/, '~')}
                 </span>

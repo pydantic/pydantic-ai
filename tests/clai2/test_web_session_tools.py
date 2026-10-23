@@ -144,18 +144,26 @@ def test_finding_and_unarchiving(make_web: MakeWeb, tmp_path: Path) -> None:
     alpha.mkdir()
     beta.mkdir()
     parser = save(web_, ConversationSummary(workspace=str(alpha), title='Parser | fix'), days=1)
-    save(web_, ConversationSummary(workspace=str(beta), title='Docs'))
+    # Imported from Claude Code: the table and the sidebar both say so; CLAI's own sessions say nothing.
+    save(web_, ConversationSummary(workspace=str(beta), title='Docs', tags=('from:claude', 'docs')))
+    sources = {
+        entry['title']: entry['source']
+        for project in web_.get('/api/sessions').json()
+        for worktree in project['worktrees']
+        for entry in worktree['sessions']
+    }
+    assert sources == {'Parser | fix': None, 'Docs': 'Claude Code'}
 
     both = call(tools.sessions_find, limit=1).splitlines()
     assert both[0] == '1 of 2 matching sessions, newest first.'
-    assert ' | Docs | beta | ' in both[3] and '(today) | no |' in both[3]
+    assert ' | Docs (from Claude Code) | beta | ' in both[3] and '(today) | no |' in both[3]
     [row] = call(tools.sessions_find, project='ALPHA').splitlines()[3:]
     assert row.startswith(f'| {parser} | Parser / fix | alpha | {alpha} | ') and '(1 day ago)' in row
     assert call(tools.sessions_find, query='nothing like it') == 'No saved sessions match.'
     # A folder removed since the last search is placed again, as the sidebar places it.
     beta.rmdir()
     [gone] = call(tools.sessions_find, query='Docs').splitlines()[3:]
-    assert ' | Docs | Removed folders | beta | ' in gone
+    assert ' | Docs (from Claude Code) | Removed folders | beta | ' in gone
 
     assert call(tools.sessions_archive, ['missing', parser, parser]).splitlines() == [
         'Archived 1 session:',
@@ -164,7 +172,7 @@ def test_finding_and_unarchiving(make_web: MakeWeb, tmp_path: Path) -> None:
         '- missing: No saved session: missing',
     ]
     assert published == [SessionsChanged()]
-    assert [line.split(' | ')[1] for line in call(tools.sessions_find).splitlines()[3:]] == ['Docs']
+    assert [line.split(' | ')[1] for line in call(tools.sessions_find).splitlines()[3:]] == ['Docs (from Claude Code)']
     archived = call(tools.sessions_find, query='Parser', include_archived=True).splitlines()[3]
     assert archived.endswith('| yes |')
     assert call(tools.sessions_unarchive, [parser]).splitlines() == [
