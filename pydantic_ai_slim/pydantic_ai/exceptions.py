@@ -547,11 +547,11 @@ class ModelAPIError(AgentRunError):
     [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError]),
     [`ModelServerError`][pydantic_ai.exceptions.ModelServerError],
     [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] (and its
-    [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]),
-    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError], or
+    [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]), or
     [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] (and its
-    [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] and
-    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError]). When the error
+    [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
+    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] and
+    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError]). When the error
     came with an HTTP status code, the raised exception is also a
     [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]; see
     [`ModelHTTPError.for_category`][pydantic_ai.exceptions.ModelHTTPError.for_category].
@@ -630,7 +630,7 @@ class ModelAPIError(AgentRunError):
 
 
 class ModelRateLimitError(ModelAPIError):
-    """Raised when the provider rejected the request because a rate limit was reached.
+    """Raised when the provider refused the request because a rate limit was reached.
 
     For example an HTTP 429 with `rate_limit_exceeded`, Bedrock's `ThrottlingException`, or a gRPC
     `RESOURCE_EXHAUSTED`, whether it arrived as an HTTP status or inside a stream. Exhausted quota or billing that
@@ -643,7 +643,7 @@ class ModelRateLimitError(ModelAPIError):
 
 
 class ModelQuotaExceededError(ModelAPIError):
-    """Raised when the provider rejected the request because the account's quota, credits, or billing is exhausted.
+    """Raised when the provider refused the request because the account's quota, credits, or billing is exhausted.
 
     Only raised when the provider says so explicitly, e.g. an HTTP 402, OpenAI's `insufficient_quota`,
     Anthropic's `billing_error`, or Bedrock's `ServiceQuotaExceededException`. Unlike a
@@ -739,33 +739,34 @@ class ModelTimeoutError(ModelConnectionError):
     """
 
 
-class ModelContextWindowExceededError(ModelAPIError):
-    """Raised when the provider rejected the request because the input exceeds the model's context window.
-
-    Catch it to compact or truncate the message history and try again; see
-    [Compaction](../capabilities/compaction.md). An overflow reported as an HTTP 400 is also a
-    [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] with status 400, as before.
-
-    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] falls back on it by default, since a later
-    model may have a larger context window. See
-    [Handling context window overflow](../models/overview.md#context-window-overflow) to change that.
-    """
-
-
 class ModelRequestRejectedError(ModelAPIError):
     """Raised when the provider rejected the request itself, so sending it again unchanged won't succeed.
 
     For example an HTTP 400 or 422, or a gRPC `INVALID_ARGUMENT`, when no more specific category applies. Its
-    subclasses [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] and
-    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] say why, where the provider does.
+    subclasses say why, where the provider does:
+    [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
+    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError], and
+    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError].
 
-    A rejection with a category of its own is raised as that category instead, even when it came with one of these
-    statuses: a context window overflow (often a 400) is a
-    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError], and exhausted
-    credits (Anthropic sends a 400) a [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError].
+    Exhausted credits are a [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] instead, even
+    when the provider sends them as a 400 like Anthropic does, since topping up the account fixes them.
 
     Another model or provider may still accept the request, so
     [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] falls back on it by default.
+    """
+
+
+class ModelContextWindowExceededError(ModelRequestRejectedError):
+    """Raised when the provider rejected the request because the input exceeds the model's context window.
+
+    Catch it to compact or truncate the message history and try again; see
+    [Compaction](../capabilities/compaction.md). An overflow reported as an HTTP 400 is also a
+    [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] with status 400, as before. A subclass of
+    [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError].
+
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] falls back on it by default, since a later
+    model may have a larger context window. See
+    [Handling context window overflow](../models/overview.md#context-window-overflow) to change that.
     """
 
 

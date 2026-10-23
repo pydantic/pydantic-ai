@@ -21,6 +21,7 @@ from pydantic_ai.exceptions import (
     ContentFilterError,
     IncompleteToolCall,
     ModelAPIError,
+    ModelAuthenticationError,
     ModelConnectionError,
     ModelContextWindowExceededError,
     ModelHTTPError,
@@ -28,6 +29,7 @@ from pydantic_ai.exceptions import (
     ModelOverloadedError,
     ModelQuotaExceededError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelRequestTimeout,
     ModelServerError,
     ModelTimeoutError,
@@ -850,7 +852,18 @@ _HTTP_CATEGORIES = [
     ModelOverloadedError,
     ModelServerError,
     ModelContextWindowExceededError,
+    ModelRequestRejectedError,
+    ModelAuthenticationError,
+    ModelNotFoundError,
 ]
+
+
+@pytest.mark.parametrize('category', [ModelContextWindowExceededError, ModelAuthenticationError, ModelNotFoundError])
+def test_rejection_subcategories_are_rejected_requests(category: type[ModelRequestRejectedError]):
+    """An overflow, a rejected credential and an unknown model are rejected requests, with or without a status."""
+    assert isinstance(category('gpt-4', 'rejected'), ModelRequestRejectedError)
+    http_error = ModelHTTPError.for_category(category, status_code=400, model_name='gpt-4')
+    assert isinstance(http_error, ModelRequestRejectedError) and isinstance(http_error, category)
 
 
 @pytest.mark.parametrize('category', _HTTP_CATEGORIES, ids=lambda c: c.__name__)

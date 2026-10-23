@@ -25,7 +25,6 @@ from temporalio.exceptions import ActivityError, ApplicationError
 from ...exceptions import (
     ModelAPIError,
     ModelConnectionError,
-    ModelContextWindowExceededError,
     ModelHTTPError,
     ModelQuotaExceededError,
     ModelRateLimitError,
@@ -144,7 +143,7 @@ _ERROR_CATEGORIES = (
     ModelUnavailableError,
     ModelServerError,
     ModelConnectionError,
-    ModelContextWindowExceededError,
+    # Also covers its subclasses, like `ModelContextWindowExceededError`.
     ModelRequestRejectedError,
 )
 

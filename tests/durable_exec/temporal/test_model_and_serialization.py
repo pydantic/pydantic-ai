@@ -57,6 +57,7 @@ from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelAuthenticationError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
     ModelNotFoundError,
     ModelRateLimitError,
@@ -3568,6 +3569,11 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             ModelNotFoundError('gpt-test', 'The model does not exist.', in_stream=True),
             'ModelAPIError',
             id='not-found',
+        ),
+        pytest.param(
+            ModelContextWindowExceededError('gpt-test', 'context_length_exceeded: too long'),
+            'ModelAPIError',
+            id='context-window',
         ),
         pytest.param(ModelTimeoutError('gpt-test', 'timed out', phase='read'), 'ModelAPIError', id='timeout'),
         pytest.param(

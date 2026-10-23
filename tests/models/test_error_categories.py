@@ -103,6 +103,8 @@ _REJECTED: set[type[ModelAPIError]] = {ModelHTTPError, ModelRequestRejectedError
 _AUTHENTICATION: set[type[ModelAPIError]] = {ModelHTTPError, ModelRequestRejectedError, ModelAuthenticationError}
 """A rejected authentication is also a rejected request."""
 _NOT_FOUND: set[type[ModelAPIError]] = {ModelHTTPError, ModelRequestRejectedError, ModelNotFoundError}
+_CONTEXT_WINDOW: set[type[ModelAPIError]] = {ModelHTTPError, ModelRequestRejectedError, ModelContextWindowExceededError}
+"""A context window overflow is also a rejected request."""
 
 
 def _openai(handler: Handler) -> Model:
@@ -287,7 +289,7 @@ CASES = [
                 }
             },
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': 'context_length_exceeded'},
     ),
     Case(
@@ -339,7 +341,7 @@ CASES = [
                 }
             }
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={
             'status_code': 400,
             'in_stream': True,
@@ -390,7 +392,7 @@ CASES = [
                 }
             },
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': '400'},
     ),
     Case(
@@ -408,7 +410,7 @@ CASES = [
             200,
             {'error': {'code': 400, 'message': "This endpoint's maximum context length is 128000 tokens."}},
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': '400'},
         has_cause=False,
     ),
@@ -444,7 +446,7 @@ CASES = [
                 'request_id': 'req_011CXsbVC34PujYNC6P8wAbP',
             },
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
     ),
     Case(
@@ -497,7 +499,7 @@ CASES = [
                 }
             },
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': None, 'provider_error_type': 'invalid_request_error'},
     ),
     Case(
@@ -513,7 +515,7 @@ CASES = [
                 }
             },
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': 'context_length_exceeded'},
     ),
     Case(
@@ -568,7 +570,7 @@ CASES = [
                 }
             },
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': 'INVALID_ARGUMENT'},
     ),
     Case(
@@ -594,7 +596,7 @@ CASES = [
                 'code': '3051',
             },
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={
             'status_code': 400,
             'provider_error_code': '3051',
@@ -626,7 +628,7 @@ CASES = [
                 'The limit for this model is 132000 tokens.',
             },
         ),
-        categories={ModelHTTPError, ModelContextWindowExceededError},
+        categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400},
     ),
     Case(
@@ -1391,7 +1393,7 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
                 'The model returned the following errors: Input is too long for requested model.',
                 400,
             ),
-            {ModelHTTPError, ModelContextWindowExceededError},
+            _CONTEXT_WINDOW,
             {'status_code': 400, 'provider_error_code': 'ValidationException'},
             id='context-window',
         ),
@@ -1452,7 +1454,7 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
         ),
         pytest.param(
             lambda: _bedrock_error('validationException', 'Input is too long for requested model.', None),
-            {ModelHTTPError, ModelContextWindowExceededError},
+            _CONTEXT_WINDOW,
             {'status_code': 400, 'in_stream': True, 'provider_error_code': 'validationException'},
             id='stream-context-window',
         ),
@@ -1554,7 +1556,7 @@ def _rpc_error(status: str, details: str) -> grpc.RpcError:
         pytest.param(
             'INVALID_ARGUMENT',
             "This model's maximum prompt length is 131072 but the request contains 150004 tokens.",
-            {ModelHTTPError, ModelContextWindowExceededError},
+            _CONTEXT_WINDOW,
             {'status_code': 400, 'provider_error_code': 'INVALID_ARGUMENT'},
             id='context-window',
         ),

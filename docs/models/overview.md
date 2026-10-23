@@ -287,16 +287,17 @@ these categories, whichever provider it came from:
 | [`ModelServerError`][pydantic_ai.exceptions.ModelServerError] | The provider failed with another server error, e.g. an HTTP 500, 502, or 504. |
 | [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] | The request could not reach the provider, or its response could not be read. Its [`phase`][pydantic_ai.exceptions.ModelConnectionError.phase] says whether the request may have reached the provider. |
 | [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError] | An attempt timed out at the transport layer. A subclass of `ModelConnectionError`. A [`request_timeout`](../timeouts.md#model-request-deadlines) deadline over all attempts raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] instead. |
-| [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] | The input exceeds the model's context window. |
 | [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] | The provider rejected the request itself, e.g. an HTTP 400 or 422, so sending it again unchanged won't succeed. |
+| [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] | The input exceeds the model's context window. A subclass of `ModelRequestRejectedError`. |
 | [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] | The provider rejected the credentials, or doesn't allow them to make the request, e.g. an HTTP 401 or 403. A subclass of `ModelRequestRejectedError`. |
 | [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] | The provider couldn't find the model, deployment or other resource the request names, e.g. an HTTP 404. A subclass of `ModelRequestRejectedError`. |
 
 A provider's own signal decides between categories that share a status code: a 429 is a rate limit unless the
 provider says the quota is exhausted, a 503 is only unavailable unless the provider says it's overloaded, and a 400 is
-a `ModelRequestRejectedError` unless the provider says the input exceeds the context window, the account is out of
-credits, the model doesn't exist (OpenAI's Responses API sends `model_not_found` as a 400), or the API key is invalid
-(the Gemini API sends `API_KEY_INVALID` as a 400).
+a `ModelRequestRejectedError` with no more specific category unless the provider says why: the input exceeds the
+context window, the model doesn't exist (OpenAI's Responses API sends `model_not_found` as a 400), or the API key is
+invalid (the Gemini API sends `API_KEY_INVALID` as a 400) make it the matching subclass, and exhausted credits
+(Anthropic sends a 400) make it a `ModelQuotaExceededError` instead.
 
 Other errors are raised as a plain `ModelAPIError` or [`ModelHTTPError`](#handling-http-errors), as they always were.
 Categories are assigned from the provider's error code or type where it sends one, and from the error message
@@ -341,7 +342,6 @@ skip the ones that sending the same request to the same model again can't fix:
 from pydantic_ai import (
     ModelAPIError,
     ModelAuthenticationError,
-    ModelContextWindowExceededError,
     ModelHTTPError,
     ModelQuotaExceededError,
     ModelRateLimitError,
@@ -350,9 +350,7 @@ from pydantic_ai import (
 
 
 def should_retry(error: ModelAPIError) -> bool:
-    return not isinstance(
-        error, ModelRequestRejectedError | ModelContextWindowExceededError | ModelQuotaExceededError
-    )
+    return not isinstance(error, ModelRequestRejectedError | ModelQuotaExceededError)
 
 
 print(should_retry(ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='my-model')))
@@ -361,9 +359,10 @@ print(should_retry(ModelHTTPError.for_category(ModelRateLimitError, status_code=
 #> True
 ```
 
-[`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] and
-[`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] are both a `ModelRequestRejectedError`, so
-`should_retry` skips them too. Under [Temporal](../durable_execution/temporal.md#activity-retries), list the same classes in
+[`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
+[`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] and
+[`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] are all a
+`ModelRequestRejectedError`, so `should_retry` skips them too. Under [Temporal](../durable_execution/temporal.md#activity-retries), list the same classes in
 `non_retryable_model_errors` to stop the activity from retrying them.
 
 ### HTTP errors {#handling-http-errors}
@@ -440,8 +439,9 @@ By default, fallback triggers on [`ModelAPIError`][pydantic_ai.exceptions.ModelA
 connection failures or timeouts before the response starts), so you don't need to configure anything for the most
 common use case. That includes every [error category](#handling-model-api-errors): rate limits, exhausted quota,
 unavailable or overloaded providers, server errors, connection failures and timeouts,
-[context window overflows](#context-window-overflow), and rejected requests, since another model or provider may accept
-a request, credentials or model name the first one rejected. To fall back only on some of them, pass those categories
+and rejected requests, including [context window overflows](#context-window-overflow): another model or provider may
+accept a request, credentials or model name the first one rejected, and a model with a larger context window may
+accept an input that overflowed another model's. To fall back only on some of them, pass those categories
 as `fallback_on`, e.g. `fallback_on=(ModelRateLimitError, ModelUnavailableError, ModelServerError)`.
 
 This behavior is controlled by the `fallback_on` parameter (see
