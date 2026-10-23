@@ -36,6 +36,9 @@ AGENT_START_HEALTH_STEPS = (
 )
 # Minimum age before a healthy scheduled check closes a quota or rate-limit incident with no recorded reset time.
 _NULL_RESET_COOL_DOWN = dt.timedelta(hours=1)
+# GitHub withholds repository secrets from these events on fork and Dependabot pull requests. A gate on any other
+# event that lacks the key opens an incident, so a broken key binding still surfaces.
+_SECRETLESS_PR_EVENTS = ('pull_request', 'pull_request_review', 'pull_request_review_comment')
 # During GitHub's 2026-10-22 Issues degradation, 34% of gate reads returned HTTP 200 with no readable incident,
 # of any age or scope, and a read within 5 s of such a miss still missed 41% of the time. Five reads cut the miss
 # rate to an estimated 1%. Only a read with no readable incident is repeated.
@@ -70,7 +73,7 @@ QuotaDiagnostic = Literal[
     'invalid_reset_time',
     'missing_windows',
 ]
-FailureKind = Literal['authentication', 'rate_limit', 'request_limit', 'time_limit', 'timeout', 'other']
+FailureKind = Literal['authentication', 'rate_limit', 'plan_limit', 'request_limit', 'time_limit', 'timeout', 'other']
 
 
 @dataclass(frozen=True)
@@ -763,7 +766,7 @@ def _failure_from(value: object) -> Failure | None:
     if data is None:
         return None
     kind = data.get('kind')
-    if kind not in ('authentication', 'rate_limit', 'request_limit', 'time_limit', 'timeout', 'other'):
+    if kind not in ('authentication', 'rate_limit', 'plan_limit', 'request_limit', 'time_limit', 'timeout', 'other'):
         return None
     status = data.get('http_status')
     if status is not None and (isinstance(status, bool) or not isinstance(status, int) or not 100 <= status <= 599):
@@ -866,7 +869,7 @@ def _scope_for(result: RunResult) -> tuple[Scope, str, str]:
         return 'workflow', result.workflow, 'execution'
     if failure.kind == 'authentication' or failure.http_status in (401, 403):
         return 'provider', 'zai', failure.kind
-    if failure.kind == 'rate_limit':
+    if failure.kind == 'plan_limit':
         return 'provider', 'zai', failure.kind
     if result.trigger_event == 'schedule' and failure.kind not in ('timeout', 'time_limit'):
         return 'workflow', result.workflow, failure.kind
@@ -937,8 +940,13 @@ def _monitor_workflow_outcome(
     run_attempt: int,
     result: RunResult | None,
     repo: str,
+    *,
+    triage: bool = False,
 ) -> int:
-    """Record only trusted host failures and typed, identity-matched provider outcomes."""
+    """Record only trusted host failures and typed, identity-matched provider outcomes.
+
+    With `triage`, stop before reading incidents and hand outcomes that need them to the serialized monitor job.
+    """
     needs_failure_evidence = args.conclusion in ('failure', 'timed_out') or (
         result is not None and result.failure is not None
     )
@@ -962,9 +970,14 @@ def _monitor_workflow_outcome(
             if health.quota.status == 'healthy':
                 print(f'Activation was blocked by existing state: {health.reason}')
                 return 0
+            if health.quota.diagnostic == 'missing_api_key' and health.trigger_event in _SECRETLESS_PR_EVENTS:
+                print('Activation had no Z.ai key for this pull request event; no operational incident was created')
+                return 0
             kind = 'quota_unknown' if health.quota.status == 'unknown' else 'quota_exhausted'
             marker = IncidentMarker('provider', 'zai', kind, str(args.run_id), health.quota.reset_at)
             result = RunResult(health.workflow, health.task_key, health.trigger_event, run_attempt, None)
+            if triage:
+                return _defer_incident_reconciliation()
             existing = next(
                 (issue for issue in client.open_incidents() if _marker_from_body(issue.body) == marker), None
             )
@@ -988,7 +1001,12 @@ def _monitor_workflow_outcome(
             print('No trusted failed job or step identifies a host stage; leaving workflow outcome unclassified')
             return 0
         result = RunResult(health.workflow, health.task_key, health.trigger_event, run_attempt, None)
-    if result.failure is not None and (result.failure.kind == 'timeout' or result.failure.http_status == 529):
+    # The runner reports a Z.ai account or plan limit as `plan_limit`, and a request-rate 429 that outlasts its
+    # retry window as `rate_limit`. Runners on older branches report every 429 as `rate_limit`; the next run's
+    # quota check still blocks on an exhausted plan.
+    if result.failure is not None and (
+        result.failure.kind in ('timeout', 'rate_limit') or result.failure.http_status == 529
+    ):
         print('Transient request failure remains local to this attempt')
         return 0
     if args.conclusion in ('cancelled', 'timed_out') and failed_stage == 'inference':
@@ -997,6 +1015,8 @@ def _monitor_workflow_outcome(
     if result.failure is None and failed_stage is None:
         print('No trusted failed job or step identifies a host stage; leaving workflow outcome unclassified')
         return 0
+    if triage:
+        return _defer_incident_reconciliation()
     reason = health.reason if not health.ready else _failure_reason(result.failure)
     marker_override = None
     if result.failure is None and failed_stage is not None:
@@ -1021,12 +1041,21 @@ def _monitor_workflow_outcome(
     return 0
 
 
+def _defer_incident_reconciliation() -> int:
+    if output := os.environ.get('GITHUB_OUTPUT'):
+        with open(output, 'a', encoding='utf-8') as handle:
+            handle.write('reconcile=true\n')
+    print('Outcome needs incident reconciliation; deferring it to the serialized monitor job')
+    return 0
+
+
 def _failure_reason(failure: Failure | None) -> str:
     if failure is None:
         return 'Agent execution failed before a typed provider result was available'
     reasons: dict[FailureKind, str] = {
         'authentication': 'Z.ai rejected the configured credentials',
         'rate_limit': 'Z.ai rate limits stopped the run',
+        'plan_limit': 'Z.ai refused the run under an account or plan limit',
         'request_limit': 'The agent reached its per-run request limit',
         'time_limit': 'The agent reached its per-run time limit',
         'timeout': 'A provider request timed out',
@@ -1201,7 +1230,7 @@ def _check_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def _monitor_command(args: argparse.Namespace) -> int:
+def _monitor_command(args: argparse.Namespace, *, triage: bool = False) -> int:
     repo = args.repository or os.environ.get('GITHUB_REPOSITORY', '')
     token = os.environ.get('GITHUB_TOKEN', '')
     if not repo or not token:
@@ -1231,7 +1260,7 @@ def _monitor_command(args: argparse.Namespace) -> int:
     if not health.ready and health.reason == _RETIRED_PROVIDER_REASON:
         print(f'Skipping retired provider configuration: {health.workflow}')
         return 0
-    return _monitor_workflow_outcome(client, args, health, run_attempt, result, repo)
+    return _monitor_workflow_outcome(client, args, health, run_attempt, result, repo, triage=triage)
 
 
 def _recover_issue(
@@ -1252,7 +1281,7 @@ def _recover_issue(
                 f'{_quota_diagnostic_suffix(quota)}'
             )
         return False
-    if marker.kind in ('rate_limit', 'quota_exhausted') and marker.reset_at is not None:
+    if marker.kind in ('rate_limit', 'plan_limit', 'quota_exhausted') and marker.reset_at is not None:
         reset_at = dt.datetime.fromisoformat(marker.reset_at.replace('Z', '+00:00'))
         if now < reset_at:
             if not automatic:
@@ -1340,7 +1369,7 @@ def _reconcile_recovery(client: GitHubClient, args: argparse.Namespace) -> int:
             continue
         if marker.key != 'zai':
             continue
-        if marker.kind not in ('rate_limit', 'quota_exhausted', 'quota_unknown'):
+        if marker.kind not in ('rate_limit', 'plan_limit', 'quota_exhausted', 'quota_unknown'):
             continue
         _recover_issue(client, issue, marker, quota, now, dry_run=args.dry_run, automatic=True)
     return 0
@@ -1363,6 +1392,16 @@ def main(argv: list[str] | None = None) -> int:
     monitor.add_argument('--recover-issue', type=int)
     monitor.add_argument('--dry-run', action='store_true')
     monitor.set_defaults(handler=_monitor_command)
+    triage = commands.add_parser(
+        'triage', help='report whether a completed agent workflow needs serialized incident reconciliation'
+    )
+    triage.add_argument('--repository')
+    triage.add_argument('--run-id', type=int, required=True)
+    triage.add_argument('--run-attempt', type=int, required=True)
+    triage.add_argument('--conclusion')
+    triage.add_argument('--health-artifact', type=Path, required=True)
+    triage.add_argument('--agent-artifact', type=Path)
+    triage.set_defaults(handler=functools.partial(_monitor_command, triage=True))
     args = parser.parse_args(argv)
     try:
         return args.handler(args)
