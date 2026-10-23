@@ -717,24 +717,31 @@ def test_google_gemini_2_5_flash():
 
 @pytest.mark.skipif(not google_imports(), reason='google not installed')
 def test_google_gemini_2_5_flash_image():
-    # `gemini-2.5-flash-image` is both a thinking (2.5) and an image model, so the `not is_image_model`
-    # term in the profile's strict-support guard is load-bearing: it flips the flag from True back to
-    # False. The explicit assert (not just the snapshot, which strips the default `False`) guards against
-    # a silent inversion of that guard, which 100% line coverage would otherwise hide.
+    # Unlike the other 2.5 models, `gemini-2.5-flash-image` doesn't think: both APIs reject a thinking config.
     profile = GoogleProvider.model_profile('gemini-2.5-flash-image')
     assert profile is not None
-    assert profile.get('google_supports_strict_tool_definition') is False
+    assert profile.get('supports_thinking') is False
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': GoogleJsonSchemaTransformer,
             'supports_image_output': True,
             'supports_tools': False,
             'supports_video_input': False,
-            'supports_thinking': True,
             'google_supports_thinking_level': False,
             'google_web_search_billed_per_prompt': True,
         }
     )
+
+
+@pytest.mark.skipif(not google_imports(), reason='google not installed')
+def test_google_gemini_3_pro_image_strict_tool_definition():
+    # `gemini-3-pro-image` is both a thinking and an image model, so the `not is_image_model` term in the
+    # profile's strict-support guard is load-bearing: it flips the flag from True back to False. The
+    # explicit assert (a snapshot would strip the default `False`) guards against a silent inversion.
+    profile = GoogleProvider.model_profile('gemini-3-pro-image')
+    assert profile is not None
+    assert profile.get('supports_thinking') is True
+    assert profile.get('google_supports_strict_tool_definition') is False
 
 
 @pytest.mark.skipif(not google_imports(), reason='google not installed')
