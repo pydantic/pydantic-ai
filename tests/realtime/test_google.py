@@ -3647,6 +3647,7 @@ async def test_connect_redial_without_a_handle_replays_the_conversation(model_na
     # would otherwise have forgotten every earlier turn. The conversation the session offered goes into
     # it through the same seeding as `message_history`, minus media (audio, images), like the
     # OpenAI-protocol replay. A session resumed from a handle already has it, so nothing is replayed there.
+    # Unit-level because a recording can't force a drop before Gemini issues its first handle.
     first_messages = (
         []
         if handle is None
@@ -3719,6 +3720,7 @@ async def test_connect_redial_without_a_handle_replays_the_conversation(model_na
 async def test_connect_redial_without_a_handle_asks_again_for_a_lost_typed_turns_reply() -> None:
     # A typed turn whose reply the drop lost comes last in the replayed conversation. Its reply is asked for
     # again: the turn goes in as a turn of its own, after the rest of the conversation, which the model answers.
+    # Unit-level because a recording can't force a drop before Gemini issues its first handle.
     first, second = _RecordingSession([]), _RecordingSession([[_turn('cobalt')]])
     client = _redialing_client([first, second])
     model = GoogleRealtimeModel(

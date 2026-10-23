@@ -54,8 +54,8 @@ Inspect `RealtimeSessionReconnectEvent.state_restored`. If false, the drop cut o
 the session closed any cut reply as interrupted and kept the earlier turns, so ask again or resend
 the cut turn rather than starting over. On Gemini, a drop before the first resumption handle starts
 a fresh session, which gets the earlier turns replayed from the session's history and is asked again
-for the reply to a typed turn the drop caught before its reply started. If true but a current utterance vanished,
-that in-flight media was outside the restored completed-turn history. See
+for the reply to a typed turn the drop caught before its reply started. If true but a current
+utterance vanished, that in-flight media was outside the restored completed-turn history. See
 [state restoration](lifecycle.md#state-restoration).
 
 ## Gemini reaches its session limit

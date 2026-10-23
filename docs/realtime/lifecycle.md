@@ -127,13 +127,13 @@ When its reply hadn't started and no spoken reply was in progress,
 A turn typed while the model was answering speech can't be told apart from that spoken reply, so
 `wait_for_reply()` may keep waiting for it, and the reconnect may report `state_restored=True`.
 
-Local replay (OpenAI, Azure OpenAI, xAI, and Gemini without a resumption handle) restores only the finalized turns, so a reply in flight when the
-socket dropped cannot continue. The session settles it before emitting the event — the partial reply
-becomes an interrupted response, running tool calls get cancelled returns, and the turn ends so queued
-messages waiting for the boundary still flush — and `state_restored` is `False` to say the turn was
-cut off. An answer that was solicited but had not started streaming is instead re-requested on the new
-connection, and a drop with nothing in flight restores the whole call as-is; both lose no output, so
-`state_restored` stays `True`.
+Local replay (OpenAI, Azure OpenAI, xAI, and Gemini without a resumption handle) restores only the
+finalized turns, so a reply in flight when the socket dropped cannot continue. The session settles
+it before emitting the event — the partial reply becomes an interrupted response, running tool calls
+get cancelled returns, and the turn ends so queued messages waiting for the boundary still flush —
+and `state_restored` is `False` to say the turn was cut off. An answer that was solicited but had
+not started streaming is instead re-requested on the new connection, and a drop with nothing in
+flight restores the whole call as-is; both lose no output, so `state_restored` stays `True`.
 
 ## Provider session limits
 
