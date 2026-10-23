@@ -59,8 +59,6 @@ class _RelayedPart:
     """The part object itself, held so its identity can't be reused by another object meanwhile."""
     snapshot: InstructionPart
     """A copy of the part as the child contributed it, so a part edited in place no longer counts as relayed."""
-    derived_key: bool = False
-    """Whether the framework chose the part's key; see `InstructionContribution.derived_key`."""
 
 
 @dataclass
@@ -153,6 +151,16 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         toolset. Don't return one from your own toolset.
         """
         raise NotImplementedError()
+
+    @property
+    def _explicit_id(self) -> str | None:
+        """The [`id`][pydantic_ai.toolsets.AbstractToolset.id] if one was chosen for this toolset, rather than derived.
+
+        A toolset can derive its `id`, as an `MCPToolset` without one does from its server's hostname.
+        Durable execution only names activities and steps after an explicit one, and two toolsets that
+        derive the same `id` don't collide where one they were given would.
+        """
+        return self.id
 
     @property
     def label(self) -> str:
@@ -253,14 +261,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
             # container built or edited is its own text even when it carries a child's id, so it can't
             # speak under a key it doesn't own.
             if (relay := relays.parts.get(id(part))) is not None and relay.part is part and part == relay.snapshot:
-                contributions.append(
-                    InstructionContribution(
-                        relay.source,
-                        relay.source_id,
-                        (part,),
-                        derived_key=relay.derived_key,
-                    )
-                )
+                contributions.append(InstructionContribution(relay.source, relay.source_id, (part,)))
             else:
                 contributions.append(make_contribution(self, part))
         return contributions
@@ -278,16 +279,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         # from the ones it writes.
         if (relays := _RELAYS.get()) is not None and relays.covers(self):
             relays.parts.update(
-                (
-                    id(part),
-                    _RelayedPart(
-                        contribution.source,
-                        contribution.source_id,
-                        part,
-                        replace(part),
-                        derived_key=contribution.derived_key,
-                    ),
-                )
+                (id(part), _RelayedPart(contribution.source, contribution.source_id, part, replace(part)))
                 for contribution in contributions
                 for part in contribution.parts
             )
@@ -305,21 +297,6 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         it is still the inherited implementation that just relays.
         """
         return not self._instruction_children()
-
-    @property
-    def _instruction_key(self) -> str | None:
-        """The id this toolset's instruction parts are keyed by, as `toolset:<key>`: its [`id`][pydantic_ai.toolsets.AbstractToolset.id]."""
-        return self.id
-
-    @property
-    def _derived_instruction_key(self) -> str | None:
-        """The key for the parts the framework appends on this toolset's behalf when it has no `id`.
-
-        `None` by default. An `MCPToolset` derives one from its server's host for the server instructions
-        it includes; parts its author writes, such as a subclass's own, are only ever keyed by `id`. A key
-        derived here rather than defaulting `id`, which also names durable operations.
-        """
-        return None
 
     @abstractmethod
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:

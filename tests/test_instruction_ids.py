@@ -490,10 +490,7 @@ async def test_a_wrapper_cannot_write_under_a_key_it_wraps(
 
 
 async def test_id_less_dynamic_toolsets_leave_their_toolsets_instructions_unkeyed():
-    """An id-less `DynamicToolset` doesn't pass on the key of a toolset it builds, so two whose toolsets share an `id` don't collide.
-
-    Only server instructions an `MCPToolset` appends by the framework's choice keep their own key through one.
-    """
+    """An id-less `DynamicToolset` speaks for the toolset it builds without a key, so two whose toolsets share an `id` don't collide."""
     agent = Agent(
         toolsets=[
             DynamicToolset[Any](lambda _ctx: InstructionsToolset('First.', id='same')),

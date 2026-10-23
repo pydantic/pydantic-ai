@@ -5,14 +5,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Self, TypeAlias
 
 from .._run_context import AgentDepsT, RunContext, without_tool_name_path
-from ..messages import InstructionPart, ToolsetInstructionSource
+from ..messages import InstructionPart
 from ..tools import ToolDefinition
-from ._instruction_collection import (
-    InstructionContribution,
-    flatten_instruction_contributions,
-    is_framework_appended,
-    make_contribution,
-)
 from .abstract import AbstractToolset, ToolsetTool
 
 ToolsetFunc: TypeAlias = Callable[
@@ -134,30 +128,6 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         if self._toolset is None:
             return None
         return await self._toolset.get_instructions(ctx)
-
-    async def _collect_instruction_contributions(
-        self, ctx: RunContext[AgentDepsT]
-    ) -> list[InstructionContribution[AgentDepsT]]:
-        toolset = self._toolset
-        if self.id is not None or toolset is None or type(self).get_instructions is not DynamicToolset.get_instructions:
-            # This toolset speaks for the one its function builds, keying what that one says by its own `id`.
-            return await super()._collect_instruction_contributions(ctx)
-        # Without an `id` there's nothing to key the built toolset's instructions by here, so they go out
-        # unkeyed, except those that append by the framework's choice, such as an `MCPToolset`'s server
-        # instructions, however the built toolset wraps it: unkeyed, they'd be downgraded with a warning
-        # on every request, so they keep the key the built toolset gave them. That key is the framework's
-        # choice, not an `id` given here.
-        contributions: list[InstructionContribution[AgentDepsT]] = []
-        for part in flatten_instruction_contributions(await toolset._collect_instruction_contributions(ctx)):
-            if (
-                is_framework_appended(part)
-                and part.id is not None
-                and isinstance(part.id.source, ToolsetInstructionSource)
-            ):
-                contributions.append(InstructionContribution(self, part.id.source, (part,), derived_key=True))
-            else:
-                contributions.append(make_contribution(self, part))
-        return contributions
 
     async def get_tool_for_tool_def(
         self, tool_def: ToolDefinition, ctx: RunContext[AgentDepsT]

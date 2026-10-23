@@ -18,9 +18,7 @@ from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import InstructionPart, ModelResponse, ToolReturn
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
-from pydantic_ai.toolsets._instruction_collection import (
-    collect_toolset_instructions,
-)
+from pydantic_ai.toolsets._instruction_collection import collect_toolset_instructions
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 

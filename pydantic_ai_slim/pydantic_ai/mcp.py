@@ -875,14 +875,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     Off by default. The server writes this text, and the model receives it with the same authority
     as instructions you write yourself, so only enable this for servers you trust.
 
-    The instructions are read each time the toolset connects, and use
-    [`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change]: if a later connection
-    brings different instructions, the new text is appended to the conversation rather than
-    rewriting the cached instruction prefix. They're keyed `toolset:<id>`, or `toolset:<host>` by
-    the server URL's hostname (with `-` for the `:`s of an IPv6 address) on a toolset without an
-    [`id`][pydantic_ai.toolsets.AbstractToolset.id], and the model sees that key with them. A server
-    with neither, such as a stdio or in-process server without an `id`, has nothing to key them by,
-    so changed instructions rewrite the prefix.
+    The instructions are read each time the toolset connects, and on a toolset with an
+    [`id`][pydantic_ai.mcp.MCPToolset.id] they use
+    [`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change], keyed `toolset:<id>`:
+    if a later connection brings different instructions, the new text is appended to the
+    conversation rather than rewriting the cached instruction prefix. A stdio or in-process server
+    without an `id` has nothing to key them by, so changed instructions rewrite the prefix.
     """
 
     include_return_schema: bool | None
@@ -915,6 +913,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     """
 
     _id: str | None
+    _id_explicit: bool
     _server_info: mcp_types.Implementation | None
     _server_capabilities: ServerCapabilities | None
     _instructions: str | None
@@ -980,9 +979,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
         Args:
             client: How to connect to the MCP server. See the class docstring for accepted shapes.
-            id: An optional unique identifier for this toolset. Required for use in durable execution
-                environments like Temporal or DBOS, where it identifies the toolset's activities/steps
-                within a workflow.
+            id: An optional unique identifier for this toolset. Without one, a toolset for a server URL
+                uses the URL's hostname. See [`MCPToolset.id`][pydantic_ai.mcp.MCPToolset.id]. Durable
+                execution environments like Temporal or DBOS require an explicit one, as it identifies the
+                toolset's activities/steps within a workflow.
             max_retries: Maximum number of times a tool call may be retried after a `ModelRetry`.
                 `None` inherits the agent's retry count at runtime.
             tool_error_behavior: `'retry'` (default) raises
@@ -1157,7 +1157,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             if elicitation_handler is not None:
                 self._server_initiated_handlers.append('elicitation_handler')
 
-        self._id = id
+        self._id_explicit = id is not None
+        self._id = id if id is not None else _host_derived_id(self.client)
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
         self.process_tool_call = process_tool_call
@@ -1180,11 +1181,23 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:
+        """The toolset's `id`: the one it was given, or else its server URL's hostname.
+
+        A hostname-derived `id`, with `-` in place of the `:`s of an IPv6 address, keys the server's
+        [instructions](../mcp/client.md#server-instructions) and shows up as tool definitions'
+        `toolset_id`, but durable execution doesn't accept it: an activity or step name has to be one you
+        chose, so pass `id=` explicitly there. A stdio or in-process server without one has no `id`.
+        """
         return self._id
 
     @id.setter
     def id(self, value: str | None) -> None:
-        self._id = value
+        self._id_explicit = value is not None
+        self._id = value if value is not None else _host_derived_id(self.client)
+
+    @property
+    def _explicit_id(self) -> str | None:
+        return self._id if self._id_explicit else None
 
     @property
     def label(self) -> str:
@@ -1468,27 +1481,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # entered, so they're static for prompt caching. A later connection can bring different text,
         # which appends as a change rather than rewriting the prefix. Appending addresses the block by
         # its key, so a server with neither an `id` nor a URL to key it by keeps rewriting.
-        if self.id is None and self._derived_instruction_key is None:
+        if self.id is None:
             return None if self._instructions is None else messages.InstructionPart(content=self._instructions)
         # A keyed server contributes its block even while it sends no instructions, so instructions a later
         # connection adds are appended as a change, and ones it drops are withdrawn, without moving the prefix.
-        # Appending is the framework's choice here, not the author's, which also lets an id-less toolset key
-        # these instructions, and only these, by its server's host.
-        return messages.InstructionPart(
-            content=self._instructions or '', dynamic=False, on_change='append', _framework_appended=True
-        )
-
-    @property
-    def _derived_instruction_key(self) -> str | None:
-        """The server URL's hostname, which keys the server instructions of a toolset without an `id`.
-
-        `id` itself isn't defaulted: it also names durable operations, which require one chosen
-        explicitly. Instructions a subclass writes itself are keyed only by `id`.
-        """
-        url = getattr(getattr(self.client, 'transport', None), 'url', None)
-        host = urlparse(url).hostname if isinstance(url, str) else None
-        # `:` delimits id segments, so an IPv6 literal such as `::1` is spelled with `-` instead.
-        return host.replace(':', '-') if host else None
+        return messages.InstructionPart(content=self._instructions or '', dynamic=False, on_change='append')
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve the tools currently exposed by the server.
@@ -1741,7 +1738,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             resource_uri=resource_uri,
             tool_input=model_args,
             result=_call_tool_result_to_wire(sent),
-            toolset_id=self.id,
+            # Only an `id` chosen for the server identifies it to the app, as before ids were derived.
+            toolset_id=self._explicit_id,
         )
         return messages.ToolReturn(return_value=return_value, metadata={MCP_APP_METADATA_KEY: app})
 
@@ -1954,6 +1952,14 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
     def __hash__(self) -> int:
         return hash((self._id, id(self.client)))
+
+
+def _host_derived_id(client: object) -> str | None:
+    """The `id` an `MCPToolset` without one takes from its server URL's hostname, or `None` without a URL."""
+    url = getattr(getattr(client, 'transport', None), 'url', None)
+    host = urlparse(url).hostname if isinstance(url, str) else None
+    # `:` delimits instruction id segments, so an IPv6 literal such as `::1` is spelled with `-` instead.
+    return host.replace(':', '-') if host else None
 
 
 def _build_message_handler(toolset: MCPToolset[Any], user_handler: MessageHandlerT | None) -> MessageHandlerT:

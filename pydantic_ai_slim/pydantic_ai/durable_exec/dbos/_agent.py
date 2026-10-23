@@ -165,7 +165,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 pass
             else:
                 if isinstance(toolset, MCPToolset):
-                    if toolset.id is None:
+                    # A hostname-derived `id` doesn't name steps; it has to be chosen.
+                    if toolset._explicit_id is None:  # pyright: ignore[reportPrivateUsage]
                         raise UserError(
                             'MCP toolsets need to have a unique `id` in order to be used with DBOS. '
                             "The ID will be used to identify the MCP server's steps within the workflow. "

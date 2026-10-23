@@ -3100,13 +3100,14 @@ def test_resolve_tool_task_config_reads_metadata() -> None:
         resolve_tool_task_config(tool, 'fn_tool', {})
 
 
-@pytest.mark.parametrize('kind', ['function', 'mcp'])
+@pytest.mark.parametrize('kind', ['function', 'mcp', 'mcp-url'])
 def test_prefect_durability_rejects_idless_toolsets(kind: str) -> None:
     """Wrapped leaf toolsets without an `id` fail loudly at construction.
 
     The Prefect task wrapper is swapped in by toolset ID at run time, so without one the
     toolset's calls would silently run untracked inside the Prefect flow and re-execute
-    on retries. Temporal raises the equivalent error for id-less leaves.
+    on retries. Temporal raises the equivalent error for id-less leaves. A URL `MCPToolset`'s
+    hostname-derived `id` doesn't count: only one chosen for it names its tasks.
     """
 
     def greet() -> str:
@@ -3115,6 +3116,7 @@ def test_prefect_durability_rejects_idless_toolsets(kind: str) -> None:
     toolset_factories = {
         'function': lambda: FunctionToolset([greet]),
         'mcp': lambda: MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server'])),
+        'mcp-url': lambda: MCPToolset('https://mcp.example.com/mcp'),
     }
     with pytest.raises(UserError, match='need to have a unique `id` in order to be used with Prefect'):
         Agent(

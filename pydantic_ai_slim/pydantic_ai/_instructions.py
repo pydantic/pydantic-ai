@@ -119,22 +119,17 @@ def append_on_change_by_default(
 
 
 def explicitly_appended_blocks(
-    instructions: Sequence[SourcedInstruction[AgentDepsT]],
-    parts: Sequence[InstructionPart],
+    instructions: Sequence[SourcedInstruction[AgentDepsT]], parts: Sequence[InstructionPart]
 ) -> list[str]:
     """The blocks among `parts` an author, rather than the framework, asked `on_change='append'` for, by id or name.
 
-    `parts` are what `instructions` (and any toolsets) resolved to. A toolset part the framework appends,
-    such as MCP server instructions, says so itself, so it's told apart from an author's block that
-    shares its id.
+    `parts` are what `instructions` (and any toolsets) resolved to.
     """
     framework_ids = {sourced.id for sourced in instructions if sourced.framework_default}
     return [
         str(part.id) if part.id is not None else part.name or 'unnamed'
         for part in parts
-        if part.on_change == 'append'
-        and not part._framework_appended  # pyright: ignore[reportPrivateUsage]
-        and part.id not in framework_ids
+        if part.on_change == 'append' and part.id not in framework_ids
     ]
 
 

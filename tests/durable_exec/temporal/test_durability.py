@@ -2471,6 +2471,14 @@ def test_durability_plugin_requires_durability_capability():
 # --- Toolset without ID raises UserError ---
 
 
+def test_durability_rejects_a_url_mcp_toolset_with_only_a_derived_id():
+    """A URL `MCPToolset`'s hostname-derived `id` doesn't name activities: Temporal requires one chosen for it."""
+    toolset = MCPToolset('https://mcp.example.com/mcp')
+    assert toolset.id == 'mcp.example.com'
+    with pytest.raises(UserError, match='need to have a unique `id` in order to be used with Temporal'):
+        Agent(_durability_fn_model, name='derived_id_test', toolsets=[toolset], capabilities=[TemporalDurability()])
+
+
 def test_durability_unwrapped_toolset_without_id_is_allowed():
     """An unwrapped leaf toolset doesn't need an ID because it isn't registered as an activity."""
     durability = TemporalDurability()

@@ -34,7 +34,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_ai import Agent, ToolsetTool, models
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import BaseExceptionGroup
-from pydantic_ai.capabilities import MCP, Capability
+from pydantic_ai.capabilities import MCP
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     InstructionDeltaPart,
@@ -57,7 +57,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, DynamicToolset, FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
 from pydantic_ai.toolsets._instruction_collection import (
     collect_toolset_instructions,
     flatten_instruction_contributions,
@@ -1025,18 +1025,12 @@ A later <context> element with the same id replaces the earlier one and stays in
 
     @pytest.mark.parametrize(
         ('composition', 'key'),
-        [
-            ('no-id', 'testserver'),
-            ('dynamic-no-id', 'testserver'),
-            ('dynamic-filtered-no-id', 'testserver'),
-            ('id', 'docs'),
-        ],
+        [('no-id', 'testserver'), ('id', 'docs'), ('dynamic-with-id', 'outer')],
     )
     async def test_url_server_instructions_are_keyed_by_the_id_or_else_the_host(self, composition: str, key: str):
-        """A remote server's instructions append under the toolset's `id`, or its hostname without one.
+        """A remote server's instructions append under the toolset's `id`, which is its hostname without one.
 
-        A `DynamicToolset` without an `id` passes the built toolset's key along, also through a transparent
-        wrapper like `FilteredToolset`, so its instructions still append rather than arriving unkeyed.
+        A `DynamicToolset` with an `id` keys what the toolset it builds says under its own, as for any toolset.
         """
         server: FastMCP[None] = FastMCP('remote_server', instructions='Remote guidance.')
         prefixes: list[str | None] = []
@@ -1061,12 +1055,11 @@ A later <context> element with the same id replaces the earlier one and stays in
             )
 
         toolset: AbstractToolset[None]
-        if composition == 'dynamic-no-id':
-            toolset = DynamicToolset[None](lambda _ctx: build(), per_run_step=False)
-        elif composition == 'dynamic-filtered-no-id':
-            toolset = DynamicToolset[None](lambda _ctx: build().filtered(lambda _ctx, _tool: True), per_run_step=False)
+        if composition == 'dynamic-with-id':
+            toolset = DynamicToolset[None](lambda _ctx: build(), per_run_step=False, id='outer')
         else:
             toolset = build()
+            assert toolset.id == key
         agent = Agent(FunctionModel(model_fn), deps_type=type(None), toolsets=[toolset])
 
         history: list[ModelMessage] = []
@@ -1100,27 +1093,43 @@ A later <context> element with the same id replaces the earlier one and stays in
             * 2
         )
 
-    def test_toolsets_sharing_a_derived_key_fall_back_to_unkeyed_instructions(self):
-        """Two id-less toolsets on one host share their derived key, so neither appends, and neither collides.
+    def test_a_url_toolset_without_an_id_takes_its_hostname(self):
+        """The hostname is the toolset's `id`, but not one chosen for it: durable execution and MCP Apps don't use it."""
+        toolset = MCPToolset('https://MCP.Example.com:8443/mcp?token=secret')
+        assert toolset.id == 'mcp.example.com'
+        assert toolset._explicit_id is None  # pyright: ignore[reportPrivateUsage]
+        # `:` delimits instruction id segments, so an IPv6 literal host is spelled with `-`.
+        assert MCPToolset('http://[::1]:8000/mcp').id == '--1'
+        explicit = MCPToolset('https://mcp.example.com/mcp', id='docs')
+        assert (explicit.id, explicit._explicit_id) == ('docs', 'docs')  # pyright: ignore[reportPrivateUsage]
+        # Setting the `id` later makes it explicit; unsetting it falls back to the hostname.
+        toolset.id = 'chosen'
+        assert toolset._explicit_id == 'chosen'  # pyright: ignore[reportPrivateUsage]
+        toolset.id = None
+        assert (toolset.id, toolset._explicit_id) == ('mcp.example.com', None)  # pyright: ignore[reportPrivateUsage]
 
-        Only `id`s an author chose collide, as they always have.
-        """
-        # The server instructions `MCPToolset.get_instructions` builds, which the framework appends.
-        part = InstructionPart(content='Guidance.', on_change='append', _framework_appended=True)
-        first = make_contribution(MCPToolset('https://mcp.example.com/a'), part)
-        second = make_contribution(MCPToolset('https://mcp.example.com/b'), part)
-        assert first.parts[0].id == InstructionId(ToolsetInstructionSource('mcp.example.com'))
-        # `:` delimits id segments, so an IPv6 literal host is spelled with `-`.
-        assert make_contribution(MCPToolset('http://[::1]:8000/mcp'), part).parts[0].id == InstructionId(
-            ToolsetInstructionSource('--1')
-        )
+    def test_toolsets_whose_derived_ids_collide_go_unkeyed(self):
+        """Only `id`s chosen for toolsets collide; one derived from a hostname gives way, with one warning."""
+        part = InstructionPart(content='Guidance.', on_change='append')
         unkeyed = InstructionPart(content='Guidance.', on_change='rewrite')
-        assert flatten_instruction_contributions([first, second]) == [unkeyed, unkeyed]
-        # An explicit `id` on that key keeps it; only the derived one falls back.
-        # A toolset that derives no key, such as a container passing the part along without an `id`, leaves it unkeyed.
-        assert make_contribution(FunctionToolset[None](), part).parts[0].id is None
-        explicit = make_contribution(MCPToolset('https://mcp.example.com/c', id='mcp.example.com'), part)
-        assert flatten_instruction_contributions([explicit, first]) == [explicit.parts[0], unkeyed]
+        first = make_contribution(MCPToolset('https://derived-vs-derived.example.com/a'), part)
+        second = make_contribution(MCPToolset('https://derived-vs-derived.example.com/b'), part)
+        assert first.parts[0].id == InstructionId(ToolsetInstructionSource('derived-vs-derived.example.com'))
+        with pytest.warns(UserWarning, match=re.escape("derive the `id` 'derived-vs-derived.example.com'")):
+            assert flatten_instruction_contributions([first, second]) == [unkeyed, unkeyed]
+        # Reported once, not on every request.
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            assert flatten_instruction_contributions([first, second]) == [unkeyed, unkeyed]
+
+        # An `id` chosen for a toolset keeps the key; only the derived one gives way.
+        explicit = make_contribution(
+            MCPToolset('https://elsewhere.example.com/mcp', id='derived-vs-explicit.example.com'), part
+        )
+        derived = make_contribution(MCPToolset('https://derived-vs-explicit.example.com/mcp'), part)
+        with pytest.warns(UserWarning, match=re.escape("derive the `id` 'derived-vs-explicit.example.com'")):
+            assert flatten_instruction_contributions([derived, explicit]) == [unkeyed, explicit.parts[0]]
+
         with pytest.raises(UserError, match=re.escape("Two toolsets have the same `id` 'docs'")):
             flatten_instruction_contributions(
                 [
@@ -1129,20 +1138,18 @@ A later <context> element with the same id replaces the earlier one and stays in
                 ]
             )
 
-    async def test_an_id_less_url_subclass_keys_only_the_server_instructions_by_host(self):
-        """An `MCPToolset` subclass's own blocks aren't keyed by the server's host, only the server instructions are.
-
-        Without an `id`, what the subclass writes in its own `get_instructions` goes out unkeyed, as it
-        always has, so it can't replace or collide with the server's block. The server instructions it
-        gets from `super()` keep the host key.
-        """
+    async def test_an_id_less_url_subclass_keys_its_own_blocks_by_the_hostname_too(self):
+        """A subclass's own blocks are keyed by the toolset's `id`, hostname-derived or not, like any toolset's."""
 
         class OwnInstructionsToolset(MCPToolset[None]):
             async def get_instructions(  # pyright: ignore[reportIncompatibleMethodOverride]
                 self, ctx: RunContext[None]
             ) -> list[InstructionPart]:
                 server = await super().get_instructions(ctx)
-                return [InstructionPart(content='Own guidance.', on_change='append'), *([server] if server else [])]
+                return [
+                    InstructionPart(content='Own guidance.', name='own', on_change='append'),
+                    *([server] if server else []),
+                ]
 
         server: FastMCP[None] = FastMCP('remote_server', instructions='Remote guidance.')
         app = server.http_app(stateless_http=True, json_response=True)
@@ -1162,217 +1169,8 @@ A later <context> element with the same id replaces the earlier one and stays in
             await client.aclose()
 
         assert [(part.content, str(part.id) if part.id else None) for part in parts] == [
-            ('Own guidance.', None),
+            ('Own guidance.', 'toolset:testserver:own'),
             ('Remote guidance.', 'toolset:testserver'),
-        ]
-
-    async def test_id_less_dynamic_toolsets_on_one_host_keep_working(self):
-        """Two id-less `DynamicToolset`s that build `MCPToolset`s on one host run as they did before keys were derived."""
-        server: FastMCP[None] = FastMCP('remote_server', instructions='Remote guidance.')
-        prefixes: list[str | None] = []
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            prefixes.append(info.instructions)
-            return ModelResponse(parts=[TextPart('done')])
-
-        app = server.http_app(stateless_http=True, json_response=True)
-        client: httpx.AsyncClient | httpx2.AsyncClient
-        if MCP_SDK_V2:
-            client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
-        else:
-            client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
-
-        def build() -> DynamicToolset[None]:
-            return DynamicToolset[None](
-                lambda _ctx: MCPToolset('http://testserver/mcp', http_client=client, include_instructions=True),
-                per_run_step=False,
-            )
-
-        agent = Agent(FunctionModel(model_fn), deps_type=type(None), toolsets=[build(), build()])
-        try:
-            async with app.router.lifespan_context(app):
-                with warnings.catch_warnings(record=True) as caught:
-                    warnings.simplefilter('always')
-                    result = await agent.run('Continue.')
-        finally:
-            await client.aclose()
-
-        assert [str(warning.message) for warning in caught if 'on_change' in str(warning.message)] == []
-        assert prefixes == ['Remote guidance.\n\nRemote guidance.']
-        assert not any(
-            isinstance(part, InstructionDeltaPart)
-            for message in result.all_messages()
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-        )
-
-    async def test_an_author_block_sharing_a_derived_key_still_warns_where_appending_isnt_supported(self):
-        """An author's block that ends up with the same id as a host-keyed MCP block is still the author's opt-in.
-
-        The MCP block falls back to unkeyed rewriting, and the author's `on_change='append'` gets the usual
-        warning in a deferred capability, rather than being mistaken for the framework's.
-        """
-        server: FastMCP[None] = FastMCP('remote_server', instructions='Remote guidance.')
-        calls = 0
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'docs'})])
-            return ModelResponse(parts=[TextPart('done')])
-
-        app = server.http_app(stateless_http=True, json_response=True)
-        client: httpx.AsyncClient | httpx2.AsyncClient
-        if MCP_SDK_V2:
-            client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
-        else:
-            client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
-        capability = Capability[None](
-            id='docs',
-            defer_loading=True,
-            toolsets=[
-                MCPToolset('http://testserver/mcp', http_client=client, include_instructions=True),
-                FunctionToolset[None](
-                    instructions=InstructionPart(content='Author guidance.', on_change='append'), id='testserver'
-                ),
-            ],
-        )
-        agent = Agent(FunctionModel(model_fn), deps_type=type(None), capabilities=[capability])
-        try:
-            async with app.router.lifespan_context(app):
-                with pytest.warns(
-                    UserWarning,
-                    match=re.escape("deferred capability instructions, so instruction blocks 'toolset:testserver'"),
-                ):
-                    result = await agent.run('Continue.')
-        finally:
-            await client.aclose()
-
-        load_return = next(
-            part
-            for message in result.all_messages()
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.tool_name == 'load_capability'
-        )
-        assert load_return.content == {'instructions': 'Remote guidance.\n\nAuthor guidance.'}
-
-    @pytest.mark.parametrize('composition', ['direct', 'dynamic-with-id'])
-    async def test_server_instructions_in_a_deferred_capability_do_not_warn(
-        self, fastmcp_server: FastMCP[None], composition: str
-    ):
-        """Appending is the framework's choice for server instructions, so where it isn't supported they rewrite quietly.
-
-        That holds when a `DynamicToolset` with an `id` builds the `MCPToolset` and keys its instructions
-        under its own id instead of the server's.
-        """
-        calls = 0
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'docs'})])
-            return ModelResponse(parts=[TextPart('done')])
-
-        capability = Capability[None](
-            id='docs',
-            defer_loading=True,
-            toolsets=[
-                DynamicToolset[None](
-                    lambda _ctx: MCPToolset(fastmcp_server, id='docs_server', include_instructions=True), id='outer'
-                )
-                if composition == 'dynamic-with-id'
-                else MCPToolset(fastmcp_server, id='docs_server', include_instructions=True)
-            ],
-        )
-        agent = Agent(FunctionModel(model_fn), deps_type=type(None), capabilities=[capability])
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter('always')
-            result = await agent.run('Continue.')
-
-        assert result.output == 'done'
-        assert [str(warning.message) for warning in caught if 'on_change' in str(warning.message)] == []
-        load_return = next(
-            part
-            for message in result.all_messages()
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.tool_name == 'load_capability'
-        )
-        assert load_return.content == {'instructions': 'You are an MCP test server.'}
-
-    @pytest.mark.parametrize(
-        ('composition', 'author_block'),
-        [
-            ('direct', 'toolset:author'),
-            ('filtered', 'toolset:author'),
-            ('dynamic-no-id', 'unnamed'),
-            ('dynamic-filtered-no-id', 'unnamed'),
-            ('dynamic-with-id', 'toolset:outer'),
-            ('subclass', 'toolset:author'),
-        ],
-    )
-    async def test_only_an_authors_own_append_opt_in_warns_however_toolsets_compose(
-        self, fastmcp_server: FastMCP[None], composition: str, author_block: str
-    ):
-        """Whether a block appends by the framework's choice travels with the block, not its id.
-
-        In a deferred capability, where appending isn't supported, an author's `on_change='append'` block
-        warns and the server's instructions don't, however the toolsets around them pass them along or
-        key them anew: a `DynamicToolset` with an `id` keys both under `toolset:outer`, and only the
-        author's is reported. An `MCPToolset` subclass that returns its own append block is its author.
-        """
-
-        class AppendingMCPToolset(MCPToolset[None]):
-            async def get_instructions(self, ctx: RunContext[None]) -> InstructionPart | None:
-                return InstructionPart(content='Own guidance.', on_change='append')
-
-        def members() -> list[AbstractToolset[None]]:
-            if composition == 'subclass':
-                return [AppendingMCPToolset(fastmcp_server, id='author', include_instructions=True)]
-            return [
-                MCPToolset(fastmcp_server, id='docs_server', include_instructions=True),
-                FunctionToolset[None](
-                    instructions=InstructionPart(content='Author guidance.', on_change='append'), id='author'
-                ),
-            ]
-
-        toolsets: list[AbstractToolset[None]]
-        if composition in ('direct', 'subclass'):
-            toolsets = members()
-        elif composition == 'filtered':
-            toolsets = [CombinedToolset(members()).filtered(lambda _ctx, _tool: True)]
-        elif composition == 'dynamic-no-id':
-            toolsets = [DynamicToolset[None](lambda _ctx: CombinedToolset(members()))]
-        elif composition == 'dynamic-filtered-no-id':
-            toolsets = [
-                DynamicToolset[None](lambda _ctx: CombinedToolset(members()).filtered(lambda _ctx, _tool: True))
-            ]
-        else:
-            toolsets = [DynamicToolset[None](lambda _ctx: CombinedToolset(members()), id='outer')]
-
-        calls = 0
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'docs'})])
-            return ModelResponse(parts=[TextPart('done')])
-
-        capability = Capability[None](id='docs', defer_loading=True, toolsets=toolsets)
-        agent = Agent(FunctionModel(model_fn), deps_type=type(None), capabilities=[capability])
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter('always')
-            await agent.run('Continue.')
-
-        assert [
-            str(warning.message) for warning in caught if 'deferred capability instructions' in str(warning.message)
-        ] == [
-            f"`on_change='append'` is not supported for deferred capability instructions, so instruction blocks "
-            f'{author_block!r} are delivered when the capability loads and their later changes are not tracked.'
         ]
 
     async def test_get_instructions_returns_none_when_disabled(

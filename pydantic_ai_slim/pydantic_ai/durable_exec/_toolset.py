@@ -947,13 +947,7 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         # Always route through the durable unit: deciding based on locally-cached state (e.g.
         # instructions a warm in-process MCP server already holds) would make the durable
         # schedule depend on process warmth and diverge on replay/recovery (#5884).
-        instructions = await self._get_instructions_operation(self._ctx_for_unit(ctx))
-        # The part was rebuilt from the unit's serialized result, which leaves out that the framework,
-        # not an author, chose to append it, so that's restored here: this wrapper only relays the
-        # server instructions `MCPToolset.get_instructions` built.
-        if isinstance(instructions, InstructionPart) and instructions.on_change == 'append':
-            return replace(instructions, _framework_appended=True)
-        return instructions
+        return await self._get_instructions_operation(self._ctx_for_unit(ctx))
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
