@@ -55,7 +55,7 @@ from pydantic_ai_harness.absurd._operation_backend import (
 )
 
 from ...conftest import try_import
-from ._task import checkpoints, claim_expires_at, reenter_running_task, running_task_context
+from ._task import checkpoints, claim_expires_at, claim_expiry, reenter_running_task, running_task_context
 
 with try_import() as logfire_installed:
     from logfire.testing import CaptureLogfire
@@ -844,7 +844,7 @@ class TestMcpSessions:
 _HEARTBEAT_INTERVAL = 'pydantic_ai_harness.absurd._operation_backend._heartbeat_interval'
 
 
-def _no_heartbeat_wait(task_ctx: object) -> float:
+def _no_heartbeat_wait(claim_timeout: int) -> float:
     return 0
 
 
@@ -881,6 +881,70 @@ class TestClaim:
             result = await agent.run('go')
 
         assert result.output == 'done'
+
+    async def test_claim_without_expiry_is_not_extended(
+        self, absurd: AsyncAbsurd, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # `claim_timeout=0` claims the task with no expiry, and Absurd refuses to extend such a claim,
+        # so a step that runs past a heartbeat interval must not try.
+        monkeypatch.setattr(_HEARTBEAT_INTERVAL, _no_heartbeat_wait)
+        toolset = FunctionToolset(id='tools')
+        task: dict[str, str] = {}
+
+        @toolset.tool_plain
+        async def slow() -> str:
+            # A query of its own lets a heartbeat, were one due, reach the database first.
+            await checkpoints(absurd, task['id'])
+            return 'done slowly'
+
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('slow')),
+            name='slow',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability()],
+        )
+        async with running_task_context(absurd, claim_timeout=0) as ctx:
+            task['id'] = ctx.task_id
+            result = await agent.run('go')
+
+        assert result.output == 'done'
+        # The claim really has no expiry, so skipping heartbeats can't let it lapse mid-step.
+        assert await claim_expiry(absurd, ctx.task_id) is None
+        assert list(await checkpoints(absurd, ctx.task_id)) == snapshot(
+            ['slow__model.request', 'slow__function_toolset__tools.call_tool:slow', 'slow__model.request#2']
+        )
+
+        # A retry on the same worker claims without expiry too, and replays from the checkpoints.
+        async with reenter_running_task(absurd, ctx.task_id, claim_timeout=0):
+            assert (await agent.run('go')).output == 'done'
+            assert await claim_expiry(absurd, ctx.task_id) is None
+
+    async def test_claim_without_expiry_sees_cancellation_at_the_next_checkpoint(self, absurd: AsyncAbsurd) -> None:
+        # Without heartbeats nothing checks mid-step that the task is still owned: a cancelled task's
+        # step runs to its end, and the cancellation surfaces when its result is checkpointed.
+        toolset = FunctionToolset(id='tools')
+        task: dict[str, str] = {}
+        finished: list[str] = []
+
+        @toolset.tool_plain
+        async def slow() -> str:
+            await absurd.cancel_task(task['id'])
+            finished.append('slow')
+            return 'done slowly'
+
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('slow')),
+            name='slow',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability()],
+        )
+        async with running_task_context(absurd, claim_timeout=0) as ctx:
+            task['id'] = ctx.task_id
+            with pytest.raises(CancelledTask):
+                await agent.run('go')
+
+        assert finished == ['slow']
+        assert list(await checkpoints(absurd, ctx.task_id)) == ['slow__model.request']
 
     async def test_step_extends_the_claim_before_its_body_runs(self, absurd: AsyncAbsurd) -> None:
         # `begin_step` leaves the claim as it was, so a step that starts late in the claim window

@@ -44,8 +44,10 @@ async def _noop(params: JsonValue, ctx: AsyncTaskContext) -> JsonValue:  # pragm
 
 
 @asynccontextmanager
-async def _entered(absurd: AsyncAbsurd, task: ClaimedTask) -> AsyncGenerator[AsyncTaskContext]:
-    ctx = await _create_async_task_context(task['task_id'], _conn(absurd), _queue(absurd), task, 120)
+async def _entered(
+    absurd: AsyncAbsurd, task: ClaimedTask, *, claim_timeout: int = 120
+) -> AsyncGenerator[AsyncTaskContext]:
+    ctx = await _create_async_task_context(task['task_id'], _conn(absurd), _queue(absurd), task, claim_timeout)
     token = _current_task_context.set(ctx)
     try:
         yield ctx
@@ -54,21 +56,25 @@ async def _entered(absurd: AsyncAbsurd, task: ClaimedTask) -> AsyncGenerator[Asy
 
 
 @asynccontextmanager
-async def running_task_context(absurd: AsyncAbsurd, task_name: str = 'noop') -> AsyncGenerator[AsyncTaskContext]:
+async def running_task_context(
+    absurd: AsyncAbsurd, task_name: str = 'noop', *, claim_timeout: int = 120
+) -> AsyncGenerator[AsyncTaskContext]:
     """Spawn, claim and enter a task context for the duration of the block.
 
     The task stays `running` when the block exits, so `reenter_running_task` can retry it.
     """
     absurd.register_task(name=task_name)(_noop)
     spawned = await absurd.spawn(task_name, None, max_attempts=2)
-    [task] = await absurd.claim_tasks(batch_size=1)
+    [task] = await absurd.claim_tasks(batch_size=1, claim_timeout=claim_timeout)
     assert task['task_id'] == spawned['task_id']
-    async with _entered(absurd, task) as ctx:
+    async with _entered(absurd, task, claim_timeout=claim_timeout) as ctx:
         yield ctx
 
 
 @asynccontextmanager
-async def reenter_running_task(absurd: AsyncAbsurd, task_id: str) -> AsyncGenerator[AsyncTaskContext]:
+async def reenter_running_task(
+    absurd: AsyncAbsurd, task_id: str, *, claim_timeout: int = 120
+) -> AsyncGenerator[AsyncTaskContext]:
     """Fail the task's current run and enter the retry, whose checkpoints come from Postgres."""
     conn = _conn(absurd)
     queue = _queue(absurd)
@@ -79,9 +85,9 @@ async def reenter_running_task(absurd: AsyncAbsurd, task_id: str) -> AsyncGenera
     row = await cursor.fetchone()
     assert row is not None
     await conn.execute('SELECT absurd.fail_run(%s, %s, %s, %s)', (queue, row[0], '{"type": "test.Replay"}', None))
-    [task] = await absurd.claim_tasks(batch_size=1)
+    [task] = await absurd.claim_tasks(batch_size=1, claim_timeout=claim_timeout)
     assert task['task_id'] == task_id
-    async with _entered(absurd, task) as ctx:
+    async with _entered(absurd, task, claim_timeout=claim_timeout) as ctx:
         yield ctx
 
 
@@ -98,6 +104,13 @@ async def checkpoints(absurd: AsyncAbsurd, task_id: str) -> dict[str, JsonValue]
 
 async def claim_expires_at(absurd: AsyncAbsurd, task_id: str) -> datetime:
     """When the task's running run's claim expires."""
+    expires_at = await claim_expiry(absurd, task_id)
+    assert expires_at is not None
+    return expires_at
+
+
+async def claim_expiry(absurd: AsyncAbsurd, task_id: str) -> datetime | None:
+    """The task's running run's claim expiry, or `None` for a claim that never expires."""
     cursor = await _conn(absurd).execute(
         sql.SQL('SELECT claim_expires_at FROM absurd.{} WHERE task_id = %s AND state = %s').format(
             sql.Identifier(f'r_{_queue(absurd)}')
