@@ -110,7 +110,9 @@ async def _unless_locked(
     try:
         await write
     except sqlite3.OperationalError as error:
-        if error.sqlite_errorcode & 0xFF not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+        # One raised by hand rather than by SQLite carries no code; it is no lock either.
+        code = getattr(error, 'sqlite_errorcode', None)
+        if code is None or code & 0xFF not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
             raise
         # Below `WARNING`, so mid-turn `logging` does not fall back to printing it over the live display.
         logging.getLogger(__name__).info('Skipped saving a %s: %s', kind, error)

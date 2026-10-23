@@ -971,7 +971,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """Encode a durable-unit result, mapping deterministic serialization failures when configured."""
         try:
             return self.engine_spec.codec.dump(tp, value)
-        except (PydanticSerializationError, TypeError) as exc:
+        # `ValueError` is what pydantic raises for a circular reference, such as a self-referencing dict.
+        except (PydanticSerializationError, TypeError, ValueError) as exc:
             if mapper := self.engine_spec.serialization_failure:
                 raise mapper(exc) from exc
             raise
