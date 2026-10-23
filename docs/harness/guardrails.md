@@ -53,7 +53,7 @@ agent = Agent(
 )
 ```
 
-A guard returns a bare `bool` (`True` = allow, `False` = block) for the simple case, or a `GuardrailResult` for the richer outcomes. Guards may also be async -- return an awaitable `bool`/`GuardrailResult`, for example to call a moderation API.
+A guard returns a bare `bool` (`True` = allow, `False` = block) for the simple case, or a `GuardrailResult` for the richer outcomes. Any other return value is read for truthiness, as in earlier releases, and emits a `HarnessDeprecationWarning`: a classifier label such as `'unsafe'` is truthy and lets the value through, and a future release will raise `UserError` instead. Return `bool(...)`, for example around a comparison on a NumPy or tensor score. Guards may also be async -- return an awaitable `bool`/`GuardrailResult`, for example to call a moderation API.
 
 `OutputGuardrail` receives the output unchanged -- no automatic stringification. For a string output the guard reads it directly; for a typed (Pydantic model) output the guard gets the model instance, so pick the serialization that fits the check (read a field, or call `output.model_dump_json()` for JSON text). This avoids the trap of `str(MyModel(...))` producing a `MyModel(field=...)` repr that hides field contents from regex-based checks.
 
@@ -233,7 +233,7 @@ The block/retry message is produced at the moment the guard decides, so it can c
 
 ## Redaction (`replace`)
 
-Return `GuardrailResult.replace(value)` to sanitize rather than refuse. `InputGuardrail` rewrites the prompt sent to the model; `OutputGuardrail` substitutes the output returned to the caller.
+Return `GuardrailResult.replace(value)` to sanitize rather than refuse. `InputGuardrail` rewrites the prompt sent to the model; `OutputGuardrail` substitutes the output returned to the caller. The replacement is not validated against the agent's `output_type`, so for a structured output return an instance of the same type, such as `output.model_copy(update=...)`.
 
 ```python
 def scrub_emails(text: str) -> GuardrailResult:
@@ -250,7 +250,7 @@ agent = Agent(
 )
 ```
 
-Input redaction requires sequential mode -- it is incompatible with `parallel=True`, since a parallel guard runs alongside a model call that has already started with the original prompt. It also requires a text prompt. A guard sees a multimodal prompt (`agent.run_sync(['describe this', BinaryContent(...)])`) rendered as text, and one string written back over a prompt built from several parts would drop the attached images, documents and audio, so `replace` raises `UserError` there instead. Return `allow` or `block` for those prompts, or guard the output.
+Input redaction requires sequential mode -- it is incompatible with `parallel=True`, since a parallel guard runs alongside a model call that has already started with the original prompt. It also requires a text prompt. A guard sees a multimodal prompt (`agent.run_sync(['describe this', BinaryContent(...)])`) rendered as text, and one string written back over a prompt built from several parts would drop the attached images, documents and audio, so `replace` raises `UserError` there instead. The same holds for a run resuming from a request with several prompt parts: the guard screens them together, as `ctx.prompt` reports them, and one replacement cannot be written back over them. Return `allow` or `block` for those prompts, or guard the output.
 
 ## Retry (`retry`)
 
@@ -268,7 +268,7 @@ OutputGuardrail(guard=must_cite_sources)
 
 ## Accessing run context
 
-A guard may take a `RunContext` as its first parameter when it needs run state -- `deps` for tenant- or role-aware policy, message history for conversation-aware checks. The parameter is detected from the signature, so prompt-only guards need not declare it:
+A guard may take a `RunContext` as its first parameter when it needs run state -- `deps` for tenant- or role-aware policy, message history for conversation-aware checks. The parameter is detected from the signature. A guard with a second positional parameter takes `RunContext` first when that parameter is required. So does a `*args` parameter alongside another parameter. When the second parameter has a default, the first parameter's annotation decides: `RunContext` (also in a union or `Annotated`) means the run context, and any other type means the guarded value. A first parameter with no annotation, `Any`, `object`, or a type that cannot be resolved still gets `RunContext`, as in earlier releases, with a `HarnessDeprecationWarning`, unless the unresolved annotation names `RunContext`, which needs no warning. Keyword-only parameters are left to the guard, so prompt-only guards need not declare anything:
 
 ```python
 from pydantic_ai import RunContext
@@ -312,7 +312,7 @@ Any exception raised by the guard propagates as-is -- use `InputBlocked` / `Outp
 
 ## Tool calls
 
-`ToolGuardrail` inspects both sides of a tool call: `guard` sees the validated arguments before the tool runs, `result_guard` sees what it returned before the model does.
+`ToolGuardrail` inspects both sides of a tool call: `guard` sees the validated arguments before the tool runs, `result_guard` sees what it returned before the model does. `result_guard` also screens the message of a `ModelRetry` or `ToolFailed` raised while the tool runs, including inside `CodeMode`, because that text reaches the model too. Hooks of a capability ordered inside this one (another `position='innermost'` capability) run within the same screening window, so their raw retries are screened as well, except one from an error hook, which this guard's error hook closes the window on; a capability ordered outside passes through. A screened failure stays a failure. A `ToolGuardrail` `retry` verdict is the guard's own instruction and is never screened.
 
 ```python
 from pathlib import Path
@@ -414,7 +414,7 @@ if isinstance(deferred.output, DeferredToolRequests):
     )
 ```
 
-A denial reaches the model as the tool's result, so the agent can explain itself or try something else. On the resumed run the guard is evaluated again, and `approve` becomes a no-op for a call the human already cleared -- every other verdict still applies, so a policy that has since changed its mind can still block an approved call.
+A denial reaches the model as the tool's result, so the agent can explain itself or try something else. On the resumed run the guard is evaluated again, and `approve` becomes a no-op for a call the human already cleared -- every other verdict still applies, so a policy that has since changed its mind can still block an approved call. An `InputGuardrail` on the same agent also runs again: the resumed run carries no new prompt, so its first request screens the most recent prompt in the history.
 
 Two shapes of approval, and which to reach for:
 
@@ -473,11 +473,11 @@ A `ToolGuardrail` is a control over tools this run executes. For the ones it doe
 
 ## Tracing
 
-`replace` and `block` are recorded as spans on the active OpenTelemetry tracer, so a redaction or refusal shows up in [Logfire](https://pydantic.dev/logfire) traces (`guardrail redacted input`, `guardrail blocked output`, and so on) with `guardrail.*` attributes. Content attributes -- the original/replacement values for a redaction and the refusal `message` for a block -- are attached **only** when `RunContext.trace_include_content` is enabled, since these can quote the very content the guard exists to keep out of traces.
+`replace` and `block` are recorded as spans on the active OpenTelemetry tracer, so a redaction or refusal shows up in [Logfire](https://pydantic.dev/logfire) traces (`guardrail redacted input`, `guardrail blocked output`, and so on) with `guardrail.*` attributes. Content attributes -- the replacement value for a redaction and the refusal `message` for a block -- are attached **only** when `RunContext.trace_include_content` is enabled, since these can quote the content the guard exists to keep out of traces. The value a redaction removed is never recorded, so content capture does not put a redacted secret into the trace.
 
 Tool spans add a `guardrail.tool` attribute naming the tool. `approve` records `guardrail deferred tool args`, which always carries `guardrail.tool_call_id` so the span can be correlated with the `DeferredToolRequests` the application answers, and carries `guardrail.arguments` under the same `trace_include_content` rule as the other content attributes. A deferred call never executes, so there is no `execute_tool` span recording what was asked for.
 
-`OutputGuardrail` positions its block/redact spans so they are always captured by an enclosing `Instrumentation` span regardless of capability order, while `InputGuardrail` runs innermost so any capability that morphs messages (a prompt rewriter, a context manager) runs first and the guard sees the final prompt the model will receive. `ToolGuardrail` also runs innermost, which puts it last among argument hooks (it sees the arguments every other capability has finished modifying) and first among result hooks (it sees the raw tool result, before a capability such as [`ToolOutputLimits`](tool-output-limits.md) truncates or offloads it).
+`OutputGuardrail` positions its block/redact spans so they are always captured by an enclosing `Instrumentation` span regardless of capability order, while `InputGuardrail` runs innermost so any capability that rewrites the user prompt (a prompt rewriter, a history processor) runs first and the guard sees the rewritten text. A `UserPromptPart` another capability adds to the request only, such as a `SystemReminders` reminder or a `Planning` plan, is not the user's prompt: the guard neither screens nor rewrites it. `ToolGuardrail` also runs innermost, which puts it last among argument hooks (it sees the arguments every other capability has finished modifying) and first among result hooks (it sees the raw tool result, before a capability such as [`ToolOutputLimits`](tool-output-limits.md) truncates or offloads it).
 
 
 ## API
