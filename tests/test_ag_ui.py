@@ -48,6 +48,7 @@ from pydantic_ai import (
     RetryPromptPart,  # pyright: ignore[reportDeprecated]
     RunCancelled,
     RunTimedOut,
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -7226,6 +7227,132 @@ def test_dump_messages_text_content() -> None:
     assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in result] == snapshot(
         [{'role': 'user', 'content': 'hello'}]
     )
+
+
+def test_structured_content_is_plain_text_before_ag_ui_0_1_11() -> None:
+    """`UserMessage.encrypted_value` landed in 0.1.11, so for an older client the item is dumped as text only."""
+    item = StructuredContent({'url': '/products/42'}, tag='ui_state')
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[item, 'Why?'])])]
+
+    dumped = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.10')
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in dumped] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'text': '<ui_state>{"url":"/products/42"}</ui_state>'},
+                    {'type': 'text', 'text': 'Why?'},
+                ],
+            }
+        ]
+    )
+    [request] = AGUIAdapter.load_messages(dumped)
+    assert request.parts == [
+        UserPromptPart(content=['<ui_state>{"url":"/products/42"}</ui_state>', 'Why?'], timestamp=IsDatetime())
+    ]
+
+
+@requires_ag_ui('0.1.11')
+def test_structured_content_round_trips_as_text_with_its_value() -> None:
+    """A structured item is text in the user message, which a frontend shows like any user text.
+
+    AG-UI has no structured user input, so the value, tag and description ride the message's `encrypted_value`,
+    keyed by the item's position, and the item loads back whole, in the same prompt as the text beside it.
+    """
+    item = StructuredContent({'url': '/products/42'}, tag='ui_state', description='The page the user is on.')
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[item, 'Why did the total jump?'])])]
+
+    dumped = AGUIAdapter.dump_messages(messages)
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in dumped] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': """\
+The page the user is on.
+<ui_state>{"url":"/products/42"}</ui_state>\
+""",
+                    },
+                    {'type': 'text', 'text': 'Why did the total jump?'},
+                ],
+                'encrypted_value': '{"pydantic_ai": {"structured_content": {"0": {"value": {"url": "/products/42"}, "tag": "ui_state", "description": "The page the user is on."}}}}',
+            }
+        ]
+    )
+    [request] = AGUIAdapter.load_messages(dumped)
+    assert request.parts == [UserPromptPart(content=[item, 'Why did the total jump?'], timestamp=IsDatetime())]
+
+    # A prompt that is only the item is dumped as a plain string, and still loads back as the item.
+    [single] = AGUIAdapter.dump_messages([ModelRequest(parts=[UserPromptPart(content=[item])])])
+    assert isinstance(single, UserMessage) and isinstance(single.content, str)
+    [request] = AGUIAdapter.load_messages([single])
+    assert request.parts == [UserPromptPart(content=[item], timestamp=IsDatetime())]
+
+
+@requires_ag_ui('0.1.11')
+@pytest.mark.parametrize(
+    'encrypted_value',
+    [
+        pytest.param('not json', id='not-json'),
+        pytest.param('{"pydantic_ai": {"structured_content": []}}', id='not-a-mapping'),
+        pytest.param('{"pydantic_ai": {"structured_content": {"0": "not a payload"}}}', id='not-a-payload'),
+        pytest.param('{"pydantic_ai": {"structured_content": {"0": {"tag": "bad tag", "value": 1}}}}', id='invalid'),
+        pytest.param(
+            json.dumps({'pydantic_ai': {'structured_content': {'x': {}, '²': {}, '1' * 5000: {}, '5': {'value': 1}}}}),
+            id='no-such-item',
+        ),
+        pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
+    ],
+)
+@pytest.mark.parametrize('content', [pytest.param('Hi', id='str'), pytest.param('list', id='list')])
+def test_load_messages_keeps_text_with_a_malformed_structured_content_payload(
+    encrypted_value: str, content: str
+) -> None:
+    """A client-sent payload that doesn't parse or validate, or names no text item, is noise: the text loads as text.
+
+    None of it may raise out of `load_messages`, which would fail the whole request.
+    """
+    message = (
+        UserMessage(id='u1', content='Hi', encrypted_value=encrypted_value)
+        if content == 'Hi'
+        else UserMessage(id='u1', content=[TextInputContent(type='text', text='Hi')], encrypted_value=encrypted_value)
+    )
+    [request] = AGUIAdapter.load_messages([message])
+    assert request.parts == [UserPromptPart(content='Hi', timestamp=IsDatetime())]
+
+
+@requires_ag_ui('0.1.19')
+async def test_enqueued_structured_content_round_trips_through_stream() -> None:
+    """An enqueued structured item reaches a client that rebuilds history from the stream, and loads back whole."""
+    item = StructuredContent({'job': 42, 'status': 'done'}, tag='job')
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='work', json_args='{}', tool_call_id='work-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool
+    def work(ctx: RunContext[object]) -> str:
+        ctx.enqueue(item, 'Background job finished.')
+        return 'started'
+
+    user = UserMessage(id='user-1', content='Go')
+    adapter = AGUIAdapter(agent, create_input(user), ag_ui_version='0.1.19')
+    events = [
+        json.loads(encoded.removeprefix('data: ')) async for encoded in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    loaded = AGUIAdapter.load_messages([user, *_reduce_events(events)])
+    assert [item, 'Background job finished.'] in [
+        part.content for part in iter_message_parts(loaded, ModelRequest, UserPromptPart)
+    ]
 
 
 # region multimodal and coverage tests

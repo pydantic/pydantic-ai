@@ -36,6 +36,7 @@ from ...messages import (
     RetryFeedbackPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -66,6 +67,8 @@ from .._adapter import (
     resolve_allow_uploaded_files,
     retry_feedback_from_payload,
     retry_feedback_payload,
+    structured_content_from_payload,
+    structured_content_payload,
     tool_availability_delta_from_payload,
     tool_retry_payload,
 )
@@ -388,14 +391,18 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         # A user part reloads as harness retry feedback only when it carries the
                         # marker this adapter dumped it with; text a person wrote has no such payload
                         # and stays a `UserPromptPart`. See `retry_feedback_from_payload`.
-                        feedback = retry_feedback_from_payload(
-                            load_provider_metadata(part.provider_metadata).get('retry_feedback')
-                        )
+                        provider_meta = load_provider_metadata(part.provider_metadata)
+                        feedback = retry_feedback_from_payload(provider_meta.get('retry_feedback'))
+                        structured = provider_meta.get('structured_content')
                         if feedback is not None:
                             flush_user_prompt()
                             builder.add(feedback)
                         else:
-                            user_prompt_content.append(part.text)
+                            user_prompt_content.append(
+                                part.text
+                                if structured is None
+                                else structured_content_from_payload(structured, part.text)
+                            )
                     elif isinstance(part, FileUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         # Restoring client-supplied `vendor_metadata` is intentional (as the `UploadedFile` branch
@@ -1253,6 +1260,15 @@ def _convert_user_prompt_part(
         for item in part.content:
             if isinstance(item, str):
                 ui_parts.append(TextUIPart(text=item, state='done'))
+            elif isinstance(item, StructuredContent):
+                # A text part the frontend shows like any user text, with the value in its metadata.
+                ui_parts.append(
+                    TextUIPart(
+                        text=item.content,
+                        state='done',
+                        provider_metadata=dump_provider_metadata(structured_content=structured_content_payload(item)),
+                    )
+                )
             elif isinstance(item, TextContent):
                 ui_parts.append(TextUIPart(text=item.content, state='done'))
             elif isinstance(item, BinaryContent):

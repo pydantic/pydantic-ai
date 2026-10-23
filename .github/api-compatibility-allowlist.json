@@ -107,6 +107,12 @@
       "fingerprint": "f5277165732c4c6ae79c0ff3e286f1fbccca262094e6dee75b26bfca7455c244",
       "reason": "False positive: only adds `repr=False` so the credential-bearing URL stays out of `repr`; the attribute's type, default, and constructor parameter are unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "89ea922e1dfeffeccefb6316b4c9c7d5c7b04e6902ee465eb998344e4bf2d247",
+      "reason": "Adds `StructuredContent` to the `UserContent` union; it subclasses `TextContent`, so existing `isinstance` checks and exhaustive matches still cover it, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10529"
     }
   ]
 }

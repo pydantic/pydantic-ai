@@ -19,6 +19,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -840,7 +841,13 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                 bounded.append(item)
                 continue
             changed = True
-            bounded.append(truncated if isinstance(item, str) else replace(item, content=truncated))
+            if isinstance(item, str):
+                bounded.append(truncated)
+            elif isinstance(item, StructuredContent):
+                # A model that takes structured input natively would still be sent the whole `value`.
+                bounded.append(TextContent(truncated, metadata=item.metadata))
+            else:
+                bounded.append(replace(item, content=truncated))
         return bounded, changed
 
     def _insert_receipt(

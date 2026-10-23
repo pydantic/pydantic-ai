@@ -41,6 +41,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     RetryFeedbackPart,
     RetryInfo,
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -4255,6 +4256,56 @@ class TestKeepUserMessages:
         assert len(first.content) == 30
         # Non-text items ride along untouched.
         assert passthrough is cache_point
+
+    async def test_a_truncated_structured_item_becomes_text(self):
+        """A decision model reads a structured item's `value`, which truncating its text would leave whole.
+
+        So a truncated item becomes a `TextContent`, and one under the budget stays structured.
+        """
+        comp = SummarizingCompaction(
+            model='test:m',
+            max_messages=3,
+            keep_messages=2,
+            keep_user_messages=True,
+            keep_user_messages_max_chars=30,
+            bridge_prefix=False,
+            preserve_first_user_message=False,
+        )
+        short = StructuredContent({'a': 1})
+        long = StructuredContent({'b': 'b' * 100}, metadata={'m': 1})
+        messages: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content=[short, long]),
+                    UserPromptPart(content=[TextContent('c' * 100, metadata={'m': 2})]),
+                ]
+            ),
+            _assistant('a'),
+            _user('b'),
+            _assistant('recent'),
+        ]
+        rc = _make_request_context(messages)
+        with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('SUMMARY')):
+            result = await comp.before_model_request(_make_ctx(rc.messages), rc)
+        structured, text = (
+            p
+            for m in result.messages
+            if isinstance(m, ModelRequest)
+            for p in m.parts
+            if isinstance(p, UserPromptPart) and not isinstance(p.content, str)
+        )
+        kept, truncated = structured.content
+        # Kept whole, marked as a kept user message like any other item.
+        assert isinstance(kept, StructuredContent)
+        assert (kept.value, kept.content) == (short.value, short.content)
+        assert type(truncated) is TextContent
+        assert truncated.content.endswith('[...]')
+        assert truncated.metadata['m'] == 1
+        # A plain `TextContent` is truncated in place, keeping its own metadata beside the kept marker.
+        [truncated_text] = text.content
+        assert type(truncated_text) is TextContent
+        assert truncated_text.content.endswith('[...]')
+        assert truncated_text.metadata['m'] == 2
 
     async def test_retained_messages_do_not_reenter_later_compactions(self):
         comp = SummarizingCompaction(
