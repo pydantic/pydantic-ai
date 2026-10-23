@@ -627,7 +627,8 @@ agent loop is implemented. Reports default to `priority='when_idle'`
 so active parents finish their current work first. A host that starts an idle
 continuation should use `DelegationReports(..., priority='asap')` and
 `agent.run(None, ...)`: pending reports then enter the first model request, with
-no synthetic user prompt. The host owns wake-up scheduling between runs.
+no synthetic user prompt. The host owns wake-up scheduling between runs. A report or question that arrives after a
+run has read its last queued messages is kept for the conversation's next run.
 
 ```python {test="skip"}
 from pathlib import Path

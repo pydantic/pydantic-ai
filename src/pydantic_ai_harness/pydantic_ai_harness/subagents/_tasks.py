@@ -20,7 +20,7 @@ from pydantic import SerializerFunctionWrapHandler, TypeAdapter, WrapSerializer
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent, CapabilityEvent, RunContext, capture_run_messages
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, on_event
-from pydantic_ai.exceptions import ModelRetry, RunCancelled
+from pydantic_ai.exceptions import ModelRetry, RunCancelled, UserError
 from pydantic_ai.messages import (
     EnqueuedMessagesEvent,
     ModelMessage,
@@ -747,6 +747,21 @@ def isolated(owner: DelegationTasks | None) -> Generator[None]:
         _CURRENT.reset(current)
 
 
+def enqueue_while_open(
+    ctx: RunContext[object], part: UserPromptPart, *, priority: Literal['asap', 'when_idle']
+) -> str | None:
+    """Queue `part` on the run of `ctx`, or return `None` once that run takes no more messages.
+
+    A run closes its queue when it reads its last queued messages, but its capabilities still receive until it
+    returns. What it no longer takes stays with the owner, which queues it on the conversation's next run.
+    """
+    try:
+        return ctx.enqueue(part, priority=priority)
+    except UserError:
+        # The only `UserError` a running agent's `enqueue` raises for a part: the run has ended.
+        return None
+
+
 class DelegationReports(AbstractCapability[object]):
     """Use core's queued-message seam for automated reports and child joins."""
 
@@ -768,7 +783,7 @@ class DelegationReports(AbstractCapability[object]):
         with self.owner.receiving(
             conversation_id=self.conversation_id,
             parent_id=self.task_id,
-            enqueue=lambda part: ctx.enqueue(part, priority=self.priority),
+            enqueue=lambda part: enqueue_while_open(ctx, part, priority=self.priority),
             steer=lambda text: ctx.enqueue(text, priority='asap'),
         ):
             return await handler()
