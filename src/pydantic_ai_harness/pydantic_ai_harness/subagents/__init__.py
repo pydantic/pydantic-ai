@@ -10,6 +10,7 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING
 
+from pydantic_ai_harness._task_report import is_task_report
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.subagents._capability import SubAgents, ToolResolver
 from pydantic_ai_harness.subagents._control import DynamicAgentFactory, DynamicAgents, DynamicAgentSpec, RemoteSubAgent
@@ -112,6 +113,7 @@ __all__ = [
     'ToolResolver',
     'clamp_effort',
     'deserialize_message',
+    'is_task_report',
     'serialize_message',
 ]
 

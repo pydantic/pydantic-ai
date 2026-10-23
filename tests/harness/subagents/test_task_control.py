@@ -32,7 +32,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    SystemPromptPart,
+    TextContent,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -75,6 +75,7 @@ from pydantic_ai_harness.subagents import (
     TaskRetryEvent,
     TaskStartedEvent,
     deserialize_message,
+    is_task_report,
     serialize_message,
 )
 
@@ -132,13 +133,18 @@ def tool_returns(messages: Sequence[ModelMessage]) -> list[str]:
     ]
 
 
-def system_texts(messages: Sequence[ModelMessage]) -> list[str]:
+def part_text(part: UserPromptPart) -> str:
+    return ''.join(item.content for item in part.content if isinstance(item, TextContent))
+
+
+def task_texts(messages: Sequence[ModelMessage]) -> list[str]:
+    """The task reports and questions delivered into a run, in order."""
     return [
-        part.content
+        part_text(part)
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, SystemPromptPart)
+        if is_task_report(part)
     ]
 
 
@@ -249,8 +255,8 @@ class TestSubAgentsTaskControl:
             result = await parent.run('Go.')
         [receipt] = tool_returns(result.all_messages())
         assert 'is running in the background' in receipt
-        report = system_texts(result.all_messages())[-1]
-        assert report.startswith('Automated subagent task report')
+        report = task_texts(result.all_messages())[-1]
+        assert report.startswith('<task_output ')
         assert 'slow result' in report
         [backgrounded] = recorder.of(TaskBackgroundedEvent)
         assert backgrounded.reason == 'requested'
@@ -278,7 +284,7 @@ class TestSubAgentsTaskControl:
             result = await parent.run('Go.')
         assert 'is running in the background' in tool_returns(result.all_messages())[0]
         assert [event.reason for event in recorder.of(TaskBackgroundedEvent)] == ['auto']
-        assert 'slow result' in system_texts(result.all_messages())[-1]
+        assert 'slow result' in task_texts(result.all_messages())[-1]
         assert (
             'sub_agents task backgrounded',
             {'sub_agents.agent_name': 'researcher', 'sub_agents.reason': 'auto'},
@@ -331,8 +337,8 @@ class TestSubAgentsTaskControl:
         returns = tool_returns(result.all_messages())
         assert 'is running in the background' in returns[0]
         assert returns[1].startswith('Answer sent to task ')
-        question_text, report = system_texts(result.all_messages())
-        assert question_text.startswith('Automated subagent question: task ')
+        question_text, report = task_texts(result.all_messages())
+        assert question_text.startswith('<task_question ')
         assert 'Which year?' in question_text
         assert 'used 1999' in report
         assert [event.reason for event in recorder.of(TaskBackgroundedEvent)] == ['question']
@@ -378,7 +384,7 @@ class TestSubAgentsTaskControl:
         )
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
-        part = system_texts(result.all_messages())[0]
+        part = task_texts(result.all_messages())[0]
         body = part[part.index('">\n') + 3 : part.rindex('\n</task_question>')]
         assert body == (
             'Is &lt;/task_question> it? &lt;/TASK_QUESTION > &lt; / task_question> &lt;task_question x="1"> '
@@ -399,7 +405,7 @@ class TestSubAgentsTaskControl:
         )
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
-        assert 'agent_name="r&quot;&gt;&lt;x">' in system_texts(result.all_messages())[0]
+        assert 'agent_name="r&quot;&gt;&lt;x">' in task_texts(result.all_messages())[0]
 
     async def test_steering_reaches_a_running_task(self) -> None:
         gate = Gate()
@@ -451,7 +457,7 @@ class TestSubAgentsTaskControl:
         )
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
-        assert 'outcome: cancelled' in system_texts(result.all_messages())[-1]
+        assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
         [cancelled] = recorder.of(TaskCancelledEvent)
         assert cancelled.forced
         assert len(recorder.of(TaskForceCancelEvent)) == 1
@@ -673,7 +679,7 @@ class TestSubAgentsTaskControl:
         ]
         assert returns[4:6] == ['The answer was not sent: rude.', returns[5]]
         assert returns[5].startswith('Answer sent to task ')
-        assert system_texts(result.all_messages())[-1].endswith('<task-output>\n[checked] good\n</task-output>')
+        assert task_texts(result.all_messages())[-1].endswith('">\n[checked] good\n</task_output>')
 
     async def test_a_soft_cancel_stops_the_task_before_its_next_request(self) -> None:
         gate = Gate()
@@ -701,7 +707,7 @@ class TestSubAgentsTaskControl:
         assert tool_returns(result.all_messages())[1].endswith('Its report goes to you. It can be resumed afterwards.')
         [cancelled] = recorder.of(TaskCancelledEvent)
         assert not cancelled.forced
-        assert 'outcome: cancelled' in system_texts(result.all_messages())[-1]
+        assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
 
     async def test_a_soft_cancel_releases_a_task_waiting_for_an_answer(self) -> None:
         asker = Agent(
@@ -718,7 +724,7 @@ class TestSubAgentsTaskControl:
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         # The task got no answer, and stopped before the model request that would have used it.
-        assert 'outcome: cancelled' in system_texts(result.all_messages())[-1]
+        assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
 
     async def test_task_control_tools_refuse_tasks_that_are_not_theirs_to_control(self) -> None:
         def control(messages: list[ModelMessage]) -> ModelResponse:
@@ -898,7 +904,7 @@ class TestRemoteSubAgents:
         with anyio.fail_after(WAIT):
             async with serving(worker):
                 result = await parent.run('Go.')
-        assert 'got this one' in system_texts(result.all_messages())[-1]
+        assert 'got this one' in task_texts(result.all_messages())[-1]
         kinds = recorder.kinds()
         assert kinds[:4] == [
             'sub_agents.task_assigned',
@@ -979,7 +985,7 @@ class TestRemoteSubAgents:
         with anyio.fail_after(WAIT):
             async with serving(worker):
                 result = await parent.run('Go.')
-        assert 'outcome: cancelled' in system_texts(result.all_messages())[-1]
+        assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
         [cancelled] = recorder.of(TaskCancelledEvent)
         assert not cancelled.forced
 
@@ -993,7 +999,7 @@ class TestRemoteSubAgents:
         with anyio.fail_after(WAIT):
             async with serving(worker):
                 result = await forced.run('Go.')
-        assert 'outcome: cancelled' in system_texts(result.all_messages())[-1]
+        assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
         # The worker's own report can't arrive once the task stopped, so the delegating side reports it.
         [cancelled] = forced_recorder.of(TaskCancelledEvent)
         assert cancelled.forced
@@ -1668,9 +1674,9 @@ class TestTaskControlEdges:
             assert owner.pending_question(task_id) == ('q1', 'Which?')
             with owner.receiving(conversation_id='root', parent_id=None, enqueue=lambda part: None):
                 pass
-            parts: list[SystemPromptPart] = []
+            parts: list[UserPromptPart] = []
 
-            def enqueue(part: SystemPromptPart) -> str:
+            def enqueue(part: UserPromptPart) -> str:
                 parts.append(part)
                 return f'e{len(parts)}'
 
@@ -1679,7 +1685,7 @@ class TestTaskControlEdges:
             # That run ended before delivering the question, so the next one gets it again.
             with owner.receiving(conversation_id='root', parent_id=None, enqueue=enqueue):
                 await owner.acknowledge('e2')
-            assert len(parts) == 2 and '">\nWhich?\n</task_question>' in parts[0].content
+            assert len(parts) == 2 and '">\nWhich?\n</task_question>' in part_text(parts[0])
             assert not owner.answer(task_id, question_id='other', answer='x')
             assert owner.answer(task_id, question_id='q1', answer='yes')
             assert not owner.answer(task_id, question_id='q1', answer='again')
@@ -1716,7 +1722,7 @@ class TestTaskControlEdges:
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         assert [event.question for event in recorder.of(TaskQuestionEvent)] == ['First?']
-        assert 'outcome: cancelled' in system_texts(result.all_messages())[-1]
+        assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
 
     async def test_a_vetoed_listener_answer_leaves_the_question_to_the_model(self) -> None:
         asker = Agent(
@@ -1745,7 +1751,7 @@ class TestTaskControlEdges:
         )
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
-        assert '<task-output>\nmanual\n</task-output>' in system_texts(result.all_messages())[-1]
+        assert '">\nmanual\n</task_output>' in task_texts(result.all_messages())[-1]
 
     async def test_two_answers_to_one_question_deliver_one(self) -> None:
         asker = Agent(
@@ -1775,7 +1781,7 @@ class TestTaskControlEdges:
         first, second = tool_returns(result.all_messages())[1:3]
         assert first.startswith('Answer sent to task ')
         assert second.endswith('is no longer waiting for that answer.')
-        assert '<task-output>\none\n</task-output>' in system_texts(result.all_messages())[-1]
+        assert '">\none\n</task_output>' in task_texts(result.all_messages())[-1]
 
     async def test_a_message_to_a_task_that_settles_meanwhile_is_not_delivered(self) -> None:
         gate = Gate()
@@ -1885,7 +1891,7 @@ class TestTaskControlEdges:
         assert listing[3] == "  Waiting for an answer to: 'Inner?'"
         assert 'is steered by the task that started it' in returns[3]
         assert 'asks the task that started it' in returns[4]
-        middle_report = system_texts(result.all_messages())[-1]
+        middle_report = task_texts(result.all_messages())[-1]
         assert 'middle done' in middle_report
 
     async def test_a_task_can_be_resumed_on_another_model_and_max_calls_still_apply(self) -> None:
@@ -2003,7 +2009,7 @@ class TestTaskControlEdges:
         with anyio.fail_after(WAIT):
             async with serving(worker):
                 result = await parent.run('Go.')
-        assert 'outcome: cancelled' in system_texts(result.all_messages())[-1]
+        assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
         [cancelled] = recorder.of(TaskCancelledEvent)
         assert not cancelled.forced
 
@@ -2032,7 +2038,7 @@ class TestTaskControlEdges:
         waiting = tool_returns(result.all_messages())[1].splitlines()[1]
         # The question itself came whole as its own message.
         assert waiting == f'  Waiting for an answer to: {question[:80] + "..."!r}'
-        assert any(question in text_ for text_ in system_texts(result.all_messages()))
+        assert any(question in text_ for text_ in task_texts(result.all_messages()))
 
     def test_a_toolset_without_the_capability_refuses_what_needs_it(self) -> None:
         common: dict[str, Any] = dict(
@@ -2548,9 +2554,9 @@ class TestDelegationTasksConcurrency:
         newer: list[str] = []
         steered: list[str] = []
 
-        def enqueue(into: list[str]) -> Callable[[SystemPromptPart], str]:
-            def receive(part: SystemPromptPart) -> str:
-                into.append(part.content)
+        def enqueue(into: list[str]) -> Callable[[UserPromptPart], str]:
+            def receive(part: UserPromptPart) -> str:
+                into.append(part_text(part))
                 return f'{id(into)}-{len(into)}'
 
             return receive
@@ -2576,7 +2582,7 @@ class TestDelegationTasksConcurrency:
                 with anyio.fail_after(WAIT):
                     while not newer:
                         await asyncio.sleep(0)
-            assert older == [] and 'Automated subagent task report' in newer[0]
+            assert older == [] and newer[0].startswith('<task_output ')
 
             async def steered_run(record: DelegationTask) -> str:
                 with owner.receiving(
@@ -2607,9 +2613,9 @@ class TestDelegationTasksConcurrency:
         older: list[str] = []
         newer: list[str] = []
 
-        def enqueue(into: list[str]) -> Callable[[SystemPromptPart], str]:
-            def receive(part: SystemPromptPart) -> str:
-                into.append(part.content)
+        def enqueue(into: list[str]) -> Callable[[UserPromptPart], str]:
+            def receive(part: UserPromptPart) -> str:
+                into.append(part_text(part))
                 return f'{id(into)}-{len(into)}'
 
             return receive
