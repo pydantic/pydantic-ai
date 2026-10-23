@@ -100,6 +100,7 @@ from pydantic_ai.usage import UsageLimits
 from ._inline_snapshot import snapshot
 from .conftest import (
     IsDatetime,
+    IsList,
     IsSameStr,
     IsStr,
     iter_message_parts,
@@ -1509,7 +1510,13 @@ Want me to tailor\
             {
                 'type': 'text-end',
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'id': IsStr(), 'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': IsStr(),
+                        'provider_name': 'openai',
+                        'provider_details': {'citations': IsList(length=(1, ...))},
+                    }
+                },
             },
             {
                 'type': 'message-metadata',

@@ -1,4 +1,4 @@
-"""LocalStack toolset — gives agents access to an emulated AWS environment."""
+"""LocalStack toolset that gives agents access to an emulated AWS environment."""
 
 from __future__ import annotations
 
@@ -472,7 +472,7 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         """Report the health and availability of the emulated AWS services.
 
         Queries LocalStack's health endpoint and returns the raw JSON, which maps
-        each service (s3, dynamodb, sqs, …) to its state (available, running, …).
+        each service (s3, dynamodb, sqs, etc.) to its state (available, running, etc.).
 
         Returns:
             The health JSON, or an error message if LocalStack is unreachable.

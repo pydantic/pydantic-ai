@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import warnings
-from collections.abc import AsyncGenerator, Callable, Mapping
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from functools import cached_property
@@ -253,6 +253,15 @@ try:
         last_cacheable_block_has_cache_control,
         last_message_content,
         raise_earlier_breakpoint_ttls,
+    )
+    from ._citations import (
+        check_citations_tool_choice,
+        citations_included,
+        citations_provider_details,
+        fetched_page,
+        fetched_pages_from_history,
+        map_citations,
+        with_document_citations,
     )
     from ._containers import is_tool_result_only
     from ._errors import is_expired_container_error, map_api_errors
@@ -948,13 +957,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response = await self._messages_create(messages, False, model_settings, model_request_parameters)
         response = check_json_response(self.model_name, response)
         if isinstance(response, BetaMessage):
-            model_response = self._process_response(response, model_request_parameters, model_settings)
+            model_response = self._process_response(
+                response, model_request_parameters, model_settings, fetched_pages_from_history(messages)
+            )
         else:
             # The request was streamed behind the scenes, see `_messages_create`. `map_api_errors` maps a transport
             # error that breaks the stream off, both while it opens and while it's read.
             async with response.source:
                 streamed_response = await self._process_streamed_response(
-                    response, model_request_parameters, model_settings
+                    response, model_request_parameters, model_settings, fetched_pages_from_history(messages)
                 )
                 async for _ in streamed_response:
                     pass
@@ -997,7 +1008,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response = await self._messages_create(messages, True, model_settings, model_request_parameters)
         async with response.source:
             streamed_response = await self._process_streamed_response(
-                response, model_request_parameters, model_settings
+                response, model_request_parameters, model_settings, fetched_pages_from_history(messages)
             )
             yield streamed_response
             mark_continuation_context_input_tokens(messages, streamed_response)
@@ -1674,6 +1685,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response: BetaMessage,
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
+        history_fetched_pages: Sequence[tuple[str, str]] = (),
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
@@ -1693,9 +1705,27 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 | BetaAdvisorToolResultBlock,
             )
         }
+        fetched_pages = [
+            *history_fetched_pages,
+            *(
+                page
+                for item in response.content
+                if isinstance(item, BetaWebFetchToolResultBlock) and (page := fetched_page(item))
+            ),
+        ]
         for item in response.content:
             if isinstance(item, BetaTextBlock):
-                items.append(TextPart(content=item.text))
+                if citations := map_citations(item.citations or [], item.text, fetched_pages):
+                    items.append(
+                        TextPart(
+                            content=item.text,
+                            provider_name=self.system,
+                            provider_details=citations_provider_details(item.citations or []),
+                            citations=citations,
+                        )
+                    )
+                else:
+                    items.append(TextPart(content=item.text))
             elif isinstance(item, BetaServerToolUseBlock):
                 if item.name not in enabled_server_tool_names and item.id not in server_tool_result_ids:
                     continue
@@ -1813,6 +1843,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response: AnthropicEventStream,
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
+        history_fetched_pages: Sequence[tuple[str, str]] = (),
     ) -> AnthropicStreamedResponse:
         first_chunk = await response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -1835,6 +1866,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
             _enabled_server_tool_names=self._get_enabled_server_tool_names(model_request_parameters, model_settings),
+            _history_fetched_pages=history_fetched_pages,
         )
 
     def _get_code_execution_tool_version(
@@ -1890,9 +1922,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     def _map_web_fetch_tool(
-        tool: WebFetchTool, supports_dynamic_filtering: bool
+        tool: WebFetchTool, supports_dynamic_filtering: bool, include_citations: bool
     ) -> tuple[BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param, str | None]:
-        citations = BetaCitationsConfigParamParam(enabled=tool.enable_citations) if tool.enable_citations else None
+        enable_citations = tool.enable_citations or include_citations
+        citations = BetaCitationsConfigParamParam(enabled=True) if enable_citations else None
         if supports_dynamic_filtering:
             return (
                 BetaWebFetchTool20260209Param(
@@ -1940,7 +1973,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if tool.files and any(file.provider_name == self.system for file in tool.files):
                     beta_features.add('files-api-2025-04-14')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
-                web_fetch_tool, beta_feature = self._map_web_fetch_tool(tool, supports_dynamic_filtering)
+                web_fetch_tool, beta_feature = self._map_web_fetch_tool(
+                    tool, supports_dynamic_filtering, citations_included(model_settings, model_request_parameters)
+                )
                 tools.append(web_fetch_tool)
                 if beta_feature is not None:
                     beta_features.add(beta_feature)
@@ -2102,6 +2137,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         messages = self._trim_before_compaction(messages)
         map_context = _MapMessagesContext(
             model_request_parameters=model_request_parameters,
+            include_citations=citations_included(model_settings, model_request_parameters),
             # Whenever this request withholds a tool's schema, render any local-shape `search_tools`
             # history exchanges as Anthropic's "client-side" tool-search wire — `tool_use` paired with a
             # `tool_result` whose `content` is a `tool_reference` array. That block is the reveal: it
@@ -2160,6 +2196,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         place_system_messages_before_generation(anthropic_messages)
         anchor_system_messages(anthropic_messages)
         self._add_container_uploads(anthropic_messages, model_request_parameters)
+        check_citations_tool_choice(
+            model_settings, model_request_parameters, anthropic_messages, map_context.include_citations
+        )
         system_prompt = self._build_system_prompt(
             map_context.system_prompt_parts, messages, model_request_parameters, model_settings
         )
@@ -2283,7 +2322,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self, part: UserPromptPart, request_context: _MapModelRequestContext, map_context: _MapMessagesContext
     ) -> None:
         user_content_params = request_context.user_content_params
-        async for content in self._map_user_prompt(part):
+        async for content in self._map_user_prompt(part, include_citations=map_context.include_citations):
             if not isinstance(content, CachePoint):
                 user_content_params.append(content)
             elif request_context.mid_conversation_system_prompts or request_context.tool_availability_blocks:
@@ -2428,9 +2467,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     )
                 elif item.media_type.startswith(('text/', 'application/')):
                     tool_result_content.append(
-                        BetaRequestDocumentBlockParam(
-                            source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
-                            type='document',
+                        with_document_citations(
+                            BetaRequestDocumentBlockParam(
+                                source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
+                                type='document',
+                            ),
+                            map_context.include_citations,
                         )
                     )
                 else:
@@ -2439,7 +2481,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         'Only image and document (text/application) types are supported.'
                     )
             elif is_multi_modal_content(item):
-                tool_result_content.append(await self._map_file_to_content_block(item, 'tool returns'))  # pyright: ignore[reportArgumentType]
+                tool_result_content.append(
+                    await self._map_file_to_content_block(
+                        item,  # pyright: ignore[reportArgumentType]
+                        'tool returns',
+                        include_citations=map_context.include_citations,
+                    )
+                )
             elif isinstance(item, str):  # pragma: no branch
                 tool_result_content.append(BetaTextBlockParam(text=item, type='text'))
 
@@ -2928,48 +2976,68 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         add_cache_control_param(params, self._build_cache_control(ttl))
 
     @staticmethod
-    def _map_binary_data(data: bytes, media_type: str) -> BetaImageBlockParam | BetaRequestDocumentBlockParam:
+    def _map_binary_data(
+        data: bytes, media_type: str, *, include_citations: bool = False
+    ) -> BetaImageBlockParam | BetaRequestDocumentBlockParam:
         if media_type.startswith('image/'):
             return BetaImageBlockParam(
                 source={'data': base64.b64encode(data).decode(), 'media_type': media_type, 'type': 'base64'},  # pyright: ignore[reportArgumentType]
                 type='image',
             )
         elif media_type == 'application/pdf':
-            return BetaRequestDocumentBlockParam(
-                source=BetaBase64PDFSourceParam(
-                    data=base64.b64encode(data).decode(),
-                    media_type='application/pdf',
-                    type='base64',
+            return with_document_citations(
+                BetaRequestDocumentBlockParam(
+                    source=BetaBase64PDFSourceParam(
+                        data=base64.b64encode(data).decode(),
+                        media_type='application/pdf',
+                        type='base64',
+                    ),
+                    type='document',
                 ),
-                type='document',
+                include_citations,
             )
         elif media_type == 'text/plain':
-            return BetaRequestDocumentBlockParam(
-                source=BetaPlainTextSourceParam(data=data.decode('utf-8'), media_type=media_type, type='text'),
-                type='document',
+            return with_document_citations(
+                BetaRequestDocumentBlockParam(
+                    source=BetaPlainTextSourceParam(data=data.decode('utf-8'), media_type=media_type, type='text'),
+                    type='document',
+                ),
+                include_citations,
             )
         else:  # pragma: no cover
             raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
 
     @staticmethod
-    async def _map_image_url(item: ImageUrl) -> BetaImageBlockParam:
+    async def _map_image_url(item: ImageUrl, *, include_citations: bool = False) -> BetaImageBlockParam:
         if item.force_download:
             downloaded = await download_item(item, data_format='bytes')
-            return AnthropicModel._map_binary_data(downloaded['data'], item.media_type)  # pyright: ignore[reportReturnType]
+            return AnthropicModel._map_binary_data(  # pyright: ignore[reportReturnType]
+                downloaded['data'], item.media_type, include_citations=include_citations
+            )
         return BetaImageBlockParam(source={'type': 'url', 'url': item.url}, type='image')
 
     @staticmethod
-    async def _map_document_url(item: DocumentUrl) -> BetaRequestDocumentBlockParam:
+    async def _map_document_url(item: DocumentUrl, *, include_citations: bool = False) -> BetaRequestDocumentBlockParam:
         if item.media_type == 'application/pdf':
             if item.force_download:
                 downloaded = await download_item(item, data_format='bytes')
-                return AnthropicModel._map_binary_data(downloaded['data'], item.media_type)  # pyright: ignore[reportReturnType]
-            return BetaRequestDocumentBlockParam(source={'url': item.url, 'type': 'url'}, type='document')
+                return AnthropicModel._map_binary_data(  # pyright: ignore[reportReturnType]
+                    downloaded['data'], item.media_type, include_citations=include_citations
+                )
+            return with_document_citations(
+                BetaRequestDocumentBlockParam(source={'url': item.url, 'type': 'url'}, type='document'),
+                include_citations,
+            )
         elif item.media_type == 'text/plain':
             downloaded_item = await download_item(item, data_format='text')
-            return BetaRequestDocumentBlockParam(
-                source=BetaPlainTextSourceParam(data=downloaded_item['data'], media_type=item.media_type, type='text'),
-                type='document',
+            return with_document_citations(
+                BetaRequestDocumentBlockParam(
+                    source=BetaPlainTextSourceParam(
+                        data=downloaded_item['data'], media_type=item.media_type, type='text'
+                    ),
+                    type='document',
+                ),
+                include_citations,
             )
         else:  # pragma: no cover
             raise RuntimeError(f'Unsupported document media type: {item.media_type}')
@@ -2978,16 +3046,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     async def _map_file_to_content_block(
         item: BinaryContent | ImageUrl | DocumentUrl | AudioUrl | VideoUrl,
         context: str,
+        *,
+        include_citations: bool = False,
     ) -> BetaImageBlockParam | BetaRequestDocumentBlockParam:
         """Map a multimodal file item to its Anthropic API content block."""
         if isinstance(item, BinaryContent):
             if item.is_image or item.is_document:
-                return AnthropicModel._map_binary_data(item.data, item.media_type)
+                return AnthropicModel._map_binary_data(item.data, item.media_type, include_citations=include_citations)
             raise NotImplementedError(f'Unsupported binary content type in Anthropic {context}: {item.media_type}')
         elif isinstance(item, ImageUrl):
-            return await AnthropicModel._map_image_url(item)
+            return await AnthropicModel._map_image_url(item, include_citations=include_citations)
         elif isinstance(item, DocumentUrl):
-            return await AnthropicModel._map_document_url(item)
+            return await AnthropicModel._map_document_url(item, include_citations=include_citations)
         elif isinstance(item, AudioUrl):
             raise NotImplementedError(f'AudioUrl is not supported in Anthropic {context}')
         else:
@@ -2996,6 +3066,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     async def _map_user_prompt(
         self,
         part: UserPromptPart,
+        *,
+        include_citations: bool = False,
     ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
         if isinstance(part.content, str):
             if part.content:  # Only yield non-empty text
@@ -3016,9 +3088,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             type='image',
                         )
                     elif item.media_type.startswith(('text/', 'application/')):
-                        yield BetaRequestDocumentBlockParam(
-                            source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
-                            type='document',
+                        yield with_document_citations(
+                            BetaRequestDocumentBlockParam(
+                                source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
+                                type='document',
+                            ),
+                            include_citations,
                         )
                     else:
                         raise UserError(
@@ -3026,7 +3101,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             'Only image and document (text/application) types are supported.'
                         )
                 elif is_multi_modal_content(item):
-                    yield await AnthropicModel._map_file_to_content_block(item, 'user prompts')  # pyright: ignore[reportArgumentType]
+                    yield await AnthropicModel._map_file_to_content_block(
+                        item,  # pyright: ignore[reportArgumentType]
+                        'user prompts',
+                        include_citations=include_citations,
+                    )
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
@@ -3225,6 +3304,8 @@ class _MapMessagesContext:
     """The request-wide facts `AnthropicModel._map_message` maps each message against, and what it builds across them."""
 
     model_request_parameters: ModelRequestParameters
+    # Anthropic requires citations on all of a request's documents or none.
+    include_citations: bool
     deferred_tools_active: bool
     advisor_active: bool
     bm25_requested: bool

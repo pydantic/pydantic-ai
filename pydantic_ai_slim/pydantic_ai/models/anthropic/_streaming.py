@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
@@ -30,6 +30,7 @@ from anthropic.types.beta import (
     BetaServerToolUseBlock,
     BetaSignatureDelta,
     BetaTextBlock,
+    BetaTextCitation,
     BetaTextDelta,
     BetaTextEditorCodeExecutionToolResultBlock,
     BetaThinkingBlock,
@@ -42,9 +43,10 @@ from anthropic.types.beta import (
 
 from ... import _utils
 from ..._context_size import mark_context_input_tokens
-from ...messages import CompactionPart, ModelResponseStreamEvent, NativeToolCallPart, NativeToolSearchCallPart
+from ...messages import CompactionPart, ModelResponseStreamEvent, NativeToolCallPart, NativeToolSearchCallPart, TextPart
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
+from ._citations import citations_provider_details, fetched_page, map_citations
 from ._errors import map_api_errors
 from ._native_tools import (
     finalize_streamed_tool_search_call_part,
@@ -87,11 +89,15 @@ class AnthropicStreamedResponse(StreamedResponse):
     _provider_url: str
     _enabled_server_tool_names: frozenset[str]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _history_fetched_pages: Sequence[tuple[str, str]] = ()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with map_api_errors(self._model_name, self._model_id_namespace):
             current_block: BetaContentBlock | None = None
             ignored_server_tool_use_indices: set[int] = set()
+            pending_citations: dict[int, list[BetaTextCitation]] = {}
+            # Web Fetch citations name their page only by its text, so the fetched pages are kept to find their URLs.
+            fetched_pages: list[tuple[str, str]] = list(self._history_fetched_pages)
 
             builtin_tool_calls: dict[str, NativeToolCallPart] = {}
             async for event in MapStreamDecodeErrors(self._response, self._model_name):
@@ -199,6 +205,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                             part=map_text_editor_code_execution_tool_result_block(current_block, self.provider_name),
                         )
                     elif isinstance(current_block, BetaWebFetchToolResultBlock):  # pragma: lax no cover
+                        if page := fetched_page(current_block):
+                            fetched_pages.append(page)
                         yield self._parts_manager.handle_part(
                             vendor_part_id=event.index,
                             part=map_web_fetch_tool_result_block(current_block, self.provider_name),
@@ -286,9 +294,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                                     provider_details=compaction_provider_details(event.delta.encrypted_content),
                                 ),
                             )
-                    # TODO(Marcelo): We need to handle citations.
-                    elif isinstance(event.delta, BetaCitationsDelta):
-                        pass
+                    elif isinstance(event.delta, BetaCitationsDelta):  # pragma: no branch
+                        pending_citations.setdefault(event.index, []).append(event.delta.citation)
 
                 elif isinstance(event, BetaRawMessageDeltaEvent):
                     self._usage = map_usage(
@@ -320,6 +327,19 @@ class AnthropicStreamedResponse(StreamedResponse):
                         )
 
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
+                    block_citations = pending_citations.pop(event.index, [])
+                    part = self._parts_manager.get_part_by_vendor_id(event.index)
+                    if isinstance(part, TextPart) and (
+                        citations := map_citations(block_citations, part.content, fetched_pages)
+                    ):
+                        for event_ in self._parts_manager.handle_text_delta(
+                            vendor_part_id=event.index,
+                            content='',
+                            provider_name=self.provider_name,
+                            provider_details=citations_provider_details(block_citations),
+                            citations=citations,
+                        ):
+                            yield event_
                     if event.index in ignored_server_tool_use_indices:
                         ignored_server_tool_use_indices.remove(event.index)
                     elif isinstance(current_block, BetaMCPToolUseBlock):
