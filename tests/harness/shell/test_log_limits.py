@@ -42,6 +42,11 @@ async def _wait_for_notice(log: Path) -> None:
             await anyio.sleep(0.05)
 
 
+def _script(command: WorkspaceCommand) -> str:
+    """The shell script `command` runs: a job log is read with one, and a job is launched with `sh -c <script> ...`."""
+    return command if isinstance(command, str) else command[2]
+
+
 class _FirstReadMarked(LocalWorkspaceBackend):
     """Creates a `read` file once the first read of the start of a job log that returns output is kept.
 
@@ -62,9 +67,9 @@ class _FirstReadMarked(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        assert isinstance(command, str)
+        script = _script(command)
         result = await super().run(command, shell=shell, env=env, timeout=timeout)
-        if 'tail -c +1 ' in command and result.stdout.strip():
+        if 'tail -c +1 ' in script and result.stdout.strip():
             self.started = True
         return result
 
@@ -87,8 +92,8 @@ class _ReadsHeldUntilWritten(_FirstReadMarked):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        assert isinstance(command, str)
-        if 'tail -c +' in command and 'tail -c +1 ' not in command:
+        script = _script(command)
+        if 'tail -c +' in script and 'tail -c +1 ' not in script:
             with anyio.fail_after(10):
                 while not (self.markers / 'written').exists():
                     await anyio.sleep(0.01)
@@ -110,9 +115,9 @@ class _ClearedOnEveryRead(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        assert isinstance(command, str)
+        script = _script(command)
         result = await super().run(command, shell=shell, env=env, timeout=timeout)
-        if 'tail -c +' in command:
+        if 'tail -c +' in script:
             for job in self.jobs.iterdir():
                 with (job / 'log_clears').open('ab') as clears:
                     clears.write(b'xx')
@@ -139,8 +144,8 @@ class _ClearsAroundReads(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        assert isinstance(command, str)
-        if 'tail -c +' in command and 'tail -c +1 ' not in command and self.steps < 2:
+        script = _script(command)
+        if 'tail -c +' in script and 'tail -c +1 ' not in script and self.steps < 2:
             [job] = (self.markers / '.pydantic-ai-harness' / 'shell').iterdir()
             if self.steps:
                 (job / 'output.log').write_text(f'{NOTICE}\n')
@@ -168,8 +173,8 @@ class _ClearedAgainDuringTheReread(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        assert isinstance(command, str)
-        if 'tail -c +' in command and (self.clears or 'tail -c +1 ' not in command) and self.clears < 2:
+        script = _script(command)
+        if 'tail -c +' in script and (self.clears or 'tail -c +1 ' not in script) and self.clears < 2:
             [job] = (self.markers / '.pydantic-ai-harness' / 'shell').iterdir()
             (job / 'output.log').write_text(f'{NOTICE}\n')
             with (job / 'log_clears').open('ab') as clears:
@@ -191,8 +196,9 @@ class _TermIgnored(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        if isinstance(command, str) and 'wrapper=' in command:
-            command = f"trap '' TERM\n{command}"
+        if not isinstance(command, str) and 'wrapper=' in _script(command):
+            sh, flag, script, *arguments = command
+            command = [sh, flag, f"trap '' TERM\n{script}", *arguments]
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
@@ -211,8 +217,8 @@ class _ClearedWhileCounted(_FirstReadMarked):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        assert isinstance(command, str)
-        if 'tail -c +1 ' in command and not self.cleared:
+        script = _script(command)
+        if 'tail -c +1 ' in script and not self.cleared:
             [job] = (self.markers / '.pydantic-ai-harness' / 'shell').iterdir()
             status = job / 'status.json'
             if status.exists() and json.loads(status.read_text())['exit_code'] is not None:
