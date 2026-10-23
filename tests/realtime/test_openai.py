@@ -1250,6 +1250,8 @@ def test_session_config_thinking_maps_to_reasoning_on_reasoning_models() -> None
 
     assert reasoning('low') == {'effort': 'low'}
     assert reasoning('high') == {'effort': 'high'}
+    # The realtime reasoning efforts stop at `xhigh`, where `max` lands.
+    assert reasoning('max') == {'effort': 'xhigh'}
     assert reasoning(True) == {'effort': 'medium'}
     # `thinking=False` sends effort `'none'`, which the SDK type omits but the reasoning models accept
     # and honor with zero reasoning tokens; omitting `reasoning` would leave them at their default effort.
