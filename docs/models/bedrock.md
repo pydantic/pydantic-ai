@@ -136,8 +136,10 @@ The output mode is chosen on the run's first request and kept for the rest of th
 [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], where each model chooses on every request), so a thinking
 setting that changes from step to step doesn't add or remove the output tool between requests and
 [invalidate the prompt cache](../capabilities/caching.md#what-invalidates-a-cache). A Claude run that starts with tool
-output keeps it once thinking turns on, with the output tool offered under `toolChoice={'auto': {}}`. Models other than
-Claude and xAI Grok don't accept output tools alongside thinking, so there a request that thinks switches to
+output keeps it once thinking turns on, with the output tool offered under `toolChoice={'auto': {}}`. OpenAI GPT-5.6
+and GPT-6 accept output tools while they think, so they keep tool output (offered without a forced `toolChoice`, as
+for these models without thinking). Models other than Claude, xAI Grok, and OpenAI GPT-5.6 and GPT-6 don't accept
+output tools alongside thinking, so there a request that thinks switches to
 [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
 
 xAI Grok 4.6 and 4.7 (`us.xai.grok-4.6`, `global.xai.grok-4.6`, `us.xai.grok-4.7`, `global.xai.grok-4.7`) always

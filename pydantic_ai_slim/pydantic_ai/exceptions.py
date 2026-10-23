@@ -648,9 +648,9 @@ class ModelQuotaExceededError(ModelAPIError):
 class ModelUnavailableError(ModelAPIError):
     """Raised when the provider or model was temporarily unable to serve the request.
 
-    For example an HTTP 503, Bedrock's `ServiceUnavailableException`, or a gRPC `UNAVAILABLE`, whether it arrived
-    as an HTTP status or inside a stream. When the provider says the cause is load, it's the more specific
-    [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError].
+    For example an HTTP 503, Bedrock's `ServiceUnavailableException`, or a gRPC `UNAVAILABLE` sent by the provider,
+    whether it arrived as an HTTP status or inside a stream. When the provider says the cause is load, it's the more
+    specific [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError].
     """
 
 
@@ -666,8 +666,8 @@ class ModelOverloadedError(ModelUnavailableError):
 class ModelServerError(ModelAPIError):
     """Raised when the provider failed with a server error that isn't otherwise categorized.
 
-    For example an HTTP 500, 502 or 504, or a gRPC `INTERNAL`, whether it arrived as an HTTP status or inside a
-    stream. An unavailable or overloaded provider is a
+    For example an HTTP 500, 502 or 504, or a gRPC `INTERNAL` or `DEADLINE_EXCEEDED` sent by the provider, whether
+    it arrived as an HTTP status or inside a stream. An unavailable or overloaded provider is a
     [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] instead.
     """
 
@@ -1006,6 +1006,19 @@ _HTTP_CATEGORY_CLASSES: dict[type[ModelAPIError], type[_CategorizedHTTPError]] =
 }
 
 
+def _parse_retry_after_ms(headers: Mapping[str, str]) -> float | None:
+    """Seconds to wait before retrying, from the `retry-after-ms` header (keys lowercased), as OpenAI and Anthropic send it."""
+    if (raw_ms := headers.get('retry-after-ms')) is None:
+        return None
+    try:
+        milliseconds = float(raw_ms)
+    except ValueError:
+        return None
+    if 0 <= milliseconds < float('inf'):
+        return milliseconds / 1000
+    return None
+
+
 def _parse_retry_after(headers: Mapping[str, str] | None) -> float | None:
     """Seconds to wait before retrying, from the `retry-after-ms` or `Retry-After` header (keys lowercased).
 
@@ -1014,14 +1027,8 @@ def _parse_retry_after(headers: Mapping[str, str] | None) -> float | None:
     """
     if headers is None:
         return None
-    if (raw_ms := headers.get('retry-after-ms')) is not None:
-        try:
-            milliseconds = float(raw_ms)
-        except ValueError:
-            pass
-        else:
-            if 0 <= milliseconds < float('inf'):
-                return milliseconds / 1000
+    if (seconds_from_ms := _parse_retry_after_ms(headers)) is not None:
+        return seconds_from_ms
     raw = headers.get('retry-after')
     if raw is None:
         return None
