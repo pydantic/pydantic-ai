@@ -230,8 +230,8 @@
     },
     {
       "against": "v2.60.0",
-      "fingerprint": "c850330ee6e7d71da2dd68320e67d99aa8467c04b73c47630560aecb72ea904d",
-      "reason": "clai2 web UI internals, not an SDK: a workspace's own CLAI process is gone, so a kind's `model` is retired; older saved values are still read and dropped.",
+      "fingerprint": "d58f8dc2737272b5050cccb8c41fefe270708b51783c8bc31ce79c7ac5996e7a",
+      "reason": "clai2 web UI internals, not an SDK: only the description of `WorktreeKind.model` changes, to say it is retired; its type and default are unchanged, and a value an older CLAI saved is kept.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10649"
     },
     {

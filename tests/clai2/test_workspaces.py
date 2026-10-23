@@ -177,7 +177,7 @@ async def test_what_an_older_clai_saved_still_reads(directory: Path, repository:
     assert not record.parent.exists(), 'what the older CLAI kept there goes too'
 
     kind = WorktreeKind.model_validate({'repo': 'x', 'model': 'openai:gpt-5'})
-    assert kind.model_dump() == WorktreeKind(repo='x').model_dump() and 'model' not in kind.model_dump()
+    assert kind.model_dump() == WorktreeKind(repo='x').model_dump() | {'model': 'openai:gpt-5'}
     settings = WorkspacesSettings.model_validate({'kinds': {'local-worktree': {'model': ''}}})
     assert settings.model_dump(mode='json') == WorkspacesSettings().model_dump(mode='json')
 

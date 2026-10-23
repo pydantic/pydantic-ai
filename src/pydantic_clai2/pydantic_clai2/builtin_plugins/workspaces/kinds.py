@@ -49,10 +49,9 @@ class WorktreeKind(BaseModel):
     )
     model: str = Field(
         default='',
-        exclude=True,
         description=(
             "Retired: the model of a workspace's own CLAI process. Its sessions run in this CLAI now and start with "
-            'the saved default, so a value an older CLAI saved is read and dropped.'
+            'the saved default, so a value an older CLAI saved is kept for it but not used.'
         ),
     )
 
