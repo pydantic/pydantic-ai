@@ -451,6 +451,9 @@ as a folder inside the working directory (`path` is relative); `LocalWorkspace` 
 `mounts=[...]`, or a function of the run context that returns them (one folder per customer from `deps`).
 
 - File tools always reach a mount; `FileSystem` tells the model which folders are mounts and whether commands see them.
+- `commands=True` makes the sandbox mount it so commands see it too: S3 and Azure, on Docker with FUSE in
+  `docker_args`, with keys that expire (`expires_at`, or a function returning them; an Azure SAS token works). Anything else is refused before the run starts, saying why; see the
+  Cloud Storage docs page. A sandbox holds one set of mounts: a concurrent run with other mounts is refused.
 - Durable runs rebuild the workspace from capabilities, so mount the bucket on a sandbox or `LocalWorkspace` there.
 
 ## Remote hosts and bubblewrap

@@ -9,7 +9,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
 from functools import cached_property, partial
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlencode, urlsplit
 
 import anyio
 import anyio.to_thread
@@ -254,11 +254,34 @@ class S3Filesystem(_ObjectStoreFilesystem):
     region: str | None = None
     """The bucket's region."""
 
+    share_long_lived_credentials: bool = False
+    """Whether keys that never expire may be handed to a sandbox for a [`Mount`][pydantic_ai.workspaces.Mount] with
+    `shell=True`, where its commands can read them. Without it, only keys with an `expires_at` are handed on."""
+
     def _config(self) -> dict[str, str]:
         config = super()._config()
         if self.region is not None:
             config['region'] = self.region
         return config
+
+    def _rclone_remote(self) -> tuple[dict[str, str], str]:
+        """The settings rclone needs for this bucket, without keys, and the folder in its terms."""
+        remote = {'type': 's3', 'provider': 'Other' if self.endpoint else 'AWS', 'env_auth': 'false'}
+        if self.endpoint:
+            remote['endpoint'] = self.endpoint
+        if self.region:
+            remote['region'] = self.region
+        return remote, '/'.join(part for part in self._location if part)
+
+    def _rclone_keys(self, keys: Mapping[str, Any]) -> dict[str, str]:
+        """The keys in rclone's terms."""
+        if not {'access_key_id', 'secret_access_key'} <= keys.keys():
+            raise ValueError('S3 keys need `access_key_id` and `secret_access_key`.')
+        return {
+            'access_key_id': keys['access_key_id'],
+            'secret_access_key': keys['secret_access_key'],
+            'session_token': keys.get('token') or '',
+        }
 
 
 @dataclass(frozen=True)
@@ -272,6 +295,7 @@ class GCSFilesystem(_ObjectStoreFilesystem):
     ```
 
     Paths start at `/`, which is the folder in `url`. An empty folder holds a hidden `.pydantic-ai-dir` object.
+    Commands can't see it: a [`Mount`][pydantic_ai.workspaces.Mount] of it with `commands=True` is refused.
     """
 
     _schemes = ('gs',)
@@ -315,6 +339,10 @@ class AzureFilesystem(_ObjectStoreFilesystem):
     account: str | None = None
     """The storage account, for an `az://` URL; an `https://` URL names it."""
 
+    share_long_lived_credentials: bool = False
+    """Whether keys that never expire may be handed to a sandbox for a [`Mount`][pydantic_ai.workspaces.Mount] with
+    `shell=True`, where its commands can read them. Without it, only keys with an `expires_at` are handed on."""
+
     def __post_init__(self) -> None:
         super().__post_init__()
         url = urlsplit(self.url)
@@ -342,6 +370,24 @@ class AzureFilesystem(_ObjectStoreFilesystem):
         config = super()._config()
         config['account_name'] = self._account
         return config
+
+    def _rclone_remote(self) -> tuple[dict[str, str], str]:
+        """The settings rclone needs for this container, without keys, and the folder in its terms."""
+        remote = {'type': 'azureblob', 'account': self._account}
+        if self.endpoint:
+            remote['endpoint'] = self.endpoint
+        return remote, '/'.join(part for part in self._location if part)
+
+    def _rclone_keys(self, keys: Mapping[str, Any]) -> dict[str, str]:
+        """The keys in rclone's terms: an account key, or a SAS token for the container."""
+        if 'access_key' in keys:
+            return {'key': keys['access_key']}
+        if 'sas_token' in keys:
+            token = keys['sas_token']
+            query = token.lstrip('?') if isinstance(token, str) else urlencode(token)
+            base = self.endpoint or f'https://{self._account}.blob.core.windows.net'
+            return {'sas_url': f'{base.rstrip("/")}/{self._location[0]}?{query}'}
+        raise ValueError('Azure keys for commands need an `access_key` or a `sas_token`.')
 
 
 def _folder(path: str) -> str:

@@ -1668,7 +1668,8 @@ jobs:
             tests/harness/step_persistence tests/harness/media tests/harness/_postgres_sqlite.py \
             "$H/integration_tests/postgres"
           detect redis "$H/pydantic_ai_harness/spend" tests/harness/spend "$H/integration_tests/redis"
-          detect cloud_storage "$H/pydantic_ai_harness/cloud_storage" tests/harness/cloud_storage "$H/integration_tests/cloud_storage"
+          detect cloud_storage "$H/pydantic_ai_harness/cloud_storage" "$H/pydantic_ai_harness/_mounts" \
+            "$H/pydantic_ai_harness/docker_sandbox" tests/harness/cloud_storage "$H/integration_tests/cloud_storage"
 
   harness-localstack-integration:
     name: harness LocalStack integration tests

@@ -92,11 +92,17 @@ def _prefix(filesystem: S3Filesystem | GCSFilesystem | AzureFilesystem) -> str |
 
 
 def test_file_tools_and_mounts_read_the_url_the_same_way() -> None:
-    # The folder in the URL is decoded once.
+    # The folder is decoded once, and both obstore and rclone get that, so file tools and commands see one folder.
     s3 = S3Filesystem('s3://b/my%20folder/', endpoint='http://s3', region='auto')
     assert _prefix(s3) == 'my folder'
+    assert s3._rclone_remote() == (  # pyright: ignore[reportPrivateUsage]
+        {'type': 's3', 'provider': 'Other', 'env_auth': 'false', 'endpoint': 'http://s3', 'region': 'auto'},
+        'b/my folder',
+    )
     azure = AzureFilesystem('https://acct.blob.core.windows.net/c/my%20f/')
     assert _prefix(azure) == 'my f'
+    assert azure._rclone_remote() == ({'type': 'azureblob', 'account': 'acct'}, 'c/my f')  # pyright: ignore[reportPrivateUsage]
+    assert AzureFilesystem('az://c', account='acct')._rclone_remote()[1] == 'c'  # pyright: ignore[reportPrivateUsage]
     assert _prefix(GCSFilesystem('gs://b/x', endpoint='http://gcs')) == 'x'
     assert _prefix(S3Filesystem('s3://b/x')) == 'x'
 

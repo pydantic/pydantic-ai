@@ -28,6 +28,7 @@ import re
 import secrets
 import shutil
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Literal
 
 import anyio
@@ -35,7 +36,10 @@ import anyio
 from pydantic_ai.workspaces import (
     CommandResult,
     LocalWorkspaceBackend,
+    Mount,
+    MountError,
     SupportsCommands,
+    SupportsMounts,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -44,6 +48,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness import _mounts
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
 
 __all__ = ('DockerSandboxBackend', 'remove_container')
@@ -205,7 +210,7 @@ async def remove_container(name: str, *, executable: str = 'docker') -> None:
         raise WorkspaceError(f'could not remove container {name}: {result.stderr.strip()}')
 
 
-class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
+class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsMounts):
     """Run commands in a local Docker container, created on first use, through the `docker` CLI.
 
     The image needs a POSIX `sh` and the usual file utilities; its own entrypoint and command don't run. A
@@ -230,6 +235,9 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             can't change the container's name, workspace label or entrypoint. A `--pids-limit` here replaces the
             default of 2048.
         executable: The container CLI to run, such as `'podman'`.
+
+    Commands see a [mount](https://pydantic.dev/docs/ai/harness/cloud-storage/) with `commands=True` when `docker_args` give the
+    container FUSE: `['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', 'apparmor:unconfined']`.
     """
 
     def __init__(
@@ -255,6 +263,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             raise TypeError('docker_args must be a sequence of arguments, not a string')
         self._image = image
         self._ref = ref
+        # Attached to an existing sandbox, an earlier run's mounts may be there.
+        self._mounter = _mounts.Mounter(self._run_as_root, attached=self._ref is not None)
         self._working_dir = None if working_dir is None else posixpath.normpath(working_dir)
         self._env = _checked_env(env or {})
         self._allow_internet_access = allow_internet_access
@@ -425,6 +435,30 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             raise WorkspaceUnavailableError(f'Docker workspace {self._name}: the container stopped during the command')
         return CommandResult(
             exit_code=int(done[2]), stdout=result.stdout, stderr=stderr[: done.start()] + stderr[done.end() :]
+        )
+
+    def check_mount(self, mount: Mount) -> None:
+        # Only `docker_args` can give the container the FUSE device that mounting needs.
+        if not any('/dev/fuse' in arg or arg == '--privileged' for arg in self._docker_args):
+            raise MountError(
+                'DockerSandbox can mount a filesystem for commands only when `docker_args` give the container FUSE: '
+                "`['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', 'apparmor:unconfined']`."
+            )
+        _mounts.check_mount(mount)
+
+    async def ensure_mounts(self, mounts: Sequence[Mount]) -> datetime | None:
+        if not self._mounter.needed(mounts):
+            return None
+        await self._acquire()
+        return await self._mounter.ensure(mounts, await self.working_dir())
+
+    async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
+        docker = [self._executable, 'exec', '--interactive', '--user', '0', '--workdir', '/', self._name]
+        result = await anyio.run_process([*docker, *argv], input=stdin, check=False)
+        return CommandResult(
+            exit_code=result.returncode,
+            stdout=result.stdout.decode(errors='replace'),
+            stderr=result.stderr.decode(errors='replace'),
         )
 
     async def _stop(self, tag: str) -> None:

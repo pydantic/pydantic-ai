@@ -15,6 +15,9 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import RunContext
 from pydantic_ai.workspaces import Mount, Workspace, WorkspaceBackend, WorkspaceCommand, WorkspaceTimeoutError
 
+from ._mounts import Mounter
+from ._workspace import innermost_backend
+
 # Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
 try:
     import sniffio as _sniffio
@@ -29,8 +32,25 @@ Mounts: TypeAlias = 'Sequence[Mount] | Callable[[RunContext[Any]], Sequence[Moun
 
 def with_mounts(backend: WorkspaceBackend, mounts: Mounts, ctx: RunContext[Any]) -> WorkspaceBackend:
     """`backend` with the capability's mounts, or `backend` itself when it has none."""
+    mounter = _mounter(backend)
+    if mounter is not None and ctx.run_id is not None:
+        # This run built the backend, so it holds the backend's mounts, and releases them when it ends.
+        mounter.owner = ctx.run_id
     picked = mounts(ctx) if callable(mounts) else mounts
     return Workspace(backend, mounts=picked) if picked else backend
+
+
+async def release_mounts(ctx: RunContext[Any]) -> None:
+    """When a run ends, let other runs mount filesystems of their own in the sandbox it mounted in."""
+    mounter = _mounter(innermost_backend(ctx.workspace))
+    # A workspace passed in as `workspace=`, such as a parent run's, belongs to the run that built it.
+    if mounter is not None and mounter.owner == ctx.run_id:
+        await mounter.release()
+
+
+def _mounter(backend: WorkspaceBackend) -> Mounter | None:
+    mounter = getattr(backend, '_mounter', None)
+    return mounter if isinstance(mounter, Mounter) else None
 
 
 def safe_credential_reason(error: Exception) -> str:

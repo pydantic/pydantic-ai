@@ -111,7 +111,7 @@ integration-redis: ## Run the harness Redis tests (`docker run -d -p 6379:6379 r
 	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/redis
 
 .PHONY: integration-cloud-storage
-integration-cloud-storage: ## Run the harness cloud storage tests against SeaweedFS and Azurite (see `integration_tests/cloud_storage/conftest.py`)
+integration-cloud-storage: ## Run the harness cloud storage and mount tests against SeaweedFS and Azurite (see `integration_tests/cloud_storage/conftest.py`)
 	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/cloud_storage
 
 .PHONY: update-examples
