@@ -3353,6 +3353,20 @@ _CROSS_SCOPE_SUMMARY_CASES = [
         overrides=True,
         marks=_SKIP_WITHOUT_OPENAI,
     ),
+    _CrossScopeCase(
+        # `thinking_summary=True` isn't translated on OpenRouter, so there's nothing to replace.
+        'openrouter-reasoning-true',
+        lambda s: http_probe(
+            lambda c: OpenRouterModel(
+                'openai/gpt-5', provider=OpenRouterProvider(api_key=PROBE_KEY, http_client=c), settings=s
+            )
+        ),
+        lambda: OpenRouterModelSettings(openrouter_reasoning={'effort': 'low'}),
+        True,
+        lambda p: (p['body'].get('reasoning') or {}).get('exclude'),
+        overrides=False,
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
 ]
 
 
@@ -3398,13 +3412,25 @@ async def test_cross_scope_thinking_summary_override_warning_matches_the_wire(
         ),
         (
             'openai',
-            {'bedrock_additional_model_requests_fields': {'include_reasoning': True}},
+            {'thinking_summary': False, 'bedrock_additional_model_requests_fields': {'include_reasoning': True}},
             ('bedrock_additional_model_requests_fields',),
+        ),
+        # gpt-oss only takes `False`, so a `True` has nothing to be replaced.
+        (
+            'openai',
+            {'thinking_summary': True, 'bedrock_additional_model_requests_fields': {'include_reasoning': True}},
+            (),
         ),
         (
             'openai_responses',
-            {'bedrock_additional_model_requests_fields': {'reasoning': {'effort': 'low'}}},
+            {'thinking_summary': True, 'bedrock_additional_model_requests_fields': {'reasoning': {'effort': 'low'}}},
             ('bedrock_additional_model_requests_fields',),
+        ),
+        # GPT-5.6 and GPT-6 only take `True`, so a `False` has nothing to be replaced.
+        (
+            'openai_responses',
+            {'thinking_summary': False, 'bedrock_additional_model_requests_fields': {'reasoning': {'effort': 'low'}}},
+            (),
         ),
         ('openai', {'bedrock_thinking_display': 'omitted'}, ()),
         ('qwen', {'bedrock_additional_model_requests_fields': {'reasoning_config': 'high'}}, ()),
@@ -3420,13 +3446,23 @@ def test_bedrock_settings_overriding_thinking_summary(
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize(
-    ('extra_body', 'expected'),
-    [({'include_reasoning': True}, ('extra_body',)), ({'top_k': 5}, ()), (None, ())],
+    ('thinking_summary', 'extra_body', 'expected'),
+    [
+        (False, {'include_reasoning': True}, ('extra_body',)),
+        # Only `False` is translated, so a `True` has nothing to be replaced.
+        (True, {'include_reasoning': True}, ()),
+        (False, {'top_k': 5}, ()),
+        (False, None, ()),
+    ],
 )
-def test_openai_chat_extra_body_overriding_thinking_summary(extra_body: Any, expected: tuple[str, ...]):
+def test_openai_chat_extra_body_overriding_thinking_summary(
+    thinking_summary: bool, extra_body: Any, expected: tuple[str, ...]
+):
     """On vLLM, a request's own `include_reasoning` in `extra_body` wins over `thinking_summary=False`."""
     model = OpenAIChatModel('qwen3', provider=VLLMProvider(base_url='http://localhost:8000/v1', api_key=PROBE_KEY))
-    settings: dict[str, Any] = {} if extra_body is None else {'extra_body': extra_body}
+    settings: dict[str, Any] = {'thinking_summary': thinking_summary}
+    if extra_body is not None:
+        settings['extra_body'] = extra_body
     assert model._settings_overriding_thinking_summary(settings) == expected
 
 

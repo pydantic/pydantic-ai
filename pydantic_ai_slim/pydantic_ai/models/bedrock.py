@@ -913,10 +913,13 @@ class BedrockConverseModel(Model[BaseClient]):
         if variant == 'anthropic' and model_settings.get('bedrock_thinking_display'):
             overriding.append('bedrock_thinking_display')
         fields = model_settings.get('bedrock_additional_model_requests_fields')
+        thinking_summary = model_settings.get('thinking_summary')
+        # gpt-oss only takes `False` (as `include_reasoning`), and GPT-5.6 and GPT-6 only take `True` (as
+        # `reasoning.summary`).
         if isinstance(fields, Mapping) and (
             (variant == 'anthropic' and 'thinking' in fields)
-            or (variant == 'openai' and 'include_reasoning' in fields)
-            or (variant == 'openai_responses' and 'reasoning' in fields)
+            or (variant == 'openai' and thinking_summary is False and 'include_reasoning' in fields)
+            or (variant == 'openai_responses' and thinking_summary is True and 'reasoning' in fields)
         ):
             overriding.append('bedrock_additional_model_requests_fields')
         return tuple(overriding)

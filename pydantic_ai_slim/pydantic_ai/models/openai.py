@@ -1897,7 +1897,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # thinking for `thinking_summary=False`.
         omit_thinking = self.profile.get('openai_chat_omit_thinking_extra_body')
         extra_body = model_settings.get('extra_body')
-        if omit_thinking and _is_str_dict(extra_body) and any(key in extra_body for key in omit_thinking):
+        if (
+            model_settings.get('thinking_summary') is False
+            and omit_thinking
+            and _is_str_dict(extra_body)
+            and any(key in extra_body for key in omit_thinking)
+        ):
             return ('extra_body',)
         return ()
 

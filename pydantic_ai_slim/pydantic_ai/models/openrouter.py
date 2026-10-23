@@ -1087,9 +1087,12 @@ class OpenRouterModel(OpenAIChatModel):
         # `openrouter_reasoning` replaces the unified mapping. `openai_reasoning_effort` is sent beside it instead.
         return ('openrouter_reasoning',) if 'openrouter_reasoning' in model_settings else ()
 
+    @override
     def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
-        # With `openrouter_reasoning` set, `thinking_summary=False` doesn't add `exclude` to it.
-        return ('openrouter_reasoning',) if 'openrouter_reasoning' in model_settings else ()
+        # Only `thinking_summary=False` is translated here, as `exclude`, which `openrouter_reasoning` leaves out.
+        if 'openrouter_reasoning' in model_settings and model_settings.get('thinking_summary') is False:
+            return ('openrouter_reasoning',)
+        return ()
 
     @override
     def _supports_tool_forcing(
