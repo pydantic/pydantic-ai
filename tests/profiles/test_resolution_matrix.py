@@ -87,7 +87,10 @@ with try_import() as openai_imports:
         _OpenAIJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.alibaba import AlibabaProvider
-    from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.azure import (
+        AzureProvider,
+        _AzureGrokJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
@@ -1867,7 +1870,7 @@ def test_azure_grok_prefix():
         {
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'json_schema_transformer': _AzureGrokJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
             'openai_chat_supports_document_input': False,
         }
