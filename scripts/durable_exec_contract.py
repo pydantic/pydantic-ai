@@ -42,7 +42,8 @@ matches an entry when the changed definition's qualname is the entry's qualname 
 an entry for `Model` matches a change to `Model.request`; an entry for `RunContext.usage` matches
 only that field. A matched entry gates review only when `gates` holds for it: an engine that names a
 class only in a signature does not depend on it at runtime, so an entry whose only kind is
-`annotation_only` stays in the manifest but does not gate.
+`annotation_only` stays in the manifest but does not gate. Nothing reads `gates` yet. TODO:
+https://github.com/pydantic/pydantic-ai/issues/11174
 
 Usage:
     uv run python scripts/durable_exec_contract.py          # exit 1 if the manifest is stale
@@ -59,7 +60,7 @@ import sys
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NamedTuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = 'scripts/durable_exec_contract.json'
@@ -138,6 +139,13 @@ class ClassInfo:
             ('pydantic_ai.models', 'ModelRequestParameters'),
             ('pydantic_ai.agent', 'Agent'),
         }
+
+
+class Ancestry(NamedTuple):
+    """Classes found by following a class's bases, and whether every base on the way resolved."""
+
+    classes: list[ClassInfo]
+    closed: bool
 
 
 @dataclass(frozen=True)
@@ -318,7 +326,7 @@ class Index:
             case _:
                 return frozenset()
 
-    def bases(self, info: ClassInfo) -> tuple[list[ClassInfo], bool]:
+    def bases(self, info: ClassInfo) -> Ancestry:
         """The class's resolved direct bases, and whether every base resolved."""
         resolved: list[ClassInfo] = []
         closed = True
@@ -330,9 +338,9 @@ class Index:
             # These bases contribute no members a core class could be looked up through.
             elif _last_name(target) not in {'ABC', 'Generic', 'Protocol', 'object'}:
                 closed = False
-        return resolved, closed
+        return Ancestry(resolved, closed)
 
-    def mro(self, info: ClassInfo) -> tuple[list[ClassInfo], bool]:
+    def mro(self, info: ClassInfo) -> Ancestry:
         """The class and its resolved ancestors, nearest first, and whether every ancestor resolved."""
         order: list[ClassInfo] = []
         closed = True
@@ -342,14 +350,14 @@ class Index:
             if current in order:
                 continue
             order.append(current)
-            bases, bases_closed = self.bases(current)
-            closed = closed and bases_closed
-            pending.extend(bases)
-        return order, closed
+            bases = self.bases(current)
+            closed = closed and bases.closed
+            pending.extend(bases.classes)
+        return Ancestry(order, closed)
 
     def lookup(self, info: ClassInfo, name: str) -> tuple[ClassInfo, Member] | None:
         """The nearest class in the MRO that defines `name`, and its member."""
-        for ancestor in self.mro(info)[0]:
+        for ancestor in self.mro(info).classes:
             if (member := ancestor.members.get(name)) is not None:
                 return ancestor, member
         return None
@@ -430,6 +438,31 @@ def _collect_instance_attributes(members: dict[str, Member], method: FunctionNod
             members[name] = Member(annotation_or_value, in_body=False)
 
 
+def _annotation_nodes(tree: ast.Module) -> set[int]:
+    """The ids of the nodes in annotation positions: annotations, return annotations and `if TYPE_CHECKING:` bodies."""
+    annotations: list[ast.AST] = []
+    for node in ast.walk(tree):
+        match node:
+            case ast.arg(annotation=ast.expr() as annotation) | ast.AnnAssign(annotation=annotation):
+                annotations.append(annotation)
+            case ast.FunctionDef(returns=ast.expr() as returns) | ast.AsyncFunctionDef(returns=ast.expr() as returns):
+                annotations.append(returns)
+            case ast.If(test=test, body=body) if _last_name(test) == 'TYPE_CHECKING':
+                annotations.extend(body)
+            case _:
+                pass
+    return {id(inner) for annotation in annotations for inner in ast.walk(annotation)}
+
+
+def _runtime_names(tree: ast.Module, annotation_nodes: set[int]) -> set[str]:
+    """The names the module loads outside annotation positions."""
+    return {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and id(node) not in annotation_nodes
+    }
+
+
 def _strip_subscript(expr: ast.expr) -> ast.expr:
     return expr.value if isinstance(expr, ast.Subscript) else expr
 
@@ -455,25 +488,8 @@ class _EngineWalker(ast.NodeVisitor):
         self.engine = engine
         self.entries = entries
         self.scopes = [_Scope('<module>')]
-        annotations: list[ast.AST] = []
-        for node in ast.walk(module.tree):
-            match node:
-                case ast.arg(annotation=ast.expr() as annotation) | ast.AnnAssign(annotation=annotation):
-                    annotations.append(annotation)
-                case (
-                    ast.FunctionDef(returns=ast.expr() as returns) | ast.AsyncFunctionDef(returns=ast.expr() as returns)
-                ):
-                    annotations.append(returns)
-                case ast.If(test=test, body=body) if _last_name(test) == 'TYPE_CHECKING':
-                    annotations.extend(body)
-                case _:
-                    pass
-        self.annotation_nodes = {id(inner) for annotation in annotations for inner in ast.walk(annotation)}
-        self.runtime_names = {
-            node.id
-            for node in ast.walk(module.tree)
-            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and id(node) not in self.annotation_nodes
-        }
+        self.annotation_nodes = _annotation_nodes(module.tree)
+        self.runtime_names = _runtime_names(module.tree, self.annotation_nodes)
 
     # --- Recording ------------------------------------------------------------------------------------------------
 
@@ -526,13 +542,13 @@ class _EngineWalker(ast.NodeVisitor):
     def record_classes(self, classes: frozenset[ClassInfo]) -> None:
         """The class-level fallback for an access the walk cannot resolve to a member."""
         for info in classes:
-            if not info.member_level_only and self.index.mro(info)[1]:
+            if not info.member_level_only and self.index.mro(info).closed:
                 self.record(info, info.qualname, 'attribute_read')
 
     def record_fields(self, expr: ast.expr) -> None:
         """Reflection over a dataclass's fields depends on every field it has."""
         for info in self.types(expr):
-            for ancestor in self.index.mro(info)[0]:
+            for ancestor in self.index.mro(info).classes:
                 for name, member in ancestor.members.items():
                     if member.is_field:
                         self.record(ancestor, f'{ancestor.qualname}.{name}', 'attribute_read')
@@ -552,7 +568,7 @@ class _EngineWalker(ast.NodeVisitor):
                 return self.attribute_types(value, attr, returns=False)
             case ast.Call(func=ast.Name(id='super')):
                 owner = next((scope.owner for scope in reversed(self.scopes) if scope.owner is not None), None)
-                return frozenset(self.index.bases(owner)[0]) if owner is not None else frozenset()
+                return frozenset(self.index.bases(owner).classes) if owner is not None else frozenset()
             case ast.Call(func=func, args=args) if _last_name(func) == 'cast' and args:
                 return self.index.annotation_classes(self.module, args[0])
             case ast.Call(func=ast.Attribute(value=value, attr=attr)) if not isinstance(
@@ -579,12 +595,16 @@ class _EngineWalker(ast.NodeVisitor):
             resolved = self.index.resolve(symbol, attr)
             return frozenset({resolved}) if isinstance(resolved, ClassInfo) else frozenset()
         result: frozenset[ClassInfo] = frozenset()
+        for definer, member in self.member_hits(value, attr):
+            annotation = member.returns if returns else member.annotation
+            result |= self.index.annotation_classes(definer.module, annotation)
+        return result
+
+    def member_hits(self, value: ast.expr, attr: str) -> Iterator[tuple[ClassInfo, Member]]:
+        """The member `attr` names on each class `value` may be an instance of, with the class that defines it."""
         for info in self.types(value):
             if (found := self.index.lookup(info, attr)) is not None:
-                definer, member = found
-                annotation = member.returns if returns else member.annotation
-                result |= self.index.annotation_classes(definer.module, annotation)
-        return result
+                yield found
 
     def element_types(self, iterable: ast.expr, annotated: Mapping[str, ast.expr | None]) -> frozenset[ClassInfo]:
         """The classes the items of `iterable` are instances of, from the annotation of what it reads or calls."""
@@ -599,11 +619,9 @@ class _EngineWalker(ast.NodeVisitor):
                 return self.index.element_classes(symbol.module, annotation)
             case ast.Attribute(value=value, attr=attr) | ast.Call(func=ast.Attribute(value=value, attr=attr)):
                 result: frozenset[ClassInfo] = frozenset()
-                for info in self.types(value):
-                    if (found := self.index.lookup(info, attr)) is not None:
-                        definer, member = found
-                        annotation = member.returns if isinstance(iterable, ast.Call) else member.annotation
-                        result |= self.index.element_classes(definer.module, annotation)
+                for definer, member in self.member_hits(value, attr):
+                    annotation = member.returns if isinstance(iterable, ast.Call) else member.annotation
+                    result |= self.index.element_classes(definer.module, annotation)
                 return result
             case _:
                 return frozenset()
@@ -632,7 +650,7 @@ class _EngineWalker(ast.NodeVisitor):
 
     def record_overrides(self, info: ClassInfo) -> None:
         """An `override` of each ancestor member the class body redefines."""
-        ancestors = self.index.mro(info)[0][1:]
+        ancestors = self.index.mro(info).classes[1:]
         for name, member in info.members.items():
             if not member.in_body:
                 continue
@@ -682,12 +700,7 @@ class _EngineWalker(ast.NodeVisitor):
         enclosing = self.scopes[-1]
         scope = _Scope(self.qualname(node.name), owner=enclosing.owner)
         arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
-        for position, argument in enumerate(arguments):
-            owner = enclosing.owner
-            if position == 0 and owner is not None and enclosing.qualname == owner.qualname and not _is_static(node):
-                self.bind(scope, argument.arg, frozenset({owner}))
-                continue
-            self.bind(scope, argument.arg, self.index.annotation_classes(self.module, argument.annotation))
+        self.bind_parameters(scope, enclosing, node, arguments)
         self.scopes.append(scope)
         annotated = {argument.arg: argument.annotation for argument in arguments}
         if (vararg := node.args.vararg) is not None and vararg.annotation is not None:
@@ -704,6 +717,15 @@ class _EngineWalker(ast.NodeVisitor):
         self.scopes.pop()
 
     visit_AsyncFunctionDef = visit_FunctionDef
+
+    def bind_parameters(self, scope: _Scope, enclosing: _Scope, node: FunctionNode, arguments: list[ast.arg]) -> None:
+        """The classes of the function's parameters: a method's first one is its class, the rest are annotated."""
+        owner = enclosing.owner
+        for position, argument in enumerate(arguments):
+            if position == 0 and owner is not None and enclosing.qualname == owner.qualname and not _is_static(node):
+                self.bind(scope, argument.arg, frozenset({owner}))
+            else:
+                self.bind(scope, argument.arg, self.index.annotation_classes(self.module, argument.annotation))
 
     def bind_locals(self, scope: _Scope, node: FunctionNode, annotated: dict[str, ast.expr | None]) -> None:
         """Flow-insensitively, the classes each local name of the function is bound to anywhere in it."""
@@ -840,7 +862,7 @@ def main(argv: Sequence[str] | None = None, *, root: Path = REPO_ROOT) -> int:
         return 0
     if manifest_path.is_file() and manifest_path.read_text(encoding='utf-8') == expected:
         return 0
-    print(f'{MANIFEST_PATH} is stale; run `{WRITE_COMMAND}`', file=sys.stderr)
+    print(f'`{MANIFEST_PATH}` is stale; run `{WRITE_COMMAND}`', file=sys.stderr)
     return 1
 
 

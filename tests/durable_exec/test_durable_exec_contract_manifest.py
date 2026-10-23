@@ -655,7 +655,7 @@ def test_main_writes_then_checks_the_manifest(fixture_repo: Path, capsys: pytest
 
     assert generator.main([], root=fixture_repo) == 1
     assert capsys.readouterr().err == snapshot(
-        'scripts/durable_exec_contract.json is stale; run `uv run python scripts/durable_exec_contract.py --write`\n'
+        '`scripts/durable_exec_contract.json` is stale; run `uv run python scripts/durable_exec_contract.py --write`\n'
     )
     assert generator.main(['--write'], root=fixture_repo) == 0
     assert generator.main([], root=fixture_repo) == 0
@@ -664,5 +664,5 @@ def test_main_writes_then_checks_the_manifest(fixture_repo: Path, capsys: pytest
     manifest_path.write_text('{}\n', encoding='utf-8')
     assert generator.main([], root=fixture_repo) == 1
     assert capsys.readouterr().err == snapshot(
-        'scripts/durable_exec_contract.json is stale; run `uv run python scripts/durable_exec_contract.py --write`\n'
+        '`scripts/durable_exec_contract.json` is stale; run `uv run python scripts/durable_exec_contract.py --write`\n'
     )

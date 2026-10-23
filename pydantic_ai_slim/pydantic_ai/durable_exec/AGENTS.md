@@ -96,10 +96,11 @@ such as a type in a mirrored signature. It stays in the manifest and does not ga
 Regenerate it with `uv run python scripts/durable_exec_contract.py --write` and commit the diff.
 Read the diff: a new entry is a new dependency an engine took on core.
 
-`tests/durable_exec/test_workflow_side_determinism.py` fails when a module that runs on Temporal's
-workflow loop directly calls a clock, a random source, a sleep, a thread, a task-completion wait or
-I/O that its `_DENYLIST` names. Prefer the replay-safe alternative the durability capability
+`tests/durable_exec/test_workflow_side_determinism.py` fails when a module in its workflow-side set
+directly calls a clock, a random source, a sleep, a thread, a task-completion wait, an environment
+read or I/O that its `_DENYLIST` names. Prefer the replay-safe alternative the durability capability
 supplies. For a delay, await `_agent_graph_sleep`, which Temporal and DBOS route through
-`set_agent_graph_sleep`. When the call is safe, mark it with `# workflow-nondeterminism-ok: <reason>`
+`set_agent_graph_sleep` (Prefect and the Harness engines do not yet:
+https://github.com/pydantic/pydantic-ai/issues/11178). When the call is safe, mark it with `# workflow-nondeterminism-ok: <reason>`
 and name why replay cannot diverge. The test docstring is the reference for the workflow-side
 modules, the pragma rules, and what the test does not see, which needs a workflow-level test.
