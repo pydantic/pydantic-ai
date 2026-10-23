@@ -26,6 +26,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest
+from pydantic_ai_harness.filesystem import READ_FILE_KIND
 from pydantic_ai_harness.memory._file import FileStore
 from pydantic_ai_harness.memory._in_memory import InMemoryStore
 from pydantic_ai_harness.memory._render import injection_listing_limit, list_subfiles, render_memory_prompt
@@ -46,6 +47,7 @@ from pydantic_ai_harness.memory._toolset import (
     read_call,
     require_metadata_store,
     run_as_operation,
+    run_workspace_directory,
     snapshot_content_budget,
     snapshot_metadata,
 )
@@ -182,6 +184,9 @@ class Memory(AbstractCapability[AgentDepsT]):
         clone._run_continues = _continues_earlier_work(ctx)
         store, scope = clone._resolve_scope(ctx)
         clone._resolved_scope = (store.bind(ctx.workspace) if isinstance(store, FileStore) else store, scope)
+        # The snapshot the model sees as the run starts, captured before any compaction hook can drop it, so a
+        # run that continues earlier work can put back the same one.
+        clone._run_snapshot = _latest_snapshot(post_compaction_window(ctx.messages), snapshot_metadata(scope, self.id))
         return clone
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
@@ -231,6 +236,7 @@ class Memory(AbstractCapability[AgentDepsT]):
                 read_memory=self._read_memory,
                 delete_memory=self._delete_memory,
                 search_memory=self._search_memory,
+                render_snapshot=self._render_current_snapshot,
             )
             self._toolset = MemoryToolset(self, operations=operations)
         return self._toolset
@@ -307,12 +313,15 @@ class Memory(AbstractCapability[AgentDepsT]):
                 ctx.enqueue(UserPromptPart([TextContent(self._run_snapshot, metadata=metadata)]))
             return request_context
         self._run_started = True
-        self._run_snapshot = latest
         # Memory waits for the next prompt when the model has already responded in this run (a deferred
         # `Memory` loaded mid-run) or the run continues from tool results without a prompt of its own (resuming
         # after a deferred tool approval): there, a snapshot follows what the model already saw or tool results.
+        # The snapshot the run started with is kept current, though, if compaction dropped it on this request.
         if self._run_continues or _responded_in_run(ctx):
+            if self._run_snapshot is not None and latest != self._run_snapshot:
+                ctx.enqueue(UserPromptPart([TextContent(self._run_snapshot, metadata=metadata)]))
             return request_context
+        self._run_snapshot = latest
         with ctx.tracer.start_as_current_span(
             'memory.inject', record_exception=False, set_status_on_exception=False
         ) as span:
@@ -406,6 +415,17 @@ class Memory(AbstractCapability[AgentDepsT]):
             location=None if reader is None else reader[1],
         )[:content_budget]
         return f'{MEMORY_DATA_PREFIX}{rendered}{MEMORY_DATA_SUFFIX}', False
+
+    async def _render_current_snapshot(self, ctx: RunContext[AgentDepsT]) -> str | None:
+        """The snapshot as `before_model_request` would render it now, or `None` when it would render none."""
+        store, scope = self.resolve_scope(ctx)
+        main, subfiles, files_truncated, error_type = await self._load_snapshot(ctx)
+        # Called while the run's tools are being prepared, before the file reader is known by name, so render as
+        # if it were there: the caller only asks whether the snapshot would name the directory.
+        directory = run_workspace_directory(store, scope)
+        reader = None if directory is None else (READ_FILE_KIND, directory)
+        snapshot = None if error_type is not None else self._render_snapshot(main, subfiles, files_truncated, reader)
+        return None if snapshot is None else snapshot[0]
 
     @durable_operation('load_snapshot')
     async def _load_snapshot(

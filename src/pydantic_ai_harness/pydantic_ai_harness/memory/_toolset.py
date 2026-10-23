@@ -267,6 +267,8 @@ class MemoryToolOperations(Generic[AgentDepsT]):
     read_memory: Callable[[RunContext[AgentDepsT], str], Awaitable[str | RetryRequest]]
     delete_memory: Callable[[RunContext[AgentDepsT], str], Awaitable[MemoryDeleteResult | RetryRequest]]
     search_memory: Callable[[RunContext[AgentDepsT], str], Awaitable[MemorySearchResponse | RetryRequest]]
+    render_snapshot: Callable[[RunContext[AgentDepsT]], Awaitable[str | None]] | None = None
+    """Renders the snapshot this run would record now, or `None` when it would record none."""
 
 
 class MemoryToolset(FunctionToolset[AgentDepsT]):
@@ -316,29 +318,26 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
     async def _prepare_read_memory(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition:
         """Step aside for a tool of `FileSystem`'s `READ_FILE_KIND` when it can read this run's memory files.
 
-        Only the injected snapshot tells the model where the files are, so `read_memory` stays when nothing is
-        injected: with `inject_memory=False`, or when the guidance leaves no room for the snapshot.
+        Only a snapshot tells the model where the files are, so `read_memory` stays unless one that names the
+        directory is in the conversation or about to be recorded: not with `inject_memory=False`, nor when the
+        rendered snapshot leaves the directory out (the budget has no room for it).
         """
         capability = self._capability
-        guidance = capability.get_instructions()
-        budget = snapshot_content_budget(capability.max_tokens, guidance if isinstance(guidance, str) else None)
-        if not capability.inject_memory or budget <= 0:
+        if not capability.inject_memory:
             return tool_def
         store, scope = self._resolve_scope(ctx)
         if (directory := run_workspace_directory(store, scope)) is None:
             return tool_def
-        # The smallest snapshot that names the directory is the empty one: if it doesn't fit, none reliably does.
-        if len(empty_snapshot_body(capability.heading, directory)) > budget:
-            return tool_def
-        # A snapshot only gives the directory when one is recorded: in a run that answers a prompt before the
-        # model's first response, or already visible in history. A run that continues earlier work, or loads
-        # `Memory` mid-run, records none, so `read_memory` stays unless an earlier snapshot already says where.
+        # Step aside only when the model sees, or this request will record, a snapshot that names the directory:
+        # judged from the snapshot as rendered, never predicted from budgets.
+        if _snapshot_discloses(ctx.messages, snapshot_metadata(scope, capability.id), directory):
+            return step_aside_for_read_file(ctx, tool_def)
+        # This run records one only when it answers a prompt and the model hasn't responded yet.
         will_record = ctx.prompt is not None and not any(
             isinstance(message, ModelResponse) and message.run_id == ctx.run_id for message in ctx.messages
         )
-        if not will_record and not _snapshot_discloses(
-            ctx.messages, snapshot_metadata(scope, capability.id), directory
-        ):
+        render = None if self._operations is None else self._operations.render_snapshot
+        if not will_record or render is None or directory not in ((await render(ctx)) or ''):
             return tool_def
         return step_aside_for_read_file(ctx, tool_def)
 

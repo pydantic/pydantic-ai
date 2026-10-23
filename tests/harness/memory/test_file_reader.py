@@ -136,6 +136,18 @@ class TestReaderKept:
         recorder, _ = await _run(tmp_path, Memory(store=FileStore('.agent-memory'), max_tokens=100), FileSystem())
         assert all('read_memory' in tools and 'read_file' in tools for tools in recorder.offered)
 
+    async def test_when_the_rendered_snapshot_leaves_the_directory_out(self, tmp_path: Path) -> None:
+        scope = tmp_path / '.agent-memory' / 'main'
+        scope.mkdir(parents=True)
+        (scope / 'MEMORY.md').write_text('- a fact\n')
+        for index in range(50):
+            (scope / f'topic-{index:02}.md').write_text('body')
+        # Too small for the listing: the snapshot falls back to a note without the directory.
+        memory = Memory(store=FileStore('.agent-memory'), guidance='', max_tokens=30)
+        recorder, _ = await _run(tmp_path, memory, FileSystem())
+        assert recorder.user_text and not any('in the workspace.' in text for text in recorder.user_text)
+        assert all('read_memory' in tools and 'read_file' in tools for tools in recorder.offered)
+
     async def test_when_no_snapshot_naming_the_directory_fits(self, tmp_path: Path) -> None:
         # Room for a few characters of snapshot, but not for the line that gives the directory.
         memory = Memory(store=FileStore('.agent-memory'), guidance='', max_tokens=5)

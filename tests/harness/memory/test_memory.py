@@ -2045,6 +2045,39 @@ class TestInjection:
         assert not any('- likes tea' in context for context in _memory_contexts(history))
         assert _memory_contexts(history)[-1] == '<memory>\n[memory is empty]\n</memory>'
 
+    async def test_deferred_approval_resume_restores_a_snapshot_compaction_drops(self) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- likes tea')
+        sent: list[list[ModelMessage]] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(messages)
+            if len(sent) == 1:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='lookup')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        def lookup() -> str:
+            return 'found'
+
+        compaction = SlidingWindowCompaction(max_messages=2, keep_messages=1, preserve_first_user_message=False)
+        agent = Agent(
+            FunctionModel(model),
+            capabilities=[compaction, Memory(store=store)],
+            output_type=[str, DeferredToolRequests],
+        )
+        agent.tool_plain(requires_approval=True)(lookup)
+        first = await agent.run('what do I like?')
+        [snapshot] = _memory_contexts(first.all_messages())
+
+        await agent.run(
+            message_history=first.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={'lookup': True}),
+        )
+
+        # Compaction drops the prompt and its snapshot on the resumed request; the same snapshot is put back.
+        assert len(sent) == 2
+        assert _memory_contexts(sent[1]) == [snapshot]
+
     async def test_memory_loaded_mid_run_waits_for_the_next_prompt(self) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- likes tea')
