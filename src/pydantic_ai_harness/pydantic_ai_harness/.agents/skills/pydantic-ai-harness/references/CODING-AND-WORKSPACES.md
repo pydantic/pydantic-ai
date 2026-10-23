@@ -168,6 +168,7 @@ as under Coder.
 `read_file` returns `[header, BinaryContent]` for a PNG, JPEG, GIF, WebP or PDF up to 5 MB (detected
 from its leading bytes, not its extension), and a text description (size, media type, and for other
 binary files the first 64 bytes in hex) for any other binary file; text files come back as a string.
+A file over 64 MiB is described by its size instead of read: find the lines with `search_files` or `grep`.
 
 `read_file` has the tool kind `READ_FILE_KIND` (`file_system.read_file`). `ToolOutputLimits`'
 `read_tool_result`, `Memory`'s `read_memory` and `RepoContext`'s inventory tool step aside for it when
@@ -178,10 +179,10 @@ Parameters: `root_dir` (default the working directory; must be the working direc
 of it, so `FileSystem(root_dir='data')` under `LocalWorkspace('.')` raises `UserError`: attach
 `LocalWorkspace('./data')` instead; `'/'` disables containment), `allowed_patterns` /
 `denied_patterns` / `read_only_patterns` (`fnmatch`: `*` spans `/`; a directory pattern covers
-descendants), `read_only=False` (`True` registers only read tools), `content_hashes=True`
-(`expected_hash` concurrency check), `max_read_lines=2000`, `max_read_chars=50_000`, `max_*_results=1000`.
+descendants; denied and read-only patterns ignore case), `read_only=False` (`True` registers only read tools), `content_hashes=True`
+(`expected_hash` concurrency check), `max_read_lines=2000` (also caps a model's `limit`), `max_read_chars=50_000`, `max_*_results=1000`.
 
-- Passing `read_only_patterns` **replaces** the defaults (`**/.git/*`, `**/.env`, `**/.env.*`, `*.pem`,
+- Passing `read_only_patterns` **replaces** the defaults (`**/.git`, `**/.env`, `**/.env.*`, `*.pem`,
   `*.key`, `**/secrets*`, `**/.pydantic-ai-harness/**`).
 - Walkers skip dotfiles and dot-directories unless a path or pattern names one explicitly, and filter entries, not the root, by
   `allowed_patterns`. A read-only workspace gets only read tools.
@@ -194,11 +195,11 @@ descendants), `read_only=False` (`True` registers only read tools), `content_has
   returns only).
 
 
-## SmartFileSearch
+## SmartSearch
 
-Plain-English code search (`.smart_file_search`, no extra). One tool,
-`smart_file_search(query, directory='.', glob=None, limit=5, candidates=128)`, returns a
-`SmartFileSearchResult` (`matches`, `omitted_matches`, `coverage`, `warnings`). Files are listed with
+Plain-English code search (`.smart_search`, no extra). One tool,
+`smart_search(query, directory='.', glob=None, limit=5, candidates=128)`, returns a
+`SmartSearchResult` (`matches`, `omitted_matches`, `coverage`, `warnings`). Files are listed with
 `rg --files` in the workspace (needs `rg` on the workspace `PATH`; hidden on a workspace that cannot run
 commands), cut into line windows (Python: along its `ast`), shortlisted with BM25, and each shortlisted
 snippet is judged by a model.
@@ -207,9 +208,9 @@ snippet is judged by a model.
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 
-from pydantic_ai_harness import SmartFileSearch
+from pydantic_ai_harness import SmartSearch
 
-agent = Agent('test', capabilities=[LocalWorkspace('.'), SmartFileSearch(model='test')])
+agent = Agent('test', capabilities=[LocalWorkspace('.'), SmartSearch(model='test')])
 ```
 
 - `model` is **required**: any Pydantic AI model or name. A decision model is recommended: `'system-one:<name>'`
@@ -519,7 +520,10 @@ a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises `UserErro
 `run_macroscope_review(base=None)` runs `macroscope codereview --raw` in the workspace and returns a
 `MacroscopeReview` of `MacroscopeIssue` findings; the agent fixes them with its other tools. No extra,
 but the `macroscope` CLI must be installed and signed in **inside the workspace**. Options: `base`,
-`command='macroscope'`, `timeout=600.0`, `guidance` (`None` default text, `''` none). Pair with `Coder`
+`command='macroscope'`, `timeout=600.0`, `guidance` (`None` default text, `''` none), `id='macroscope'`
+(keyword-only; capability and toolset id, so two with the same `id` merge or raise, and it works under
+durable execution; a Temporal activity gets `timeout` + 30s). A review the CLI stopped early still returns
+its findings, with `status='timed_out'` or `'interrupted'`. Pair with `Coder`
 or `FileSystem`/`Shell`: `Agent(..., capabilities=[LocalWorkspace('.'), Coder(), Macroscope(base='main')])`.
 
 ## LocalStack
