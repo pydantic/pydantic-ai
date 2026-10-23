@@ -79,6 +79,11 @@ async def test_auth_function_returning_oauth_raises() -> None:
         await _resolved_for(toolset, 'oauth')
 
 
+async def test_reject_oauth_false_leaves_oauth_to_connect() -> None:
+    toolset = connect_with_auth(lambda ctx: ctx.deps, _connect, id='whoami', reject_oauth=False)
+    assert await _resolved_for(toolset, 'oauth') == 'connected-as-oauth'
+
+
 @pytest.mark.parametrize(
     ('metadata', 'expected'),
     [

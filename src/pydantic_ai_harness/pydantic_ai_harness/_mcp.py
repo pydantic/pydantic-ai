@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Callable
+from dataclasses import dataclass
 from os import environ
 
 from pydantic_ai._utils import await_maybe
 from pydantic_ai.capabilities import MCPAuthorizationTokenFunc
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
+from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, PreparedToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._warn import MCPReadOnlyNoToolsWarning
 
@@ -34,20 +35,22 @@ def connect_with_auth(
     connect: Callable[[str | None], AbstractToolset[AgentDepsT]],
     *,
     id: str | None,
+    reject_oauth: bool = True,
 ) -> AbstractToolset[AgentDepsT]:
     """`connect(auth)` for a fixed `auth`; for a function of the run context, a toolset that connects per run.
 
     The function, sync or async, is called at the start of each run, and that run connects with the token it
     returns: each run then has a session of its own, opened as its own user. When it returns `None` or `''`, that run
     has no tools, rather than `connect` falling back to the environment credential. The toolset is registered once
-    under `id`, as durable execution requires, and filled per run.
+    under `id`, as durable execution requires, and filled per run. A function returning `'oauth'` raises, unless
+    `reject_oauth=False` leaves that to `connect`, to give a service-specific reason.
     """
     if not callable(auth):
         return connect(auth)
 
     async def connect_for_run(ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         token = await await_maybe(auth(ctx))
-        if token == 'oauth':
+        if reject_oauth and token == 'oauth':
             # FastMCP reads 'oauth' as "log in through a browser", which would hang a server run.
             raise UserError("The `auth` function must return an API key or token, not 'oauth'.")
         return connect(token) if token else None
@@ -64,8 +67,20 @@ def is_read_only(tool: ToolDefinition) -> bool:
             return False
 
 
-def read_only_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-    """Keep tools marked as read-only and warn when the filter removes every tool."""
+@dataclass
+class _IdentifiedPreparedToolset(PreparedToolset[AgentDepsT]):
+    """A `PreparedToolset` that keeps the wrapped toolset's `id`, so durable execution can still find it by that id."""
+
+    @property
+    def id(self) -> str | None:
+        return self.wrapped.id
+
+
+def read_only_toolset(toolset: AbstractToolset[AgentDepsT], *, keep_id: bool = False) -> AbstractToolset[AgentDepsT]:
+    """Keep tools marked as read-only and warn when the filter removes every tool.
+
+    `keep_id=True` gives the filtered toolset the wrapped toolset's `id`; otherwise it has none, like any wrapper.
+    """
 
     def prepare_read_only(_ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         read_only_tools = [tool for tool in tool_defs if is_read_only(tool)]
@@ -80,4 +95,6 @@ def read_only_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[A
             )
         return read_only_tools
 
+    if keep_id:
+        return _IdentifiedPreparedToolset(toolset, prepare_read_only)
     return toolset.prepared(prepare_read_only)
