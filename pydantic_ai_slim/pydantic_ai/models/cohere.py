@@ -114,6 +114,7 @@ _THINKING_TOKEN_BUDGETS: dict[ThinkingEffort, int] = {
     'high': 16384,
     # Cohere suggests a 31K budget for maximum reasoning, leaving at least 1K tokens for the response.
     'xhigh': 31000,
+    'max': 31000,
 }
 """Maps unified thinking effort levels to Cohere's `thinking.token_budget`.
 

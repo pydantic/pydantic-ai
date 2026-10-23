@@ -337,6 +337,7 @@ _GPT_OSS_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     False: 'low',
     'minimal': 'low',
     'xhigh': 'high',
+    'max': 'high',
 }
 """Maps unified thinking values to the `reasoning_effort` that gpt-oss accepts on Converse."""
 
@@ -348,6 +349,7 @@ _QWEN_REASONING_CONFIG_MAP: dict[ThinkingLevel, str] = {
     'medium': 'high',
     'high': 'high',
     'xhigh': 'high',
+    'max': 'high',
 }
 """Maps unified thinking values to Qwen's `reasoning_config` on Converse.
 
@@ -357,7 +359,8 @@ folds up to it rather than sending a level that doesn't reason.
 
 _GROK_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     # Grok always reasons on Converse and accepts `low`/`medium`/`high`/`xhigh`, so `thinking=False` and `minimal`
-    # reason as little as it can. `True` picks `medium` like the other always-on effort-based variants.
+    # reason as little as it can and `max` folds to `xhigh`. `True` picks `medium` like the other always-on
+    # effort-based variants.
     False: 'low',
     True: 'medium',
     'minimal': 'low',
@@ -365,6 +368,7 @@ _GROK_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     'medium': 'medium',
     'high': 'high',
     'xhigh': 'xhigh',
+    'max': 'xhigh',
 }
 """Maps unified thinking values to Grok's `reasoning.effort` on Converse."""
 
@@ -2326,7 +2330,9 @@ def _add_anthropic_thinking_fields(existing: dict[str, Any], thinking: ThinkingL
                 and 'output_config' not in existing
             ):
                 effort = resolve_anthropic_effort(
-                    thinking, supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False)
+                    thinking,
+                    supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False),
+                    supports_max=profile.get('anthropic_supports_max_effort', True),
                 )
                 existing['output_config'] = {'effort': effort}
     elif thinking is False:

@@ -83,6 +83,9 @@ with try_import() as xai_imports:
 with try_import() as openai_imports:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.profiles.openai import (
+        _OpenAIJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.alibaba import AlibabaProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cerebras import CerebrasProvider
@@ -234,6 +237,7 @@ def test_anthropic_claude_sonnet_4_6():
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'anthropic_supports_adaptive_thinking': True,
+            'anthropic_supports_max_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
@@ -269,6 +273,7 @@ def test_anthropic_claude_opus_4_7():
             ),
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_dynamic_filtering': True,
+            'anthropic_supports_max_effort': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_xhigh_effort': True,
             'anthropic_disallows_budget_thinking': True,
@@ -300,6 +305,7 @@ def test_anthropic_claude_haiku_4_5():
             'default_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
@@ -328,6 +334,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
@@ -352,7 +359,7 @@ def test_openai_gpt_5_4():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_image_output': True,
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'json_schema_transformer': _OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
@@ -362,6 +369,7 @@ def test_openai_gpt_5_4():
             'openai_supports_reasoning': True,
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
+            'openai_responses_supports_max_reasoning_effort': False,
             'openai_supports_phase': True,
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
@@ -398,7 +406,7 @@ def test_openai_gpt_5_6():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_image_output': True,
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'json_schema_transformer': _OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
@@ -412,6 +420,7 @@ def test_openai_gpt_5_6():
             'openai_responses_supports_reasoning_mode': True,
             'tool_addition_mode': 'with_definitions',
             'openai_supports_phase': True,
+            'openai_responses_supports_max_reasoning_effort': True,
             'openai_supports_prompt_cache_breakpoints': True,
             'tool_deferral_mode': 'with_tool_search',
             'openai_supports_minimal_reasoning_effort': False,
@@ -438,7 +447,7 @@ def test_openai_gpt_6_astra():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_image_output': True,
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'json_schema_transformer': _OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
@@ -452,6 +461,7 @@ def test_openai_gpt_6_astra():
             'openai_responses_supports_reasoning_mode': True,
             'tool_addition_mode': 'with_definitions',
             'openai_supports_phase': True,
+            'openai_responses_supports_max_reasoning_effort': True,
             'openai_supports_prompt_cache_breakpoints': True,
             'openai_reasoning_efforts': frozenset({'high', 'low', 'max', 'medium', 'xhigh'}),
             'tool_deferral_mode': 'with_tool_search',
@@ -586,8 +596,9 @@ def test_openai_gpt_4o():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_image_output': True,
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'json_schema_transformer': _OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
+            'openai_responses_supports_max_reasoning_effort': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -607,7 +618,7 @@ def test_openai_o3_mini():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_image_output': True,
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'json_schema_transformer': _OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
@@ -617,6 +628,7 @@ def test_openai_o3_mini():
             'openai_supports_encrypted_reasoning_content': True,
             'thinking_enabled_by_default': True,
             'openai_supports_minimal_reasoning_effort': False,
+            'openai_responses_supports_max_reasoning_effort': False,
             'openai_supports_reasoning': True,
             'openai_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
             'tool_addition_mode': 'with_definitions',
@@ -648,6 +660,7 @@ def test_openai_codex_gpt_5_6():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_phase': True,
             'openai_supports_minimal_reasoning_effort': False,
+            'openai_responses_supports_max_reasoning_effort': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
@@ -820,6 +833,7 @@ def test_deepseek_provider_deepseek_chat():
             'openai_chat_thinking_requires_field_on_tool_calls': True,
             'openai_responses_supports_interleaved_function_calls': False,
             'openai_responses_supports_json_schema_output': True,
+            'openai_chat_supports_max_reasoning_effort': False,
         }
     )
 
@@ -843,6 +857,7 @@ def test_deepseek_provider_deepseek_reasoner():
             'supports_forced_tool_choice': False,
             'thinking_enabled_by_default': True,
             'openai_responses_supports_json_schema_output': True,
+            'openai_chat_supports_max_reasoning_effort': False,
         }
     )
 
@@ -879,6 +894,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'default_cache_retention': timedelta(seconds=300),
             'supports_json_schema_output': True,
             'bedrock_supports_prompt_caching': True,
+            'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
@@ -956,6 +972,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'default_cache_retention': timedelta(seconds=300),
             'supports_json_schema_output': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
+            'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
@@ -995,6 +1012,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
+            'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
@@ -1268,6 +1286,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_effort': True,
+            'anthropic_supports_max_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
@@ -1504,6 +1523,7 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
             'supports_json_schema_output': True,
             'supports_thinking': True,
             'forced_tool_choice_disables_thinking': True,
+            'anthropic_supports_max_effort': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_binds_thinking_blocks': False,
@@ -2261,6 +2281,7 @@ def test_anthropic_unknown_model_returns_some_profile():
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
@@ -2317,6 +2338,7 @@ def test_moonshotai_kimi():
             'openai_chat_thinking_field': 'reasoning_content',
             'openai_chat_send_back_thinking_parts': 'field',
             'supports_forced_tool_choice': False,
+            'openai_chat_supports_max_reasoning_effort': False,
         }
     )
 
@@ -2410,6 +2432,7 @@ def test_vercel_anthropic_claude_sonnet():
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
+            'anthropic_supports_max_effort': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_default_code_execution_tool_version': '20260120',
@@ -2532,6 +2555,7 @@ def test_heroku_returns_openai_transformer():
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
+            'anthropic_supports_max_effort': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_default_code_execution_tool_version': '20260120',

@@ -613,10 +613,14 @@ _REASONING_EFFORT_ORDER: tuple[OpenAIReasoningEffort, ...] = (
 """Every `reasoning_effort` value, from least to most reasoning."""
 
 
-def _resolve_openai_thinking_effort(thinking: ThinkingLevel, profile: OpenAIModelProfile) -> ReasoningEffort:
+def _resolve_openai_thinking_effort(
+    thinking: ThinkingLevel, profile: OpenAIModelProfile, *, supports_max: bool
+) -> ReasoningEffort:
     """Map unified thinking to the closest reasoning effort the model accepts, or `None` to send none.
 
     `thinking=False` on a model that always reasons resolves to the least reasoning it accepts.
+    `supports_max` says whether the API the request goes to accepts `'max'` for the model, which differs
+    between OpenAI's Chat Completions and Responses APIs.
     """
     supported = profile.get('openai_reasoning_efforts')
     if supported is None:
@@ -625,12 +629,17 @@ def _resolve_openai_thinking_effort(thinking: ThinkingLevel, profile: OpenAIMode
             return None
         if thinking == 'minimal' and not profile.get('openai_supports_minimal_reasoning_effort', True):
             return 'low'
+        if thinking == 'max' and supports_max:
+            return 'max'
         return OPENAI_REASONING_EFFORT_MAP[thinking]
-    accepted: list[OpenAIReasoningEffort] = sorted(supported, key=_REASONING_EFFORT_ORDER.index)
+    accepted: list[OpenAIReasoningEffort] = sorted(
+        (effort for effort in supported if effort != 'max' or supports_max), key=_REASONING_EFFORT_ORDER.index
+    )
     if thinking is False:
         # `'none'` where the model accepts it, else its lowest effort.
         return next(iter(accepted), None)
-    requested = _REASONING_EFFORT_ORDER.index(OPENAI_REASONING_EFFORT_MAP[thinking])
+    requested_effort = 'max' if thinking == 'max' and supports_max else OPENAI_REASONING_EFFORT_MAP[thinking]
+    requested = _REASONING_EFFORT_ORDER.index(requested_effort)
     active: list[OpenAIReasoningEffort] = [effort for effort in accepted if effort != 'none']
     # The lowest accepted effort at or above the requested one, else the highest.
     for effort in active:
@@ -1509,7 +1518,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return OMIT
-        effort = _resolve_openai_thinking_effort(thinking, self.profile)
+        effort = _resolve_openai_thinking_effort(
+            thinking,
+            self.profile,
+            supports_max=self.profile.get('openai_chat_supports_max_reasoning_effort', False),
+        )
         return OMIT if effort is None else effort
 
     @asynccontextmanager
@@ -3735,7 +3748,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         # Fall back to unified thinking when openai_reasoning_effort is not set
         if reasoning_effort is None and (thinking := model_request_parameters.thinking) is not None:
-            reasoning_effort = _resolve_openai_thinking_effort(thinking, self.profile)
+            reasoning_effort = _resolve_openai_thinking_effort(
+                thinking,
+                self.profile,
+                supports_max=self.profile.get('openai_responses_supports_max_reasoning_effort', False),
+            )
 
         reasoning: Reasoning = {}
         if reasoning_effort:

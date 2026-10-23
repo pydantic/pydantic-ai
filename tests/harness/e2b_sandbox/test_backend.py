@@ -10,6 +10,7 @@ import shlex
 import shutil
 import sys
 import tempfile
+from functools import partial
 from pathlib import Path
 from typing import IO, Any
 
@@ -1061,11 +1062,13 @@ async def test_filesystem_first_use_preserves_auth_error(fake_e2b: FakeE2B) -> N
         await E2BSandboxBackend().read_bytes('/file')
 
 
+@pytest.mark.skipif(os.path.exists('/proc/self/stat'), reason='the `ps` fallback runs only without Linux `/proc`')
 async def test_timeout_stops_a_command_run_with_a_different_locale(
     fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A `ps` whose start-time format follows the locale, as it does with LC_ALL=de_DE.UTF-8: the launcher
-    # has the user's env and the stopper does not, so the recorded and checked times would differ.
+    # A `ps` whose start-time format follows the locale, as it does with LC_ALL=de_DE.UTF-8. A per-command
+    # env reaches only the launcher, so the recorded and checked times would differ unless both use LC_ALL=C.
+    # The backend's own `env` would not show this: a created sandbox passes it to every process, the stop included.
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
     fake_ps = bin_dir / 'ps'
@@ -1077,12 +1080,17 @@ async def test_timeout_stops_a_command_run_with_a_different_locale(
     fake_ps.chmod(0o755)
     monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
     fake_e2b.host_root = tmp_path
-    backend = await started(env={'LC_ALL': 'de_DE.UTF-8'})
+    backend = await started()
     marker = tmp_path / 'child-marker'
     try:
         with anyio.fail_after(5):
             with pytest.raises(WorkspaceTimeoutError):
-                await backend.run(f'(sleep 0.6; touch {shlex.quote(str(marker))}) & sleep 20', shell=True, timeout=0.1)
+                await backend.run(
+                    f'(sleep 0.6; touch {shlex.quote(str(marker))}) & sleep 20',
+                    shell=True,
+                    timeout=0.1,
+                    env={'LC_ALL': 'de_DE.UTF-8'},
+                )
         await anyio.sleep(0.7)
         assert not marker.exists()
     finally:
@@ -1120,3 +1128,117 @@ async def test_created_sandbox_id_is_logged_and_attached_one_is_not(
     assert [record.getMessage() for record in caplog.records if record.levelname == 'INFO'] == [
         f'Created E2B sandbox {created_ref.id}'
     ]
+
+
+def _path_without_ps(tmp_path: Path) -> str:
+    """A `PATH` with what the launcher, the stop and a test command need, but no `ps`, like a Debian `-slim` template."""
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    for tool in ('sh', 'mkdir', 'sleep', 'touch', 'cat', 'rm'):
+        source = shutil.which(tool)
+        assert source is not None
+        (bin_dir / tool).symlink_to(source)
+    return str(bin_dir)
+
+
+async def test_a_template_without_ps_keeps_stderr_clean(fake_e2b: FakeE2B, tmp_path: Path) -> None:
+    fake_e2b.host_root = tmp_path
+    backend = await started(env={'PATH': _path_without_ps(tmp_path)})
+    result = await backend.run(['sh', '-c', 'echo hi'])
+    assert (result.exit_code, result.stdout, result.stderr) == (0, 'hi\n', '')
+
+
+async def _exited(pid: int) -> None:
+    """Wait until `pid` has exited; a zombie no init has reaped yet has exited too, though `kill -0` finds it."""
+    stat = Path(f'/proc/{pid}/stat')
+    has_proc = os.path.exists('/proc/self/stat')
+    while True:
+        try:
+            os.kill(pid, 0)
+            # Reached only while the process still runs.
+            state = stat.read_bytes().rsplit(b') ', 1)[1].split()[0] if has_proc else b''  # pragma: lax no cover
+        except (ProcessLookupError, FileNotFoundError):
+            return
+        # Only where nothing reaps orphans.
+        if state == b'Z':  # pragma: lax no cover
+            return
+        # The process is often already gone.
+        await anyio.sleep(0.01)  # pragma: lax no cover
+
+
+@pytest.mark.skipif(not os.path.exists('/proc/self/stat'), reason='identifies processes through Linux `/proc`')
+async def test_timeout_stops_a_command_on_a_template_without_ps(fake_e2b: FakeE2B, tmp_path: Path) -> None:
+    fake_e2b.host_root = tmp_path
+    backend = await started(env={'PATH': _path_without_ps(tmp_path)})
+    pid_file = tmp_path / 'child.pid'
+    try:
+        with anyio.fail_after(5):
+            with pytest.raises(WorkspaceTimeoutError):
+                await backend.run(f'sleep 20 & echo $! > {shlex.quote(str(pid_file))}; wait', shell=True, timeout=0.1)
+            # The group stop reaches the background child; the bound only guards a hang.
+            await _exited(int(pid_file.read_text()))
+    finally:
+        for handle in fake_e2b.sandboxes[0].commands.handles:
+            handle.close()
+
+
+@pytest.mark.skipif(shutil.which('perl') is None, reason="leaves its process group with Perl's `setpgrp`")
+async def test_a_leader_stop_reaches_a_command_that_left_its_group(fake_e2b: FakeE2B, tmp_path: Path) -> None:
+    # Without `setsid` only the leader is stopped; one that later moves to its own group is still that leader.
+    fake_e2b.host_root = tmp_path
+    path = _path_without_ps(tmp_path)
+    for tool in ('perl', 'ps'):
+        source = shutil.which(tool)
+        assert source is not None
+        (Path(path) / tool).symlink_to(source)
+    # A custom template is probed for `setsid`, which this `PATH` lacks.
+    backend = await started(template='minimal', env={'PATH': path})
+    pid_file = tmp_path / 'pid'
+    leaver = ['perl', '-e', 'setpgrp(0, 0); open(F, ">", $ARGV[0]); print F $$; close(F); sleep 30', str(pid_file)]
+    try:
+        with anyio.fail_after(10):
+            async with anyio.create_task_group() as group:
+                group.start_soon(backend.run, leaver)
+                while not pid_file.exists() or not pid_file.read_text():
+                    await anyio.sleep(0.01)
+                group.cancel_scope.cancel()
+            assert not any(call.command.startswith('setsid ') for call in fake_e2b.sandboxes[0].commands.calls)
+            await _exited(int(pid_file.read_text()))
+    finally:
+        for handle in fake_e2b.sandboxes[0].commands.handles:
+            handle.close()
+
+
+@pytest.mark.skipif(not os.path.exists('/proc/self/stat'), reason='identifies processes through Linux `/proc`')
+async def test_a_stop_reaches_a_command_whose_name_holds_a_newline(fake_e2b: FakeE2B, tmp_path: Path) -> None:
+    # Linux names a process after its executable, and a file name may hold a newline, which a
+    # line-wise read of `/proc/PID/stat` would cut short.
+    fake_e2b.host_root = tmp_path
+    sleep = shutil.which('sleep')
+    assert sleep is not None
+    odd = tmp_path / 'odd\nname'
+    odd.symlink_to(sleep)
+    pid_file = tmp_path / 'pid'
+    backend = await started()
+    try:
+        with anyio.fail_after(10):
+            async with anyio.create_task_group() as group:
+                group.start_soon(
+                    partial(
+                        backend.run,
+                        f'echo $$ > {shlex.quote(str(pid_file))}; exec {shlex.quote(str(odd))} 30',
+                        shell=True,
+                    )
+                )
+                # Stop it only once it carries the name, so the stop reads that name.
+                while (
+                    not pid_file.exists()
+                    or not pid_file.read_text()
+                    or (Path(f'/proc/{pid_file.read_text().strip()}/comm').read_bytes() != b'odd\nname\n')
+                ):
+                    await anyio.sleep(0.01)
+                group.cancel_scope.cancel()
+            await _exited(int(pid_file.read_text()))
+    finally:
+        for handle in fake_e2b.sandboxes[0].commands.handles:
+            handle.close()

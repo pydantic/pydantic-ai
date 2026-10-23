@@ -2661,6 +2661,20 @@ async def test_bedrock_opus_5_thinking_uses_native_output(
     assert result.output == 42
 
 
+async def test_bedrock_anthropic_unified_max_effort(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Sonnet 4.6 accepts `max` but not `xhigh`, so unified `thinking='max'` reaches Converse as `effort='max'`."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking='max'))
+
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result = await agent.run('What is 2+2? Reply with just the number.')
+
+    assert result.output
+    assert [sent['additionalModelRequestFields'] for sent in sent_requests] == snapshot(
+        [{'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'max'}}]
+    )
+
+
 async def test_bedrock_fable_5_thinking_offers_output_tool_unforced(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:

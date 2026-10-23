@@ -153,7 +153,6 @@ def _anthropic_efforts(*, name: str) -> tuple[str, ...]:
     efforts = ['low', 'medium', 'high']
     if profile.get('anthropic_supports_xhigh_effort', False):
         efforts.append('xhigh')
-    # Max effort starts with Opus 4.6; Sonnet only offers low/medium/high.
-    if profile.get('anthropic_supports_adaptive_thinking', False) and 'sonnet' not in name:
+    if profile.get('anthropic_supports_max_effort', True):
         efforts.append('max')
     return tuple(efforts)

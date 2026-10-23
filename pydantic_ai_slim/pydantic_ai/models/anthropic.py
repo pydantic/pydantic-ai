@@ -3399,7 +3399,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if effort is None and self.profile.get('anthropic_supports_effort', False):
             if isinstance(thinking, str):
                 effort = resolve_anthropic_effort(
-                    thinking, supports_xhigh=self.profile.get('anthropic_supports_xhigh_effort', False)
+                    thinking,
+                    supports_xhigh=self.profile.get('anthropic_supports_xhigh_effort', False),
+                    supports_max=self.profile.get('anthropic_supports_max_effort', True),
                 )
             elif thinking is False and self.profile.get('thinking_always_enabled', False):
                 # The least thinking a model that can't turn it off accepts.
