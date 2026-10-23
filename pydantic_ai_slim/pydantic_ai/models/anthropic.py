@@ -168,15 +168,42 @@ def _include_citations(model_settings: ModelSettings, model_request_parameters: 
     """Whether the `citations` setting turns on document and Web Fetch citations for this request.
 
     Anthropic rejects citations with native structured output, and writes its `<cite>` markup into tool and prompted
-    output, so they're only turned on for text output. A forced function tool call gets the same markup in its
-    arguments, so that combination is an error.
+    output, so they're only turned on for text output.
     """
-    if not (model_settings.get('citations', False) and model_request_parameters.output_mode == 'text'):
-        return False
+    return model_settings.get('citations', False) and model_request_parameters.output_mode == 'text'
+
+
+def _check_citations_tool_choice(
+    model_settings: ModelSettings,
+    model_request_parameters: ModelRequestParameters,
+    messages: list[BetaMessageParam],
+    include_citations: bool,
+) -> None:
+    """Raise if the `citations` setting turned on citations for a request that forces a function tool call.
+
+    The model writes its `<cite>` markup into a forced tool call's arguments. A request with nothing to cite, no
+    document and no Web Fetch tool, is unchanged by the setting, so it's allowed.
+    """
+    if not include_citations:
+        return
     tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-    if tool_choice == 'required' or (isinstance(tool_choice, tuple) and tool_choice[0] == 'required'):
+    if not (tool_choice == 'required' or (isinstance(tool_choice, tuple) and tool_choice[0] == 'required')):
+        return
+    if any(isinstance(tool, WebFetchTool) for tool in model_request_parameters.native_tools) or _has_cited_document(
+        messages
+    ):
         raise UserError(_CITATIONS_WITH_FORCED_TOOL_ERROR)
-    return True
+
+
+def _has_cited_document(value: object) -> bool:
+    """Whether a request's messages hold a document block with citations turned on, including in tool results."""
+    if isinstance(value, list):
+        return any(_has_cited_document(item) for item in cast(list[object], value))
+    if _utils.is_str_dict(value):
+        if value.get('type') == 'document' and value.get('citations'):
+            return True
+        return any(_has_cited_document(item) for item in value.values())
+    return False
 
 
 def _history_fetched_pages(messages: Sequence[ModelMessage]) -> list[tuple[str, str]]:
@@ -2617,6 +2644,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         _place_system_messages_before_generation(anthropic_messages)
         _anchor_system_messages(anthropic_messages)
         self._add_container_uploads(anthropic_messages, model_request_parameters)
+        _check_citations_tool_choice(
+            model_settings, model_request_parameters, anthropic_messages, map_context.include_citations
+        )
         system_prompt = self._build_system_prompt(
             map_context.system_prompt_parts, messages, model_request_parameters, model_settings
         )

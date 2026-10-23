@@ -134,10 +134,12 @@ On Anthropic, the model writes its citation markup into anything that isn't text
 
 - **Structured output:** Anthropic isn't asked for citations, so your fields stay clean and you get no document
   citations. (Anthropic rejects citations with `NativeOutput`.)
-- **A tool call forced with [`tool_choice`](tools-advanced.md#dynamic-tool-choice-via-capabilities):** raises a
-  `UserError`, because the markup reaches the tool's arguments every time.
-- **Tools the model chooses to call:** citations stay on, but some models still write the markup into the tool's
-  arguments now and then. Check arguments that end up in front of people, such as an email body.
+- **A tool call forced with [`tool_choice`](tools-advanced.md#dynamic-tool-choice-via-capabilities), in a request
+  with a document or Web Fetch:** raises a `UserError` before that request is sent, because the markup reaches the
+  tool's arguments every time. A run that forces a tool on a later step fails at that step.
+- **Tools the model chooses to call:** citations stay on, but smaller models often write the markup into the tool's
+  arguments, about half the time in our tests when the arguments summarise a document. Check arguments that end up
+  in front of people, such as an email body, or leave `Citations()` off for those agents.
 
 If you need citations, use text output.
 

@@ -601,7 +601,7 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic (documents, including those returned by tools, and Web Fetch), for text output only
 
     Providers that always return citations ignore this setting. On Anthropic, combining it with a `tool_choice` that
-    forces a tool call raises a `UserError`. See
+    forces a tool call, in a request with a document or Web Fetch, raises a `UserError`. See
     [Citations, tools and structured output](../citations.md#citations-tools-and-structured-output).
     """
 
