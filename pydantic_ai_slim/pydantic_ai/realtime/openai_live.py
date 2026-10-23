@@ -874,6 +874,8 @@ class OpenAILiveConnection(RealtimeConnection):
 
     @property
     def _speech_spans_tool_calls(self) -> bool:
+        # Live talks while its delegated backend works, and the backend's calls land wherever Live is in a sentence, so
+        # ending the speech at each one would cut it mid-sentence (checked live).
         return True
 
     @property

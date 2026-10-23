@@ -147,7 +147,9 @@ speaks once the backend has them. What Live says while the backend works ("Okay,
 forecast ... now.") is part of the reply that delegated, ahead of the results: Live only speaks with
 them in hand once the backend answers. So that reply, and the results after it, appear in
 [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] once the backend answers, or
-calls more tools with those results, which are then a response of their own, after them.
+calls more tools with those results, which are then a response of their own, after them. The backend's
+calls land wherever Live is in a sentence, so what Live says in the reply is recorded as one
+[`SpeechPart`][pydantic_ai.messages.SpeechPart], ahead of the calls, rather than cut in two at each one.
 
 That split is why the agent's instructions describe the *work* and `openai_live_instructions`
 describes the *speech*:

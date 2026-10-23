@@ -363,8 +363,9 @@ class _Response:
     open_part: SpeechPart | TextPart | None = None
     open_part_item: str | None = None
     open_part_index: int = 0
-    open_part_position: int = 0
     """The stream index of `open_part` (see `SessionCore._take_index`)."""
+    open_part_position: int = 0
+    """Where `open_part` goes in `parts` once it closes: where it started, ahead of tool calls made while it was open."""
     open_transcript: str = ''
     open_audio: bytearray = field(default_factory=bytearray)
     closed_parts: dict[str, tuple[int, SpeechPart | TextPart]] = field(
@@ -470,8 +471,9 @@ class SessionCore:
         self._answers_per_response = answers_tool_calls_per_response
         """Whether one reply answers all the tool results of a response, rather than one per result."""
         self._tracks_tool_rounds = tracks_tool_rounds
-        self._speech_spans_calls = speech_spans_tool_calls
         """Whether to say when tool rounds are over (`ToolRoundsOver`), for a connection that prunes them."""
+        self._speech_spans_calls = speech_spans_tool_calls
+        """Whether the model's speech goes on through its tool calls, as one part, rather than ending at each one."""
         self._transcription = input_transcription_enabled
         self._retain_input = retain_input_audio
         self._retain_output = retain_output_audio
@@ -944,9 +946,14 @@ class SessionCore:
             return
         del self._call_response[call_id]
         response.tool_calls.remove(call_id)
-        response.parts = [
-            part for part in response.parts if not (isinstance(part, ToolCallPart) and part.tool_call_id == call_id)
-        ]
+        position = next(
+            position
+            for position, part in enumerate(response.parts)
+            if isinstance(part, ToolCallPart) and part.tool_call_id == call_id
+        )
+        del response.parts[position]
+        if response.open_part is not None and position < response.open_part_position:
+            response.open_part_position -= 1
 
     def _tool_returned(self, command: ToolReturned) -> None:
         self._returns[command.tool_call_id] = command.request

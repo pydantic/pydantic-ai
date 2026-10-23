@@ -653,6 +653,12 @@ class RealtimeConnection(ABC):
 
     @property
     def _speech_spans_tool_calls(self) -> bool:
+        """Whether the model's speech goes on through the tool calls it makes, rather than stopping at each one.
+
+        Then a tool call doesn't end the speech part under way: the speech is recorded as one part, ahead of the calls
+        made while it went on, as a standard run orders parts by where they start. Defaults to `False`: a call ends the
+        part before it, and speech after it is a part of its own. Private until the realtime refactor settles.
+        """
         return False
 
     @property
