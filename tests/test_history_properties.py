@@ -301,8 +301,8 @@ class MapperCase:
     instructions with an empty `input`, probed 2026-10-23 (UTC)."""
     takes_empty_assistant_turns: bool = False
     """Whether the API takes an assistant turn with no content, which the adapter sends for a response with no
-    parts: Groq (openai/gpt-oss-120b) accepted one, and the Hugging Face router's vLLM validation reported only an
-    unrelated error on the same body, probed 2026-10-23 (UTC)."""
+    parts: Groq (openai/gpt-oss-120b) and the Hugging Face router (Qwen/Qwen3-235B-A22B through `provider_name='auto'`,
+    with a tool declared to clear #11177) accepted one, probed 2026-10-23 (UTC)."""
     marks: tuple[pytest.MarkDecorator, ...] = ()
 
 
