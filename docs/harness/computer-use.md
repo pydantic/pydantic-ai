@@ -13,11 +13,15 @@ returns a screenshot of the screen afterwards.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-## Usage
+## Installation
 
 ```bash
-pip/uv-add pydantic-ai-harness
+pip/uv-add "pydantic-ai-harness[anthropic]"
 ```
+
+Swap `anthropic` for your model provider's extra.
+
+## Usage
 
 ```python {title="computer_use.py" test="skip" lint="skip"}
 from pydantic_ai import Agent
@@ -38,16 +42,13 @@ async def main():
    [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]. See
    [Controlling a display](../workspace.md#controlling-a-display) to give a sandbox one.
 
-The agent keeps the rest of the workspace, so it can mix desktop steps with commands and file tools on the same
-machine.
+Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them.
 
 ## Requirements
 
-- **A workspace with a display.** A run without a workspace, or a workspace without a display, fails at its start
-  with an error saying so. A [read-only](../workspace.md#read-only-access) workspace allows screenshots and reports
-  every mouse and keyboard action to the model as refused.
-- **A model that accepts images.** Every call returns a screenshot, so a request to a text-only model fails before
-  it is sent, including a model that [`SelectModel`](../capabilities/select-model.md) picks later in the run.
+- **A workspace with a display.** On a [read-only](../workspace.md#read-only-access) workspace the agent can take
+  screenshots but not act.
+- **A model that accepts images.**
 
 ## Computer use, Playwright, or Browser Use
 
@@ -57,29 +58,27 @@ machine.
 | Drive a browser with typed actions such as `navigate` and `click(selector)` | [Playwright Browser](playwright.md) |
 | Hand a whole web task to a browsing sub-agent | [Browser Use](browser-use.md) |
 
-## Settings
+## Configuration
 
 | Setting | Default | What it does |
 |---|---|---|
-| `require_approval` | `False` | Ask before any call that does more than look or wait; the run needs a [deferred tool handler](../deferred-tools.md#human-in-the-loop-tool-approval). Turn it on for anything you'd regret an agent clicking. |
-| `keep_screenshots` | `None` | The fewest recent screenshots each model request carries; older ones become a short note in the request, 25 at a time so the prompt cache keeps working in between: `keep_screenshots=5` sends between 5 and 29. The run's history keeps them all. Use it to bound a long run; a short run costs the same either way. |
+| `require_approval` | `False` | Ask before any call that clicks or types; needs a [deferred tool handler](../deferred-tools.md#human-in-the-loop-tool-approval). Turn it on for anything you'd regret an agent clicking. |
+| `keep_screenshots` | `None` | Send only the most recent N screenshots (between N and N+24, so prompt caching keeps working); the run's history keeps all of them. Use it to bound long runs. |
 | `settle_seconds` | `0.5` | Pause after acting before the screenshot, so animations and page loads can finish. |
 
-A call whose provider attached safety checks to it waits for approval even without `require_approval`: the reviewer
-finds the checks on the call's `provider_details`. Without a way to approve calls, such as
-[`HandleDeferredToolCalls`](../deferred-tools.md), the run stops at that call instead of running it.
+A call its provider flags with safety checks, as OpenAI does, needs approval even with `require_approval=False`.
+Give such an agent a deferred tool handler, such as [`HandleDeferredToolCalls`](../deferred-tools.md); without one,
+a flagged call ends the run with an error. The checks are on the call's `provider_details`.
 
-## Limits
+## Limitations
 
 - A 1280x800 screenshot costs about 1,200 input tokens on GPT-5.5 and 1,340 on Claude Sonnet 5.5, and every later
   request carries it again. With [prompt caching](../capabilities/caching.md) (Claude needs `Caching()`; OpenAI
   caches on its own), screenshots already sent cost about a tenth of that.
-- Under [durable execution](../durable_execution/overview.md), each action and screenshot is its own durable
-  workspace operation, so a retry repeats only that one, which may already have taken effect, such as a click.
-  Every screenshot in the history rides in each model request's payload, so long runs can reach Temporal's payload
-  size limit.
-- Inside a [`FallbackModel`](../models/overview.md#fallback-model), every model gets pixel coordinates, since the
-  fallback has no profile of its own. Gemini 3 models point less accurately in pixels than on their own grid.
+- Under [durable execution](../durable_execution/overview.md), a retried action may repeat a click that already
+  happened, and long runs can exceed Temporal's payload size limit, since every screenshot rides in each request.
+- Inside a [`FallbackModel`](../models/overview.md#fallback-model), Gemini 3 gets pixel coordinates and points less
+  accurately, so don't put it in a fallback with other models.
 
 ## API reference
 
