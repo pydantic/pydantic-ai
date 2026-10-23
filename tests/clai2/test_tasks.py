@@ -34,13 +34,16 @@ from pydantic_ai_harness.subagents import (
     DelegationTaskEvent,
     SubAgent,
     SubAgents,
+    is_task_report,
 )
 from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.builtin_plugins.web.protocol import history_items
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
 from pydantic_clai2.runtime.tasks import TaskPresentation, Tasks, task_row, task_tree
 from pydantic_clai2.ui.menus.field_menu import Runners
 from pydantic_clai2.ui.menus.task_menu import TaskDetail, TaskMenu, open_tasks, run_tasks
+from pydantic_clai2.ui.rendering.history import turn_starts
 from tests.clai2.test_forks import Model as ForkModel, shell_for
 
 
@@ -580,7 +583,6 @@ async def test_background_completion_continues_parent_without_user_input(
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
 
-    from pydantic_ai.messages import SystemPromptPart
     from pydantic_ai_harness.subagents import DelegationTaskEvent
     from pydantic_clai2.config.project_settings import ProjectSettings
     from pydantic_clai2.config.settings_store import SettingsStore
@@ -611,12 +613,7 @@ async def test_background_completion_continues_parent_without_user_input(
             await release.wait()
             yield 'Admiral Fluff commands the cheese fleet.'
         elif any(
-            isinstance(part, (SystemPromptPart, UserPromptPart))
-            and isinstance(part.content, str)
-            and 'Automated subagent task report' in part.content
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
+            is_task_report(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts
         ):
             captured.append(messages)
             yield 'Pirate hamster reporting for duty.'
@@ -701,9 +698,12 @@ async def test_background_completion_continues_parent_without_user_input(
         for message in shell.session.messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, UserPromptPart)
+        if isinstance(part, UserPromptPart) and not is_task_report(part)
     ]
     assert prompts == ['launch']
+    # The report rides the user channel, but a restored transcript doesn't show it as something the user typed.
+    assert len(turn_starts(shell.session.messages)) == 1
+    assert [item.text for item in history_items(shell.session.messages) if item.kind == 'user'] == ['launch']
     (record,) = shell.tasks.owner.records.values()
     assert record.delivered
     last = shell.session.messages[-1]

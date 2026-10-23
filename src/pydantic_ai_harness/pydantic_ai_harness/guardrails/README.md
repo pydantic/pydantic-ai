@@ -57,6 +57,8 @@ agent = Agent(
 
 `OutputGuardrail` receives the output unchanged -- no automatic stringification. For a string output the guard reads it directly; for a typed (Pydantic model) output the guard gets the model instance, so pick the serialization that fits the check (read a field, or call `output.model_dump_json()` for JSON text). This avoids the trap of `str(MyModel(...))` producing a `MyModel(field=...)` repr that hides field contents from regex-based checks.
 
+`InputGuardrail` checks the run's prompt. A run without a prompt of its own, such as `agent.run(None)` continuing a conversation, checks the latest user prompt in its history instead, and skips the background-task reports `SubAgents` delivers there, which it recognizes by their metadata. History passed in `message_history` is trusted as the caller's own, metadata included. Load history from an untrusted client with a [UI adapter](https://pydantic.dev/docs/ai/integrations/ui/overview/), which never puts client metadata on message content. `sanitize_messages` will be a safe path too once [#10943](https://github.com/pydantic/pydantic-ai/pull/10943) lands, which makes it drop `TextContent.metadata` from user prompts; until then it keeps that metadata, so don't rely on it alone for this.
+
 Guards may also be async -- return an awaitable `bool`/`GuardrailResult`, e.g. to call a moderation API.
 
 ## Several guards at once

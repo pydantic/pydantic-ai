@@ -47,6 +47,7 @@ from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserContent, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._background_completion import get_background_completion
+from pydantic_ai_harness._task_report import is_task_report
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 from pydantic_ai_harness.guardrails._shared import (
     GuardOutcome,
@@ -116,9 +117,10 @@ def _find_prompt_part(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessa
     trimmed from the start moves it. Only when no part can be told to be the copy, because the
     request was rebuilt, is the most recent part in `messages` used.
     """
-    prompt = _latest_prompt_part(ctx.messages)
+    skip_task_reports = ctx.prompt is None
+    prompt = _latest_prompt_part(ctx.messages, skip_task_reports=skip_task_reports)
     if prompt is None:
-        return _latest_prompt_part(messages)
+        return _latest_prompt_part(messages, skip_task_reports=skip_task_reports)
     if any(part is prompt for request in messages for part in request.parts):
         return prompt
     holder = next(
@@ -130,7 +132,7 @@ def _find_prompt_part(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessa
         None,
     )
     copy = None if holder is None else _find_copy(prompt, holder.parts)
-    return copy if copy is not None else _latest_prompt_part(messages)
+    return copy if copy is not None else _latest_prompt_part(messages, skip_task_reports=skip_task_reports)
 
 
 def _find_copy(prompt: UserPromptPart, parts: Sequence[object]) -> UserPromptPart | None:
@@ -148,14 +150,21 @@ def _find_copy(prompt: UserPromptPart, parts: Sequence[object]) -> UserPromptPar
     return candidates[0] if len(candidates) == 1 else None
 
 
-def _latest_prompt_part(messages: Sequence[ModelMessage]) -> UserPromptPart | None:
-    """The most recent `UserPromptPart` in `messages`, if any."""
+def _latest_prompt_part(messages: Sequence[ModelMessage], *, skip_task_reports: bool) -> UserPromptPart | None:
+    """The most recent `UserPromptPart` in `messages`, if any.
+
+    `skip_task_reports` is set only for a run without a prompt of its own. `ctx.prompt` is always
+    guarded, whatever metadata it carries, including a prompt taken from a request that ends
+    `message_history`. Earlier history is trusted as the caller's own (untrusted client history
+    goes through a UI adapter first), so a part there that carries a `SubAgents` task report's
+    metadata is taken for one: a child agent's output, not the prompt.
+    """
     return next(
         (
             part
             for message in reversed(messages)
             for part in reversed(message.parts)
-            if isinstance(part, UserPromptPart)
+            if isinstance(part, UserPromptPart) and not (skip_task_reports and is_task_report(part))
         ),
         None,
     )
