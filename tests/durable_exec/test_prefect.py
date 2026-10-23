@@ -19,7 +19,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import httpx2
@@ -180,6 +180,8 @@ except ImportError:  # pragma: lax no cover
 try:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .responses_websocket import drain_events, responses_reply, websocket_model
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
@@ -452,6 +454,24 @@ model = OpenAIChatModel(
 # Simple agent for basic testing
 simple_agent = Agent(model, name='simple_agent')
 simple_prefect_agent = PrefectAgent(simple_agent)  # pyright: ignore[reportDeprecated]
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_prefect_agent_model_tasks_use_http_for_responses_websocket(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, stream: bool
+) -> None:
+    """A model task serves one request, so `openai_transport='websocket'` does nothing in it.
+
+    The deprecated wrapper has no durability capability, so its run holds the model's socket open like any run.
+    """
+    pytest.importorskip('websockets')
+    connect = AsyncMock()
+    monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', connect)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(responses_reply)) as client:
+        agent = Agent(websocket_model(client), name=f'responses_websocket_{"stream" if stream else "request"}')
+        prefect_agent = PrefectAgent(agent, event_stream_handler=drain_events if stream else None)  # pyright: ignore[reportDeprecated]
+        assert (await prefect_agent.run('hello')).output == 'from HTTP'
+    connect.assert_not_called()
 
 
 async def test_prefect_agent_rejects_a_workspace_inside_a_flow(tmp_path: Path) -> None:

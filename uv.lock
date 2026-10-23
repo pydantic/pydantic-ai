@@ -5232,6 +5232,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fd/37/08c6d71d542b079364221fcbaee863ead900b53cd89db17f4bd0ec83f41a/openai-3.26.0-py3-none-any.whl", hash = "sha256:050597ff71ff4025177405a41fa4019d4f9feae5826645b63b8e35b6e9a3c88b", size = 2164504, upload-time = "2026-10-06T21:31:16.415Z" },
 ]
 
+[package.optional-dependencies]
+realtime = [
+    { name = "websockets" },
+]
+
 [[package]]
 name = "openapi-pydantic"
 version = "0.5.1"
@@ -6356,6 +6361,9 @@ mistral = [
 openai-realtime = [
     { name = "pydantic-ai-slim", extra = ["openai-realtime"] },
 ]
+openai-responses-websocket = [
+    { name = "pydantic-ai-slim", extra = ["openai-responses-websocket"] },
+]
 openrouter = [
     { name = "pydantic-ai-slim", extra = ["openrouter"] },
 ]
@@ -6466,6 +6474,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["mcp-tasks"], marker = "extra == 'mcp-tasks'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["mistral"], marker = "extra == 'mistral'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["openai-realtime"], marker = "extra == 'openai-realtime'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["openai-responses-websocket"], marker = "extra == 'openai-responses-websocket'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["openrouter"], marker = "extra == 'openrouter'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["prefect"], marker = "extra == 'prefect'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["realtime"], marker = "extra == 'realtime'", editable = "pydantic_ai_slim" },
@@ -6481,7 +6490,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["xai"], marker = "extra == 'xai'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["xai-realtime"], marker = "extra == 'xai-realtime'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "exa", "examples", "google-realtime", "groq", "huggingface", "mcp-tasks", "mistral", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web-fetch", "xai", "xai-realtime"]
+provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "exa", "examples", "google-realtime", "groq", "huggingface", "mcp-tasks", "mistral", "openai-realtime", "openai-responses-websocket", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web-fetch", "xai", "xai-realtime"]
 
 [package.metadata.requires-dev]
 coverage = [{ name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=6c644106e03138abae01d8d60105d4a7ad4916a1" }]
@@ -6883,6 +6892,11 @@ openai-realtime = [
     { name = "tiktoken" },
     { name = "websockets" },
 ]
+openai-responses-websocket = [
+    { name = "openai", extra = ["realtime"] },
+    { name = "tiktoken" },
+    { name = "websockets" },
+]
 openrouter = [
     { name = "openai" },
 ]
@@ -6974,10 +6988,12 @@ requires-dist = [
     { name = "openai", marker = "extra == 'elevenlabs-realtime'", specifier = ">=3.26.0" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=3.26.0" },
     { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'openai-responses-websocket'", specifier = ">=3.26.0" },
     { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.26.0" },
     { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.26.0" },
     { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.26.0" },
     { name = "openai", marker = "extra == 'zai'", specifier = ">=3.26.0" },
+    { name = "openai", extras = ["realtime"], marker = "extra == 'openai-responses-websocket'", specifier = ">=3.26.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "opentelemetry-instrumentation-httpx", marker = "extra == 'logfire'", specifier = ">=0.65b0" },
     { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.9.0" },
@@ -7000,6 +7016,7 @@ requires-dist = [
     { name = "tiktoken", marker = "extra == 'elevenlabs-realtime'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'openai'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'openai-realtime'", specifier = ">=0.12.0" },
+    { name = "tiktoken", marker = "extra == 'openai-responses-websocket'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'xai-realtime'", specifier = ">=0.12.0" },
     { name = "typesafe-sdk", marker = "extra == 'typesafe'", specifier = ">=0.6.0" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
@@ -7009,12 +7026,13 @@ requires-dist = [
     { name = "websockets", marker = "extra == 'elevenlabs-realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'google-realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'openai-realtime'", specifier = ">=14.0" },
+    { name = "websockets", marker = "extra == 'openai-responses-websocket'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'xai-realtime'", specifier = ">=14.0" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.16.0" },
     { name = "xai-sdk", marker = "extra == 'xai-realtime'", specifier = ">=1.16.0" },
 ]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openai-responses-websocket", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
 
 [[package]]
 name = "pydantic-clai2"

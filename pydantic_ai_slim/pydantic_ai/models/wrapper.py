@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from types import TracebackType
@@ -42,6 +42,9 @@ class WrapperModel(Model):
     def __init__(self, wrapped: Model | KnownModelName):
         super().__init__()
         self.wrapped = infer_model(wrapped)
+
+    def _run_scope(self) -> AbstractAsyncContextManager[None]:
+        return self.wrapped._run_scope()
 
     async def __aenter__(self) -> Self:
         await self.wrapped.__aenter__()

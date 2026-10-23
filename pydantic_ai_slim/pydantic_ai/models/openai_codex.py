@@ -53,6 +53,10 @@ class OpenAICodexModel(OpenAIResponsesModel):
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)
 
     @override
+    def _websocket_unsupported_reason(self) -> str | None:
+        return 'its session headers depend on each conversation, after a WebSocket handshake would have sent them.'
+
+    @override
     def _prepare_responses_settings(
         self,
         messages: list[ModelRequest | ModelResponse],

@@ -1,6 +1,6 @@
 # Input and History
 
-Read this file when the user wants multimodal input, message history, `run_id` / `conversation_id` correlation, or context trimming.
+Read this file when the user wants multimodal input, message history, OpenAI Responses WebSockets, `run_id` / `conversation_id` correlation, or context trimming.
 
 ## Send Images, Audio, Video, or Documents to the Model
 
@@ -53,6 +53,19 @@ Important distinctions:
 - interrupted, hand-built, or context-evicted histories are made provider-valid automatically before each model request — no manual cleanup needed. Repairs only ADD synthesized parts or REMOVE fundamentally-unsendable ones (never silently dropping meaningful content): a tool call with no result gets a synthesized `ToolReturnPart` (marked with `{'pydantic_ai_synthesized_tool_return': True}` in `metadata`), including one whose args were cut off mid-stream; an orphaned tool result (result with no matching call) is dropped; then consecutive compatible messages are merged. Applies to regular tool calls only — builtin/native parts are left untouched (handled by each model's serializer). Duplicate tool results and provider-specific ordering rules are out of scope.
 - to cancel a whole run: pass a `CancellationToken` to any run method and call `token.cancel()` (thread-safe), call `agent_run.cancel()` on the `agent.iter()` handle, cancel via `async with agent.run_stream_events(...) as events: ... events.cancel()`, or call `ctx.cancel()` from a tool, `event_stream_handler`, or capability hook. Inside the `agent.iter()` block this surfaces as `CancelledError`; once the context exits it raises `RunCancelled`. `RunCancelled.all_messages()` returns a complete snapshot of the history (completed tool results included) and can be passed as `message_history` to a new run to resume — dangling calls are repaired per the previous bullet. Cancellation is terminal: capability hooks may clean up but cannot recover the run to success. External `asyncio.Task.cancel()` keeps raising `CancelledError` (never translated; wins if both race); catch it and call `RunCancelled.from_cancellation(exc)` to access the attached run state. `StreamedRunResult.cancel()` is different: it only stops the current model response, the run continues.
 - to bound a whole run's wall-clock time: pass `timeout=` (seconds) to any run method (`run`, `run_sync`, `run_stream`, `run_stream_sync`, `run_stream_events`, `iter`), or to a UI adapter's `run_stream`/`dispatch_request` (which report expiry to the client like any first-party cancellation and pass the `RunTimedOut` to `on_cancel`) or `run_stream_native` (which raises it). Expiry cancels the run like `cancel()` and raises `RunTimedOut` (a subclass of both `RunCancelled` and `TimeoutError`) carrying the same resumable `all_messages()`. `RunContext.deadline` (UTC `datetime` or `None`) and `ctx.remaining_time()` (seconds or `None`) expose it to tools and hooks. A sub-agent run from a tool inherits the deadline; its own `timeout=` can only shorten it, and a sub-agent's own shorter timeout fails just the delegate tool. A `FallbackModel` never falls back on expiry. Durability capabilities keep the original deadline across replay/recovery (Temporal: `workflow.now()` + workflow timer); deprecated `TemporalAgent`/`DBOSAgent`/`PrefectAgent` reject `timeout=`. Prefer this over wrapping the run in `asyncio.timeout()`, which surfaces as an external `CancelledError`/`TimeoutError`.
+
+### Continue OpenAI Responses on a WebSocket
+
+Install `pydantic-ai-slim[openai-responses-websocket]`, then set `model_settings=OpenAIResponsesModelSettings(openai_transport='websocket')` on the model, agent or run (a plain dict fails type checking, since `openai_transport` isn't a `ModelSettings` key).
+Other models ignore the setting, so code that takes a model string doesn't change.
+Each run opens a socket on its first request and closes it at the end; wrap back-to-back runs, or an app's lifetime, in `async with agent:` or `async with model:` to keep one socket.
+Socket requests default `openai_previous_response_id` to `'auto'`, so tool round trips send only their new input. A single-request run pays the handshake for nothing.
+Runs on one model instance share its socket: on `api.openai.com` each concurrent request gets its own `stream_id` lane; other hosts run one at a time unless the profile sets `openai_responses_supports_websocket_stream_id=True`.
+These requests use HTTP without a warning: a direct `model.request()` outside a run or `async with`, another event loop, durable execution units, background or resumed requests, no free lane, and headers that differ from the handshake's. The `pydantic_ai.transport='websocket'` span attribute marks socket requests.
+Azure, the `openai-chatgpt` and `openai-codex` providers, `OpenAICodexModel`, a missing extra and non-asyncio backends warn and use HTTP.
+A closed or failed socket, or one nearing OpenAI's 60-minute limit, is replaced on the next request; a failure mid-request raises `ModelConnectionError`, so `FallbackModel` works.
+A response stored server-side (the default) continues from any socket or HTTP; with `openai_store=False`, keep the full message history, since only the socket that created it can continue from it.
+Use [OpenAI Responses WebSockets](https://pydantic.dev/docs/ai/models/openai/#responses-websockets) for the full list of fallbacks and limits.
 
 ## Correlate Runs with `run_id` and `conversation_id`
 
