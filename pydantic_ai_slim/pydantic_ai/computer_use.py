@@ -1,4 +1,10 @@
-"""The `computer` tool's kind and shapes, shared by the `ComputerUse` capability and the model adapters."""
+"""The `computer` tool: its kind and the shapes of its arguments and result.
+
+A capability that gives an agent a screen, such as Pydantic AI Harness's `ComputerUse`, defines a tool of
+[`COMPUTER_KIND`][pydantic_ai.computer_use.COMPUTER_KIND]. A model adapter whose provider has a native computer tool
+sends that tool as the native one, translates the provider's calls into these arguments, and reads the result back
+from them.
+"""
 
 from __future__ import annotations as _annotations
 
@@ -18,6 +24,7 @@ if TYPE_CHECKING:
 
 __all__ = (
     'COMPUTER_KIND',
+    'SAFETY_CHECKS',
     'ComputerArgs',
     'ComputerContent',
     'ComputerResult',

@@ -344,9 +344,9 @@ The Responses API has native tools that you can use instead of building your own
 
 Web search, Code interpreter, Image generation, and File search are natively supported through the [Native tools](../native-tools.md) feature.
 
-Computer use is provided by the [`ComputerUse`](../capabilities/computer-use.md) capability: on models that accept
-OpenAI's `computer` tool (GPT-5.4 and later, except GPT-5.4 nano), its `computer` tool is sent as that native tool, and
-other models get it as a function tool.
+Computer use is provided by the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability: on models
+that accept OpenAI's `computer` tool (GPT-5.4 and later, except GPT-5.4 nano), its `computer` tool is sent as that
+native tool, and other models get it as a function tool.
 
 #### Referencing earlier responses
 

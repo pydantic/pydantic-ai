@@ -15,7 +15,7 @@ from opentelemetry.trace import get_current_span
 from pydantic import TypeAdapter
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
-from .._computer_use import computer_tool
+from ..computer_use import computer_tool
 from .._context_size import mark_context_input_tokens, marked_context_input_tokens
 from .._http import to_httpx2_timeout
 from .._run_context import RunContext

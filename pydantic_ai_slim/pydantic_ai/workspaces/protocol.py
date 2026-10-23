@@ -231,8 +231,7 @@ class SupportsRealpath(Protocol):
 class SupportsDisplay(Protocol):
     """Optional control of a graphical display: screenshots, mouse, and keyboard.
 
-    Without it, the `Workspace` display methods raise `UserError`. A Linux environment with an X server can
-    implement it by delegating to [`X11Computer`][pydantic_ai.workspaces.X11Computer].
+    Without it, the `Workspace` display methods raise `UserError`.
     """
 
     @property

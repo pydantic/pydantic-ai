@@ -418,8 +418,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_supports_computer_tool: bool
     """Whether the Responses API accepts the native `computer` tool for this model. Default: False.
 
-    When enabled, the [`ComputerUse`][pydantic_ai.capabilities.ComputerUse] capability's `computer` tool is sent
-    as OpenAI's native computer tool; otherwise it is sent as a function tool.
+    When enabled, a tool of the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind is sent as OpenAI's native
+    computer tool; otherwise it is sent as a function tool.
     """
 
     openai_responses_supports_prompt_cache_diagnostics: bool
