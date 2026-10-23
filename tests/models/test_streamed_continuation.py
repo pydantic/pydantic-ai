@@ -1163,8 +1163,14 @@ async def test_streamed_background_detach_records_suspended_and_resumes() -> Non
     assert new_messages[-1].state == 'complete'
 
 
-async def test_nonstream_model_change_chain_counts_against_strict_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize('polled', [False, True], ids=['continued', 'polled'])
+async def test_nonstream_model_change_chain_counts_against_strict_ceiling(
+    polled: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A model-change replace chain is bound by `MAX_GENERATION_CONTINUATIONS`, not the poll backstop.
+
+    Also when the model waits between segments: only a batch request, whose model bounds its own polls, is
+    counted as a poll under a new ID.
 
     Each suspended segment reports a different `model_name`, so the merge *replaces* — but as *fresh*
     generation, not a same-id re-poll of one background job. It must therefore count against the strict
@@ -1192,6 +1198,8 @@ async def test_nonstream_model_change_chain_counts_against_strict_ceiling(monkey
             _suspended_model_change('m3', 'r3'),
         ]
     )
+    if polled:
+        monkeypatch.setattr(model, 'continuation_delay', lambda response: 0.0)
     agent = Agent(model)
 
     with pytest.raises(UnexpectedModelBehavior, match=r"Model response 'r3' was suspended more than the maximum"):

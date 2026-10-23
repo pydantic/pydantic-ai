@@ -488,10 +488,10 @@ class _ContinuationStreamedResponse(StreamedResponse):
         See `MAX_BACKGROUND_POLLS`. Returns the updated `(accumulate_count, replace_count)`.
         """
         job_id = response.provider_response_id
-        # A response the model polls, such as a batch request waiting for its batch, is waiting on a job rather than
-        # continuing a generation, even when it started a new one with a new ID, as in the non-streaming loop.
+        # A batch request waiting for its batch is waiting on a job rather than continuing a generation, even when it
+        # was submitted again under a new ID, as in the non-streaming loop.
         if last_mode == 'replace-same-id' or (
-            last_mode is not None and self.model.continuation_delay(response) is not None
+            last_mode is not None and not self.model._limits_polls(response)  # pyright: ignore[reportPrivateUsage]
         ):
             replace_count += 1
             if replace_count > self.max_background_polls and self.model._limits_polls(response):  # pyright: ignore[reportPrivateUsage]

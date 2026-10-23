@@ -1324,10 +1324,10 @@ async def model_request(  # noqa: C901
                     model._release_suspended_response(response)  # pyright: ignore[reportPrivateUsage]
                     return response
                 job_id = response.provider_response_id
-                # A response the model polls, such as a batch request waiting for its batch, is waiting on a job rather
-                # than continuing a generation, even when it started a new one with a new ID.
+                # A batch request waiting for its batch is waiting on a job rather than continuing a generation, even
+                # when it was submitted again under a new ID.
                 if last_mode == 'replace-same-id' or (
-                    last_mode is not None and model.continuation_delay(response) is not None
+                    last_mode is not None and not model._limits_polls(response)  # pyright: ignore[reportPrivateUsage]
                 ):
                     replace_count += 1
                     over_limit = replace_count > MAX_BACKGROUND_POLLS and model._limits_polls(response)  # pyright: ignore[reportPrivateUsage]
