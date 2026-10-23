@@ -3,10 +3,13 @@ from copy import deepcopy
 
 import pytest
 from pytest_mock import MockerFixture
+from typing_extensions import TypeAliasType
 
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -36,6 +39,8 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
 ]
+
+Key = TypeAliasType('Key', str)
 
 
 def test_openrouter_provider():
@@ -361,3 +366,31 @@ def test_openrouter_google_boolean_defs(definition: bool):
         'properties': {'x': {'not': {'type': 'string'} if definition else {}}},
     }
     assert schema == original
+
+
+def test_openrouter_google_resolves_property_names_ref_through_tool_preparation():
+    """The OpenRouter Google transformer drops `$defs`, so the `$ref` under `propertyNames` must be inlined too."""
+
+    def accept_values(values: dict[Key, int]) -> str:
+        return 'accepted'  # pragma: no cover
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.function_tools[0].parameters_json_schema == snapshot(
+            {
+                'additionalProperties': False,
+                'properties': {
+                    'values': {
+                        'additionalProperties': {'type': 'integer'},
+                        'propertyNames': {'type': 'string'},
+                        'type': 'object',
+                    }
+                },
+                'required': ['values'],
+                'type': 'object',
+            }
+        )
+        return ModelResponse(parts=[TextPart('done')])
+
+    profile = OpenRouterProvider(api_key='api-key').model_profile('google/gemini-2.5-flash')
+    agent = Agent(FunctionModel(model_function, profile=profile), tools=[accept_values])
+    assert agent.run_sync('accept').output == 'done'
