@@ -16,6 +16,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceRef
 from pydantic_ai_harness.coder import FILE_TOOL_NAMES, Coder, coder_agent
+from pydantic_ai_harness.coder._capability import _BoundToolOutputs  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.subagents import SubAgents
@@ -123,13 +124,13 @@ def test_coder_members_and_parameters() -> None:
         assert text in instructions
     delegation = next(item for item in coder.capabilities if isinstance(item, SubAgents))
     assert (delegation.include_self, delegation.agents, delegation.agent_folders) == (True, (), None)
-    limits = next(item for item in coder.capabilities if type(item).__name__ == '_BoundToolOutputs')
+    limits = next(item for item in coder.capabilities if isinstance(item, _BoundToolOutputs))
     assert limits.id == 'coder_tool_output_limits'
     assert isinstance(coder.for_agent(Agent(TestModel())), Coder)
 
 
 def test_bound_tool_outputs_sharing_an_id_raise_instead_of_merging() -> None:
-    limits = next(item for item in Coder().capabilities if type(item).__name__ == '_BoundToolOutputs')
+    limits = next(item for item in Coder().capabilities if isinstance(item, _BoundToolOutputs))
     with pytest.raises(UserError, match="'coder_tool_output_limits' is used by multiple capabilities"):
         Agent(TestModel(), capabilities=[limits, copy.copy(limits)])
 
