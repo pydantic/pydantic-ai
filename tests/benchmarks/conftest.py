@@ -1,27 +1,21 @@
 from __future__ import annotations
 
-import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-from pydantic import TypeAdapter
-
-
-def pytest_addoption(parser: pytest.Parser) -> None:
-    parser.addoption(
-        '--benchmark-write-dependencies',
-        action='store_true',
-        help='Record imported repository files for auditing the CodSpeed dependency filter.',
-    )
 
 
 def pytest_sessionfinish(session: pytest.Session) -> None:
     """Check imports in isolated benchmark runs, without other suites' collection imports."""
-    root = Path(__file__).resolve().parents[2]
-    if session.config.args != ['tests/benchmarks']:
+    benchmark_dir = Path(__file__).resolve().parent
+    if not session.config.args or any(
+        not Path(argument.split('::', 1)[0]).resolve().is_relative_to(benchmark_dir) for argument in session.config.args
+    ):
         return
+    root = benchmark_dir.parent.parent
     loaded: set[str] = set()
     for module in tuple(sys.modules.values()):
         namespace: dict[str, object] = getattr(module, '__dict__', {})
@@ -39,16 +33,32 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
                 'docs',
             ):
                 loaded.add(path.relative_to(root).as_posix())
-    manifest = Path(__file__).with_name('dependencies.json')
-    if session.config.getoption('benchmark_write_dependencies'):
-        manifest.write_text(json.dumps({'loaded': sorted(loaded)}, indent=2) + '\n')
-        return
-    dependencies = TypeAdapter(dict[str, list[str]]).validate_json(manifest.read_text())['loaded']
-    missing = loaded.difference(dependencies)
-    if missing:
+    workflow = (root / '.github/workflows/benchmark.yml').read_text()
+    start = workflow.index('          affects_benchmarks() {')
+    end = workflow.index('\n          }', start) + len('\n          }')
+    classifier = workflow[start:end]
+    # This executes only in the benchmark/test context, never in the token-bearing classifier job.
+    result = subprocess.run(
+        [
+            'bash',
+            '-e',
+            '-c',
+            classifier + '\nuncovered=0\nfor filename; do\n'
+            '  if ! affects_benchmarks "$filename"; then\n'
+            '    printf \'%s\\n\' "$filename"\n'
+            '    uncovered=1\n'
+            '  fi\ndone\nexit "$uncovered"\n',
+            'benchmark-dependencies',
+            *sorted(loaded),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode:
         pytest.exit(
-            'Benchmark dependencies changed; audit dependencies.json and the CodSpeed classifier: '
-            + ', '.join(sorted(missing)),
+            'Loaded benchmark dependencies would skip CodSpeed; update affects_benchmarks in '
+            '.github/workflows/benchmark.yml:\n' + result.stdout + result.stderr,
             returncode=1,
         )
 

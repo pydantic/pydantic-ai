@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import json
-import sys
 from pathlib import Path
-from types import ModuleType
-from typing import Literal
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -16,38 +13,67 @@ def blockbuster_enabled() -> bool:
     return False
 
 
-@pytest.mark.parametrize('mode', ['missing', 'present', 'write'])
-def test_dependency_guard_detects_new_runtime_import(
+@pytest.mark.parametrize(
+    'argument',
+    [
+        'tests/benchmarks',
+        'tests/benchmarks/',
+        str(Path(__file__).resolve().parent),
+        'tests/benchmarks/test_agent.py',
+        'tests/benchmarks/test_agent.py::test_agent_run_without_capabilities',
+    ],
+)
+@pytest.mark.parametrize(
+    ('dependency', 'included'),
+    [
+        ('pydantic_ai_slim/pydantic_ai/capabilities/foo.py', True),
+        ('pydantic_ai_slim/pydantic_ai/models/function.py', True),
+        ('pydantic_ai_slim/pydantic_ai/providers/openai.py', False),
+    ],
+)
+def test_dependency_guard_checks_loaded_files_against_classifier(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
-    mode: Literal['missing', 'present', 'write'],
+    argument: str,
+    dependency: str,
+    included: bool,
 ) -> None:
-    benchmark_dir = tmp_path / 'tests' / 'benchmarks'
-    benchmark_dir.mkdir(parents=True)
-    manifest = benchmark_dir / 'dependencies.json'
-    expected: dict[str, list[str]] = {
-        'loaded': ['pydantic_ai_slim/pydantic_ai/providers/new.py', 'tests/benchmarks/conftest.py']
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.chdir(root)
+    module = ModuleType('loaded_dependency')
+    module.__file__ = str(root / dependency)
+    external = ModuleType('external_dependency')
+    external.__file__ = str(tmp_path / 'external.py')
+    environment = ModuleType('environment_dependency')
+    environment.__file__ = str(root / '.venv/package/module.py')
+    modules: dict[str, ModuleType] = {
+        'loaded': module,
+        'originless': ModuleType('originless'),
+        'external': external,
+        'environment': environment,
     }
-    manifest.write_text(json.dumps(expected if mode == 'present' else {'loaded': []}))
-    monkeypatch.setattr(conftest, '__file__', str(benchmark_dir / 'conftest.py'))
-    module = ModuleType('new_benchmark_dependency')
-    module.__file__ = str(tmp_path / 'pydantic_ai_slim' / 'pydantic_ai' / 'providers' / 'new.py')
-    monkeypatch.setitem(sys.modules, module.__name__, module)
-    monkeypatch.setattr(request.config, 'args', ['tests/benchmarks'])
-    # Xdist workers can collect this conftest after receiving the controller's option namespace.
-    monkeypatch.delattr(request.config.option, 'benchmark_write_dependencies', raising=False)
-    monkeypatch.setattr(request.config.option, 'benchmark_write_dependencies', mode == 'write', raising=False)
-    if mode == 'write':
-        conftest.pytest_sessionfinish(request.session)
-        assert json.loads(manifest.read_text()) == expected
-    elif mode == 'present':
+    monkeypatch.setattr(conftest, 'sys', SimpleNamespace(modules=modules))
+    monkeypatch.setattr(request.config, 'args', [argument])
+    if included:
         conftest.pytest_sessionfinish(request.session)
     else:
-        with pytest.raises(pytest.exit.Exception, match='Benchmark dependencies changed'):
+        with pytest.raises(pytest.exit.Exception, match='Loaded benchmark dependencies would skip CodSpeed') as error:
             conftest.pytest_sessionfinish(request.session)
+        assert str(error.value).endswith(f'{dependency}\n')
 
 
-def test_dependency_guard_ignores_other_suites(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
-    monkeypatch.setattr(request.config, 'args', ['tests'])
+@pytest.mark.parametrize(
+    'arguments',
+    [[], ['tests'], ['.github/scripts/test_ci_content_classifier.py'], ['tests/benchmarks', 'tests/test_tools.py']],
+)
+def test_dependency_guard_ignores_mixed_and_unrelated_suites(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest, arguments: list[str]
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.chdir(root)
+    module = ModuleType('excluded_dependency')
+    module.__file__ = str(root / 'pydantic_ai_slim/pydantic_ai/providers/openai.py')
+    monkeypatch.setattr(conftest, 'sys', SimpleNamespace(modules={'excluded': module}))
+    monkeypatch.setattr(request.config, 'args', arguments)
     conftest.pytest_sessionfinish(request.session)

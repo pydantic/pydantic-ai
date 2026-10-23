@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -383,7 +382,7 @@ def test_agent_data_uses_content_only_route(tmp_path: Path, changed_files: list[
         ('tests/models/conftest.py', 'false'),
         ('tests/cassette_utils.py', 'true'),
         ('tests/cassette_hooks.py', 'true'),
-        ('tests/benchmarks/dependencies.json', 'true'),
+        ('tests/benchmarks/data/input.json', 'true'),
         ('examples/pydantic_ai_examples/weather_agent.py', 'false'),
         ('pydantic_ai_slim/pydantic_ai/agent/__init__.py', 'true'),
         ('pydantic_graph/pydantic_graph/graph.py', 'true'),
@@ -555,47 +554,6 @@ def test_benchmark_classifier_distinguishes_documentation_from_markdown_workload
         workflow_path=BENCHMARK_WORKFLOW,
         status='renamed' if previous_filename else 'modified',
     ) == {'run_benchmarks': expected}
-
-
-def test_benchmark_classifier_covers_import_inventory():
-    filenames = TypeAdapter(dict[str, list[str]]).validate_json(
-        (Path(__file__).parents[2] / 'tests/benchmarks/dependencies.json').read_text()
-    )['loaded']
-    classifier = CLASSIFIER_JOB_ADAPTER.validate_python(_workflow(BENCHMARK_WORKFLOW)['jobs']['classify'])
-    run = classifier['steps'][0]['run']
-    function = run[run.index('affects_benchmarks() {') : run.index('\nrun_benchmarks=false')]
-    process = subprocess.run(
-        [
-            'bash',
-            '-e',
-            '-c',
-            function + '\nfor filename; do affects_benchmarks "$filename" || { echo "$filename skips"; exit 1; }; done',
-            'benchmark-inventory',
-            *filenames,
-        ],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert process.returncode == 0, process.stdout + process.stderr
-
-
-@pytest.mark.subprocess(reason='Benchmark dependency inventory requires fresh imports, isolated from other suites')
-def test_benchmark_dependency_inventory_in_fresh_process():
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith('COVERAGE_') and key not in ('CODSPEED_ENV', 'PYTEST_ADDOPTS')
-    }
-    process = subprocess.run(
-        [sys.executable, '-m', 'pytest', 'tests/benchmarks', '-q'],
-        cwd=Path(__file__).parents[2],
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert process.returncode == 0, process.stdout + process.stderr
 
 
 def test_benchmark_job_is_gated_on_the_classifier_output():
