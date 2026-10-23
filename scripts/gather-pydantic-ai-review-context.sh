@@ -723,24 +723,29 @@ mechanism where a rule is marked *(pending #N)*.
 
 Trigger: the diff changes a model adapter's request mapping, its response or
 stream parsing, a capability check in an adapter, or a profile flag an adapter
-reads. "Adapter structure" in `pydantic_ai_slim/pydantic_ai/models/AGENTS.md`
-summarizes the rules. Read only the sections of `agent_docs/provider-adapters.md`
-that govern what the diff changes; each rule there carries its precedent and
-reason. The rules govern the code a diff adds. A violation is HIGH when it has a concrete trigger that changes a request
-or a replayed history, or that the user's `profile=` can't override. A violation
-of code shape alone is MEDIUM.
+reads. Read `agent_docs/provider-adapters.md` and apply the rules that govern
+what the diff changes; each rule carries its precedent and reason. In
+`pydantic_ai_slim/pydantic_ai/models/AGENTS.md`, "Adapter structure"
+summarizes the structure rules, and the "Narrow a capability by client class"
+bullet holds the gating rule's gateway reasoning. The rules govern the code a
+diff adds. A PR that aligns existing code must also meet the guide's scope
+rules: flag as MEDIUM a structural alignment that shows no diff of request
+bodies captured on `main` and on the branch, and a behavioral one that doesn't
+name each change it makes. A violation is HIGH when it has a concrete trigger
+that changes a request or a replayed history, or that the user's `profile=`
+can't override. A violation of code shape alone is MEDIUM.
 
 **Flag this (HIGH):**
 ```python
-# PR adds `anthropic_search_mode`, which the Vertex client can't send yet
+# PR adds a beta the adapter needs for a new block type; Vertex doesn't accept it yet
 if not isinstance(self.client, AsyncAnthropicVertex):
-    extra_body['search_mode'] = model_settings.get('anthropic_search_mode')
+    betas.add('context-hints-2026-09-01')
 ```
-*Why:* The adapter checks the client class where the feature is used, so a
-user can't turn the feature on with `profile=` once Vertex supports it, and
-every other use site needs its own copy of the check. Ask for a profile flag set
-in `_instance_profile_defaults()`, or in the `profile` property for a limit the
-client class can't get past, and read only the flag here. The same goes for a
+*Why:* The adapter checks the client class where it decides to send the
+feature, so a user can't turn the feature on with `profile=` once Vertex
+accepts it, and every other use site needs its own copy of the check. Ask for a
+profile flag set in `_instance_profile_defaults()`, which the user's `profile=`
+overrides, and read only the flag here. The same goes for a
 gate on the model name, the provider name or the `base_url`, a tool return with
 files sent as `model_response_str()` alone, `thinking_tags` joined by hand, and
 an own native tool part with an unknown `kind` sent in a guessed shape. Flag as
@@ -760,9 +765,7 @@ Vertex takes headers, the Gemini API a request field. That is mapping, not a
 gate, so it may branch on the transport. Also don't flag existing code that the
 diff only touches and that already diverges, such as a one-line fix inside a
 deeply nested mapper or next to an inline gate on `main`: aligning it is its
-own PR. When the PR is that alignment, flag as MEDIUM a structural one that
-shows no diff of request bodies captured on `main` and on the branch, and a
-behavioral one that doesn't name each change it makes.
+own PR.
 
 ## Sub-agent finding format
 
