@@ -20,7 +20,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import Click, TypeText
 
 from ..conftest import try_import
-from ..workspace_fakes import InMemoryProvider, computer_toolset
+from ..workspace_fakes import FAKE_SCREENSHOT, InMemoryProvider, computer_toolset
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
@@ -156,7 +156,7 @@ async def test_a_call_with_no_actions_takes_a_screenshot(allow_model_requests: N
     assert call.args_as_dict() == {'actions': [{'type': 'screenshot'}]}
     _, second = get_mock_responses_kwargs(client)
     (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
-    assert output['output']['image_url'].startswith('data:image/png;base64,')
+    assert output['output']['image_url'] == f'data:image/png;base64,{base64.b64encode(FAKE_SCREENSHOT).decode()}'
 
 
 @pytest.mark.parametrize(
@@ -288,7 +288,7 @@ async def test_a_refused_action_is_explained_after_its_screenshot(allow_model_re
     assert provider.actions == []
 
 
-async def test_a_failed_call_still_sends_a_screenshot_and_says_why(allow_model_requests: None) -> None:
+async def test_a_failed_call_sends_a_blank_screenshot_and_says_why(allow_model_requests: None) -> None:
     async def computer(actions: list[ComputerToolAction]) -> ToolReturn:
         raise ToolFailed('Taking the screenshot failed: scrot: not found')
 
@@ -300,7 +300,7 @@ async def test_a_failed_call_still_sends_a_screenshot_and_says_why(allow_model_r
 
     _, second = get_mock_responses_kwargs(client)
     (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
-    assert output['output']['image_url'].startswith('data:image/png;base64,')
+    assert output['output']['image_url'] == _BLANK_SCREENSHOT
     note = second['input'][second['input'].index(output) + 1]
     assert note == {'role': 'user', 'content': 'Taking the screenshot failed: scrot: not found'}
 
