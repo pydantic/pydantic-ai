@@ -60,7 +60,7 @@ The ref is `WorkspaceRef(provider='ssh', id='dev@build-box:/srv/app')`, availabl
 
 `SSHWorkspace` has the full authority of the remote user. Neither `working_dir` nor a [FileSystem](filesystem.md) root jails shell commands. Do not pass your local environment to the host: choose the variables the command needs with `env=`, which is kept out of the capability's `repr`.
 
-`env=` values travel inside the script that `ssh` sends, which this machine passes to a local `sh` as arguments, so while a command runs they are visible in process listings (`ps`) to other users on this machine. Don't put secrets in `env=` on a shared machine: keep them in a file only the remote user can read, or in the remote user's login environment.
+`env=` values travel inside the script that `ssh` sends, which this machine passes to a local `sh` as arguments, so while a command runs they are visible in process listings (`ps`) to other users on this machine, and on the host too when `ssh` doesn't forward its input (see above). Don't put secrets in `env=` on a shared machine: keep them in a file only the remote user can read, or in the remote user's login environment.
 
 ## Platforms
 
