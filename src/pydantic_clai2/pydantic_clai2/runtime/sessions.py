@@ -197,7 +197,7 @@ class Sessions(Generic[DepsT, OutputT]):
         """
         imported = await run_sync(find_import, source, native_id)
         self.session.check_workspace(imported.summary.workspace)
-        return await save_import(self.store, imported)
+        return await save_import(self.store, imported, delegations=self.session.delegations)
 
     async def listing(
         self, *, query: str = '', limit: int = 200, archived: bool | None = False
@@ -333,7 +333,7 @@ class Sessions(Generic[DepsT, OutputT]):
         if not selected:
             return ''
         if (imported := imports.get(selected)) is not None:
-            selected = await save_import(self.store, imported)
+            selected = await save_import(self.store, imported, delegations=self.session.delegations)
         # Another session can be shown while this one runs a turn: that turn goes on.
         if (notice := await self.show_live(selected)) is not None:
             return notice

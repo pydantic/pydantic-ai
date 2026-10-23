@@ -8,6 +8,7 @@ from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartEndE
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     RetryFeedbackPart,
     TextPart,
     ThinkingPart,
@@ -16,6 +17,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai_harness.subagents import is_task_report
+from pydantic_clai2.runtime.imported_history import is_imported_context
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import StreamRenderer
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
@@ -33,11 +35,16 @@ def turn_starts(messages: Sequence[ModelMessage]) -> list[int]:
             continue
         if message.run_id is not None:
             seen_runs.add(message.run_id)
-        if any(isinstance(part, UserPromptPart) and not is_task_report(part) for part in message.parts) and not any(
+        if any(_typed(part) for part in message.parts) and not any(
             isinstance(part, (ToolReturnPart, RetryFeedbackPart)) for part in message.parts
         ):
             starts.append(index)
     return starts
+
+
+def _typed(part: ModelRequestPart) -> bool:
+    """A prompt the user wrote, not a task's report or context another agent's harness added."""
+    return isinstance(part, UserPromptPart) and not is_task_report(part) and not is_imported_context(part)
 
 
 def prompt_text(part: UserPromptPart) -> str:
@@ -70,7 +77,7 @@ async def render_history(
             seen_runs.add(message.run_id)
         if isinstance(message, ModelRequest):
             for part in message.parts:
-                if isinstance(part, UserPromptPart) and not steered and not is_task_report(part):
+                if isinstance(part, UserPromptPart) and not steered and _typed(part):
                     await renderer.finish()
                     console.print(f'> {terminal_text(prompt_text(part))}', markup=False, highlight=False)
                     console.print()

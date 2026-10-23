@@ -19,6 +19,7 @@ from anyio.to_thread import run_sync
 
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
+from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks
 from pydantic_clai2.runtime import claude_code_sessions, codex_sessions
 from pydantic_clai2.runtime.imported_history import Header
 from pydantic_clai2.ui import telemetry
@@ -38,7 +39,10 @@ class _Source:
     find: Callable[[Path, str], Path | None]
     titles: Callable[[Path], dict[str, str]]
     header: Callable[[Path], Header | None]
-    messages: Callable[[Path], list[ModelMessage]]
+    messages: Callable[[Path, str], list[ModelMessage]]
+    """The history to continue, given the transcript and the CLAI conversation ID it is imported as."""
+    tasks: Callable[[Path, str], list[DelegationTask]]
+    """The session's sub-agents, as finished tasks of the CLAI conversation."""
 
 
 _SOURCES: dict[ImportSource, _Source] = {
@@ -50,6 +54,7 @@ _SOURCES: dict[ImportSource, _Source] = {
         titles=claude_code_sessions.titles,
         header=claude_code_sessions.header,
         messages=claude_code_sessions.messages,
+        tasks=claude_code_sessions.tasks,
     ),
     'codex': _Source(
         label='Codex',
@@ -58,7 +63,8 @@ _SOURCES: dict[ImportSource, _Source] = {
         find=codex_sessions.find,
         titles=codex_sessions.titles,
         header=codex_sessions.header,
-        messages=codex_sessions.messages,
+        messages=lambda path, _conversation_id: codex_sessions.messages(path),
+        tasks=lambda _path, _conversation_id: [],
     ),
 }
 
@@ -79,7 +85,11 @@ class ImportedSession:
 
     def messages(self) -> list[ModelMessage]:
         """Read the whole transcript. Blocking file IO, so call it off the event loop."""
-        return _SOURCES[self.source].messages(self.path)
+        return _SOURCES[self.source].messages(self.path, self.summary.id)
+
+    def tasks(self) -> list[DelegationTask]:
+        """Read the session's sub-agent transcripts. Blocking file IO, so call it off the event loop."""
+        return _SOURCES[self.source].tasks(self.path, self.summary.id)
 
 
 def _modified(path: Path) -> float | None:
@@ -184,11 +194,14 @@ def merge(
     return entries[:limit]
 
 
-async def save_import(store: SqliteConversationStore, imported: ImportedSession) -> str:
+async def save_import(
+    store: SqliteConversationStore, imported: ImportedSession, *, delegations: DelegationTasks | None = None
+) -> str:
     """Copy a session into the store, or refresh a copy CLAI has not continued, and return its CLAI ID.
 
     The refresh does not compare times: the original may change while it is being read, after its
-    time was taken, and that turn would never be imported.
+    time was taken, and that turn would never be imported. With `delegations`, the session's sub-agents
+    become its tasks too, except one CLAI has since resumed.
     """
     try:
         saved = (await store.get(conversation_id=imported.summary.id)).summary
@@ -216,5 +229,12 @@ async def save_import(store: SqliteConversationStore, imported: ImportedSession)
         # Only once the new transcript has been read, so a failed refresh keeps the previous copy.
         await store.delete(source=saved)
     await store.save(summary=summary, messages=messages)
-    telemetry.record('conversation imported', source=imported.source, messages=len(messages))
+    tasks = await run_sync(imported.tasks) if delegations is not None else []
+    if delegations is not None:
+        for task in tasks:
+            # Resuming a task gives it a new run ID; until then, it is the copy an earlier import saved.
+            if (saved_task := delegations.records.get(task.id)) is None or saved_task.run_id == task.run_id:
+                delegations.records[task.id] = task
+                await delegations.save(task)
+    telemetry.record('conversation imported', source=imported.source, messages=len(messages), tasks=len(tasks))
     return imported.summary.id
