@@ -568,9 +568,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         # Prints a process's start time and then its group id, for the launcher to record and the stop
         # to check: a reused PID belongs to another run. Linux's `/proc` needs no extra package, and E2B
         # sandboxes always have it; the `ps` branch keeps the host-backed test fake working on macOS,
-        # under `LC_ALL=C` because only the launcher gets the user's locale. `/proc` is read whole, not
-        # by line, because a command name may hold a newline. A process that is gone prints nothing,
-        # which never matches a record.
+        # under `LC_ALL=C` because a per-command env (`run(env=...)`, or `env` on an attached sandbox)
+        # reaches only the launcher. `/proc` is read whole, not by line, because a command name may hold
+        # a newline. A process that is gone prints nothing, which never matches a record.
         identify = (
             '_pydantic_e2b_id() { '
             'if [ -r "/proc/$1/stat" ]; then '
