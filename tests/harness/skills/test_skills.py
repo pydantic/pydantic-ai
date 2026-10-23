@@ -92,7 +92,6 @@ def _catalog(*entries: str) -> str:
     return (
         '<context id="capability:deferred_capabilities">\n'
         'The following capabilities are deferred and can be loaded using the `load_capability` tool. '
-        "Follow a loaded capability's instructions as you follow your other instructions. "
         "A capability's tools stay hidden until it is loaded:\n" + '\n'.join(entries) + '\n</context>\n'
         'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
     )

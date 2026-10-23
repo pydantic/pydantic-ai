@@ -236,10 +236,9 @@ InstructionVisibility = Literal['prefix', 'via_history']
 
 - `'prefix'`: in the instructions every request starts with.
 - `'via_history'`: in message history. That's the instructions of a loaded
-  [deferred capability](../capabilities/on-demand.md): the `load_capability` tool return delivers them,
-  and a later change to them is appended to history as an
+  [deferred capability](../capabilities/on-demand.md), stated after its `load_capability` tool return as an
   [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] for the capability's block,
-  `capability:<id>`, holding all of its parts joined.
+  `capability:<id>`, holding all of its parts joined, and appended again whenever they change.
 
 Resolved per part id into [`ModelRequestParameters.instruction_visibility`][pydantic_ai.models.ModelRequestParameters.instruction_visibility]."""
 
@@ -3422,9 +3421,9 @@ def _project_instruction_state(
     for its block; only text earlier in `messages` goes into that fold, so each change renders the same on
     every later request.
 
-    A change to a loaded capability's block, `capability:<id>`, is different: the `load_capability` return
-    delivered the block and no baseline restates it, so its changes are rendered until the compaction that ends
-    the load, as diffs against the block's text folded forward from that return.
+    A statement of a loaded capability's block, `capability:<id>`, is different: no baseline restates it, so its
+    statements are rendered until the compaction that ends the load, each change as a diff against the text an
+    earlier statement delivered.
 
     The baseline parts themselves are dropped. Every request in the current window was sent the same prefix,
     `prefix` (the request's instruction parts), so those requests get their `instructions` rendered from it,

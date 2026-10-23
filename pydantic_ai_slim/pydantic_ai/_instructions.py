@@ -420,9 +420,10 @@ def loaded_instruction_id(capability_id: str) -> InstructionId:
 class LoadedInstructionValues:
     """Each loaded capability's instructions as the model last received them, in the order they were loaded.
 
-    A capability's block, `capability:<id>`, comes into scope
-    with the `load_capability` return that delivers its instructions, and its later changes are recorded as
-    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s with that id. A compaction ends every
+    A capability's block, `capability:<id>`, comes into scope with its `load_capability` return, and its
+    statements are recorded as [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s with that id:
+    the first one on the request after the load, and one for each change since. A load return from an earlier
+    version, which carried the instructions itself, seeds the block with them. A compaction ends every
     load, as [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] does for loaded tools.
 
     Unlike the prefix's blocks, a loaded block is not recorded in an
@@ -467,6 +468,10 @@ class LoadedInstructionValues:
                 self.values[capability_id] = part.instructions
                 self._changed.discard(capability_id)
 
+    def loaded_by(self, part: LoadCapabilityReturnPart) -> str | None:
+        """The capability a `load_capability` return `observe`d loads, if its call was seen."""
+        return self._loading.get(part.tool_call_id)
+
     def tracks(self, part: ModelRequestPart | ModelResponsePart) -> TypeGuard[InstructionDeltaPart]:
         """Whether `part` is a change to a loaded capability's block."""
         return isinstance(part, InstructionDeltaPart) and _loaded_block_capability_id(part.id) in self.values
@@ -494,6 +499,61 @@ def _loaded_block_capability_id(instruction_id: InstructionId | None) -> str | N
     return source.id if isinstance(source, CapabilityInstructionSource) else None
 
 
+def _loaded_texts(parts: Sequence[InstructionPart]) -> dict[str, str | None]:
+    """Each loaded capability's joined text, from its parts as `resolve_loaded_capability_instructions` keys them."""
+    grouped: dict[str, list[InstructionPart]] = {}
+    for part in parts:
+        if part.id is not None and isinstance(source := part.id.source, CapabilityInstructionSource):
+            grouped.setdefault(source.id, []).append(part)
+    return {
+        capability_id: InstructionPart.join([part for part in group if part.content])
+        for capability_id, group in grouped.items()
+    }
+
+
+def restate_loaded_instructions(
+    messages: Sequence[ModelMessage], parts: Sequence[InstructionPart], targets: Sequence[ModelRequest]
+) -> list[ModelMessage]:
+    """Put back the first statement of each loaded capability's instructions where history lost it, for one request.
+
+    The request after a load records the capability's instructions as an
+    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] at the end of the request holding the
+    load return. A UI client's history comes back without it, since a client can't be trusted with the system
+    voice (see [`sanitize_messages`][pydantic_ai.messages.sanitize_messages]), so the capability would lose its
+    instructions. Each load in the window whose return carries no instructions and that no change follows gets
+    the capability's current text, from `parts`, in that same place, in the returned copy only: unchanged
+    instructions give the bytes the original request sent. A load on one of `targets`, the request being sent,
+    is left to [`update_loaded_instruction_history`][pydantic_ai._instructions.update_loaded_instruction_history],
+    which records its first statement.
+    """
+    loaded = LoadedInstructionValues()
+    unstated: dict[str, int] = {}
+    for index, message in enumerate(messages):
+        for part in message.parts:
+            if loaded.tracks(part):
+                unstated.pop(_loaded_block_capability_id(part.id) or '', None)
+                loaded.apply(part)
+                continue
+            loaded.observe(part)
+            if isinstance(part, CompactionPart):
+                unstated.clear()
+            elif isinstance(part, LoadCapabilityReturnPart) and (capability_id := loaded.loaded_by(part)) is not None:
+                if part.instructions is None and not any(message is target for target in targets):
+                    unstated[capability_id] = index
+                else:
+                    unstated.pop(capability_id, None)
+    if not unstated:
+        return list(messages)
+    texts = _loaded_texts(parts)
+    restated = list(messages)
+    for capability_id, index in unstated.items():
+        if (content := texts.get(capability_id)) is not None:
+            message = restated[index]
+            change = InstructionDeltaPart(id=loaded_instruction_id(capability_id), content=content)
+            restated[index] = replace(message, parts=[*message.parts, change])
+    return restated
+
+
 def update_loaded_instruction_history(
     messages: Sequence[ModelMessage],
     parts: Sequence[InstructionPart],
@@ -511,20 +571,14 @@ def update_loaded_instruction_history(
 
     A loaded block with no parts at all is withdrawn too, because the capability's instructions resolved to
     nothing or it is no longer configured, unless it's in `keep_without_parts`: a capability that's eager
-    again, whose instructions are back in the prefix, or one whose parts a hook left out, as a hook that
-    builds `instruction_parts` from scratch does. A hook withdraws a block by keeping its parts with empty
-    content instead.
+    again, whose instructions are back in the prefix.
     """
-    current: dict[str, list[InstructionPart]] = {}
-    for part in parts:
-        if part.id is not None and isinstance(source := part.id.source, CapabilityInstructionSource):
-            current.setdefault(source.id, []).append(part)
+    current = _loaded_texts(parts)
     changes = [
         _instruction_change(loaded_instruction_id(capability_id), previous, content)
         for capability_id, previous in LoadedInstructionValues.of(messages).values.items()
         if (capability_id in current or capability_id not in keep_without_parts)
-        and (content := InstructionPart.join([part for part in current.get(capability_id, []) if part.content]))
-        != previous
+        and (content := current.get(capability_id)) != previous
     ]
     if changes:
         for target in targets:

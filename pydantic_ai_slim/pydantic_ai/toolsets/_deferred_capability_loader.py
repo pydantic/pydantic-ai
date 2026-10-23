@@ -90,12 +90,16 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         if _is_duplicate_load_in_response(ctx, capability_id):
             raise ModelRetry(LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE.format(capability_id=capability_id))
 
-        parts = await resolve_loaded_capability_instructions(capability_id, self, ctx)
-        # Every later request resolves the same parts and records a change to their joined text as an
-        # `InstructionDeltaPart` for `capability:<id>`, which is what this text seeds.
-        instructions_text = InstructionPart.join([part for part in parts if part.content])
-
-        result: LoadCapabilityReturn = {'instructions': instructions_text} if instructions_text is not None else {}
+        # The return only confirms the load: the next request records the capability's instructions as an
+        # `InstructionDeltaPart` for `capability:<id>`, which models receive in the system voice, the voice
+        # they treat as authoritative over user and tool-output pressure. They're never in both places, which
+        # made models treat them as tool output again. A realtime session has no channel for those parts, so
+        # the instructions still ride the return there.
+        result: LoadCapabilityReturn = {}
+        if ctx.realtime:
+            parts = await resolve_loaded_capability_instructions(capability_id, self, ctx)
+            text = InstructionPart.join([part for part in parts if part.content])
+            result = {'instructions': text} if text is not None else {}
         tools = sorted(name for name, tool_def in ctx.tools.items() if tool_def.capability_id == capability_id)
         return ToolReturn(return_value=result, tools=tools or None)
 

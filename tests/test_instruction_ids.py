@@ -1354,7 +1354,7 @@ async def test_deferred_capability_instructions_stay_hidden():
         InstructionPart(
             content="""\
 <context id="capability:deferred_capabilities">
-The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - deferred
 </context>
 A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
@@ -1779,7 +1779,14 @@ async def test_a_deferred_capability_can_declare_its_blocks_as_parts():
         for part in message.parts
         if part.part_kind == 'tool-return'
     ]
-    assert returns == [{'instructions': 'Check the order first.\n\nThen issue the refund.'}]
+    assert returns == [{}]
+    assert [
+        part.content
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, InstructionDeltaPart)
+    ] == ['Check the order first.\n\nThen issue the refund.']
 
 
 async def test_a_blank_instruction_part_contributes_nothing():

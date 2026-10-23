@@ -74,6 +74,7 @@ from ._instructions import (
     LoadedInstructionValues,
     instruction_window,
     recorded_prefix,
+    restate_loaded_instructions,
     update_instruction_history,
     update_loaded_instruction_history,
 )
@@ -991,8 +992,8 @@ async def _get_loaded_instructions(
 ) -> list[_messages.InstructionPart]:
     """Resolve the instructions of the deferred capabilities the model has loaded, in the order it loaded them.
 
-    They reach the model through history, where the `load_capability` return delivered them, rather than in
-    the prefix: they go into `instruction_parts` so `before_model_request` hooks see them, marked `'via_history'`
+    They reach the model through history, stated after the `load_capability` return, rather than in the
+    prefix: they go into `instruction_parts` so `before_model_request` hooks see them, marked `'via_history'`
     in `instruction_visibility`, and `update_loaded_instruction_history` records their changes.
     """
     parts: list[_messages.InstructionPart] = []
@@ -1508,8 +1509,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     )
     _did_stream: bool = field(repr=False, init=False, default=False)
     last_request_context: ModelRequestContext | None = field(repr=False, init=False, default=None)
-    _resolved_loaded_capability_ids: frozenset[str] = field(repr=False, init=False, default=frozenset())
-    """The loaded capabilities whose instructions this request resolved to text, before the hooks ran."""
+    _resolved_loaded_parts: list[_messages.InstructionPart] = field(repr=False, init=False, default_factory=list)
+    """The loaded capabilities' instruction parts this request resolved, before the hooks ran."""
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -1981,9 +1982,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
         loaded_instruction_parts = await _get_loaded_instructions(ctx, run_context)
-        self._resolved_loaded_capability_ids = frozenset(
-            _loaded_capability_id(part) for part in loaded_instruction_parts if part.content
-        )
+        self._resolved_loaded_parts = loaded_instruction_parts
         model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts, loaded_instruction_parts)
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
         run_context.model_settings = model_settings
@@ -2144,7 +2143,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # Loaded capabilities' instructions reach the model through history: changes to them are appended
             # after the prefix's, and they leave the parts the model is sent.
             prefix_parts, loaded_parts = _split_loaded_instruction_parts(model_request_parameters)
+            # A capability whose parts a hook left out, as a hook that builds `instruction_parts` from scratch
+            # does, is delivered as it resolved; a hook withdraws one by emptying its parts instead.
+            kept = {_loaded_capability_id(part) for part in loaded_parts}
+            loaded_parts = [
+                *loaded_parts,
+                *(part for part in self._resolved_loaded_parts if _loaded_capability_id(part) not in kept),
+            ]
             recording_targets = _history_recording_targets(ctx, messages)
+            messages = restate_loaded_instructions(messages, loaded_parts, recording_targets)
             model_request_parameters = replace(
                 model_request_parameters,
                 instruction_parts=update_instruction_history(messages, prefix_parts, recording_targets),
@@ -2155,12 +2162,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 loaded_parts,
                 recording_targets,
                 keep_without_parts={
-                    *self._resolved_loaded_capability_ids,
-                    *(
-                        capability_id
-                        for capability_id, capability in ctx.deps.capabilities.items()
-                        if capability.defer_loading is not True
-                    ),
+                    capability_id
+                    for capability_id, capability in ctx.deps.capabilities.items()
+                    if capability.defer_loading is not True
                 },
             )
             _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)

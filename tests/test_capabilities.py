@@ -176,7 +176,7 @@ async def test_abstract_capability_description_field_is_optional_in_deferred_cat
 
     assert request.instructions == snapshot(
         """\
-The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - account-security: Use for suspicious logins, account takeover, or session revocation.
 - refunds\
 """
@@ -2518,7 +2518,7 @@ async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() 
     # The deferred capability is surfaced in the catalog under the wrapped capability's id.
     assert first_request_instructions == [
         '<context id="capability:deferred_capabilities">\n'
-        "The following capabilities are deferred and can be loaded using the `load_capability` tool. Follow a loaded capability's instructions as you follow your other instructions. A capability's tools stay hidden until it is loaded:\n"
+        "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:\n"
         '- refunds: Refund policy tools.\n</context>\n'
         'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
     ]

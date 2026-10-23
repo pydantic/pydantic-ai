@@ -1,10 +1,12 @@
-"""A loaded deferred capability's instructions: delivered by the `load_capability` return, changes appended to history."""
+"""A loaded deferred capability's instructions: stated in history in the system voice after the load, changes appended."""
 
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -30,11 +32,22 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     ToolsetInstructionSource,
+    UserPromptPart,
     sanitize_messages,
 )
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
+
+from .append_only import (
+    PROVIDERS,
+    Provider,
+    Scenario,
+    Turn,
+    inject_clock,
+    provider_imports_successful,
+    run_conversation,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -133,23 +146,33 @@ def load_return(messages: list[ModelMessage]) -> LoadCapabilityReturnPart:
     )
 
 
-async def test_changes_to_loaded_instructions_are_appended():
-    """The load return delivers the instructions, and each later change is appended once, keeping the prefix."""
+async def test_loaded_instructions_are_stated_after_the_load():
+    """The load return only confirms the load: the next request states the instructions, and appends each change."""
     received = Received()
     counter = Counter()
     agent = scripted_agent(LOAD, BUMP, received=received)
     first = await agent.run('Count.', deps=counter)
-    assert load_return(first.all_messages()).instructions == f'{RULES}\n\nThe count is 0.'
+    assert load_return(first.all_messages()).content == {}
     assert deltas(first.all_messages()) == [
+        InstructionDeltaPart(id=COUNTER_ID, content=f'{RULES}\n\nThe count is 0.'),
         InstructionDeltaPart(
             id=COUNTER_ID, content=f'{RULES}\n\nThe count is 1.', base_hash=text_hash(f'{RULES}\n\nThe count is 0.')
-        )
+        ),
     ]
-    # The prefix never changes, and the change is sent from the request after the bump on.
+    # The first statement goes on the request holding the load return, right after it.
+    load_request = next(
+        message
+        for message in first.all_messages()
+        if isinstance(message, ModelRequest)
+        and any(isinstance(part, LoadCapabilityReturnPart) for part in message.parts)
+    )
+    assert [type(part).__name__ for part in load_request.parts] == snapshot(
+        ['LoadCapabilityReturnPart', 'InstructionDeltaPart']
+    )
+    # The prefix never changes.
     assert len(set(received.instructions)) == 1
     assert received.statements == snapshot(
         [
-            [],
             [],
             [
                 """\
@@ -159,20 +182,43 @@ Count every item exactly once.
 Say each number out loud.
 Never skip a number.
 
-The count is 1.
+The count is 0.
 </context>\
 """
+            ],
+            [
+                """\
+<context id="capability:counter">
+Count carefully.
+Count every item exactly once.
+Say each number out loud.
+Never skip a number.
+
+The count is 0.
+</context>\
+""",
+                """\
+<context_diff id="capability:counter">
+--- before
++++ after
+@@ -4,3 +4,3 @@
+ Never skip a number.
+ \n\
+-The count is 0.
++The count is 1.
+</context_diff>\
+""",
             ],
         ]
     )
 
-    # Stored as JSON and continued: unchanged instructions add nothing, and the change is sent as before.
+    # Stored as JSON and continued: unchanged instructions add nothing, and the statements are sent as before.
     history = ModelMessagesTypeAdapter.validate_json(first.all_messages_json())
     second = await agent.run('Again.', deps=counter, message_history=history)
     assert deltas(second.new_messages()) == []
     assert received.statements[-1] == received.statements[-2]
 
-    # A later change is appended after it, as a diff against the text the model last received.
+    # A later change is appended after them, as a diff against the text the model last received.
     counter.value = 12
     third = await agent.run('Again.', deps=counter, message_history=second.all_messages())
     assert [delta.content for delta in deltas(third.new_messages())] == [f'{RULES}\n\nThe count is 12.']
@@ -188,6 +234,30 @@ The count is 1.
 </context_diff>\
 """)
     assert len(set(received.instructions)) == 1
+
+
+async def test_legacy_load_return_seeds_without_restating():
+    """A history from before this change carries the instructions in the load return: they aren't sent again."""
+    received = Received()
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Count.')]),
+        ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'counter'}, tool_call_id='load')]),
+        ModelRequest(
+            parts=[
+                LoadCapabilityReturnPart(tool_call_id='load', content={'instructions': f'{RULES}\n\nThe count is 0.'})
+            ]
+        ),
+        ModelResponse(parts=[TextPart('Done.')]),
+    ]
+    agent = scripted_agent(received=received)
+    first = await agent.run('Again.', deps=Counter(), message_history=history)
+    assert deltas(first.new_messages()) == []
+    assert received.statements[-1] == []
+
+    # A change is still appended, in full, since the text it replaces was a tool result.
+    second = await agent.run('Again.', deps=Counter(1), message_history=first.all_messages())
+    assert received.statements[-1] == [f'<context id="capability:counter">\n{RULES}\n\nThe count is 1.\n</context>']
+    assert len(deltas(second.new_messages())) == 1
 
 
 async def test_hooks_see_and_shape_loaded_instructions():
@@ -246,12 +316,13 @@ async def test_loaded_instructions_are_withdrawn():
 
     agent = scripted_agent(LOAD, received=received, capabilities=[capability])
     first = await agent.run('Count.', deps=Counter())
-    assert deltas(first.all_messages()) == []
+    assert deltas(first.all_messages()) == [InstructionDeltaPart(id=COUNTER_ID, content='The count is 0.')]
 
     second = await agent.run('Again.', deps=Counter(None), message_history=first.all_messages())
     assert deltas(second.new_messages()) == [InstructionDeltaPart(id=COUNTER_ID, content=None)]
     assert received.statements[-1] == [
-        '<context id="capability:counter">\nThis context has been withdrawn.\n</context>'
+        '<context id="capability:counter">\nThe count is 0.\n</context>',
+        '<context id="capability:counter">\nThis context has been withdrawn.\n</context>',
     ]
 
     # Back again, then gone from the agent's configuration.
@@ -283,7 +354,7 @@ async def test_new_instruction_window_keeps_loaded_changes():
     received = Received()
     first = await scripted_agent(LOAD, BUMP, received=received).run('Count.', deps=Counter())
     loaded_change = received.statements[-1]
-    assert len(loaded_change) == 1
+    assert len(loaded_change) == 2
 
     second = await scripted_agent(received=received, instructions='Be briefer.').run(
         'Again.', deps=Counter(1), message_history=first.all_messages()
@@ -302,23 +373,46 @@ async def test_compaction_ends_the_load():
     second = await scripted_agent(BUMP, LOAD, received=received).run(
         'Again.', deps=Counter(1), message_history=compacted
     )
-    # The change the first run recorded is from before the compaction, and none is recorded after it.
-    assert received.statements[-3:] == [[], [], []]
-    assert deltas(second.new_messages()) == []
-    assert load_return(second.new_messages()).instructions == f'{RULES}\n\nThe count is 2.'
+    # The statements the first run recorded are from before the compaction, and the reload states them again.
+    assert received.statements[-3:] == [
+        [],
+        [],
+        [f'<context id="capability:counter">\n{RULES}\n\nThe count is 2.\n</context>'],
+    ]
+    assert [delta.content for delta in deltas(second.new_messages())] == [f'{RULES}\n\nThe count is 2.']
 
 
-async def test_client_round_trip_reseeds_from_the_load():
-    """A UI client's history has no instruction records, so the current text is restated after the load once more."""
+async def test_client_round_trip_restates_after_the_load():
+    """A UI client's history has no instruction records, so the request restates the instructions after the load."""
     received = Received()
-    first = await scripted_agent(LOAD, BUMP, received=received).run('Count.', deps=Counter())
+    first = await scripted_agent(LOAD, received=received).run('Count.', deps=Counter())
+    sent_after_load = received.statements[-1]
     with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
         sanitized = sanitize_messages(first.all_messages(), strip_system_prompts=True)
     assert deltas(sanitized) == []
 
-    second = await scripted_agent(received=received).run('Again.', deps=Counter(1), message_history=sanitized)
-    assert [delta.content for delta in deltas(second.new_messages())] == [f'{RULES}\n\nThe count is 1.']
-    assert len(received.statements[-1]) == 1
+    # Unchanged, the restatement is what the original request sent, in the same place, and nothing is recorded.
+    agent = scripted_agent(received=received)
+    second = await agent.run('Again.', deps=Counter(), message_history=sanitized)
+    assert received.statements[-1] == sent_after_load
+    assert deltas(second.new_messages()) == []
+
+    # Changed since, the current text is restated there instead.
+    await agent.run('Again.', deps=Counter(1), message_history=sanitized)
+    assert received.statements[-1] == [f'<context id="capability:counter">\n{RULES}\n\nThe count is 1.\n</context>']
+
+
+async def test_client_round_trip_of_a_capability_no_longer_configured():
+    """A client's history loading a capability the agent no longer has gets nothing restated for it."""
+    received = Received()
+    first = await scripted_agent(LOAD, received=received).run('Count.', deps=Counter())
+    with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
+        sanitized = sanitize_messages(first.all_messages(), strip_system_prompts=True)
+    second = await scripted_agent(received=received, capabilities=[]).run(
+        'Again.', deps=Counter(), message_history=sanitized
+    )
+    assert received.statements[-1] == []
+    assert deltas(second.new_messages()) == []
 
 
 async def test_append_mode_loaded_instructions_are_tracked():
@@ -332,8 +426,10 @@ async def test_append_mode_loaded_instructions_are_tracked():
     )
     load = ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'memory'})])
     result = await scripted_agent(load, received=received, capabilities=[capability]).run('Go.', deps=Counter())
-    assert load_return(result.all_messages()).instructions == 'Remember.'
-    assert deltas(result.all_messages()) == []
+    assert load_return(result.all_messages()).content == {}
+    assert deltas(result.all_messages()) == [
+        InstructionDeltaPart(id=InstructionId(CapabilityInstructionSource('memory')), content='Remember.')
+    ]
 
 
 async def test_hook_can_drop_the_prefix_and_keep_loaded_instructions():
@@ -353,7 +449,10 @@ async def test_hook_can_drop_the_prefix_and_keep_loaded_instructions():
         'Count.', deps=Counter()
     )
     assert received.instructions == [None, None, None]
-    assert [delta.content for delta in deltas(first.all_messages())] == [f'{RULES}\n\nThe count is 1.']
+    assert [delta.content for delta in deltas(first.all_messages())] == [
+        f'{RULES}\n\nThe count is 0.',
+        f'{RULES}\n\nThe count is 1.',
+    ]
 
     # An instruction window the first request opened is ended.
     second = await scripted_agent(LOAD, received=received).run('Count.', deps=Counter())
@@ -432,7 +531,7 @@ async def test_client_edited_load_return_never_reaches_the_system_voice():
 
 
 async def test_hook_that_leaves_loaded_parts_out_keeps_them():
-    """A hook that builds `instruction_parts` from scratch doesn't withdraw a loaded block; emptying its parts does."""
+    """A hook that builds `instruction_parts` from scratch leaves loaded blocks as if it weren't there; emptying them withdraws."""
     received = Received()
     first = await scripted_agent(LOAD, received=received).run('Count.', deps=Counter())
 
@@ -452,11 +551,119 @@ async def test_hook_that_leaves_loaded_parts_out_keeps_them():
     second = await scripted_agent(received=received, capabilities=[counter_capability(), hooks]).run(
         'Again.', deps=Counter(5), message_history=first.all_messages()
     )
-    # The count changed, but the hook left it out: nothing is recorded for it.
-    assert deltas(second.new_messages()) == []
+    # The hook left the count out, so its change is delivered as if there were no hook.
+    assert [delta.content for delta in deltas(second.new_messages())] == [f'{RULES}\n\nThe count is 5.']
 
     hooks = Hooks(before_model_request=emptied)
     third = await scripted_agent(received=received, capabilities=[counter_capability(), hooks]).run(
         'Again.', deps=Counter(), message_history=first.all_messages()
     )
     assert deltas(third.new_messages()) == [InstructionDeltaPart(id=COUNTER_ID, content=None)]
+
+
+WIRE_SHAPES: dict[str, Any] = snapshot(
+    {
+        'anthropic': [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'tool_use_id': 'toolu_1_0',
+                        'type': 'tool_result',
+                        'content': [{'text': '{}', 'type': 'text'}],
+                        'is_error': False,
+                    }
+                ],
+            },
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'text': """\
+<context id="capability:housekeeping">
+Use trash.
+</context>\
+""",
+                        'type': 'text',
+                    }
+                ],
+            },
+        ],
+        'openai-responses': [
+            {
+                'name': 'load_capability',
+                'arguments': '{"id":"housekeeping"}',
+                'call_id': 'call_1_0',
+                'type': 'function_call',
+                'id': 'fc_1_0',
+            },
+            {'type': 'function_call_output', 'call_id': 'call_1_0', 'output': '{}'},
+            {
+                'role': 'system',
+                'content': """\
+<context id="capability:housekeeping">
+Use trash.
+</context>\
+""",
+            },
+        ],
+        'openai-chat': [
+            {'role': 'tool', 'tool_call_id': 'call_1_0', 'content': '{}'},
+            {
+                'role': 'system',
+                'content': """\
+<context id="capability:housekeeping">
+Use trash.
+</context>\
+""",
+            },
+        ],
+    }
+)
+
+
+@pytest.mark.skipif(not provider_imports_successful(), reason='anthropic or openai not installed')
+@pytest.mark.parametrize('provider', PROVIDERS)
+async def test_wire_shape_after_the_load(
+    provider: Provider, monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
+):
+    """The tool result confirms the load, and the instructions follow it in the system voice."""
+    capability = Capability[Any](id='housekeeping', defer_loading=True, description='Files.', instructions='Use trash.')
+    scenario = Scenario(turns=(Turn(calls=(('load_capability', {'id': 'housekeeping'}),)), Turn(text='Done.')))
+    result = await run_conversation(provider, [capability], scenario, inject_clock(monkeypatch))
+    body = json.loads(result.conversation[1])
+    tail = body['messages'][-2:] if provider != 'openai-responses' else body['input'][-3:]
+    assert tail == WIRE_SHAPES[provider]
+
+
+@pytest.mark.skipif(not provider_imports_successful(), reason='anthropic or openai not installed')
+async def test_wire_shape_after_the_load_without_a_system_channel(
+    monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
+):
+    """A model without mid-conversation system messages gets them as `<system>` text in the tool result's turn."""
+    capability = Capability[Any](id='housekeeping', defer_loading=True, description='Files.', instructions='Use trash.')
+    scenario = Scenario(turns=(Turn(calls=(('load_capability', {'id': 'housekeeping'}),)), Turn(text='Done.')))
+    result = await run_conversation(
+        'anthropic', [capability], scenario, inject_clock(monkeypatch), model_name='claude-haiku-4-5'
+    )
+    assert json.loads(result.conversation[1])['messages'][-1] == snapshot(
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'tool_use_id': 'toolu_1_0',
+                    'type': 'tool_result',
+                    'content': [{'text': '{}', 'type': 'text'}],
+                    'is_error': False,
+                },
+                {
+                    'text': """\
+<system><context id="capability:housekeeping">
+Use trash.
+</context></system>\
+""",
+                    'type': 'text',
+                },
+            ],
+        }
+    )
