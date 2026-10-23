@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
+import os
 import re
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, ParamSpec, Protocol, TypeVar
 
 import httpx
+from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -21,6 +24,7 @@ from pydantic_ai_harness._web_search import defer_to_native_web_search
 
 try:
     from exa_py import AsyncExa
+    from exa_py.agent.types import AgentEffort, AgentRun
     from exa_py.api import (
         ContentsOptions,
         DeepOutputSchema,
@@ -117,15 +121,104 @@ class ExaSearchOperations:
     deep_search: ToolOperation
 
 
+class DefaultExa:
+    """An `AsyncExa` built from `EXA_API_KEY`, rebuilt when it's used on another event loop.
+
+    `AsyncExa` keeps one httpx connection pool, and connections belong to the event loop that opened
+    them, so an agent reused on a new loop (a second `asyncio.run`, a new test) can't use the old pool.
+    As in Pydantic AI's providers, the client is only replaced once the loop it was last used on has
+    stopped, so runs still going there keep it. Only that last loop is checked: with three or more loops
+    taking turns, a run still going on an earlier one can see the client replaced.
+
+    Implements both `ExaClient` and `ExaAgentRuns`, including the optional `cancel`.
+    """
+
+    def __init__(self, *, missing_key_hint: str) -> None:
+        api_key = os.environ.get('EXA_API_KEY')
+        if api_key is None:
+            raise UserError(missing_key_hint)
+        self._api_key = api_key
+        self._exa = AsyncExa(api_key=api_key)
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    @property
+    def exa(self) -> AsyncExa:
+        """The client for the running event loop."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No asyncio event loop, e.g. under Trio, so there's nothing to compare.
+            return self._exa
+        previous, self._loop = self._loop, loop
+        if previous is not None and previous is not loop and not previous.is_running():
+            self._exa = AsyncExa(api_key=self._api_key)
+        return self._exa
+
+    async def search(
+        self,
+        query: str,
+        *,
+        contents: ContentsOptions | Literal[False],
+        num_results: int | None = None,
+        type: SearchType | None = None,
+        output_schema: DeepOutputSchema | None = None,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
+    ) -> SearchResponse[Result]:
+        """Search with the client for the running event loop."""
+        return await self._client().search(
+            query,
+            contents=contents,
+            num_results=num_results,
+            type=type,
+            output_schema=output_schema,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+        )
+
+    async def get_contents(self, urls: str, *, text: TextContentsOptions) -> SearchResponse[Result]:
+        """Retrieve contents with the client for the running event loop."""
+        return await self._client().get_contents(urls, text=text)
+
+    def _client(self) -> ExaClient:
+        """The client for the running event loop, typed by the protocol, since some `AsyncExa` methods are untyped."""
+        return self.exa
+
+    async def create(
+        self,
+        *,
+        query: str,
+        system_prompt: str | None = None,
+        output_schema: dict[str, object] | type[BaseModel] | None = None,
+        effort: AgentEffort | None = None,
+        previous_run_id: str | None = None,
+    ) -> AgentRun:
+        """Create an agent run with the client for the running event loop."""
+        return await self.exa.agent.runs.create(
+            query=query,
+            system_prompt=system_prompt,
+            output_schema=output_schema,
+            effort=effort,
+            previous_run_id=previous_run_id,
+        )
+
+    async def poll_until_finished(
+        self, run_id: str, *, poll_interval: int = 1000, timeout_ms: int = 3600000
+    ) -> AgentRun:
+        """Poll an agent run with the client for the running event loop."""
+        return await self.exa.agent.runs.poll_until_finished(run_id, poll_interval=poll_interval, timeout_ms=timeout_ms)
+
+    async def cancel(self, run_id: str) -> AgentRun:
+        """Cancel an agent run with the client for the running event loop."""
+        return await self.exa.agent.runs.cancel(run_id)
+
+
 def default_client() -> ExaClient:
-    """Build an `AsyncExa` client from the `EXA_API_KEY` environment variable."""
-    try:
-        return AsyncExa()
-    except ValueError as error:
-        raise UserError(
-            'ExaSearch needs an Exa API key: set the EXA_API_KEY environment variable, '
-            'or pass a configured client, e.g. ExaSearch(client=AsyncExa(api_key=...)).'
-        ) from error
+    """Build the default client from the `EXA_API_KEY` environment variable."""
+    return DefaultExa(
+        missing_key_hint='ExaSearch needs an Exa API key: set the EXA_API_KEY environment variable, '
+        'or pass a configured client, e.g. ExaSearch(client=AsyncExa(api_key=...)).'
+    )
 
 
 def is_recoverable(error: Exception, *, idempotent: bool = True) -> bool:

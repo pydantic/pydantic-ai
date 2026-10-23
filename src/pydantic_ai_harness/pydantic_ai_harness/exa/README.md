@@ -178,7 +178,7 @@ ExaSearch(
     exclude_domains=[],         # never search these domains (not get_page)
     native=False,               # prefer the model's native web search, Exa as fallback
     guidance=None,              # None = default instructions, '' = none, str = custom
-    client=None,                # ExaClient -- None builds exa_py.AsyncExa from EXA_API_KEY
+    client=None,                # ExaClient -- None wraps exa_py.AsyncExa from EXA_API_KEY
 )
 ```
 
@@ -283,7 +283,7 @@ ExaAgent(
     poll_interval=1000,     # ms between polls when resolving inline (positive)
     timeout_ms=3_600_000,   # ms to wait for each run when resolving inline (positive)
     guidance=None,          # None = default instructions, '' = none, str = custom
-    runs=None,              # ExaAgentRuns -- None builds AsyncExa().agent.runs from EXA_API_KEY
+    runs=None,              # ExaAgentRuns -- None wraps exa_py.AsyncExa from EXA_API_KEY
 )
 ```
 
@@ -369,12 +369,17 @@ in-flight runs then cannot find.
 
 ## Custom client
 
-The default client is `exa_py.AsyncExa`, configured from the `EXA_API_KEY`
-environment variable. When the variable is missing, building the `Agent` fails
-with a setup hint; the capability itself constructs without it. Pass any object
-satisfying the `ExaClient` protocol (the subset of `AsyncExa` the toolset calls)
-to configure authentication or the base URL explicitly, or to substitute a fake
-in tests:
+The default client wraps an `exa_py.AsyncExa` configured from the
+`EXA_API_KEY` environment variable, and offers only the calls the capabilities
+make, not the rest of `AsyncExa`. When the variable is missing, building the
+`Agent` fails with a setup hint; the capability itself constructs without it.
+An `AsyncExa` connection pool belongs to the event loop that opened it, so the
+default client builds a new `AsyncExa` when the agent runs on a new asyncio
+event loop after the previous one has stopped, for example in a second
+`asyncio.run`. Under Trio, which has no asyncio event loop to compare, it keeps
+the one it has. A client you pass is used as is. Pass any object satisfying the
+`ExaClient` protocol (the subset of `AsyncExa` the toolset calls) to configure
+authentication or the base URL explicitly, or to substitute a fake in tests:
 
 ```python
 from exa_py import AsyncExa
