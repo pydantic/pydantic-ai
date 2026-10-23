@@ -373,8 +373,8 @@ class RealtimeModel(AbstractModel):
         [`RealtimeSession.hang_up`][pydantic_ai.realtime.RealtimeSession.hang_up] instead. A call that has
         already ended is not an error; the provider likely answers the same for a call negotiated with a
         different API key or project, so that reads as already ended too. Only implemented by realtime
-        models whose provider can end a WebRTC call from the server (OpenAI gpt-realtime and GPT-Live); the
-        default raises [`UserError`][pydantic_ai.exceptions.UserError].
+        models whose provider can end a WebRTC call from the server (OpenAI gpt-realtime and GPT-Live, and Azure
+        OpenAI); the default raises [`UserError`][pydantic_ai.exceptions.UserError].
         """
         self._check_hang_up(session)
         raise NotImplementedError  # pragma: no cover - a model that can hang up overrides this method
