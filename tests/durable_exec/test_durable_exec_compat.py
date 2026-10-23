@@ -126,6 +126,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -819,7 +820,9 @@ def test_model_request_context_projection_is_exhaustive() -> None:
     provider request.
     """
     intentionally_not_projected = {
-        'model',  # live `Model`, not serializable; crosses as `model_id` and is re-resolved on each side
+        # Live `Model`, not serializable; crosses as `model_id`, re-resolved worker-side, and
+        # caller-side only when the hook changed it.
+        'model',
         # Private usage record the agent graph appends to caller-side as the model responds; `apply`
         # updates the caller's own context in place, so the record stays with the run.
         '_usage_response_ledger',
@@ -833,6 +836,29 @@ def test_model_request_context_projection_is_exhaustive() -> None:
         'Project each new `ModelRequestContext` field in `ModelRequestContextProjection` (`from_context`, '
         '`build_context` and `apply`), or list it in `intentionally_not_projected` with its reason.'
     )
+
+    # Field names alone don't prove the wiring: every projected field must also make it through
+    # `from_context` and back out through both `build_context` (worker-side) and `apply` (caller-side).
+    model = TestModel()
+    model_settings: ModelSettings = {'temperature': 0.5}
+    context = ModelRequestContext(
+        model=model,
+        messages=[ModelRequest(parts=[UserPromptPart('hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(allow_text_output=False),
+        model_id='test:alias',
+        streaming=True,
+    )
+    default_context = ModelRequestContext(
+        model=model, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    )
+    assert [name for name in projected if getattr(context, name) == getattr(default_context, name)] == [], (
+        'give each projected field a non-default value in `context` so the round trip below checks it'
+    )
+    projection = ModelRequestContextProjection.from_context(context)
+    assert projection.build_context(model) == context
+    projection.apply(default_context)
+    assert default_context == context
 
 
 @dataclass(kw_only=True)
@@ -949,22 +975,25 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         GoldenCheckpointEvent(label='start', capability_id='golden'),
     ]
 
-    # `RetryPromptPart` stays in the union only for type checking: the discriminator translates a
-    # legacy payload into one of its replacements, so it never round-trips as itself.
+    # `RetryPromptPart` stays in the union for type checking and the published JSON schema: the
+    # discriminator translates a legacy payload into one of its replacements, so it never
+    # round-trips as itself. Parts and deltas match by exact type, since several members subclass
+    # another member; events match by `isinstance`, as `CustomEvent` and `CapabilityEvent` are
+    # covered by registered subclasses.
     assert {
         member.__name__
         for member in _union_members(ModelRequestPart)
-        if not any(isinstance(part, member) for part in request_parts)
+        if not any(type(part) is member for part in request_parts)
     } == {'RetryPromptPart'}
     assert [
         member.__name__
         for member in _union_members(ModelResponsePart)
-        if not any(isinstance(part, member) for part in response_parts)
+        if not any(type(part) is member for part in response_parts)
     ] == []
     assert [
         member.__name__
         for member in _union_members(ModelResponsePartDelta)
-        if not any(isinstance(delta, member) for delta in deltas)
+        if not any(type(delta) is member for delta in deltas)
     ] == []
     assert [
         member.__name__
