@@ -947,6 +947,7 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         ToolAvailabilityDeltaPart(),
         InstructionDeltaPart(id=None, content='delta'),
         InstructionBaselinePart(instructions=[InstructionPart('baseline')]),
+        CompactionPart(content='summary'),
     ]
     response_parts: list[ModelResponsePart] = [
         TextPart('text'),

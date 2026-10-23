@@ -32,9 +32,9 @@
     },
     {
       "against": "v2.59.0",
-      "fingerprint": "4c68f760f7da49fd330ae6ec1c15bf49951de8ed4ff692e0de9509b451b3336c",
-      "reason": "Adds `RetryFeedbackPart` and the legacy retry translations to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8094"
+      "fingerprint": "d96b24a57cedd8a42ab6875b5fbb21fd3fc8d1aef9a6a596e3c67a13015f4bd4",
+      "reason": "Adds `RetryFeedbackPart` and the legacy retry translations (#8094) and `CompactionPart` (#10573) to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10573"
     },
     {
       "against": "v2.59.0",
@@ -155,6 +155,12 @@
       "fingerprint": "e3cbeaca4cd1a6c06b48a95afcd22e314cd2699e757a3c2b395dd659020b40ae",
       "reason": "The `iban` pattern in the harness `DEFAULT_PII_PATTERNS` gains a `(?=[A-Za-z]{2}\\d{2})` lookahead ahead of its country-code alternation; it matches exactly the same text and only skips the alternation at positions that cannot start an IBAN.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10841"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "d218cbd771cfb1d0623d02931b39ec07d25538f01e046e53915b68a4c3153577",
+      "reason": "Adds `CompactionPart` to `ModelRequestPart`, for a summary the application or a harness strategy wrote; the version policy permits new message parts, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10573"
     }
   ]
 }

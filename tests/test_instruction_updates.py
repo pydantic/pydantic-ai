@@ -842,7 +842,25 @@ async def test_instruction_updates_empty_baseline_keeps_other_block_positions():
     assert not any(isinstance(part, InstructionDeltaPart) for part in request.parts)
 
 
-async def test_instruction_updates_rebaseline_after_compaction_or_history_loss():
+def _with_compaction(messages: list[ModelMessage], where: str) -> list[ModelMessage]:
+    """`messages` compacted where a provider puts its compaction, the application its summary, or a merge would."""
+    if where == 'response':
+        return [*messages, ModelResponse(parts=[CompactionPart(content='Summary', provider_name='test')])]
+    if where == 'request':
+        return [*messages, ModelRequest(parts=[CompactionPart(content='Summary')])]
+    # The summary merged into the last request, after the change it supersedes.
+    index = max(i for i, message in enumerate(messages) if isinstance(message, ModelRequest))
+    last = messages[index]
+    assert isinstance(last, ModelRequest)
+    merged = replace(last, parts=[*last.parts, CompactionPart(content='Summary')])
+    return [*messages[:index], merged, *messages[index + 1 :]]
+
+
+COMPACTION_PLACEMENTS = pytest.mark.parametrize('where', ['response', 'request', 'merged-request'])
+
+
+@COMPACTION_PLACEMENTS
+async def test_instruction_updates_rebaseline_after_compaction_or_history_loss(where: str):
     agent = Agent(TestModel(custom_output_text='ok'), deps_type=str)
 
     @agent.instructions(name='state', on_change='append')
@@ -852,7 +870,7 @@ async def test_instruction_updates_rebaseline_after_compaction_or_history_loss()
     first = await agent.run('Continue.', deps='A')
     second = await agent.run('Continue.', deps='B', message_history=first.all_messages())
     for history in [
-        [*second.all_messages(), ModelResponse(parts=[CompactionPart(content='Summary', provider_name='test')])],
+        _with_compaction(second.all_messages(), where),
         second.new_messages(),
     ]:
         result = await agent.run('Continue.', deps='C', message_history=history)
@@ -871,7 +889,8 @@ async def test_instruction_updates_rebaseline_after_compaction_or_history_loss()
         )
 
 
-async def test_instruction_updates_compaction_drops_earlier_deltas_without_new_baseline():
+@COMPACTION_PLACEMENTS
+async def test_instruction_updates_compaction_drops_earlier_deltas_without_new_baseline(where: str):
     """Compaction supersedes earlier deltas even when the next request records no new baseline."""
     received: list[list[ModelMessage]] = []
 
@@ -887,7 +906,7 @@ async def test_instruction_updates_compaction_drops_earlier_deltas_without_new_b
 
     first = await agent.run('one', deps='A')
     second = await agent.run('two', deps='B', message_history=first.all_messages())
-    history = [*second.all_messages(), ModelResponse(parts=[CompactionPart(content='Summary', provider_name='test')])]
+    history = _with_compaction(second.all_messages(), where)
 
     await Agent(FunctionModel(respond), instructions='Plain').run('three', message_history=history)
     assert [

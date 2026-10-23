@@ -1960,8 +1960,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     self._map_response_builtin_part(item)
                 elif isinstance(item, FilePart):  # pragma: no cover
                     self._map_response_file_part(item)
-                elif isinstance(item, CompactionPart):  # pragma: no cover
-                    # Compaction parts are not sent back to the Chat Completions API.
+                elif isinstance(item, CompactionPart):
+                    # Provider-produced compaction parts are not sent back to the Chat Completions API.
                     pass
                 elif isinstance(item, SpeechPart):  # pragma: no cover
                     # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.

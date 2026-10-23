@@ -3500,6 +3500,17 @@ class CompactionPart:
 
     For Anthropic, `content` contains a readable text summary.
     For OpenAI, `content` is `None` and the encrypted data is stored in `provider_details`.
+
+    A provider's compaction part lives in a [`ModelResponse`][pydantic_ai.messages.ModelResponse], in
+    that provider's own role.
+
+    A summary the application or a capability wrote, such as Pydantic AI Harness's
+    `SummarizingCompaction`, lives in a [`ModelRequest`][pydantic_ai.messages.ModelRequest] instead,
+    with no `provider_name`, `id` or `provider_details`. The assistant continuing the conversation
+    didn't write it, so every provider model sends its `content` as user-voice text inside
+    `<conversation_summary>`, after a line saying a separate summarization model wrote it. A
+    `FunctionModel` receives the part itself, a `DecisionModel` passes it on as a summary entry, and
+    realtime sessions send it as user text.
     """
 
     content: str | None = None
@@ -3531,12 +3542,27 @@ class CompactionPart:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
+    metadata: dict[str, Any] | None = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the model.
+
+    Pydantic AI Harness's `SummarizingCompaction` marks the summaries it writes here.
+    """
+
     part_kind: Literal['compaction'] = 'compaction'
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def has_content(self) -> bool:
         """Return `True` if the compaction content is non-empty."""
         return bool(self.content)
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """The OTel message parts of a request-side summary: its text."""
+        if not self.content:
+            return []
+        part = _otel_messages.TextPart(type='text')
+        if settings.include_content:
+            part['content'] = self.content
+        return [part]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -3965,6 +3991,16 @@ def _check_parts(
                     f'`SpeechPart` in `{owner}.parts` must have `speaker={speaker!r}`, got {part.speaker!r}'
                 )
             continue
+        if isinstance(part, CompactionPart):
+            if speaker == 'user' and (
+                part.provider_name is not None or part.id is not None or part.provider_details is not None
+            ):
+                raise ValueError(
+                    'A `CompactionPart` in `ModelRequest.parts` is a summary no provider produced, so it must not '
+                    "set `provider_name`, `id` or `provider_details`; a provider's own compaction part belongs "
+                    'in `ModelResponse.parts`.'
+                )
+            continue
         if type(part) not in _BASE_TOOL_PART_TYPES:
             continue
         if isinstance(part, ToolCallPart | NativeToolCallPart):
@@ -4010,7 +4046,7 @@ _BASE_TOOL_PART_TYPES: frozenset[type] = frozenset(
 )
 """The base tool part classes, which a message promotes to their typed subclasses by `tool_kind`."""
 
-_CHECKED_PART_TYPES: frozenset[type] = _BASE_TOOL_PART_TYPES | {SpeechPart}
+_CHECKED_PART_TYPES: frozenset[type] = _BASE_TOOL_PART_TYPES | {SpeechPart, CompactionPart}
 """The part classes `ModelRequest` / `ModelResponse` look at when they're built; see `_check_parts`."""
 
 
@@ -4112,6 +4148,7 @@ ModelRequestPart = Annotated[
     | Annotated[ToolAvailabilityDeltaPart, pydantic.Tag('tool-availability-delta')]
     | Annotated[InstructionDeltaPart, pydantic.Tag('instruction-delta')]
     | Annotated[InstructionBaselinePart, pydantic.Tag('instruction-baseline')]
+    | Annotated[CompactionPart, pydantic.Tag('compaction')]
     # A legacy part is translated on the way in, so a stored history is upgraded by loading it and
     # the deprecated class is never constructed. `SerializeAsAny` covers the other direction: an
     # instance a caller built by hand and never validated still dumps in its own shape rather than
@@ -4536,9 +4573,12 @@ def post_compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessag
     """The messages from the latest [`CompactionPart`][pydantic_ai.messages.CompactionPart] onward.
 
     After compaction, the summary replaces everything before it, so this window is what the model
-    effectively works from — at part-level precision: within the response that carries the
-    compaction part, parts before it are excluded and parts after it are kept. With no compaction
-    part in the history, the whole history is returned (as a new list).
+    effectively works from — at part-level precision for a provider's compaction: within the response
+    that carries the compaction part, parts before it are excluded and parts after it are kept. A
+    summary the application wrote into a request opens the window at the start of that request's turn
+    (the consecutive requests around it), since normalizing the history merges them and moves tool
+    results ahead of the summary. With no compaction part in the history, the whole history is
+    returned (as a new list).
 
     This is the boundary rule Pydantic AI itself uses when deriving model-visible state from
     history (discovered tools, loaded capabilities). Capability and toolset authors should apply
@@ -4560,18 +4600,26 @@ def post_compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessag
     continue to use this conservative provider-agnostic window because they feed a future request
     whose provider may differ.
     """
+    # Indexed iteration rather than slicing `messages`: the runtime `Sequence` contract only requires
+    # integer `__getitem__`, so a minimal conforming implementation may reject slices.
     for message_index in range(len(messages) - 1, -1, -1):
         message = messages[message_index]
-        if isinstance(message, ModelResponse):
-            for part_index in range(len(message.parts) - 1, -1, -1):
-                if isinstance(message.parts[part_index], CompactionPart):
-                    # Indexed iteration rather than `messages[message_index + 1:]`: the runtime
-                    # `Sequence` contract only requires integer `__getitem__`, so a minimal
-                    # conforming implementation may reject slices. (`message.parts` is a list.)
-                    return [
-                        replace(message, parts=list(message.parts[part_index:])),
-                        *(messages[i] for i in range(message_index + 1, len(messages))),
-                    ]
+        if isinstance(message, ModelRequest):
+            if any(isinstance(part, CompactionPart) for part in message.parts):
+                # A summary the application wrote sits in a request, and the window opens with that
+                # request's turn: the run of consecutive requests that history normalization merges into
+                # one, hoisting its tool results ahead of the summary as providers require. Cutting at the
+                # part instead would let that reordering decide what was discovered or loaded.
+                start = message_index
+                while start > 0 and isinstance(messages[start - 1], ModelRequest):
+                    start -= 1
+                return [messages[i] for i in range(start, len(messages))]
+            continue
+        # A provider's compaction part sits in a response, which the provider replays from that part on.
+        for part_index in range(len(message.parts) - 1, -1, -1):
+            if isinstance(message.parts[part_index], CompactionPart):
+                head = replace(message, parts=list(message.parts[part_index:]))
+                return [head, *(messages[i] for i in range(message_index + 1, len(messages)))]
     return list(messages)
 
 
@@ -4697,7 +4745,7 @@ def _drop_compaction_parts(messages: Sequence[ModelMessage]) -> list[ModelMessag
     from the model, replacing it with the client's own summary or blob — so only the server's own
     boundaries are kept. With no server-side history, the client-transmitted messages are the
     entire conversation, boundaries included, and its compaction parts should be honored. A
-    response left with no parts is dropped entirely. Shared by
+    message left with no parts is dropped entirely. Shared by
     `sanitize_messages(strip_compaction_parts=True)` and the UI adapters' handling of runs that
     combine server-side `message_history` with client-submitted messages.
     """
@@ -4707,6 +4755,11 @@ def _drop_compaction_parts(messages: Sequence[ModelMessage]) -> list[ModelMessag
             parts = [part for part in message.parts if not isinstance(part, CompactionPart)]
             if parts:
                 result.append(replace(message, parts=parts))
+        elif isinstance(message, ModelRequest) and any(isinstance(part, CompactionPart) for part in message.parts):
+            # A summary the client wrote stands in for history just as a provider's would.
+            request_parts = [part for part in message.parts if not isinstance(part, CompactionPart)]
+            if request_parts:
+                result.append(replace(message, parts=request_parts))
         else:
             result.append(message)
     return result
