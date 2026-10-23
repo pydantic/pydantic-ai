@@ -401,6 +401,16 @@ class OpenAIModelProfile(ModelProfile, total=False):
     OpenAI's own Chat Completions API rejects `'max'` on every model, so only providers that accept it set this
     (DeepSeek V4, and Kimi K3, K2.6 and K2.7). Explicit `openai_reasoning_effort='max'` settings are still passed through unchanged."""
 
+    openai_chat_thinking_false_body: dict[str, Any]
+    """Request body fields that unified `thinking=False` sends on the Chat Completions API, in place of
+    `reasoning_effort`. Default: unset.
+
+    For providers whose off switch isn't `reasoning_effort='none'`, or whose lowest effort on a model that always
+    reasons isn't known from `openai_reasoning_efforts`. `MoonshotAIProvider` sets it to
+    `{'thinking': {'type': 'disabled'}}` on Kimi K2.5 and K2.6, and to `{'reasoning_effort': 'low'}` on Kimi K3,
+    which always reasons. The fields go out through `extra_body`, where keys the caller set in `extra_body` win,
+    and nothing is added when `openai_reasoning_effort` is set explicitly."""
+
     openai_responses_supports_max_reasoning_effort: bool
     """Whether the Responses API accepts `reasoning.effort='max'` for this model. Default: `False`.
 

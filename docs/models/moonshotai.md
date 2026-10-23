@@ -57,3 +57,10 @@ You can then use the model-string configuration shown above.
 Alternatively, pass `base_url='https://api.moonshot.cn/v1'` to
 [`MoonshotAIProvider`][pydantic_ai.providers.moonshotai.MoonshotAIProvider].
 An explicit `base_url` overrides `MOONSHOTAI_BASE_URL`.
+
+## Thinking
+
+Kimi K2.5, K2.6, K2.7 Code and K3 reason by default. The unified [`thinking`](../capabilities/thinking.md) setting maps onto Moonshot's request fields:
+
+- `thinking=False` turns thinking off on Kimi K2.5 and K2.6 by sending `thinking={'type': 'disabled'}`. Kimi K3 can't turn thinking off, so it reasons at its lowest effort, `reasoning_effort='low'`. Kimi K2.7 Code can't turn thinking off either and has no effort setting, so `thinking=False` sends nothing.
+- `thinking=True` and the effort levels are sent as `reasoning_effort` (`True` as `'medium'`). `'max'` is sent as `'max'` on Kimi K3, K2.6 and K2.7, and as `'xhigh'` on the other Kimi models.

@@ -1518,12 +1518,34 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return OMIT
+        if thinking is False and 'openai_chat_thinking_false_body' in self.profile:
+            # The profile's body fields stand in for `reasoning_effort`; see `_thinking_false_extra_body`.
+            return OMIT
         effort = _resolve_openai_thinking_effort(
             thinking,
             self.profile,
             supports_max=self.profile.get('openai_chat_supports_max_reasoning_effort', False),
         )
         return OMIT if effort is None else effort
+
+    def _thinking_false_extra_body(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> object | None:
+        """The request's `extra_body`, plus the profile's `openai_chat_thinking_false_body` fields for `thinking=False`.
+
+        Keys the caller set in `extra_body` win, and nothing is added when `openai_reasoning_effort` is set.
+        """
+        extra_body = model_settings.get('extra_body')
+        thinking_false_body = self.profile.get('openai_chat_thinking_false_body')
+        if (
+            thinking_false_body is None
+            or model_request_parameters.thinking is not False
+            or model_settings.get('openai_reasoning_effort')
+        ):
+            return extra_body
+        return {**thinking_false_body, **cast(dict[str, Any], extra_body or {})}
 
     @asynccontextmanager
     async def request_stream(
@@ -1636,7 +1658,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                     prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
                     extra_headers=extra_headers,
-                    extra_body=model_settings.get('extra_body'),
+                    extra_body=self._thinking_false_extra_body(model_settings, model_request_parameters),
                 )
             except APIStatusError as e:
                 if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
