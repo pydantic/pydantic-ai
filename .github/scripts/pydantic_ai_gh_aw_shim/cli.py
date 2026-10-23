@@ -88,6 +88,7 @@ from pydantic_ai.messages import (
     ModelResponsePart,
     NativeToolCallPart,
     NativeToolSearchCallPart,
+    ThinkingEffortDeltaPart,
     ToolAvailabilityDeltaPart,
     ToolCallEvent,
     ToolCallPart,
@@ -642,6 +643,8 @@ def _part_text(part: MessagePart) -> str:
     if isinstance(part, InstructionBaselinePart):
         # Records what the request's instructions were made of; the transcript leaves instructions out.
         return ''
+    if isinstance(part, ThinkingEffortDeltaPart):
+        return f'thinking effort changed: {part.effort or "default"}'
     return str(part.content)
 
 
