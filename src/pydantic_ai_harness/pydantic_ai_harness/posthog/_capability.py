@@ -26,8 +26,9 @@ from urllib.parse import urlencode
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, one_connection, read_only_toolset
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._mcp import credential, per_run_connection, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -109,7 +110,7 @@ class PostHog(AbstractCapability[AgentDepsT]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one connection stated twice; two that disagree raise rather than merge."""
-        return one_connection(capabilities)
+        return one_per_id(capabilities)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the PostHog MCP tools."""
@@ -122,15 +123,8 @@ class PostHog(AbstractCapability[AgentDepsT]):
                 return read_only_toolset(toolset)
             return toolset
         if callable(self.auth):
-            return DynamicToolset(self._connect_for_run, per_run_step=False, id=id)
+            return per_run_connection(self.auth, self._connect, id=id)
         return self._connect(self.auth)
-
-    def _connect_for_run(self, ctx: RunContext[AgentDepsT]) -> MCPToolset[AgentDepsT] | None:
-        auth = self.auth(ctx) if callable(self.auth) else self.auth
-        if auth == 'oauth':
-            # FastMCP reads 'oauth' as "log in through a browser", which would hang a server run.
-            raise UserError("The `auth` function must return an API key or token, not 'oauth'.")
-        return self._connect(auth) if auth else None
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
         url = _POSTHOG_MCP_URL
