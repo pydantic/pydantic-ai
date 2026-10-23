@@ -1027,7 +1027,11 @@ async def test_model_change_replace_chain_counts_against_strict_ceiling(
         ]
     )
     if polled:
-        monkeypatch.setattr(model, 'continuation_delay', lambda response: 0.0)
+
+        def poll_at_once(response: ModelResponse) -> float:
+            return 0.0
+
+        monkeypatch.setattr(model, 'continuation_delay', poll_at_once)
     # A generous replace ceiling that a same-id poll chain would sail past — but a model-change chain must
     # be bound by the strict `max_generation_continuations=2` instead and raise, naming the current job id.
     stream = _composite(model, max_generation_continuations=2, max_background_polls=1000)

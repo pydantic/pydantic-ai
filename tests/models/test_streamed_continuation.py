@@ -1199,7 +1199,11 @@ async def test_nonstream_model_change_chain_counts_against_strict_ceiling(
         ]
     )
     if polled:
-        monkeypatch.setattr(model, 'continuation_delay', lambda response: 0.0)
+
+        def poll_at_once(response: ModelResponse) -> float:
+            return 0.0
+
+        monkeypatch.setattr(model, 'continuation_delay', poll_at_once)
     agent = Agent(model)
 
     with pytest.raises(UnexpectedModelBehavior, match=r"Model response 'r3' was suspended more than the maximum"):
