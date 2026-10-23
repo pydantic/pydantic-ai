@@ -100,15 +100,15 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     include_domains: Sequence[str] = field(default_factory=list[str])
     """If non-empty, search results only come from these domains (allowlist).
 
-    Applies to `web_search` and `deep_search`. Mutually exclusive with
-    `exclude_domains`.
+    Applies to `web_search` and `deep_search`, not `get_page`, which reads any
+    URL the model passes. Mutually exclusive with `exclude_domains`.
     """
 
     exclude_domains: Sequence[str] = field(default_factory=list[str])
     """Search results never come from these domains (denylist).
 
-    Applies to `web_search` and `deep_search`. Mutually exclusive with
-    `include_domains`.
+    Applies to `web_search` and `deep_search`, not `get_page`. Mutually
+    exclusive with `include_domains`.
     """
 
     guidance: str | None = None
