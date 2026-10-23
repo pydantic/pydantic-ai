@@ -10,7 +10,7 @@ from collections.abc import Awaitable
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatch
 from typing import Literal, Protocol
-from urllib.parse import urlsplit
+from urllib.parse import quote_plus, urlsplit
 
 import anyio
 from pydantic import BaseModel, JsonValue, ValidationError
@@ -261,26 +261,33 @@ def _scope_flat_secrets(
 
 
 def _secret_placeholders(sensitive_data: dict[str, str | dict[str, str]] | None) -> dict[str, str]:
-    """Each secret value, and its JSON-escaped form, mapped to its placeholder for redacting tool output.
+    """Each secret value, and its JSON-escaped and `quote_plus`-encoded forms, mapped to its placeholder.
+
+    The mapping redacts tool output.
 
     browser-use substitutes a placeholder in the parameters of every action, the final
     `done` text included, so a value can come back in the result. Schema output escapes
-    characters such as `"`, hence the JSON-escaped form.
+    characters such as `"`, hence the JSON-escaped form. A blocked `search` reports the
+    URL it built with `quote_plus` (`p%40ss+word`), its only URL encoding of a value.
     """
     if sensitive_data is None:
         return {}
     secrets: list[tuple[str, str]] = []
     for key, value in sensitive_data.items():
         secrets.extend(value.items() if isinstance(value, dict) else [(key, value)])
+    named = [(value, f'<secret>{key}</secret>') for key, value in secrets if value]
     placeholders: dict[str, str] = {}
-    for key, value in secrets:
-        if value:
-            placeholder = f'<secret>{key}</secret>'
-            # Mapped to itself so a placeholder already in the text is consumed whole,
-            # before a value it happens to contain can match inside it.
-            placeholders.setdefault(placeholder, placeholder)
-            placeholders.setdefault(value, placeholder)
-            placeholders.setdefault(json.dumps(value, ensure_ascii=False)[1:-1], placeholder)
+    # Placeholders and raw values first, so a text that is one secret's value and another's
+    # encoded form keeps the placeholder of the secret whose value it is.
+    for value, placeholder in named:
+        # Mapped to itself so a placeholder already in the text is consumed whole,
+        # before a value it happens to contain can match inside it.
+        placeholders.setdefault(placeholder, placeholder)
+        placeholders.setdefault(value, placeholder)
+    for value, placeholder in named:
+        placeholders.setdefault(json.dumps(value, ensure_ascii=False)[1:-1], placeholder)
+        # `surrogatepass` keeps a lone surrogate (as `os.environ` decodes invalid UTF-8) from raising.
+        placeholders.setdefault(quote_plus(value, errors='surrogatepass'), placeholder)
     return placeholders
 
 

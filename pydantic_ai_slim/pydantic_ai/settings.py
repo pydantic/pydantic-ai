@@ -590,6 +590,22 @@ class ModelSettings(TypedDict, total=False):
       `gpt-oss-safeguard` models, which take no thinking parameter)
     """
 
+    citations: bool
+    """Whether to ask for citations from providers that only cite when asked.
+
+    Citations go on [`TextPart.citations`][pydantic_ai.messages.TextPart.citations].
+
+    Supported by:
+
+    * Anthropic (documents, including those returned by tools, and Web Fetch)
+    * Bedrock (TXT and PDF documents, including those returned by tools, on Anthropic models)
+    * xAI (inline citations)
+
+    Only used when the output is text. On Anthropic models, a `tool_choice` that forces a tool call raises a
+    `UserError` when the request has something to cite. Providers that always cite ignore this setting. See
+    [Citations, tools and structured output](../citations.md#citations-tools-and-structured-output).
+    """
+
     cache: CacheSetting
     """Enable, configure, or disable library-managed prompt caching for the model request.
 
@@ -708,6 +724,7 @@ ModelSettingName: TypeAlias = Literal[
     'stop_sequences',
     'extra_headers',
     'thinking',
+    'citations',
     'cache',
     'service_tier',
     'extra_body',

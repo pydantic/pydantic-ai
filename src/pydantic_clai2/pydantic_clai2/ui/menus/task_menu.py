@@ -171,7 +171,7 @@ async def open_tasks(tasks: Tasks, *, runners: Runners = TERMINAL) -> str:
             await tasks.owner.cancel(task_id)
             await tasks.owner.save(tasks.owner.records[task_id])
         else:
-            tasks.owner.background(task_id)
+            tasks.background(task_id)
 
     def run() -> None:
         picker = TaskMenu(
