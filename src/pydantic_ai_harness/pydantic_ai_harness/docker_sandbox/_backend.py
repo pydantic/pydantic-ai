@@ -41,7 +41,8 @@ from pydantic_ai.workspaces import (
     ComputerAction,
     LocalWorkspaceBackend,
     SupportsCommands,
-    SupportsComputerUse,
+    SupportsDisplay,
+    UnsupportedComputerActionError,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -264,7 +265,7 @@ async def _build_desktop_image(runner: LocalWorkspaceBackend, executable: str) -
         raise WorkspaceUnavailableError(f'could not build the desktop image: {result.stderr.strip()[-2000:]}')
 
 
-class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsComputerUse):
+class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     """Run commands in a local Docker container, created on first use, through the `docker` CLI.
 
     The image needs a POSIX `sh` and the usual file utilities; its own entrypoint and command don't run. A
@@ -523,6 +524,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsComputerU
                 self._display_started = True
         try:
             return await operation(X11Computer(self, display=_DISPLAY))
+        except UnsupportedComputerActionError:
+            raise  # a refused action, such as an unknown key: the display is fine
         except WorkspaceError:
             # The X server may have died, or the container restarted: the next call checks and starts it again.
             self._display_started = False

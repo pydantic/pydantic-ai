@@ -337,7 +337,8 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         ('key', {'text': 'a'}, {'type': 'keypress', 'keys': ['a'], 'repeat': 1}),
         ('wait', {'duration': 2}, {'type': 'wait', 'seconds': 2}),
         ('screenshot', {}, {'type': 'screenshot'}),
-        ('zoom', {'region': [0, 0, 10, 10]}, {'type': 'zoom', 'region': [0, 0, 10, 10]}),
+        ('zoom', {'region': [0, 0, 10, 10]}, {'type': 'screenshot'}),
+        ('cursor_position', {}, {'type': 'cursor_position'}),
     ],
 )
 def test_toolset_members_map_onto_the_computer_tool(name: str, input: dict[str, Any], action: dict[str, Any]) -> None:

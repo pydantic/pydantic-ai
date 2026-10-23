@@ -16,7 +16,7 @@ from pydantic_ai.workspaces import (
     FileEntry,
     ReadOnlyWorkspace,
     SupportsCommands,
-    SupportsComputerUse,
+    SupportsDisplay,
     SupportsFilesystem,
     UnsupportedComputerActionError,
     Workspace,
@@ -373,7 +373,7 @@ class InMemoryProvider:
         return ProviderWorkspaces(self, read_only=read_only)
 
 
-class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsComputerUse):
+class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsDisplay):
     def __init__(self, provider: InMemoryProvider, ref: WorkspaceRef | None) -> None:
         self._provider = provider
         self._ref = ref

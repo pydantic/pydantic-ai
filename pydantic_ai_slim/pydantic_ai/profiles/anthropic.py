@@ -127,7 +127,7 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """Whether the model accepts the `computer_toolset_20260801` computer toolset. Default: False.
 
     When enabled, the [`ComputerUse`][pydantic_ai.capabilities.ComputerUse] capability's `computer` tool is sent as
-    that toolset on the Claude API and Google Cloud; otherwise it is sent as a function tool.
+    that toolset on the Claude API; otherwise it is sent as a function tool.
     """
 
     anthropic_supports_forced_tool_choice: bool

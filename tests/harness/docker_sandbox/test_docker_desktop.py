@@ -10,7 +10,15 @@ import pytest
 
 from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import Click, Workspace, WorkspaceError, WorkspaceRef, WorkspaceUnavailableError
+from pydantic_ai.workspaces import (
+    Click,
+    PressKeys,
+    UnsupportedComputerActionError,
+    Workspace,
+    WorkspaceError,
+    WorkspaceRef,
+    WorkspaceUnavailableError,
+)
 from pydantic_ai_harness.docker_sandbox import DESKTOP_DOCKERFILE, DockerSandbox, DockerSandboxBackend
 
 from ._fake_docker import FakeDocker, install_fake_docker
@@ -102,6 +110,19 @@ async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, con
     await workspace.act(Click(x=1, y=1))
 
     assert docker.xvfb_starts == 1
+
+
+async def test_a_refused_key_does_not_restart_the_display(docker: FakeDocker, container_dir: Path) -> None:
+    workspace = Workspace(_desktop(container_dir))
+    await workspace.display_size()
+    checks = docker.xdotool_calls.count(':1 getdisplaygeometry')
+
+    with pytest.raises(UnsupportedComputerActionError, match='NoSuchKey'):
+        await workspace.act(PressKeys(keys=('NoSuchKey',)))
+    await workspace.act(Click(x=1, y=1))
+
+    # The start script, which first checks the display with `getdisplaygeometry`, did not run again.
+    assert docker.xdotool_calls.count(':1 getdisplaygeometry') == checks
 
 
 async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDocker, container_dir: Path) -> None:

@@ -4947,7 +4947,8 @@ def _map_computer_member(name: str, input: dict[str, Any]) -> dict[str, Any]:
             return {'type': 'hold_key', 'keys': [input.get('text', '')], 'seconds': _given(input, 'duration', 1)}
         case 'wait':
             return {'type': 'wait', 'seconds': _given(input, 'duration', 1)}
-        case 'screenshot':
+        # Claude calls `zoom` even when the toolset disables it; the full screenshot holds every pixel it asked for.
+        case 'screenshot' | 'zoom':
             return {'type': 'screenshot'}
         case _:
             return {**input, 'type': name}

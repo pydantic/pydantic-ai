@@ -140,8 +140,10 @@ bin=$(dirname "$0")
 printf '%s %s\\n' "$DISPLAY" "$*" >> "$bin/xdotool-calls"
 [ ! -e "$bin/no-display" ] || { echo "Can't open display: $DISPLAY" >&2; exit 1; }
 [ "$1" != getdisplaygeometry ] || echo '1280 800'
+case " $* " in *' NoSuchKey '*) echo "(symbol) No such key name 'NoSuchKey'. Ignoring it." >&2 ;; esac
 """
-"""Stands in for `xdotool` in a container: reports a 1280x800 display unless `no-display` exists, and logs each call."""
+"""Stands in for `xdotool` in a container: reports a 1280x800 display unless `no-display` exists, skips the key
+`NoSuchKey` as xdotool skips a name it doesn't know, and logs each call."""
 
 _FAKE_XVFB = """#!/bin/sh
 bin=$(dirname "$0")
