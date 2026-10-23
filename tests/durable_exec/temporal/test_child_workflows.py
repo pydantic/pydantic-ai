@@ -21,6 +21,7 @@ from ..._inline_snapshot import snapshot
 try:
     from temporalio import activity, workflow
     from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
+    from temporalio.common import RetryPolicy
     from temporalio.contrib.pydantic import pydantic_data_converter
     from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError, TerminatedError
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
@@ -248,6 +249,54 @@ async def test_child_workflow_tool_exception_fails_the_child(client: Client) -> 
 
     cause = _workflow_failure_cause(exc_info.value)
     assert (cause.type, cause.message) == ('ValueError', 'Something broke in the child.')
+
+
+@activity.defn
+async def failing_nested_activity() -> str:
+    raise ValueError('The nested activity failed.')
+
+
+nested_failure_toolset = FunctionToolset[None](id='nested_failure_tools')
+
+
+@nested_failure_toolset.tool_plain(metadata={'temporal': {'child_workflow': _CHILD_WORKFLOW}})
+async def nested_failure_tool() -> str:
+    return await workflow.execute_activity(
+        failing_nested_activity,
+        start_to_close_timeout=timedelta(seconds=10),
+        retry_policy=RetryPolicy(maximum_attempts=1),
+    )
+
+
+nested_failure_agent = _metadata_error_agent('nested_failure_child_workflow_agent', nested_failure_toolset)
+
+
+@workflow.defn
+class NestedFailureChildWorkflowAgentWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await nested_failure_agent.run('call the tool')).output
+
+
+async def test_child_workflow_tool_temporal_error_passes_through(client: Client) -> None:
+    """A Temporal error from the tool body, like a failed nested activity, fails the child unchanged."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[NestedFailureChildWorkflowAgentWorkflow],
+        activities=[failing_nested_activity],
+        plugins=[AgentPlugin(nested_failure_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                NestedFailureChildWorkflowAgentWorkflow.run,
+                id='test_child_workflow_tool_temporal_error_passes_through',
+                task_queue=TASK_QUEUE,
+            )
+
+    # Not re-wrapped as an `ActivityError`-typed `ApplicationError`: the innermost failure is the activity's own.
+    cause = _workflow_failure_cause(exc_info.value)
+    assert (cause.type, cause.message) == ('ValueError', 'The nested activity failed.')
 
 
 async def test_child_workflow_metadata_rejects_non_function_tool_operation() -> None:
