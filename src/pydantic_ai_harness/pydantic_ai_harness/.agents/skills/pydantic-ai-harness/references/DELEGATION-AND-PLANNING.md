@@ -183,7 +183,7 @@ orchestrator = Agent(
   `message_task`, `answer_task`, and `cancel_task(force=False)`. Sub-agents get `ask_parent`
   (`SubAgent(can_ask_questions=False)` removes it; `SubAgent(resumable=False)` makes one one-shot).
 - Without a bound `DelegationTasks`, each run opens its own owner: background reports arrive as
-  `SystemPromptPart` messages, the top-level run waits for its background tasks before it ends, and
+  `<task_output>` data and questions as `<task_question>` data, the top-level run waits for its background tasks before it ends, and
   tasks still running when it ends are cancelled. Bind a `DelegationTasks` to keep tasks across runs;
   its observer then gets every task event as `DelegationTaskEvent(event=...)`.
 - `auto_background_after=None`, `max_running_tasks=None`, `forward_events=False` are opt-in.
@@ -200,8 +200,15 @@ orchestrator = Agent(
 
 ## DelegationReports
 
-Delivers finished background-task reports from a `DelegationTasks` owner into a parent run, as
-automated, untrusted task data rather than user messages.
+Delivers finished background-task reports from a `DelegationTasks` owner into a parent run. Each
+report is the child's output as framed `<task_output task_id=... agent_name=...>` data in a
+`UserPromptPart`, with `outcome=...` only when the task didn't succeed and no preamble.
+`is_task_report(part)` identifies that part by its
+metadata, so hosts can keep it out of user-prompt listings. Like `BackgroundTools` completions, the
+metadata is never sent to the model, but the Vercel AI and AG-UI message conversions omit it: a
+history that round-trips through them returns the report as plain user text, and `is_task_report`
+no longer matches it. `message_history` is trusted as the caller's own, metadata included; load untrusted
+client history with a UI adapter (`sanitize_messages` joins once #10943 lands; until then it keeps `TextContent.metadata`).
 
 ```python
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
@@ -321,8 +328,9 @@ Gotchas:
 - A `Model` instance, a non-default `output_type`, or `max_uses` on OpenRouter select local execution.
 - Local path: the advisor sees only the consultation prompt (plus completed history with
   `forward_history=True`), never the executor's deps or tools. Its usage counts toward parent limits.
-- One `Advisor` per agent (tool name `advisor`). For durable runs use `mode='native'`; local
-  execution is unsupported there.
+- An agent has one advisor (tool name `advisor`): two `Advisor`s merge, a `None` option taking the
+  other instance's value, two list `output_type`s combining, and any other option the later one's.
+  For durable runs use `mode='native'`; local execution is unsupported there.
 
 ## BackgroundTools
 

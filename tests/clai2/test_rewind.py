@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import ConversationConflict
+from pydantic_ai_harness.subagents import DelegationTask
 from pydantic_clai2 import chat
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Conversation, Transcript
@@ -73,6 +74,27 @@ def test_menu_selects_run_boundaries_and_sanitizes_preview(monkeypatch: pytest.M
     assert 'Replaces your current draft' in text and 'and its attachments.' in text
     assert 'steering' not in text and 'not a boundary' not in text
     assert '\x1b]52;' not in output.getvalue() and '\x07' not in output.getvalue()
+
+
+def test_background_task_reports_are_not_rewind_points(monkeypatch: pytest.MonkeyPatch) -> None:
+    record = DelegationTask(
+        id='a' * 32, agent_name='worker', prompt='p', conversation_id='c', status='finished', outcome='ok'
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('first')], run_id='first'),
+        ModelResponse(parts=[TextPart('launched')], run_id='first'),
+        ModelRequest(parts=[record.report()], run_id='report'),
+        ModelResponse(parts=[TextPart('reviewed')], run_id='report'),
+    ]
+    output = StringIO()
+    monkeypatch.setattr('sys.stdout', output)
+    keys = iter(['enter'])
+    monkeypatch.setattr('pydantic_clai2.ui.menus.rewind.menu_key', lambda: next(keys))
+    result = build_rewind_menu(messages).run()
+    assert result.item is not None
+    assert result.item.value == RewindPoint(message_index=0, text='first', images=())
+    text = ' '.join(Text.from_ansi(output.getvalue().replace('\r\n', '\n')).plain.split())
+    assert '1. first' in text and '2.' not in text and '[attachment]' not in text
 
 
 @pytest.mark.parametrize(

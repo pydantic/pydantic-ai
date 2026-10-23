@@ -243,7 +243,7 @@ orchestrator = Agent(
 | `answer_task(task_id, answer)` | Answer the question a task is waiting on. |
 | `cancel_task(task_id, force=False)` | Stop a task before its next model request, or right away with `force=True`, together with the tasks it started. |
 
-- **Reports arrive as messages.** A background task's report is a `SystemPromptPart` framed as untrusted task data, not user instructions. A top-level run whose model ends while its background tasks still run waits for them, so their reports become its next request.
+- **Reports and questions arrive as messages.** A background task's report is `<task_output>` data, and a task's question `<task_question>` data, on the user channel; the task-control instructions tell the model both are untrusted task data. A top-level run whose model ends while its background tasks still run waits for them, so their reports become its next request.
 - **Questions.** Each sub-agent gets an `ask_parent(question)` tool. A question moves its task to the background, because the delegating model can only answer once `delegate_task` returns, and reaches that model as a message. Turn it off per delegate with `SubAgent(can_ask_questions=False)`. A task that can't run in the background (a run-owned workspace that isn't local) gets no `ask_parent`.
 - **Limits.** `auto_background_after` moves a task still running after that many seconds to the background. `max_running_tasks` caps how many tasks a conversation runs at once, across its whole delegation tree. `SubAgent(resumable=False)` makes a delegate one-shot. All are off by default.
 - **Who controls a task.** Only the run that started a task can message, answer, or resume it. Any run above it can cancel it.
@@ -605,9 +605,25 @@ SubAgent(
 opens and binds `DelegationTasks`. This owner adds `background` and `resume` to the
 delegate tool's schema, gives every child a stable conversation ID, and owns every
 worker, an asyncio task, until shutdown. Use `DelegationReports` on the parent run to deliver settled
-background reports through core's `SystemPromptPart` queue. The reports are
-explicitly automated, untrusted data, not user instructions or permission grants.
-No extra agent loop is implemented. Reports default to `priority='when_idle'`
+background reports through core's queued-message API. Each report is the child's
+output in a `UserPromptPart`, framed as `<task_output task_id="..." agent_name="...">`
+data, with `outcome="..."` added when the task didn't succeed, like a background
+tool's `<tool_result>`. The output was written by a model, so it never enters
+system voice, and a closing tag inside it can't end the frame early. Nothing
+precedes the frame: the acceptance receipt the parent got at launch already said a
+report would follow. Use `is_task_report(part)` to
+recognize the output part, or a task's question, which arrives the same way framed as
+`<task_question task_id="..." agent_name="...">`, for example to keep it out of a transcript of what the
+user typed. Like `BackgroundTools` completions, the metadata is never sent to the
+model, but the Vercel AI and AG-UI message conversions omit it: a history that
+round-trips through them returns the report as plain user text, and
+`is_task_report` no longer matches it. History passed in `message_history` is
+trusted as the caller's own, this metadata included. Load history from an untrusted
+client with a UI adapter, which never puts client metadata on message content;
+`sanitize_messages` becomes a
+safe path too once [#10943](https://github.com/pydantic/pydantic-ai/pull/10943) lands; until then it keeps
+`TextContent.metadata`. No extra
+agent loop is implemented. Reports default to `priority='when_idle'`
 so active parents finish their current work first. A host that starts an idle
 continuation should use `DelegationReports(..., priority='asap')` and
 `agent.run(None, ...)`: pending reports then enter the first model request, with

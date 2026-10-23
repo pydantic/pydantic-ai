@@ -29,7 +29,7 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ToolCallPart,
@@ -46,8 +46,10 @@ from pydantic_ai_harness.subagents import (
     SubAgent,
     SubAgents,
     TaskQuestionEvent,
+    is_task_report,
 )
 from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.builtin_plugins.web.protocol import history_items
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
@@ -60,6 +62,7 @@ from pydantic_clai2.ui.menus.task_menu import TaskDetail, TaskMenu, open_tasks, 
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.terminal import Terminal
+from pydantic_clai2.ui.rendering.history import turn_starts
 from tests.clai2.test_forks import Model as ForkModel, shell_for
 
 
@@ -639,7 +642,6 @@ async def test_background_completion_continues_parent_without_user_input(
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
 
-    from pydantic_ai.messages import SystemPromptPart
     from pydantic_ai_harness.subagents import DelegationTaskEvent
     from pydantic_clai2.config.project_settings import ProjectSettings
     from pydantic_clai2.config.settings_store import SettingsStore
@@ -670,12 +672,7 @@ async def test_background_completion_continues_parent_without_user_input(
             await release.wait()
             yield 'Admiral Fluff commands the cheese fleet.'
         elif any(
-            isinstance(part, (SystemPromptPart, UserPromptPart))
-            and isinstance(part.content, str)
-            and 'Automated subagent task report' in part.content
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
+            is_task_report(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts
         ):
             captured.append(messages)
             yield 'Pirate hamster reporting for duty.'
@@ -760,9 +757,12 @@ async def test_background_completion_continues_parent_without_user_input(
         for message in shell.session.messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, UserPromptPart)
+        if isinstance(part, UserPromptPart) and not is_task_report(part)
     ]
     assert prompts == ['launch']
+    # The report rides the user channel, but a restored transcript doesn't show it as something the user typed.
+    assert len(turn_starts(shell.session.messages)) == 1
+    assert [item.text for item in history_items(shell.session.messages) if item.kind == 'user'] == ['launch']
     (record,) = shell.tasks.owner.records.values()
     assert record.delivered
     last = shell.session.messages[-1]
@@ -834,13 +834,15 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
     monkeypatch.setattr('pydantic_clai2.runtime.tasks.task_row', counted)
     monkeypatch.setattr('pydantic_clai2.runtime.session_runtime.task_row', counted)
 
-    def system_texts(request: ModelMessage) -> list[str]:
-        """What the request says, including queued system messages, which reach the model as user content."""
+    def task_texts(request: ModelMessage) -> list[str]:
+        """The task reports and questions the request carries."""
         assert isinstance(request, ModelRequest)
         return [
-            part.content
+            item.content
             for part in request.parts
-            if isinstance(part, (SystemPromptPart, UserPromptPart)) and isinstance(part.content, str)
+            if is_task_report(part)
+            for item in part.content
+            if isinstance(item, TextContent)
         ]
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
@@ -854,10 +856,10 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
             else:
                 answer = next(part.content for part in last.parts if isinstance(part, ToolReturnPart))
                 yield f'Chose {answer}'
-        elif any('Automated subagent task report' in text for text in system_texts(last)):
+        elif any(text.startswith('<task_output ') for text in task_texts(last)):
             yield 'Report read.'
             continued.set()
-        elif question := next((text for text in system_texts(last) if 'Automated subagent question' in text), None):
+        elif question := next((text for text in task_texts(last) if text.startswith('<task_question ')), None):
             match = re.search(r'task_id="([0-9a-f]{32})"', question)
             assert match is not None
             arguments = f'{{"task_id":"{match[1]}","answer":"cheddar"}}'
@@ -915,9 +917,12 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
         for message in shell.session.messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, UserPromptPart)
+        if isinstance(part, UserPromptPart) and not is_task_report(part)
     ]
     assert prompts == ['launch']
+    # The question rides the user channel too, but a restored transcript doesn't show it as something the user typed.
+    assert len(turn_starts(shell.session.messages)) == 1
+    assert [item.text for item in history_items(shell.session.messages) if item.kind == 'user'] == ['launch']
 
 
 async def test_a_custom_agent_with_task_control_shows_its_tasks_questions(tmp_path: Path) -> None:
