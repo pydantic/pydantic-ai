@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,7 @@ def _classify(
     total: int | str | None = None,
     count_api_failure: bool = False,
     files_api_failure: bool = False,
+    status: str = 'modified',
 ) -> dict[str, str]:
     workflow = _workflow(workflow_path)
     classify_job = CLASSIFIER_JOB_ADAPTER.validate_python(workflow['jobs']['classify'])
@@ -95,7 +97,10 @@ fi
     runner_temp = tmp_path / 'runner-temp'
     runner_temp.mkdir()
     output = tmp_path / 'github-output'
-    files = '\n'.join(f'{new}\t{old}' for new, old in changed_files)
+    files = '\n'.join(
+        f'{new}\t{old}\t{status}' if workflow_path == BENCHMARK_WORKFLOW else f'{new}\t{old}'
+        for new, old in changed_files
+    )
     env = {
         **os.environ,
         'PATH': f'{tmp_path}:{os.environ["PATH"]}',
@@ -351,6 +356,35 @@ def test_agent_data_uses_content_only_route(tmp_path: Path, changed_files: list[
 @pytest.mark.parametrize(
     ('filename', 'expected'),
     [
+        ('pydantic_ai_slim/pydantic_ai/models/openai.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/models/anthropic.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/models/concurrency.py', 'true'),
+        ('pydantic_ai_slim/pydantic_ai/providers/openai.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/providers/__init__.py', 'true'),
+        ('pydantic_ai_slim/pydantic_ai/capabilities/tool_search.py', 'true'),
+        ('pydantic_ai_slim/pydantic_ai/profiles/openai.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/profiles/decision.py', 'true'),
+        ('pydantic_ai_slim/pydantic_ai/durable_exec/_operation.py', 'true'),
+        ('pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/embeddings/test.py', 'true'),
+        ('pydantic_ai_slim/pydantic_ai/embeddings/openai.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/images/test.py', 'true'),
+        ('pydantic_ai_slim/pydantic_ai/images/openai.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/workspaces/conformance.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/workspaces/local.py', 'true'),
+        ('pydantic_ai_slim/pydantic_ai/ui/__init__.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/realtime/__init__.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/common_tools/webfetch.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/_ssrf.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/retries.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/new_module.py', 'true'),
+        ('pydantic_evals/pydantic_evals/evaluators/llm_as_a_judge.py', 'false'),
+        ('pydantic_evals/pydantic_evals/online.py', 'false'),
+        ('tests/models/conftest.py', 'false'),
+        ('tests/cassette_utils.py', 'true'),
+        ('tests/cassette_hooks.py', 'true'),
+        ('tests/benchmarks/dependencies.json', 'true'),
+        ('examples/pydantic_ai_examples/weather_agent.py', 'false'),
         ('pydantic_ai_slim/pydantic_ai/agent/__init__.py', 'true'),
         ('pydantic_graph/pydantic_graph/graph.py', 'true'),
         ('pydantic_evals/pydantic_evals/evaluators/common.py', 'true'),
@@ -360,8 +394,8 @@ def test_agent_data_uses_content_only_route(tmp_path: Path, changed_files: list[
         ('tests/__init__.py', 'true'),
         ('tests/cost_guards.py', 'true'),
         ('tests/_inline_snapshot.py', 'true'),
-        ('tests/data/input.json', 'true'),
-        ('tests/test_tools.py', 'true'),
+        ('tests/data/input.json', 'false'),
+        ('tests/test_tools.py', 'false'),
         ('pyproject.toml', 'true'),
         ('pydantic_ai_slim/pyproject.toml', 'true'),
         ('src/pydantic_ai_harness/pyproject.toml', 'true'),
@@ -372,15 +406,15 @@ def test_agent_data_uses_content_only_route(tmp_path: Path, changed_files: list[
         ('.python-version', 'true'),
         ('requirements-dev.txt', 'true'),
         ('src/pydantic_ai_harness/requirements.in', 'true'),
-        ('src/pydantic_clai2/web-ui/package-lock.json', 'true'),
-        ('src/pydantic_clai2/web-ui/package.json', 'true'),
+        ('src/pydantic_clai2/web-ui/package-lock.json', 'false'),
+        ('src/pydantic_clai2/web-ui/package.json', 'false'),
         ('src/pydantic_ai_harness/uv.lock', 'true'),
         ('src/pydantic_ai_harness/setup.cfg', 'true'),
         ('tests/harness/pytest.ini', 'true'),
         ('pytest.ini', 'true'),
         ('.github/workflows/benchmark.yml', 'true'),
         ('.github/scripts/test_ci_content_classifier.py', 'true'),
-        ('Makefile', 'true'),
+        ('Makefile', 'false'),
         ('codspeed.yml', 'true'),
         ('unknown/input.json', 'true'),
         ('src/new_package/module.py', 'true'),
@@ -424,6 +458,10 @@ def test_benchmark_classifier_uses_benchmark_inputs(tmp_path: Path, filename: st
         ([('pydantic_ai_slim/pydantic_ai/new.py', 'docs/old.md')], 'true'),
         ([('src/pydantic_ai_harness/new.py', 'pydantic_evals/pydantic_evals/old.py')], 'true'),
         ([('pydantic_graph/pydantic_graph/new.py', 'src/pydantic_clai2/old.py')], 'true'),
+        ([('docs/new.md', 'pydantic_ai_slim/pydantic_ai/models/function.py')], 'true'),
+        ([('docs/new.md', 'pydantic_ai_slim/pydantic_ai/providers/openai.py')], 'false'),
+        ([('tests/new.py', 'tests/test_tools.py')], 'false'),
+        ([('tests/new|name.py', 'tests/conftest.py')], 'true'),
         ([('docs/new.md', 'docs/old.md')], 'false'),
         ([('src/pydantic_clai2/new.py', 'src/pydantic_ai_harness/old.py')], 'false'),
         ([('docs/guide.md', ''), ('tests/conftest.py', '')], 'true'),
@@ -485,6 +523,45 @@ def test_benchmark_non_pr_events_keep_full_run_defaults(tmp_path: Path, event_na
     outputs = _classify(tmp_path, [], workflow_path=BENCHMARK_WORKFLOW, event_name=event_name)
 
     assert outputs == {'run_benchmarks': 'true'}
+
+
+@pytest.mark.parametrize('status', ['added', 'copied', 'renamed', '', 'unexpected'])
+def test_benchmark_classifier_keeps_new_source_and_unknown_status_conservative(tmp_path: Path, status: str):
+    outputs = _classify(
+        tmp_path,
+        [('pydantic_ai_slim/pydantic_ai/providers/new.py', '')],
+        workflow_path=BENCHMARK_WORKFLOW,
+        status=status,
+    )
+    assert outputs == {'run_benchmarks': 'true'}
+
+
+@pytest.mark.parametrize(
+    'filename',
+    TypeAdapter(dict[str, list[str]]).validate_json(
+        (Path(__file__).parents[2] / 'tests/benchmarks/dependencies.json').read_text()
+    )['loaded'],
+)
+def test_benchmark_classifier_covers_import_inventory(tmp_path: Path, filename: str):
+    assert _classify(tmp_path, [(filename, '')], workflow_path=BENCHMARK_WORKFLOW) == {'run_benchmarks': 'true'}
+
+
+@pytest.mark.subprocess(reason='Benchmark dependency inventory requires fresh imports, isolated from other suites')
+def test_benchmark_dependency_inventory_in_fresh_process():
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith('COVERAGE_') and key not in ('CODSPEED_ENV', 'PYTEST_ADDOPTS')
+    }
+    process = subprocess.run(
+        [sys.executable, '-m', 'pytest', 'tests/benchmarks', '-q'],
+        cwd=Path(__file__).parents[2],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert process.returncode == 0, process.stdout + process.stderr
 
 
 def test_benchmark_job_is_gated_on_the_classifier_output():

@@ -1,8 +1,56 @@
 from __future__ import annotations
 
+import json
 import os
+import sys
+from pathlib import Path
 
 import pytest
+from pydantic import TypeAdapter
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        '--benchmark-write-dependencies',
+        action='store_true',
+        help='Record imported repository files for auditing the CodSpeed dependency filter.',
+    )
+
+
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    """Check imports in isolated benchmark runs, without other suites' collection imports."""
+    root = Path(__file__).resolve().parents[2]
+    if session.config.args != ['tests/benchmarks']:
+        return
+    loaded: set[str] = set()
+    for module in tuple(sys.modules.values()):
+        namespace: dict[str, object] = getattr(module, '__dict__', {})
+        filename = namespace.get('__file__')
+        if isinstance(filename, str):
+            path = Path(filename).resolve()
+            if path.is_relative_to(root) and path.relative_to(root).parts[0] in (
+                'pydantic_ai_slim',
+                'pydantic_graph',
+                'pydantic_evals',
+                'src',
+                'clai',
+                'tests',
+                'examples',
+                'docs',
+            ):
+                loaded.add(path.relative_to(root).as_posix())
+    manifest = Path(__file__).with_name('dependencies.json')
+    if session.config.getoption('--benchmark-write-dependencies'):
+        manifest.write_text(json.dumps({'loaded': sorted(loaded)}, indent=2) + '\n')
+        return
+    dependencies = TypeAdapter(dict[str, list[str]]).validate_json(manifest.read_text())['loaded']
+    missing = loaded.difference(dependencies)
+    if missing:
+        pytest.exit(
+            'Benchmark dependencies changed; audit dependencies.json and the CodSpeed classifier: '
+            + ', '.join(sorted(missing)),
+            returncode=1,
+        )
 
 
 def pytest_configure(config: pytest.Config) -> None:
