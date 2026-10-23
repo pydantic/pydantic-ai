@@ -103,6 +103,6 @@ async def test_loaded_rules_hold_under_pressure(allow_model_requests: None, anth
     # They reached the model in the system voice, not in the tool result.
     parts = [part for message in history if isinstance(message, ModelRequest) for part in message.parts]
     assert [part.content for part in parts if isinstance(part, LoadCapabilityReturnPart)] == [
-        {'message': "Capability 'file_housekeeping' loaded. Its instructions follow."}
+        {'message': "Capability 'file_housekeeping' loaded. Its instructions, if any, follow."}
     ]
     assert [part.content for part in parts if isinstance(part, InstructionDeltaPart)] == [RULES]

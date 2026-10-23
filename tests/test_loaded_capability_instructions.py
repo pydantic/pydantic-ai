@@ -151,7 +151,7 @@ async def test_loaded_instructions_are_stated_after_the_load():
     agent = scripted_agent(LOAD, BUMP, received=received)
     first = await agent.run('Count.', deps=counter)
     assert load_return(first.all_messages()).content == {
-        'message': "Capability 'counter' loaded. Its instructions follow."
+        'message': "Capability 'counter' loaded. Its instructions, if any, follow."
     }
     assert deltas(first.all_messages()) == [
         InstructionDeltaPart(id=COUNTER_ID, content=f'{RULES}\n\nThe count is 0.'),
@@ -428,7 +428,7 @@ async def test_append_mode_loaded_instructions_are_tracked():
     load = ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'memory'})])
     result = await scripted_agent(load, received=received, capabilities=[capability]).run('Go.', deps=Counter())
     assert load_return(result.all_messages()).content == {
-        'message': "Capability 'memory' loaded. Its instructions follow."
+        'message': "Capability 'memory' loaded. Its instructions, if any, follow."
     }
     assert deltas(result.all_messages()) == [
         InstructionDeltaPart(id=InstructionId(CapabilityInstructionSource('memory')), content='Remember.')
@@ -579,7 +579,7 @@ WIRE_SHAPES: dict[str, Any] = snapshot(
                         'type': 'tool_result',
                         'content': [
                             {
-                                'text': '{"message":"Capability \'housekeeping\' loaded. Its instructions follow."}',
+                                'text': '{"message":"Capability \'housekeeping\' loaded. Its instructions, if any, follow."}',
                                 'type': 'text',
                             }
                         ],
@@ -612,7 +612,7 @@ Use trash.
             {
                 'type': 'function_call_output',
                 'call_id': 'call_1_0',
-                'output': '{"message":"Capability \'housekeeping\' loaded. Its instructions follow."}',
+                'output': '{"message":"Capability \'housekeeping\' loaded. Its instructions, if any, follow."}',
             },
             {
                 'role': 'system',
@@ -627,7 +627,7 @@ Use trash.
             {
                 'role': 'tool',
                 'tool_call_id': 'call_1_0',
-                'content': '{"message":"Capability \'housekeeping\' loaded. Its instructions follow."}',
+                'content': '{"message":"Capability \'housekeeping\' loaded. Its instructions, if any, follow."}',
             },
             {
                 'role': 'system',
@@ -675,7 +675,7 @@ async def test_wire_shape_after_the_load_without_a_system_channel(
                     'type': 'tool_result',
                     'content': [
                         {
-                            'text': '{"message":"Capability \'housekeeping\' loaded. Its instructions follow."}',
+                            'text': '{"message":"Capability \'housekeeping\' loaded. Its instructions, if any, follow."}',
                             'type': 'text',
                         }
                     ],
