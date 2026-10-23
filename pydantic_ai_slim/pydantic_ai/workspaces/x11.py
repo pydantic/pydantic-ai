@@ -154,7 +154,7 @@ class X11Computer:
     The X server must already be running: starting it is the environment's job (for example an image that runs
     `Xvfb :1`). Needs `xdotool`, `scrot`, `base64`, and `mktemp` in the environment. Text outside ASCII can lose
     characters: `xdotool` types it by remapping keys on the fly. A backend with a desktop
-    implements [`SupportsComputerUse`][pydantic_ai.workspaces.SupportsComputerUse] by delegating to an instance:
+    implements [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay] by delegating to an instance:
 
     ```python {test="skip" lint="skip"}
     async def screenshot(self) -> bytes:

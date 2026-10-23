@@ -1,4 +1,4 @@
-"""The actions a [`SupportsComputerUse`][pydantic_ai.workspaces.SupportsComputerUse] backend performs on a display.
+"""The actions a [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay] backend performs on a display.
 
 The vocabulary follows OpenAI's computer tool (`click`, `move`, `drag`, `scroll`, `type`, `keypress`), plus the
 pointer and key holds Anthropic's tool adds. Actions are validated on construction, every model-controlled amount is

@@ -8,7 +8,7 @@ from typing import Never
 from .computer import ComputerAction
 from .protocol import (
     SupportsCommands,
-    SupportsComputerUse,
+    SupportsDisplay,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceUnavailableError,
@@ -17,7 +17,7 @@ from .protocol import (
 __all__ = ('UnavailableWorkspace',)
 
 
-class UnavailableWorkspace(WorkspaceBackend, SupportsCommands, SupportsComputerUse):
+class UnavailableWorkspace(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     """A `WorkspaceBackend` whose operations raise `WorkspaceUnavailableError` with a configured reason."""
 
     def __init__(self, reason: str):
