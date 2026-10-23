@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 import anyio
 from pydantic import Field
 
-from pydantic_ai._computer_use import COMPUTER_KIND, SAFETY_CHECKS, ComputerResult, ComputerToolAction, Wait
-from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.computer_use import COMPUTER_KIND, SAFETY_CHECKS, ComputerResult, ComputerToolAction, Wait
 from pydantic_ai.exceptions import ApprovalRequired, ToolFailed, UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -27,12 +27,9 @@ from pydantic_ai.tools import AgentDepsT, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import Click, Drag, MoveMouse, Point, Scroll, WorkspaceError, WorkspaceUnavailableError
 
-from .abstract import AbstractCapability
-
 if TYPE_CHECKING:
+    from pydantic_ai._instructions import AgentInstructions
     from pydantic_ai.models import ModelRequestContext
-
-__all__ = ('ComputerUse',)
 
 _INSTRUCTIONS = """\
 You can see and control a computer screen with the `computer` tool. Each call runs a list of actions in order and \
@@ -102,7 +99,8 @@ def _to_pixels(action: ComputerToolAction, width: int, height: int, grid: int) -
     """Scale an action's grid coordinates to display pixels."""
 
     def scale(value: int, size: int) -> int:
-        return min(size - 1, round(value * size / grid))
+        # Rounds down, so the grid's last point lands on the last pixel, never past it.
+        return value * size // grid
 
     match action:
         case Click(x=x, y=y) | Scroll(x=x, y=y) | MoveMouse(x=x, y=y) if x is not None and y is not None:

@@ -8,8 +8,11 @@ from typing import Any, Protocol
 
 import anyio
 
-from pydantic_ai import RunContext
+from pydantic_ai import RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.computer_use import COMPUTER_KIND, ComputerResult, ComputerToolAction, Screenshot, Wait
+from pydantic_ai.messages import BinaryImage, ToolReturn
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import (
     CommandResult,
     ComputerAction,
@@ -22,6 +25,7 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
+    WorkspaceError,
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
@@ -357,14 +361,12 @@ class InMemoryProvider:
         self.directories: dict[str, set[str]] = {}
         self.log: list[str] = []
         self.actions: list[ComputerAction] = []
-        self.display_size_calls = 0
 
     def reset(self) -> None:
         self.environments.clear()
         self.directories.clear()
         self.log.clear()
         self.actions.clear()
-        self.display_size_calls = 0
 
     def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
         return ProviderBackend(self, ref)
@@ -468,7 +470,6 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, Su
 
     async def display_size(self) -> tuple[int, int]:
         await self._files()
-        self._provider.display_size_calls += 1
         return FAKE_DISPLAY_SIZE
 
     async def screenshot(self) -> bytes:
@@ -495,3 +496,30 @@ class ProviderWorkspaces(AbstractCapability[Any]):
             return None
         backend = self.provider.backend(ref)
         return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend
+
+
+def computer_toolset(*, requires_approval: bool = False) -> FunctionToolset[Any]:
+    """A `computer` tool that keeps the tool's contract and nothing more, for testing model adapters.
+
+    It runs the actions on the workspace's display until one fails, then returns a summary and a screenshot, with
+    the outcome in the result's metadata.
+    """
+
+    async def computer(ctx: RunContext[Any], actions: list[ComputerToolAction]) -> ToolReturn:
+        result = ComputerResult(performed=0)
+        for action in actions:
+            if not isinstance(action, Wait | Screenshot):
+                try:
+                    await ctx.workspace.act(action)
+                except WorkspaceError as error:
+                    result['error'] = str(error)
+                    break
+            result['performed'] += 1
+        summary = f'Ran {result["performed"]} of {len(actions)} actions.'
+        if 'error' in result:
+            summary += f' The next one failed: {result["error"]}'
+        screenshot = BinaryImage(data=await ctx.workspace.screenshot(), media_type='image/png')
+        return ToolReturn([summary, screenshot], metadata=result)
+
+    tool = Tool(computer, name='computer', tool_kind=COMPUTER_KIND, requires_approval=requires_approval)
+    return FunctionToolset([tool])
