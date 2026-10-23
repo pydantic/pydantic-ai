@@ -11,6 +11,7 @@ import json
 from typing import Any
 
 import pytest
+from cassetter import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, ThinkingPart
@@ -30,6 +31,10 @@ with try_import() as google_imports:
 with try_import() as openai_imports:
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
+
+with try_import() as bedrock_imports:
+    from pydantic_ai.models.bedrock import BedrockConverseModel
+    from pydantic_ai.providers.bedrock import BedrockProvider
 
 with try_import() as groq_imports:
     import httpx
@@ -69,6 +74,63 @@ async def test_anthropic_thinking_returns_summaries_by_default(
     result = await Agent(model, model_settings=ModelSettings(thinking='high')).run(PROMPT)
 
     assert request_capture.body('/v1/messages')['thinking'] == snapshot({'type': 'adaptive', 'display': 'summarized'})
+    thinking = _thinking_parts(result.all_messages())
+    assert thinking and all(part.content and part.signature for part in thinking)
+
+
+@pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+async def test_anthropic_thinking_summary_on_a_budget_based_model(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+):
+    """Claude Sonnet 4.5 takes `display` on the budget-based `enabled` block, and returns summarized thinking."""
+    model = AnthropicModel(
+        'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
+    )
+    result = await Agent(model, model_settings=ModelSettings(thinking='high')).run(PROMPT)
+
+    assert request_capture.body('/v1/messages')['thinking'] == snapshot(
+        {'type': 'enabled', 'budget_tokens': 16384, 'display': 'summarized'}
+    )
+    thinking = _thinking_parts(result.all_messages())
+    assert thinking and all(part.content and part.signature for part in thinking)
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='boto3 not installed')
+@pytest.mark.parametrize(
+    ('model_name', 'expected_thinking'),
+    [
+        pytest.param(
+            'us.anthropic.claude-opus-4-7', {'type': 'adaptive', 'display': 'summarized'}, id='adaptive-opus-4-7'
+        ),
+        pytest.param(
+            'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+            {'type': 'enabled', 'budget_tokens': 16384, 'display': 'summarized'},
+            id='budget-haiku-4-5',
+        ),
+    ],
+)
+async def test_bedrock_claude_thinking_returns_summaries_by_default(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    vcr: Cassette,
+    model_name: str,
+    expected_thinking: dict[str, Any],
+):
+    """Claude on Converse accepts `display` from unified `thinking`, on the adaptive and the budget-based block.
+
+    The outbound body is read off botocore's `before-send` hook, which also fires on replay.
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    sent: list[dict[str, Any]] = []
+
+    def capture(request: Any, **_: Any) -> None:
+        sent.append(json.loads(request.body))
+
+    for event in ('before-send.bedrock-runtime.Converse', 'before-send.bedrock-runtime.ConverseStream'):
+        model.client.meta.events.register_last(event, capture)
+    result = await Agent(model, model_settings=ModelSettings(thinking='high', max_tokens=20000)).run(PROMPT)
+
+    assert [body['additionalModelRequestFields']['thinking'] for body in sent] == [expected_thinking]
     thinking = _thinking_parts(result.all_messages())
     assert thinking and all(part.content and part.signature for part in thinking)
 
