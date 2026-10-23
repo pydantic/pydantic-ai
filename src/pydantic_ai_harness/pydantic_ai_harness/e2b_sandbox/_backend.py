@@ -565,10 +565,22 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         # remote group undiscoverable. setsid isolates this invocation from other jobs.
         claim = f'/tmp/pydantic-e2b-pgid-{uuid.uuid4().hex}'
         pgid_file = f'{claim}/pgid'
+        # Prints a process's start time and then its group id, for the launcher to record and the stop
+        # to check: a reused PID belongs to another run. Linux's `/proc` needs no extra package, and E2B
+        # sandboxes always have it; the `ps` branch keeps the host-backed test fake working on macOS,
+        # under `LC_ALL=C` because a per-command env (`run(env=...)`, or `env` on an attached sandbox)
+        # reaches only the launcher. `/proc` is read whole, not by line, because a command name may hold
+        # a newline. A process that is gone prints nothing, which never matches a record.
+        identify = (
+            '_pydantic_e2b_id() { '
+            'if [ -r "/proc/$1/stat" ]; then '
+            '_s=$(cat "/proc/$1/stat" 2>/dev/null) || return 0; _s=${_s##*) }; set -- $_s; echo "${20} $3"; '
+            'else set -- $(LC_ALL=C ps -o lstart= -o pgid= -p "$1" 2>/dev/null); echo "$*"; fi; }; '
+        )
         # The launcher and canceller race on one atomic mkdir. A cancelled late launcher
         # exits before user code; if launch wins, the canceller waits for its registration.
         # Keep a cancellation claim when the start ACK is lost so a late RPC stays fenced.
-        launch = f'mkdir {claim} 2>/dev/null || exit 143; echo "$$:$(LC_ALL=C ps -o lstart= -p $$)" > {pgid_file}; exec {line}'
+        launch = f'mkdir {claim} 2>/dev/null || exit 143; {identify}echo "$$:$(_pydantic_e2b_id $$)" > {pgid_file}; exec {line}'
         # Probe only custom/attached images: default E2B images include util-linux.
         isolated = await self._has_setsid(sandbox) if self._probe_setsid else True
         launch = f'{"setsid " if isolated else ""}sh -c {shlex.quote(launch)}'
@@ -576,16 +588,16 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         async def stop() -> None:
             # A new SDK command can run even when the original output stream is blocked.
             script = (
-                f'if mkdir {claim} 2>/dev/null; then exit 0; fi; '
+                f'if mkdir {claim} 2>/dev/null; then exit 0; fi; {identify}'
                 f'i=0; while [ ! -s {pgid_file} ] && [ "$i" -lt 100 ]; do '
                 'sleep 0.1; i=$((i+1)); done; '
                 # A registered launcher consumed its claim, so it can go; a claim this stop won stays.
                 f'if [ -s {pgid_file} ]; then record=$(cat {pgid_file}); rm -rf {claim}; '
-                'p=${record%%:*}; '
-                # Match creation time before signalling: a reused PID belongs to another run. Both sides
-                # format it under LC_ALL=C, since only the launcher gets the user's locale.
-                '[ "$(LC_ALL=C ps -o lstart= -p "$p")" = "${record#*:}" ] || exit 0; '
-                + ('[ "$(ps -o pgid= -p "$p" 2>/dev/null | tr -d " ")" = "$p" ] || exit 0; ' if isolated else '')
+                'p=${record%%:*}; recorded=${record#*:}; current=$(_pydantic_e2b_id "$p"); '
+                # The start time alone identifies the process: a leader stop must still reach one that
+                # has since moved to its own group. A group stop also needs that group to be the one setsid made.
+                '[ "${current% *}" = "${recorded% *}" ] || exit 0; '
+                + ('[ "${current##* }" = "$p" ] || exit 0; ' if isolated else '')
                 + f'kill -TERM {"-" if isolated else ""}"$p" 2>/dev/null || true; sleep 0.1; '
                 + f'kill -KILL {"-" if isolated else ""}"$p" 2>/dev/null || true; fi'
             )
