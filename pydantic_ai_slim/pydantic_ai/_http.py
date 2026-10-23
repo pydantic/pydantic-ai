@@ -103,7 +103,8 @@ def create_async_httpx2_client(
             on it, or on the transport it wraps (an `AsyncHTTPX2TenacityTransport` without `wrapped` uses
             these defaults). With a transport, HTTPX also stops reading proxies from the
             `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` environment variables; give the transport a `proxy`
-            to use one. The timeouts and user agent still apply.
+            to use one, and its `limits` too, since an `httpx2.AsyncHTTPTransport` you build has HTTPX's
+            default pool of 100 connections, 20 kept alive. The timeouts and user agent still apply.
 
     A request timeout whose phases are all equal, such as a number of seconds, can shorten the
     client's connect and pool timeouts but never lengthen them; see
