@@ -7,6 +7,7 @@ from prefect.context import FlowRunContext
 
 from pydantic_ai.durable_exec._operation import CapabilityOperationId, DurableOperationId, EventStreamHandlerId
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend, RoleBasedOperationConfig
+from pydantic_ai.durable_exec._workspace import WORKSPACE_OPERATION_ID
 
 from ._operation_names import PrefectOperationNamer
 from ._types import TaskConfig
@@ -36,15 +37,21 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
             sequence_key = (
                 f'{self._event_sequence_key}:capability:{len(capability_id)}:{capability_id}{operation_id.operation}'
             )
+            # Match the singleton bound by _bind_workspace_operation: equal custom capability IDs
+            # must retain their shared per-agent counter.
+            if operation_id is WORKSPACE_OPERATION_ID:
+                # The projection carries the workspace's own run ID, including after the run ends.
+                # Concurrent runs can arrive in a different order when a flow retries.
+                run_id = cache_key[-1]
+                assert isinstance(run_id, str)
+                sequence_key = f'{self._event_sequence_key}:workspace:{len(run_id)}:{run_id}'
 
         if sequence_key is not None:
             flow_context = FlowRunContext.get()
             assert flow_context is not None
-            # Prefect rebuilds dynamic task keys in the same order on flow retry. A counter per
-            # semantic operation therefore distinguishes repeated live invocations while producing
-            # the same cache keys during replay. Capability operations use separate counters so an
-            # unrelated operation cannot shift their replay identities. The counter is per agent, so
-            # its key goes into the cache key: two agents in one flow must not share cached results.
+            # Each counter is rebuilt on flow retry. Its ordinal distinguishes identical calls;
+            # separate operation counters keep unrelated calls from shifting replay identities.
+            # Include the counter key so distinct agents and workspace runs cannot share results.
             sequence = flow_context.task_run_dynamic_keys.get(sequence_key, 0)
             assert isinstance(sequence, int)
             flow_context.task_run_dynamic_keys[sequence_key] = sequence + 1
