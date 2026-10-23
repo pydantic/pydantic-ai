@@ -2668,8 +2668,8 @@ prompt the keyboard does:
   keeps. One imported by an earlier CLAI may not have it yet: CLAI still labels it while its
   subtitle names the original, and adds the tag at its next background name, or when it is
   imported again before being continued in CLAI. As in `/resume`, a fork gets its own copy of the
-  session's Monty state, and a deleted session's state is deleted with it. Like opening `/resume`, `listing`
-  queues the newest untitled sessions for background naming, which calls the
+  session's Monty state, and a deleted session's state is deleted with it. Like opening `/resume`,
+  `listing` queues the newest untitled sessions for background naming, which calls the
   naming model. Renaming the current conversation fires `on_conversation_changed` at once, even
   while a turn runs, unlike background naming. `follows_workspace` says whether `/resume ID`
   moves the session into the directory it was saved in (its `host.workspace`; the process's working
