@@ -162,8 +162,8 @@ fields.
   On xAI they go on the last text part at the end of the response, so a streamed answer followed by a tool call gets
   none.
 - The [AG-UI adapter](ui/ag-ui.md) doesn't send citations to the frontend.
-- Citation URLs, titles and excerpts come from outside sources, so treat them as untrusted. Excerpts can also contain
-  private content from your documents, so choose whether to log them or show them to users.
+- Citation URLs, titles and excerpts come from the sources themselves, and excerpts can include text from your own
+  documents. Check them before you log them or show them to users.
 - Anything else the provider returned about a citation, such as Google's confidence scores, is kept as the provider
   sent it in the part's `provider_details['citations']`. Its shape is the provider's and can change.
 

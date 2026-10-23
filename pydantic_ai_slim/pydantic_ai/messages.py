@@ -3262,22 +3262,21 @@ class ModelRequest:
 
 @dataclass(repr=False)
 class WebCitationSource:
-    """A web source referenced by a model-generated citation."""
+    """A web page a citation points to."""
 
     url: str
-    """The source URL."""
+    """The page's URL."""
 
     _: KW_ONLY
 
     title: str | None = None
-    """The source title, if available."""
+    """The page's title, if the provider gave one."""
 
     excerpts: list[str] = field(default_factory=list[str])
-    """Provider-selected source passages associated with the citation.
+    """Passages from the source that back the cited text.
 
-    Each item may be an exact cited passage or a broader retrieved chunk, depending on the provider. Excerpts are
-    untrusted source content and may contain private data; applications should choose deliberately whether to log,
-    render, or send them to clients.
+    Depending on the provider, this is the exact cited text or a longer retrieved chunk. It can include text from your
+    own documents, so choose whether to log it or show it to users.
     """
 
     kind: Literal['web'] = 'web'
@@ -3288,29 +3287,21 @@ class WebCitationSource:
 
 @dataclass(repr=False)
 class DocumentCitationSource:
-    """A non-web document source referenced by a model-generated citation.
-
-    This can represent a document supplied inline with the request or one retrieved from provider-managed storage,
-    such as a file-search store, collection, or retrieval corpus. It does not imply that the source is downloadable.
-    """
+    """Any other source a citation points to, such as a document you sent or a file in the provider's file store."""
 
     _: KW_ONLY
 
     document_id: str | None = None
-    """The provider-scoped file or document identifier, if available.
-
-    This is an opaque provider resource identifier, not a local path or a Pydantic AI file identifier.
-    """
+    """The provider's ID for the file or document, if it has one. It's not a local path."""
 
     title: str | None = None
-    """The document title or filename, if available."""
+    """The document's title or filename, if the provider gave one."""
 
     excerpts: list[str] = field(default_factory=list[str])
-    """Provider-selected source passages associated with the citation.
+    """Passages from the source that back the cited text.
 
-    Each item may be an exact cited passage or a broader retrieved chunk, depending on the provider. Excerpts are
-    untrusted source content and may contain private data; applications should choose deliberately whether to log,
-    render, or send them to clients.
+    Depending on the provider, this is the exact cited text or a longer retrieved chunk. It can include text from your
+    own documents, so choose whether to log it or show it to users.
     """
 
     kind: Literal['document'] = 'document'
@@ -3324,7 +3315,7 @@ class DocumentCitationSource:
 
 
 CitationSource: TypeAlias = Annotated[WebCitationSource | DocumentCitationSource, pydantic.Discriminator('kind')]
-"""A source referenced by a model-generated citation."""
+"""Where a citation's information came from."""
 
 
 def _validate_citation_anchor(start: int, end: int) -> None:
@@ -3334,13 +3325,13 @@ def _validate_citation_anchor(start: int, end: int) -> None:
 
 @dataclass(repr=False, kw_only=True)
 class ContentCitationAnchor:
-    """A supported content range in the containing [`TextPart.content`][pydantic_ai.messages.TextPart.content]."""
+    """The text the citation's sources support, as positions in the part's `content`."""
 
     start: int
-    """The zero-based start character index, inclusive."""
+    """The position of the first character, counting from 0."""
 
     end: int
-    """The zero-based end character index, exclusive."""
+    """The position after the last character, so `content[start:end]` is the range."""
 
     kind: Literal['content'] = 'content'
     """Anchor type identifier, used as a discriminator for deserialization."""
@@ -3353,13 +3344,13 @@ class ContentCitationAnchor:
 
 @dataclass(repr=False, kw_only=True)
 class MarkerCitationAnchor:
-    """A rendered citation marker range in the containing [`TextPart.content`][pydantic_ai.messages.TextPart.content]."""
+    """A marker the model wrote, such as `[1]` or a link, as positions in the part's `content`."""
 
     start: int
-    """The zero-based start character index, inclusive."""
+    """The position of the first character, counting from 0."""
 
     end: int
-    """The zero-based end character index, exclusive."""
+    """The position after the last character, so `content[start:end]` is the range."""
 
     kind: Literal['marker'] = 'marker'
     """Anchor type identifier, used as a discriminator for deserialization."""
@@ -3371,23 +3362,20 @@ class MarkerCitationAnchor:
 
 
 CitationAnchor: TypeAlias = Annotated[ContentCitationAnchor | MarkerCitationAnchor, pydantic.Discriminator('kind')]
-"""A content or citation-marker range in the containing [`TextPart.content`][pydantic_ai.messages.TextPart.content]."""
+"""Which part of [`TextPart.content`][pydantic_ai.messages.TextPart.content] a citation is about."""
 
 
 @dataclass(repr=False)
 class Citation:
-    """A citation relating generated text to one or more sources."""
+    """Links part of a model's answer to the sources that back it."""
 
     sources: list[CitationSource]
-    """The sources supporting the generated text."""
+    """Where the information came from."""
 
     _: KW_ONLY
 
     anchor: CitationAnchor | None = None
-    """The associated range in the containing text part.
-
-    `None` means the citation belongs to the text part, but its position in the text is unknown.
-    """
+    """Which part of the text the citation is about, or `None` when the provider didn't say."""
 
     def __post_init__(self) -> None:
         if not self.sources:
@@ -3425,9 +3413,9 @@ class TextPart:
     """
 
     citations: list[Citation] | None = None
-    """Citations associated with this text part, if any.
+    """The citations for this text, if any.
 
-    The provider's own citation data for this part, such as page numbers or confidence scores, is kept in
+    Anything else the provider returned about them, such as page numbers or confidence scores, is in
     `provider_details['citations']`.
     """
 
@@ -5685,11 +5673,11 @@ class TextPartDelta:
     """
 
     citations_delta: list[Citation] | None = None
-    """All of the text part's citations, replacing any it has.
+    """All of the part's citations, replacing any it has.
 
-    Models send them in one delta, without text, once the part's text is complete. That delta also sets the part's whole
-    `provider_details['citations']`. Providers that return citations at the end of the response, such as Google, send it
-    then, which can be after the part's [`PartEndEvent`][pydantic_ai.messages.PartEndEvent].
+    They come in one delta, without text, once the part's text is complete, and the delta also sets
+    `provider_details['citations']`. Providers that return citations at the end of the response, such as Google, send
+    it then, which can be after the part's [`PartEndEvent`][pydantic_ai.messages.PartEndEvent].
     """
 
     part_delta_kind: Literal['text'] = 'text'
