@@ -29,7 +29,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [Groq](groq.md) | Inference platform | `groq:` |
 | [Heroku AI](compatible-apis.md#heroku-ai) | Cloud platform | `heroku:` |
 | [Hugging Face](huggingface.md) | Inference platform | `huggingface:` |
-| [LiteLLM](compatible-apis.md#litellm) | Self-hosted gateway | `litellm:` |
+| [LiteLLM](compatible-apis.md#litellm) | Self-hosted gateway (over HTTP; doesn't use the `litellm` package) | `litellm:` |
 | [Meta](meta.md) | Model developer | `meta:` |
 | [Mistral](mistral.md) | Model developer | `mistral:` |
 | [Moonshot AI / Kimi](moonshotai.md) | Model developer | `moonshotai:` |
