@@ -120,9 +120,31 @@ Gemini-specific control is needed.
 !!! note "`google_proactive_audio` dials the `v1alpha` API"
     Gemini serves `proactivity` on the Developer API's `v1alpha` only; on any other version the
     session is closed with `1007 Invalid JSON payload received. Unknown name "proactivity" at
-    'setup'`. So a session with `google_proactive_audio=True` opens its Live connection on `v1alpha`
-    whatever version the provider's client is on, and the client itself is left as it is: ordinary
+    'setup'`. When the provider was built from an API key (the default `'google'` provider, or
+    `GoogleProvider(api_key=...)`), a session with `google_proactive_audio=True` opens its Live
+    connection with a separate `v1alpha` client built from that key, closed when the session ends.
+    The provider's own client is left as it is, so ordinary
     [`GoogleModel`][pydantic_ai.models.google.GoogleModel] requests sharing it keep their version.
+
+    A client you built yourself can't be rebuilt that way, so pass one that is already on `v1alpha`;
+    connecting with one on another version raises [`UserError`][pydantic_ai.exceptions.UserError]:
+
+    ```python {title="proactive_audio.py"}
+    from google.genai import Client, types
+
+    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.realtime.google import GoogleRealtimeModel, GoogleRealtimeModelSettings
+
+    client = Client(
+        api_key='your-api-key', http_options=types.HttpOptions(api_version='v1alpha')
+    )
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
+        provider=GoogleProvider(client=client),
+        settings=GoogleRealtimeModelSettings(google_proactive_audio=True),
+    )
+    ```
+
     Unavailable on Vertex AI, whose version line has no `v1alpha`.
 
 !!! warning "Keep automatic VAD enabled"

@@ -3981,60 +3981,87 @@ def test_deprecated_google_requires_async_tool_calls_profile_key(requires: bool,
     assert 'google_requires_async_tool_calls' not in profile
 
 
-@pytest.mark.parametrize(
-    ('settings', 'client_api_version', 'dialed_api_version'),
-    [
-        # Proactive audio is served on `v1alpha` only, so the Live connection dials it whatever the client is on.
-        ({'google_proactive_audio': True}, None, 'v1alpha'),
-        ({'google_proactive_audio': True}, 'v1beta', 'v1alpha'),
-        ({'google_proactive_audio': True}, 'v1alpha', 'v1alpha'),
-        # Without it, the client's own version is dialed.
-        ({}, None, 'v1beta'),
-        ({'google_proactive_audio': False}, 'v1beta', 'v1beta'),
-        ({}, 'v1alpha', 'v1alpha'),
-    ],
-)
-async def test_proactive_audio_dials_v1alpha_without_touching_the_client(
-    monkeypatch: pytest.MonkeyPatch,
-    settings: GoogleRealtimeModelSettings,
-    client_api_version: str | None,
-    dialed_api_version: str,
-) -> None:
-    http_options = genai_types.HttpOptions(api_version=client_api_version) if client_api_version else None
-    client = Client(api_key='k', http_options=http_options)
-    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
-    original_version = client._api_client._http_options.api_version  # pyright: ignore[reportPrivateUsage]
-
+def _proactive_capture(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     captured: dict[str, Any] = {}
     monkeypatch.setattr('google.genai.live.ws_connect', _capture_ws_connect(captured))
+    return captured
+
+
+def _live_uri(api_version: str) -> str:
+    return (
+        'wss://generativelanguage.googleapis.com//ws/'
+        f'google.ai.generativelanguage.{api_version}.GenerativeService.BidiGenerateContent'
+    )
+
+
+@pytest.mark.parametrize(
+    ('settings', 'dialed_api_version'), [({'google_proactive_audio': True}, 'v1alpha'), ({}, 'v1beta')]
+)
+async def test_proactive_audio_dials_its_own_v1alpha_client(
+    monkeypatch: pytest.MonkeyPatch, settings: dict[str, Any], dialed_api_version: str
+) -> None:
+    """A provider built from an API key gives a proactive-audio session its own `v1alpha` client.
+
+    The provider's client keeps its version and headers, and the session's client is closed when it ends.
+    """
+    provider = GoogleProvider(api_key='k')
+    client = provider.client
+    headers = dict(client._api_client._http_options.headers or {})  # pyright: ignore[reportPrivateUsage]
+    built: list[Client] = []
+    client_for_api_version = provider._client_for_api_version  # pyright: ignore[reportPrivateUsage]
+
+    def record(api_version: str) -> Client | None:
+        new_client = client_for_api_version(api_version)
+        assert new_client is not None
+        built.append(new_client)
+        return new_client
+
+    monkeypatch.setattr(provider, '_client_for_api_version', record)
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=provider)
+    captured = _proactive_capture(monkeypatch)
     with pytest.raises(_StopDial):
-        async with _connect(model, 'hi', model_settings=settings):
+        async with _connect(model, 'hi', model_settings=cast(GoogleRealtimeModelSettings, settings)):
             pass  # pragma: no cover
 
-    assert captured['uri'] == (
-        'wss://generativelanguage.googleapis.com//ws/'
-        f'google.ai.generativelanguage.{dialed_api_version}.GenerativeService.BidiGenerateContent'
-    )
-    # The `v1alpha` view shares the client's headers, so the handshake still carries one user-agent.
+    assert captured['uri'] == _live_uri(dialed_api_version)
+    assert captured['headers']['x-goog-api-key'] == 'k'
     assert sum(key.lower() == 'user-agent' for key in captured['headers']) == 1
-    assert client._api_client._http_options.api_version == original_version  # pyright: ignore[reportPrivateUsage]
+    assert client._api_client._http_options.api_version == 'v1beta'  # pyright: ignore[reportPrivateUsage]
+    assert client._api_client._http_options.headers == headers  # pyright: ignore[reportPrivateUsage]
+    assert not client._api_client._async_httpx_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    if settings:
+        [session_client] = built
+        assert session_client is not client
+        assert session_client._api_client._async_httpx_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    else:
+        assert built == []
 
 
-async def test_proactive_audio_view_does_not_close_the_clients_http_clients(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The `v1alpha` view shares the client's HTTP clients; collecting it must not close them."""
-    client = Client(api_key='k')
-    api_client = client._api_client  # pyright: ignore[reportPrivateUsage]
+async def test_proactive_audio_uses_a_caller_client_already_on_v1alpha(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = Client(api_key='k', http_options=genai_types.HttpOptions(api_version='v1alpha'))
     model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
-
-    monkeypatch.setattr('google.genai.live.ws_connect', _capture_ws_connect({}))
+    captured = _proactive_capture(monkeypatch)
     with pytest.raises(_StopDial):
         async with _connect(model, 'hi', model_settings=GoogleRealtimeModelSettings(google_proactive_audio=True)):
             pass  # pragma: no cover
-    gc.collect()
-    await asyncio.sleep(0)  # a collected `BaseApiClient` closes its async HTTP client in a task
 
-    assert not api_client._httpx_client.is_closed  # pyright: ignore[reportPrivateUsage]
-    assert not api_client._async_httpx_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert captured['uri'] == _live_uri('v1alpha')
+    assert not client._api_client._async_httpx_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_proactive_audio_on_a_caller_client_says_how_to_fix_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A client the caller built can't be rebuilt on `v1alpha`, so the session is refused before dialing."""
+    client = Client(api_key='k')
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
+    captured = _proactive_capture(monkeypatch)
+    with pytest.raises(UserError) as exc_info:
+        async with _connect(model, 'hi', model_settings=GoogleRealtimeModelSettings(google_proactive_audio=True)):
+            pass  # pragma: no cover
+
+    message = str(exc_info.value)
+    assert 'needs a client on the `v1alpha` API version, but this one is on `v1beta`' in message
+    assert "types.HttpOptions(api_version='v1alpha')" in message
+    assert captured == {}
 
 
 async def test_proactive_audio_on_vertex_keeps_the_client_version(monkeypatch: pytest.MonkeyPatch) -> None:
