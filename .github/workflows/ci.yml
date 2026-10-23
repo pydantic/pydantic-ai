@@ -1738,15 +1738,18 @@ jobs:
 
       - run: uv sync --locked --package pydantic-ai-harness --group dev --extra code-mode
 
-      # An empty URL would quietly run the suite on local workers, so it fails instead.
+      # An empty URL would quietly run the suite on local workers, and staging refuses a dial
+      # without a key, so either secret missing fails here instead.
       # `local_monty` tests patch the local worker class, so they skip; `temporal` ones run in
       # `test-durable-exec` and need a dev server.
       - run: |
           [ -n "$MONTY_SANDBOX_TEST_URL" ] || { echo '::error::the MONTY_STAGING_URL secret is not set'; exit 1; }
+          [ -n "$MONTY_EXECUTION_KEY" ] || { echo '::error::the MONTY_EXECUTION_KEY secret is not set'; exit 1; }
           uv run --no-sync pytest -p no:cacheprovider --durations=20 -m "not temporal" tests/harness/code_mode
         env:
           # The job executes the full PR checkout, so path detection is not a security boundary.
           MONTY_SANDBOX_TEST_URL: ${{ secrets.MONTY_STAGING_URL }} # zizmor: ignore[secrets-outside-env]
+          MONTY_EXECUTION_KEY: ${{ secrets.MONTY_EXECUTION_KEY }} # zizmor: ignore[secrets-outside-env]
 
   harness-mongodb-integration:
     name: harness MongoDB integration tests
