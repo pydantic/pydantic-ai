@@ -3922,6 +3922,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         and is not itself a run.
         """
         from ..realtime import RealtimeModel, infer_realtime_model
+        from ..realtime._utils import session_instructions
 
         if not isinstance(model, RealtimeModel):
             model = infer_realtime_model(model)
@@ -4202,9 +4203,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Nothing appends here, so an empty append-mode block has no withdrawal to record.
             instruction_parts = _messages.InstructionPart.sorted([part for part in instruction_parts if part.content])
             resolved_instructions = _messages.InstructionPart.join(instruction_parts)
-            request_messages = [
-                *(message_history or ()),
-                _messages.ModelRequest(parts=[], instructions=resolved_instructions or None),
+            # As in a standard run (`UserPromptNode`), the agent's system prompts open a fresh conversation,
+            # while seeded history is taken to carry its own, with its dynamic system prompts re-evaluated.
+            # The model sends this standing prompt as instructions, and the session records it.
+            seeded_history = list(message_history or ())
+            system_prompt_parts: list[_messages.SystemPromptPart] = []
+            if seeded_history:
+                await _system_prompt.reevaluate_dynamic_system_prompts(
+                    seeded_history, self._system_prompt_dynamic_functions, run_context
+                )
+            else:
+                system_prompt_parts = await _system_prompt.resolve_system_prompts(
+                    self._system_prompts, self._system_prompt_functions, run_context
+                )
+            request_messages: list[_messages.ModelMessage] = [
+                *seeded_history,
+                _messages.ModelRequest(parts=[*system_prompt_parts], instructions=resolved_instructions or None),
             ]
             model_request_parameters = models.ModelRequestParameters(
                 function_tools=tool_defs,
@@ -4281,7 +4295,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 model_request_parameters=model_request_parameters,
                 model_settings=effective_model_settings,
                 instructions=resolved_instructions or None,
+                session_instructions=session_instructions(request_messages, model_request_parameters) or None,
                 request_messages=request_messages,
+                message_history=seeded_history,
+                system_prompt=system_prompt_parts,
                 model_profile=model_profile,
                 instrumentation_settings=session_instrumentation_settings,
                 conversation_id=conversation_id,
@@ -4476,7 +4493,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     retain_images_every_n=retain_images_every_n,
                     retain_images_max=retain_images_max,
                     retain_audio_max_seconds=retain_audio_max_seconds,
-                    message_history=message_history,
+                    message_history=resolved.message_history,
+                    _opening_request=(
+                        _messages.ModelRequest(parts=[*resolved.system_prompt]) if resolved.system_prompt else None
+                    ),
                     conversation_id=resolved.conversation_id,
                     run_id=resolved.run_id,
                     instructions=resolved.instructions,

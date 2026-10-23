@@ -3567,6 +3567,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             effort = resolve_anthropic_effort(
                 model_request_parameters.thinking,
                 supports_xhigh=self.profile.get('anthropic_supports_xhigh_effort', False),
+                supports_max=self.profile.get('anthropic_supports_max_effort', True),
             )
 
         if effort is not None:

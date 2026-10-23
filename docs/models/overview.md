@@ -282,7 +282,7 @@ these categories, whichever provider it came from:
 |---|---|
 | [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] | A rate limit was reached, e.g. an HTTP 429. Waiting and retrying may help. |
 | [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] | The provider said the account's quota, credits, or billing is exhausted, e.g. an HTTP 402 or OpenAI's `insufficient_quota`. Waiting won't help. |
-| [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] | The provider or model is temporarily unavailable, e.g. an HTTP 503 or a gRPC `UNAVAILABLE`. |
+| [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] | The provider or model is temporarily unavailable, e.g. an HTTP 503 or a gRPC `UNAVAILABLE` sent by the provider. |
 | [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError] | The provider said it's unavailable because it's overloaded, e.g. an HTTP 529 or Anthropic's `overloaded_error`. A subclass of `ModelUnavailableError`. |
 | [`ModelServerError`][pydantic_ai.exceptions.ModelServerError] | The provider failed with another server error, e.g. an HTTP 500, 502, or 504. |
 | [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] | The request could not reach the provider, or its response could not be read. Its [`phase`][pydantic_ai.exceptions.ModelConnectionError.phase] says whether the request may have reached the provider. |
@@ -360,7 +360,8 @@ available as [`hint`][pydantic_ai.exceptions.ModelHTTPError.hint].
     the same error instead, so they're handled the same way:
 
     - xAI's gRPC status codes are mapped to their HTTP equivalents, like `RESOURCE_EXHAUSTED` to 429. These have
-      `headers=None`.
+      `headers=None`. A gRPC error the client raised itself, because it couldn't connect, lost the connection, or
+      reached its `timeout`, is a `ModelConnectionError` or `ModelTimeoutError` instead, as with other providers.
     - OpenRouter errors parsed from a 200-OK response report the error's own `code`.
     - An error sent inside an already open stream gets the status of the same error before the stream opens, like
       529 for Anthropic's `overloaded_error`. These have

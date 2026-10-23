@@ -1120,29 +1120,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         self, messages: list[_messages.ModelMessage], run_context: RunContext[DepsT]
     ) -> None:
         """Reevaluate any `SystemPromptPart` with dynamic_ref in the provided messages by running the associated runner function."""
-        # Only proceed if there's at least one dynamic runner.
-        if self.system_prompt_dynamic_functions:
-            for index, msg in enumerate(messages):
-                if isinstance(msg, _messages.ModelRequest):
-                    reevaluated_message_parts: list[_messages.ModelRequestPart] = []
-                    for part in msg.parts:
-                        if isinstance(part, _messages.SystemPromptPart) and part.dynamic_ref:
-                            # Look up the runner by its ref
-                            if runner := self.system_prompt_dynamic_functions.get(  # pragma: lax no cover
-                                part.dynamic_ref
-                            ):
-                                # To enable dynamic system prompt refs in future runs, use a placeholder string
-                                updated_part_content = await runner.run(run_context)
-                                part = _messages.SystemPromptPart(
-                                    updated_part_content or '', dynamic_ref=part.dynamic_ref, metadata=part.metadata
-                                )
-
-                        reevaluated_message_parts.append(part)
-
-                    # Replace the whole message instead of assigning to msg.parts so
-                    # caller-owned message_history objects are never mutated in place.
-                    if reevaluated_message_parts != msg.parts:
-                        messages[index] = replace(msg, parts=reevaluated_message_parts)
+        await _system_prompt.reevaluate_dynamic_system_prompts(
+            messages, self.system_prompt_dynamic_functions, run_context
+        )
 
     async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.SystemPromptPart]:
         """Build the initial system-prompt messages for the conversation."""
