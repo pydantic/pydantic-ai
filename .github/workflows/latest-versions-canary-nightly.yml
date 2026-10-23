@@ -1,0 +1,55 @@
+name: Latest Versions Canary Nightly
+
+# The daily run of `latest-versions-canary.yml`, and the job that reports it. The report job lives
+# here rather than in the canary because `ci.yml` also calls the canary, granting it only
+# `contents: read`, and a called workflow cannot request more than its caller grants.
+#
+# `.github/scripts/latest_versions_canary_report.py` files one issue per new failure signature,
+# labeled `p:1-highest` and `pydanty:triage-issue`, and comments on the issues it filed before.
+# Its docstring has the deduplication rules. A manual run of the canary reports nothing; its
+# result is on its own page.
+
+on:
+  schedule:
+    - cron: '23 7 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    uses: ./.github/workflows/latest-versions-canary.yml
+
+  report:
+    needs: [canary]
+    # A green run reports too: it is how an issue learns its failure passed.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: latest-versions-canary-*
+          path: ${{ runner.temp }}/canary-reports
+
+      - name: Install the typed-boundary dependency
+        # Pinned exactly: this job holds a write-scoped token, so a compromised new release must
+        # never reach it.
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
+
+      - name: File or update the canary issues
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CANARY_RESULT: ${{ needs.canary.result }}
+        run: >-
+          python3 .github/scripts/latest_versions_canary_report.py
+          --reports "${RUNNER_TEMP}/canary-reports"
+          --result "$CANARY_RESULT"
+          --tested-at "$(git log -1 --format=%cI)"

@@ -39,10 +39,13 @@ name: Latest Versions Canary
 # not run them. The interior versions are left to `ci.yml`, which covers all five at the
 # bottom of the range; two here is the compromise between that coverage and a job that gates
 # every release.
+#
+# Each leg uploads a report: its step outcomes, its JUnit results and the dependencies that moved.
+# The daily run comes from `latest-versions-canary-nightly.yml`, whose report job files new
+# failures as issues. That job lives there because `ci.yml` grants this workflow only
+# `contents: read`, and a called workflow cannot request more than its caller grants.
 
 on:
-  schedule:
-    - cron: '23 7 * * *'
   workflow_dispatch:
   # Self-test: the PR that adds or edits the canary runs it once as a PR check, so a
   # change to it is proven before merge rather than on the next scheduled run.
@@ -145,6 +148,7 @@ jobs:
       # workspace member's `requires-dist`, so they cannot drift from what we publish, and no
       # install is needed to read them.
       - name: Resolve at the latest allowed versions
+        id: resolve
         env:
           UPGRADE_ARGS: ${{ runner.temp }}/upgrade-args
         run: |
@@ -186,6 +190,7 @@ jobs:
       # `make install` without `--frozen`, and without the `pydantic-ai-harness` pin it adds
       # for pyright: nothing here typechecks.
       - name: Install
+        id: install
         run: uv sync --all-extras --no-extra mcp-tasks --all-packages
 
       # So a red run's log answers "which upgrade did this" without a bisect. The package list
@@ -194,6 +199,7 @@ jobs:
       - name: Report which dependencies moved
         env:
           LOCKED_BEFORE: ${{ runner.temp }}/uv.lock.committed
+          MOVED_REPORT: ${{ runner.temp }}/canary-report/moved.txt
         run: |
           python3 - <<'PY'
           import os
@@ -269,6 +275,10 @@ jobs:
           print('\n'.join(lines) or 'No declared dependency moved past uv.lock.')
           print(summary)
 
+          moved_report = Path(os.environ['MOVED_REPORT'])
+          moved_report.parent.mkdir(parents=True, exist_ok=True)
+          moved_report.write_text('\n'.join(lines))
+
           if step_summary := os.environ.get('GITHUB_STEP_SUMMARY'):
               Path(step_summary).write_text(
                   '\n'.join(['## Dependencies resolved past `uv.lock`', '', '```', *lines, '```', '', summary, ''])
@@ -281,7 +291,34 @@ jobs:
       # deselecting them would drop real signal about the `sentence-transformers` extra rather
       # than drop flake. That self-skip is also why this job needs none of `ci.yml`'s
       # out-of-band HF cache warming.
-      - run: uv run --no-sync pytest --durations=100 -n logical --dist=loadgroup
+      #
+      # `xunit1` because only that JUnit family records each test's file, which the report needs.
+      - id: test
+        run: >-
+          uv run --no-sync pytest --durations=100 -n logical --dist=loadgroup
+          --junit-xml="${RUNNER_TEMP}/canary-report/junit.xml" -o junit_family=xunit1
         env:
           # The docs examples are type-checked against the locked dependencies, in `ci.yml`.
           TYPECHECK_EXAMPLES: false
+
+      # The report is untrusted: the steps above ran freshly published packages, which can write
+      # anything. `.github/scripts/latest_versions_canary_report.py` treats it that way.
+      - name: Record each stage's outcome
+        if: always()
+        env:
+          RESOLVE: ${{ steps.resolve.outcome }}
+          INSTALL: ${{ steps.install.outcome }}
+          TEST: ${{ steps.test.outcome }}
+          LEGS: ${{ strategy.job-total }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/canary-report"
+          printf '{"resolve": "%s", "install": "%s", "test": "%s", "legs": %s}\n' \
+            "$RESOLVE" "$INSTALL" "$TEST" "$LEGS" > "${RUNNER_TEMP}/canary-report/outcome.json"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: latest-versions-canary-${{ matrix.python-version }}
+          path: ${{ runner.temp }}/canary-report/
+          retention-days: 7

@@ -263,6 +263,7 @@ jobs:
           .github/scripts/test_agent_provider_health.py
           .github/scripts/test_check_api_compatibility.py
           .github/scripts/test_issue_pr_attention_monitor.py
+          .github/scripts/test_latest_versions_canary_report.py
           .github/scripts/test_semantic_owner_router.py
           .github/scripts/test_community_demand.py
           .github/scripts/test_triage_telemetry.py
