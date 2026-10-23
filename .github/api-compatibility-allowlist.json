@@ -115,7 +115,7 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10841"
     },
     {
-      "against": "v2.59.0",
+      "against": "v2.60.0",
       "fingerprint": "76c8e5b469f66ad102b2cdd3261834ead76190074752af9a971cd8ac9e6c4c4e",
       "reason": "Changes the value of `AbsurdDurability.engine_spec`, a class-level engine configuration: it adds a `serialization_failure` mapping and keeps one MCP session per run (`'enter-in-durable-unit'`). Users don't set or read it, so no code changes.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10732"
