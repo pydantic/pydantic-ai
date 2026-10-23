@@ -251,7 +251,6 @@ def create_server_tool_call(
     tool_call_id: str = 'server_tool_001',
     tool_type: chat_pb2.ToolCallType | None = None,
     status: chat_pb2.ToolCallStatus | None = None,
-    error_message: str = '',
 ) -> chat_pb2.ToolCall:
     """Create a server-side (builtin) ToolCall proto."""
     if tool_type is None:
@@ -262,7 +261,6 @@ def create_server_tool_call(
         id=tool_call_id,
         type=tool_type,
         status=status,
-        error_message=error_message,
         function=chat_pb2.FunctionCall(
             name=tool_name,
             arguments=json.dumps(arguments),
