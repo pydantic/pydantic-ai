@@ -12,8 +12,6 @@ and users never produce, or one whose shape needs its own strategy:
 - Values are ones a JSON round trip preserves (no NaN or infinities, no tuples), as a stored history has to.
 - Text in a well-formed history is never blank. Empty and whitespace-only text comes only from the `empty_*`
   damages, so a failure it causes is tied to a damage a test can name.
-- A user prompt's list content has at least one item. An empty list maps to the empty body that F5 pins, so
-  drawing it would only repeat that finding.
 - Tool call ids follow the formats providers emit, and are never `''`. A provider that sends none gets a
   generated `pyd_ai_` id, and an empty id is replaced by a random one at mapping, which no property about
   the body can hold. No provider is known to send one.
@@ -31,7 +29,8 @@ and users never produce, or one whose shape needs its own strategy:
 - Damage that adds a message puts it after a request, never between a call's response and the request
   answering it: the agent loop never puts one there, and repair pairs results with calls by order.
 - `empty_parts` never leaves a history with no part and no instructions: the agent refuses to run on one
-  (`No message history, user prompt, or instructions provided`).
+  (`No message history, user prompt, or instructions provided`). Nor does it empty a response that reuses an
+  earlier response's call id, which leaves the shape `reanswered_call_id` draws on its own.
 """
 
 from __future__ import annotations as _annotations
@@ -197,6 +196,7 @@ Damage = Literal[
     'dangling_call',
     'repeated_call_id',
     'repeated_call_id_across_responses',
+    'reanswered_call_id',
     'thinking_only_response',
     'consecutive_request',
     'empty_prompt',
@@ -238,12 +238,44 @@ def _damaged_histories(draw: st.DrawFn, without: frozenset[Damage]) -> list[Mode
                 for call in later_response.parts
             )
         ]
-        # Each message that can lose its parts and leave the run something to send.
+        # Each request right after a response, with each return of an earlier request whose call that response
+        # doesn't make.
+        reanswerable = [
+            (index, part)
+            for index in requests
+            if index - 1 in responses
+            for earlier in requests
+            if earlier < index - 1
+            for part in requests[earlier].parts
+            if isinstance(part, ToolReturnPart)
+            and not any(
+                isinstance(call, ToolCallPart) and call.tool_call_id == part.tool_call_id
+                for call in responses[index - 1].parts
+            )
+        ]
+        earlier_call_ids = {
+            index: {
+                part.tool_call_id
+                for earlier, response in responses.items()
+                if earlier < index
+                for part in response.parts
+                if isinstance(part, ToolCallPart)
+            }
+            for index in responses
+        }
+        # Each message that can lose its parts and leave the run something to send, other than a response that
+        # reuses an earlier response's call id.
         emptiable = [
             index
             for index in range(len(history))
-            if any(request.instructions for request in requests.values())
-            or any(message.parts for other, message in enumerate(history) if other != index)
+            if (
+                any(request.instructions for request in requests.values())
+                or any(message.parts for other, message in enumerate(history) if other != index)
+            )
+            and not any(
+                isinstance(part, ToolCallPart) and part.tool_call_id in earlier_call_ids.get(index, set())
+                for part in history[index].parts
+            )
         ]
         applicable: list[Damage] = [
             kind
@@ -251,6 +283,7 @@ def _damaged_histories(draw: st.DrawFn, without: frozenset[Damage]) -> list[Mode
             if kind not in without
             and (responses or kind not in _NEEDS_A_RESPONSE)
             and (reusable_ids or kind != 'repeated_call_id_across_responses')
+            and (reanswerable or kind != 'reanswered_call_id')
             and (emptiable or kind != 'empty_parts')
         ]
         damage = draw(st.sampled_from(applicable))
@@ -294,15 +327,23 @@ def _damaged_histories(draw: st.DrawFn, without: frozenset[Damage]) -> list[Mode
                 answered_by = requests[response_index + 1]
                 answer = ToolReturnPart(call.tool_name, draw(_TEXT), call_id)
                 history[response_index + 1] = replace(answered_by, parts=[answer, *answered_by.parts])
+            case 'reanswered_call_id':
+                # A return for a call an earlier request already answered, after a response that doesn't make that
+                # call, as dropping the later call of a reused id (`TestModel` reuses output tool ids) leaves.
+                answering_index, answered = draw(st.sampled_from(reanswerable))
+                answering = requests[answering_index]
+                again = ToolReturnPart(answered.tool_name, draw(_TEXT), answered.tool_call_id)
+                history[answering_index] = replace(answering, parts=[again, *answering.parts])
             case 'thinking_only_response':
                 # A response with nothing but thinking, as an interrupted stream or a `no_output` retry leaves.
                 history.insert(request_index + 1, ModelResponse(parts=[draw(st.builds(ThinkingPart, _TEXT))]))
             case 'consecutive_request':
                 history.insert(request_index + 1, ModelRequest(parts=[draw(_USER_PROMPTS)]))
             case 'empty_prompt':
-                # A prompt with no text, or only whitespace, as `agent.run('')` records.
+                # A prompt with no text, only whitespace, or no items, as `agent.run('')` or `agent.run([])` records.
                 kept = [part for part in request.parts if not isinstance(part, UserPromptPart)]
-                history[request_index] = replace(request, parts=[*kept, UserPromptPart(draw(_BLANK))])
+                prompt = UserPromptPart(draw(_BLANK | st.lists(_TEXT, max_size=0)))
+                history[request_index] = replace(request, parts=[*kept, prompt])
             case 'empty_system_prompt':
                 # A system prompt that rendered to nothing, or to whitespace.
                 history[request_index] = replace(request, parts=[*request.parts, SystemPromptPart(draw(_BLANK))])

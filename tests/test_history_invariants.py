@@ -250,7 +250,12 @@ def test_well_formed_body_passes_every_body_checker(case: WireCase):
     assert wire == case.expected
     assert duplicate_call_id_violations(wire, across_messages=True) == []
     assert call_pairing_violations(wire, results_follow_their_call=True) == []
-    assert empty_message_violations(wire, system_suffices=False, empty_assistant_turns_pass=False) == []
+    assert (
+        empty_message_violations(
+            wire, system_suffices=False, empty_assistant_turns_pass=False, empty_user_turns_pass=False
+        )
+        == []
+    )
     assert empty_text_violations(wire) == []
 
 
@@ -305,25 +310,48 @@ def test_unanswered_call():
 
 def test_empty_body():
     wire = anthropic_wire([])
-    assert empty_message_violations(wire, system_suffices=False, empty_assistant_turns_pass=False) == [
-        'wire.empty_body'
-    ]
-    assert empty_message_violations(wire, system_suffices=True, empty_assistant_turns_pass=False) == []
+    assert empty_message_violations(
+        wire, system_suffices=False, empty_assistant_turns_pass=False, empty_user_turns_pass=False
+    ) == ['wire.empty_body']
+    assert (
+        empty_message_violations(
+            wire, system_suffices=True, empty_assistant_turns_pass=False, empty_user_turns_pass=False
+        )
+        == []
+    )
 
 
 def test_empty_message():
     wire = chat_completions_wire([{'role': 'assistant', 'content': None}])
-    assert empty_message_violations(wire, system_suffices=False, empty_assistant_turns_pass=False) == [
-        'wire.empty_message'
-    ]
-    assert empty_message_violations(wire, system_suffices=False, empty_assistant_turns_pass=True) == []
+    assert empty_message_violations(
+        wire, system_suffices=False, empty_assistant_turns_pass=False, empty_user_turns_pass=False
+    ) == ['wire.empty_message']
+    assert (
+        empty_message_violations(
+            wire, system_suffices=False, empty_assistant_turns_pass=True, empty_user_turns_pass=False
+        )
+        == []
+    )
+
+
+def test_empty_user_turn():
+    wire = chat_completions_wire([{'role': 'user', 'content': []}])
+    assert empty_message_violations(
+        wire, system_suffices=False, empty_assistant_turns_pass=False, empty_user_turns_pass=False
+    ) == ['wire.empty_message']
+    assert (
+        empty_message_violations(
+            wire, system_suffices=False, empty_assistant_turns_pass=False, empty_user_turns_pass=True
+        )
+        == []
+    )
 
 
 def test_empty_message_outside_an_assistant_turn():
     wire = chat_completions_wire([{'role': 'user', 'content': None}])
-    assert empty_message_violations(wire, system_suffices=False, empty_assistant_turns_pass=True) == [
-        'wire.empty_message'
-    ]
+    assert empty_message_violations(
+        wire, system_suffices=False, empty_assistant_turns_pass=True, empty_user_turns_pass=False
+    ) == ['wire.empty_message']
 
 
 def test_empty_text():

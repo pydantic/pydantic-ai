@@ -19,12 +19,14 @@ History checkers:
 
 Body checkers, over a body's messages projected to `WireMessage`s by the function for its shape:
 
-- `wire.duplicate_call_id`: a call id the body sends more than once;
+- `wire.duplicate_call_id`: a call id one message sends more than once or, with `across_messages`, one the
+  body sends more than once;
 - `wire.orphan_result`: a tool result with no earlier call or, where results must answer the message
   right before theirs, none in that message;
 - `wire.unanswered_call`: a call no later result answers;
-- `wire.empty_body`: a body with no messages;
-- `wire.empty_message`: a message with no blocks;
+- `wire.empty_body`: a body with no messages, unless `system_suffices` (the API takes its system prompt alone);
+- `wire.empty_message`: a message with no blocks, other than an assistant turn where `empty_assistant_turns_pass`
+  or a user turn where `empty_user_turns_pass`;
 - `wire.empty_text`: a text block with no text, or one outside an assistant turn with only whitespace;
 - `wire.body_changed`: two mappings that should agree, such as mapping the same history twice, don't.
 """
@@ -304,19 +306,26 @@ _ASSISTANT_ROLES = frozenset({'assistant', 'model'})
 
 
 def empty_message_violations(
-    messages: Sequence[WireMessage], *, system_suffices: bool, empty_assistant_turns_pass: bool
+    messages: Sequence[WireMessage],
+    *,
+    system_suffices: bool,
+    empty_assistant_turns_pass: bool,
+    empty_user_turns_pass: bool,
 ) -> list[str]:
     """`wire.empty_body`, `wire.empty_message`: the body has a message, and every message has a block.
 
     With `system_suffices`, the body sends a system prompt the API takes as a request on its own, so it needs no
-    message. With `empty_assistant_turns_pass`, the API takes an assistant turn with no block.
+    message. With `empty_assistant_turns_pass` or `empty_user_turns_pass`, the API takes an assistant or a user turn
+    with no block.
     """
     if not messages:
         return [] if system_suffices else ['wire.empty_body']
     return [
         'wire.empty_message'
         for message in messages
-        if not message.blocks and not (empty_assistant_turns_pass and message.role in _ASSISTANT_ROLES)
+        if not message.blocks
+        and not (empty_assistant_turns_pass and message.role in _ASSISTANT_ROLES)
+        and not (empty_user_turns_pass and message.role == 'user')
     ]
 
 

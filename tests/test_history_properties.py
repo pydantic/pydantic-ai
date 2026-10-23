@@ -6,9 +6,10 @@ Histories are drawn by `tests/history_strategies.py`, and every property is a ch
 The body properties call each model's private message mapper instead of recording requests. They are
 about the request body itself, over many histories per run: no request is sent, and a cassette holds
 one recorded body per test and isn't always matched on it. Each history goes through what an agent run
-does before mapping: `repair_messages`, `Model.prepare_request`, then `Model.prepare_messages`, repaired
-again as the run repairs it. Every body test also checks P1, that mapping doesn't raise: no drawn history
-is one a model should refuse, so a `UserError` fails a test too.
+does before mapping, in its order: `repair_messages`, `Model.prepare_messages` with the run's parameters,
+`repair_messages` again, then `Model.prepare_request`, whose parameters the mapper gets. Every body test also
+checks P1, that mapping doesn't raise: no drawn history is one a model should refuse, so a `UserError` fails a
+test too.
 
 A property that fails on main for drawn histories is a known finding: `KNOWN_FINDINGS` leaves the damage that
 draws it out of that property's histories, and a strict expected failure on a hand-built reproducer pins it.
@@ -131,16 +132,6 @@ def test_history_survives_serialization(history: list[ModelMessage]):
     """`ModelMessagesTypeAdapter` loads back what it dumped, in Python and in JSON."""
     assert round_trip_violations(history, mode='python') == []
     assert round_trip_violations(history, mode='json') == []
-
-
-@PROPERTY_SETTINGS
-@given(histories(well_formed=False))
-def test_repair_makes_tool_calls_pair_up(history: list[ModelMessage]):
-    """Repair answers every call once in the next request, keeps every part but orphan returns, and settles."""
-    repaired = repair_messages(history)
-    assert tool_pairing_violations(repaired) == []
-    assert part_changes(history, repaired) == []
-    assert idempotence_violations(repair_messages, history) == []
 
 
 @dataclass(frozen=True)
@@ -299,6 +290,10 @@ class MapperCase:
     takes_system_alone: bool = False
     """Whether the API takes a system prompt with no message as a request: OpenAI Responses (gpt-5.5) accepted
     instructions with an empty `input`, probed 2026-10-23 (UTC)."""
+    takes_empty_user_turns: bool = False
+    """Whether the API takes a user turn with no content, which the adapter sends for `UserPromptPart([])`: OpenAI
+    Chat and OpenAI Responses (gpt-5.5) and the Hugging Face router (Qwen/Qwen3-235B-A22B through
+    `provider_name='auto'`, with a tool declared) accepted one, probed 2026-10-23 (UTC)."""
     takes_empty_assistant_turns: bool = False
     """Whether the API takes an assistant turn with no content, which the adapter sends for a response with no
     parts: Groq (openai/gpt-oss-120b) and the Hugging Face router (Qwen/Qwen3-235B-A22B through `provider_name='auto'`,
@@ -334,6 +329,7 @@ MAPPER_CASES = [
         _openai_chat_body,
         chat_completions_wire,
         _baseline_turns(assistant='assistant', results='tool'),
+        takes_empty_user_turns=True,
         marks=_needs(openai_imports_successful, 'openai'),
     ),
     MapperCase(
@@ -348,6 +344,7 @@ MAPPER_CASES = [
             WireMessage('assistant', [WireBlock('text', 'Found it')]),
         ],
         takes_system_alone=True,
+        takes_empty_user_turns=True,
         marks=_needs(openai_imports_successful, 'openai'),
     ),
     MapperCase(
@@ -403,6 +400,7 @@ MAPPER_CASES = [
         _huggingface_body,
         chat_completions_wire,
         _baseline_turns(assistant='assistant', results='tool'),
+        takes_empty_user_turns=True,
         takes_empty_assistant_turns=True,
         marks=_needs(huggingface_imports_successful, 'huggingface-hub'),
     ),
@@ -439,6 +437,7 @@ async def _violations(checked: CheckedProperty, case: MapperCase, history: list[
                 wire,
                 system_suffices=case.takes_system_alone and body.system is not None,
                 empty_assistant_turns_pass=case.takes_empty_assistant_turns,
+                empty_user_turns_pass=case.takes_empty_user_turns,
             )
         case 'text_is_not_empty':
             return empty_text_violations(wire)
@@ -463,7 +462,10 @@ async def _violations(checked: CheckedProperty, case: MapperCase, history: list[
 class Pin:
     """A hand-built reproducer of a known finding, on one provider."""
 
-    case_id: str
+    case_id: str | None
+    """The mapper case the reproducer fails on, or `None` for a history `repair_messages` leaves broken. Every
+    mapper maps what repair leaves, so the finding's damage is then left out of its property on every case, and
+    out of the repair property."""
     history: list[ModelMessage]
     rejection: str
     """The probed model and its error, verbatim."""
@@ -481,8 +483,14 @@ class KnownFinding:
     pins: tuple[Pin, ...]
 
     @property
+    def breaks_repair(self) -> bool:
+        return any(pin.case_id is None for pin in self.pins)
+
+    @property
     def providers(self) -> frozenset[str]:
-        return frozenset(pin.case_id for pin in self.pins)
+        if self.breaks_repair:
+            return frozenset(case.id for case in MAPPER_CASES)
+        return frozenset(pin.case_id for pin in self.pins if pin.case_id is not None)
 
 
 _REPEATED_CALL_ID: list[ModelMessage] = [
@@ -518,17 +526,16 @@ REPEATED_CALL_ID_REJECTIONS = {
     'cohere': 'command-r7b-12-2024: 400 "invalid tool call provided in messages[1].tool_calls[1]: '
     "cannot have duplicate tool ids 'call_0'\"",
 }
-"""The APIs that rejected a call id repeated in one response, and how. OpenAI Responses (gpt-5.5) and Groq
-(openai/gpt-oss-120b) accepted it. The Hugging Face probe failed on an unrelated bug,
-https://github.com/pydantic/pydantic-ai/issues/11125: once that is fixed, probe a repeated call id there again. The
-misspelling in OpenAI's error is its own."""
+"""The APIs that rejected a call id repeated in one response, and how. OpenAI Responses (gpt-5.5), Groq
+(openai/gpt-oss-120b) and the Hugging Face router (Qwen/Qwen3-235B-A22B through `provider_name='auto'`) accepted it.
+The misspelling in OpenAI's error is its own."""
 
 REPEATED_CALL_ID_ACROSS_RESPONSES_REJECTIONS = {
     'cohere': 'command-r7b-12-2024: 400 "invalid tool call provided in messages[3].tool_calls[0]: '
     "cannot have duplicate tool ids 'call_0'\"",
 }
-"""The APIs that also rejected a call id an earlier response used, and how. Of the others, OpenAI Chat, Anthropic,
-Google, Bedrock and Mistral accepted it, so on them an id is unique per message."""
+"""The APIs that also rejected a call id an earlier response used, and how. OpenAI Chat, OpenAI Responses, Anthropic,
+Google, Bedrock, Groq, Mistral and the Hugging Face router accepted it, so on them an id is unique per message."""
 
 KNOWN_FINDINGS = [
     KnownFinding(
@@ -631,6 +638,44 @@ KNOWN_FINDINGS = [
             ),
         ),
     ),
+    KnownFinding(
+        'F7',
+        'results_answer_calls',
+        frozenset({'reanswered_call_id'}),
+        'https://github.com/pydantic/pydantic-ai/issues/11180',
+        (
+            Pin(
+                None,
+                [
+                    ModelRequest(parts=[UserPromptPart('Look it up')]),
+                    ModelResponse(parts=[ToolCallPart('lookup', {'q': 'a'}, 'call_0')]),
+                    ModelRequest(parts=[ToolReturnPart('lookup', 'a', 'call_0')]),
+                    ModelResponse(parts=[TextPart('It is a.')]),
+                    ModelRequest(parts=[ToolReturnPart('lookup', 'a', 'call_0'), UserPromptPart('Thanks')]),
+                ],
+                'repair keeps the second return; claude-sonnet-5-5: 400 "messages.4.content.0: unexpected '
+                '`tool_use_id` found in `tool_result` blocks: call_0. Each `tool_result` block must have a '
+                'corresponding `tool_use` block in the previous message."',
+                label='repair',
+            ),
+        ),
+    ),
+    KnownFinding(
+        'F8',
+        'messages_are_not_empty',
+        frozenset({'empty_prompt'}),
+        'https://github.com/pydantic/pydantic-ai/issues/11181',
+        tuple(
+            Pin(case_id, [ModelRequest(parts=[UserPromptPart([])])], rejection)
+            for case_id, rejection in {
+                'groq': "openai/gpt-oss-120b: 400 \"'messages.0' : for 'role:user' the following must be satisfied"
+                "[('messages.0.content' : one of the following must be satisfied[('messages.0.content' : value must "
+                "be a string) OR ('messages.0.content' : minimum number of items is 1)])]\"",
+                'mistral': 'mistral-large-latest: 400 "No messages contain any content"',
+                'cohere': 'command-r7b-12-2024: 400 "missing required parameter: \'messages[0].content\'"',
+            }.items()
+        ),
+    ),
 ]
 
 
@@ -642,7 +687,7 @@ KNOWN_FINDINGS = [
             pin,
             id='-'.join(filter(None, [finding.id, pin.case_id, pin.label])),
             marks=(
-                *next(case.marks for case in MAPPER_CASES if case.id == pin.case_id),
+                *next((case.marks for case in MAPPER_CASES if case.id == pin.case_id), ()),
                 pytest.mark.xfail(
                     strict=True,
                     raises=AssertionError,
@@ -655,15 +700,34 @@ KNOWN_FINDINGS = [
     ],
 )
 async def test_known_finding_is_still_present(finding: KnownFinding, pin: Pin):
-    case = next(case for case in MAPPER_CASES if case.id == pin.case_id)
-    assert await _violations(finding.fails, case, pin.history) == []
+    if pin.case_id is None:
+        assert tool_pairing_violations(repair_messages(pin.history)) == []
+    else:
+        case = next(case for case in MAPPER_CASES if case.id == pin.case_id)
+        assert await _violations(finding.fails, case, pin.history) == []
 
 
 # --- properties --------------------------------------------------------------------------------------
-#
-# Each history is drawn inside the test, since a known finding's damage is left out only for the cases it fails on.
-# The tests are sync: Hypothesis ends a draw that runs out of data with a `BaseException`, which raised inside an
-# async test breaks the anyio test runner for every later example.
+
+
+@PROPERTY_SETTINGS
+@given(
+    histories(
+        well_formed=False,
+        without=frozenset[Damage]().union(*(finding.damage for finding in KNOWN_FINDINGS if finding.breaks_repair)),
+    )
+)
+def test_repair_makes_tool_calls_pair_up(history: list[ModelMessage]):
+    """Repair answers every call once in the next request, keeps every part but orphan returns, and settles."""
+    repaired = repair_messages(history)
+    assert tool_pairing_violations(repaired) == []
+    assert part_changes(history, repaired) == []
+    assert idempotence_violations(repair_messages, history) == []
+
+
+# The body properties draw each history inside the test, since a known finding's damage is left out only for the
+# cases it fails on. They are sync: Hypothesis ends a draw that runs out of data with a `BaseException`, which raised
+# inside an async test breaks the anyio test runner for every later example.
 
 
 def _check(checked: CheckedProperty, case: MapperCase, data: st.DataObject) -> list[str]:
