@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
@@ -31,6 +33,9 @@ def _ifs(name: str, count: int, indent: str = '', marker: str = '') -> str:
 
 @pytest.fixture
 def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    # Keep the developer's git config, such as commit signing or a global hooks path, out of the scratch repo.
+    monkeypatch.setenv('GIT_CONFIG_GLOBAL', os.devnull)
+    monkeypatch.setenv('GIT_CONFIG_NOSYSTEM', '1')
     _write(tmp_path, 'pyproject.toml', _PYPROJECT)
     _write(tmp_path, 'pkg/__init__.py', '')
     _write(tmp_path, 'pkg/debt.py', _ifs('debt', 5) + '\n\n' + _ifs('small', 2))
@@ -260,6 +265,17 @@ def test_an_ignore_without_a_reason_fails(repo: Path, capsys: pytest.CaptureFixt
     assert out == f'pkg/debt.py:1: complexipy give the ignore a reason, see {GUIDE}#ignoring-a-function\n'
 
 
+@pytest.mark.parametrize('marker', ['  # NOQA: complexipy', '  # noqa: complexipy, C901', '  # Complexipy : ignore ()'])
+def test_every_spelling_complexipy_honors_needs_a_reason(repo: Path, capsys: pytest.CaptureFixture[str], marker: str):
+    _write(repo, 'pkg/debt.py', _ifs('debt', 6, marker=marker) + '\n\n' + _ifs('small', 2))
+    _stage(repo)
+
+    code, out = _check(capsys, '--staged')
+
+    assert code == 1
+    assert 'give the ignore a reason' in out
+
+
 def test_an_ignore_with_a_reason_passes_and_is_reported(repo: Path, capsys: pytest.CaptureFixture[str]):
     marker = '  # complexipy: ignore (one branch per value)'
     _write(repo, 'pkg/debt.py', _ifs('debt', 6, marker=marker) + '\n\n' + _ifs('small', 2))
@@ -282,6 +298,43 @@ def test_an_ignore_that_was_already_there_is_not_reported(repo: Path, capsys: py
     _stage(repo)
 
     assert _check(capsys, '--staged') == (0, '')
+
+
+def test_an_ignored_function_is_not_a_predecessor_for_a_new_one(repo: Path, capsys: pytest.CaptureFixture[str]):
+    marker = '  # complexipy: ignore (one branch per value)'
+    _write(repo, 'pkg/debt.py', _ifs('debt', 5, marker=marker) + '\n\n' + _ifs('small', 2))
+    _write(repo, 'pkg/owner.py', 'class Owner:\n' + _ifs('debt', 4, indent='    '))
+    _stage(repo)
+
+    code, out = _check(capsys, '--staged')
+
+    assert code == 1
+    assert 'pkg/owner.py:2: Owner::debt 4: new function over the limit' in out
+
+
+def test_removing_an_ignore_from_unchanged_debt_passes(repo: Path, capsys: pytest.CaptureFixture[str]):
+    marker = '  # complexipy: ignore (one branch per value)'
+    _write(repo, 'pkg/debt.py', _ifs('debt', 5, marker=marker) + '\n\n' + _ifs('small', 2))
+    _commit(repo)
+    _write(repo, 'pkg/debt.py', _ifs('debt', 5) + '\n\n' + _ifs('small', 2))
+    _stage(repo)
+
+    assert _check(capsys, '--staged') == (0, '')
+
+
+@pytest.mark.parametrize(
+    'config',
+    [
+        '[tool.complexipy]\npaths = "pkg"\nmax-complexity-allowed = 3\n',
+        '[tool.complexipy]\npaths = ["pkg"]\nmax-complexity-allowed = "3"\n',
+        '[tool.complexipy]\npaths = ["pkg", 1]\nmax-complexity-allowed = 3\n',
+    ],
+)
+def test_a_malformed_config_stops_the_check(repo: Path, config: str):
+    _write(repo, 'pyproject.toml', config)
+
+    with pytest.raises(SystemExit, match=r'\[tool\.complexipy\]'):
+        check_complexity.main(['--staged'])
 
 
 def test_github_format_annotates_and_summarizes(
@@ -500,8 +553,8 @@ def test_every_anchor_the_report_links_is_a_heading_in_the_guide():
     assert linked - _guide_anchors() == set()
 
 
-def test_every_case_test_names_a_case_in_the_guide():
-    assert {case for case, _ in check_complexity._CASE_TESTS} <= set(check_complexity._CASES)
+def test_every_case_has_a_fix():
+    assert set(check_complexity._CASES) == set(get_args(check_complexity._Case))
 
 
 def test_the_repository_config_names_existing_roots():

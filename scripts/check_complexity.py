@@ -26,14 +26,35 @@ import tomllib
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from complexipy import FunctionComplexity, code_complexity
 
 GUIDE = 'agent_docs/complexity.md'
 
-_IGNORE = re.compile(r'#\s*(?:complexipy:\s*ignore|noqa:\s*complexipy)\b(.*)$')
+# complexipy drops a function on either marker, in any case and with any text after it. Only a `(reason)`
+# directly after the marker counts as a reason.
+_IGNORE = re.compile(
+    r'#\s*(?:complexipy\s*:\s*ignore|noqa\s*:\s*complexipy)\S*\s*(?:\((?P<reason>[^)]*)\))?', re.IGNORECASE
+)
 
-_FAILURES = {
+_Failure = Literal['new', 'crossed', 'worsened']
+_Case = Literal[
+    'closure-hosted',
+    'orchestration',
+    'name-dispatch',
+    'stream-state-machine',
+    'tree-walk',
+    'presentation',
+    'vocab-translator',
+    'history-pass',
+    'part-ladder',
+    'precedence-resolution',
+    'check-chain',
+    'algorithm',
+]
+
+_FAILURES: dict[_Failure, tuple[str, str]] = {
     'new': ('new-function', 'new function over the limit'),
     'crossed': ('crossed-the-limit', 'this change took it over the limit'),
     'worsened': ('existing-debt', 'already over the limit, and this change made it worse'),
@@ -50,7 +71,7 @@ _RULES = {
     'C011': ('flatten-nested-try', 'move the inner `try` into its own method'),
 }
 
-_CASES = {
+_CASES: dict[_Case, str] = {
     'closure-hosted': 'hoist the nested function to a method or a module function, passing what it captures',
     'orchestration': 'move the pure steps out, and keep every `yield`, cleanup and cancellation path in place',
     'name-dispatch': 'dispatch with `match` on the key, ending in `case _:` that raises or calls `assert_never`',
@@ -98,6 +119,15 @@ _PRECEDENCE_NAME = re.compile(r'__init__|resolve|override|_prepare|_build|get_mo
 
 
 @dataclass
+class _Options:
+    base: str
+    head: str | None
+    """A revision, `''` for the index, or `None` for the working tree."""
+    files: list[str]
+    github: bool
+
+
+@dataclass
 class _Change:
     old_path: str | None
     new_path: str | None
@@ -110,8 +140,8 @@ class _Offender:
     path: str
     function: FunctionComplexity
     old: int | None
-    failure: str
-    case: str = 'algorithm'
+    failure: _Failure
+    case: _Case = 'algorithm'
 
 
 @dataclass
@@ -147,7 +177,7 @@ class _Shape:
 
 
 # The first case whose test holds names the function, so the narrower shapes come first.
-_CASE_TESTS: tuple[tuple[str, Callable[[_Shape], bool]], ...] = (
+_CASE_TESTS: tuple[tuple[_Case, Callable[[_Shape], bool]], ...] = (
     ('closure-hosted', lambda s: s.closure_share >= 0.5),
     ('orchestration', lambda s: s.concurrency > 0),
     ('name-dispatch', lambda s: bool(_DISPATCH_NAME.search(s.name)) and s.string_tests + s.type_tests >= 4),
@@ -176,6 +206,7 @@ _CASE_TESTS: tuple[tuple[str, Callable[[_Shape], bool]], ...] = (
     ('precedence-resolution', lambda s: bool(_PRECEDENCE_NAME.search(s.name)) or s.ternaries >= 4),
     ('orchestration', lambda s: s.is_async_generator),
     ('check-chain', lambda s: s.raises >= 2 or s.top_level_ifs >= max(0.4 * s.ifs, 1)),
+    ('algorithm', lambda s: True),
 )
 
 
@@ -236,11 +267,11 @@ def _load(changes: list[_Change], base: str, head: str | None) -> None:
             c.new_source = next(news) if head is not None else Path(c.new_path).read_text(encoding='utf-8')
 
 
-def _functions(source: str | None) -> dict[str, FunctionComplexity]:
+def _functions(source: str | None, *, no_ignore: bool = False) -> dict[str, FunctionComplexity]:
     """The most complex function per name, so `@overload` stubs do not hide their implementation."""
     by_name: dict[str, FunctionComplexity] = {}
     try:
-        found = code_complexity(source).functions if source is not None else []
+        found = code_complexity(source, no_ignore=no_ignore).functions if source is not None else []
     except ValueError:
         found = []
     for function in found:
@@ -249,15 +280,18 @@ def _functions(source: str | None) -> dict[str, FunctionComplexity]:
     return by_name
 
 
-def _classify(before: int | None, after: int, limit: int) -> str | None:
+def _classify(before: int | None, after: int, limit: int) -> _Failure | None:
     if after <= limit or (before is not None and after <= before):
         return None
     return 'new' if before is None else 'crossed' if before <= limit else 'worsened'
 
 
 def _offenders_in(change: _Change, limit: int) -> tuple[list[_Offender], list[_Removed]]:
-    old, new = _functions(change.old_source), _functions(change.new_source)
-    removed = [_Removed(change.old_path or '', name, f.complexity) for name, f in old.items() if name not in new]
+    # The base and the removals are scored with ignores off, so adding or removing an ignore neither hides a
+    # function nor makes one look new. Only the change's own result honors them.
+    old, new = _functions(change.old_source, no_ignore=True), _functions(change.new_source)
+    kept = _functions(change.new_source, no_ignore=True)
+    removed = [_Removed(change.old_path or '', name, f.complexity) for name, f in old.items() if name not in kept]
     offenders: list[_Offender] = []
     for name, function in new.items():
         before = old[name].complexity if name in old else None
@@ -403,8 +437,8 @@ def _shape(path: str, function: FunctionComplexity, node: ast.FunctionDef | ast.
     return shape
 
 
-def _case(shape: _Shape) -> str:
-    return next((case for case, test in _CASE_TESTS if test(shape)), 'algorithm')
+def _case(shape: _Shape) -> _Case:
+    return next(case for case, test in _CASE_TESTS if test(shape))
 
 
 def _definitions(source: str) -> dict[tuple[str, int], ast.FunctionDef | ast.AsyncFunctionDef]:
@@ -436,7 +470,7 @@ def _added_ignores(change: _Change) -> list[tuple[str, int, str]]:
     for n, line in enumerate((change.new_source or '').splitlines(), 1):
         marker = _IGNORE.search(line)
         if marker and line.strip() not in before:
-            added.append((change.new_path or '', n, marker.group(1).strip().removeprefix('(').removesuffix(')')))
+            added.append((change.new_path or '', n, (marker['reason'] or '').strip()))
     return added
 
 
@@ -495,7 +529,7 @@ def _report_ignores(added: list[tuple[str, int, str]], github: bool) -> bool:
     return any(not reason for _, _, reason in added)
 
 
-def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
+def _parse_args(argv: Sequence[str] | None) -> _Options:
     parser = argparse.ArgumentParser(description='Check the cognitive complexity a change adds.')
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument('--staged', action='store_true', help='compare the index with HEAD')
@@ -504,39 +538,54 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument('--format', choices=('text', 'github'), default='text')
     parser.add_argument('files', nargs='*', help='only check these paths')
     args = parser.parse_args(argv)
-    if args.head and not args.base:
+    staged: bool = args.staged
+    base: str | None = args.base
+    head: str | None = args.head
+    files: list[str] = args.files
+    output_format: str = args.format
+    if head and not base:
         parser.error('--head needs --base')
-    return args
+    # The group is required, so `base` is set whenever `--staged` is not.
+    return _Options(base or 'HEAD', '' if staged else head, files, output_format == 'github')
 
 
-def _changes(args: argparse.Namespace, roots: Sequence[str]) -> tuple[list[_Change], str, str | None]:
-    """The changes to check, the base revision, and the head revision (`''` for the index, `None` for the tree)."""
-    if args.staged:
-        return _changed_files(['--cached', 'HEAD'], roots), 'HEAD', ''
-    if args.head:
-        return _changed_files([args.base, args.head], roots), args.base, args.head
-    return _changed_files([args.base], roots) + _untracked_files(roots), args.base, None
+def _config() -> tuple[int, list[str]]:
+    """The limit and the checked roots, from `[tool.complexipy]` in `pyproject.toml`."""
+    config = tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8'))['tool']['complexipy']
+    limit = config['max-complexity-allowed']
+    if not isinstance(limit, int) or not isinstance(config['paths'], list):
+        raise SystemExit('`[tool.complexipy]` needs an integer `max-complexity-allowed` and a list of `paths`')
+    roots = [root for root in config['paths'] if isinstance(root, str)]
+    if len(roots) != len(config['paths']):
+        raise SystemExit('`[tool.complexipy] paths` must be strings')
+    return limit, roots
+
+
+def _changes(options: _Options, roots: Sequence[str]) -> list[_Change]:
+    if options.head == '':
+        return _changed_files(['--cached', options.base], roots)
+    if options.head is not None:
+        return _changed_files([options.base, options.head], roots)
+    return _changed_files([options.base], roots) + _untracked_files(roots)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the check and return the exit code."""
-    args = _parse_args(argv)
-    config = tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8'))['tool']['complexipy']
-    limit, roots = config['max-complexity-allowed'], config['paths']
-    github = args.format == 'github'
+    options = _parse_args(argv)
+    limit, roots = _config()
 
-    changes, base, head = _changes(args, roots)
-    changes = _select(changes, args.files)
-    _load(changes, base, head)
+    changes = _select(_changes(options, roots), options.files)
+    _load(changes, options.base, options.head)
     offenders = _collect(changes, limit)
     _name_cases(offenders, changes)
-    unexplained = _report_ignores([marker for change in changes for marker in _added_ignores(change)], github)
+    added = [marker for change in changes for marker in _added_ignores(change)]
+    unexplained = _report_ignores(added, options.github)
     if offenders:
         print(f'\ncognitive complexity limit is {limit}; {len(offenders)} function(s) got worse ({GUIDE}):\n')
     for o in offenders:
-        _print_offender(o, limit, github)
+        _print_offender(o, limit, options.github)
     summary = os.environ.get('GITHUB_STEP_SUMMARY')
-    if github and offenders and summary:
+    if options.github and offenders and summary:
         _write_summary(offenders, limit, summary)
     return 1 if offenders or unexplained else 0
 

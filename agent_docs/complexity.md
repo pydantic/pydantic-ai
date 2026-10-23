@@ -147,7 +147,7 @@ C003, C005.
 
 ### Dispatch on type
 
-C004. A `match` costs 1 however many cases it has. An `if`/`elif isinstance` chain costs 1 per branch. Dispatch with `match part:`, one `case TextPart():` per type, and `case _: assert_never(part)`. Keep each case to a call, as `UIEventStream.handle_part_start` in `ui/_event_stream.py` does. Ruff's `C901` still counts each `case`, so a large dispatcher can need `# noqa: C901`.
+C004. A `match` costs 1 however many cases it has. An `if`/`elif isinstance` chain costs 1 per branch. Dispatch with `match part:`, one `case TextPart():` per type, and `case _: assert_never(part)`. Keep each case to a call to the method that handles that type. `UIEventStream.handle_part_start` in `ui/_event_stream.py` dispatches to its `handle_*` methods this way; it is an async generator, so each of its cases costs one delegation loop. Ruff's `C901` still counts each `case`, so a large dispatcher can need `# noqa: C901`.
 
 ### Merge nested ifs
 
