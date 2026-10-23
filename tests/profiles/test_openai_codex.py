@@ -13,7 +13,7 @@ import pytest
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.profiles.openai import openai_model_profile
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
     from pydantic_ai.profiles.openai_codex import openai_codex_model_profile
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexProvider
@@ -64,6 +64,7 @@ def test_codex_provider_layers_wire_dialect_over_first_party_profile():
     codex = dict(OpenAICodexProvider.model_profile('gpt-5.6-luna') or {})
     dialect = {
         'openai_unsupported_model_settings',
+        'json_schema_transformer',
         'openai_responses_requires_streaming',
         'openai_responses_requires_store_false',
         'openai_supports_input_token_counting',
@@ -78,6 +79,8 @@ def test_codex_provider_layers_wire_dialect_over_first_party_profile():
     }
     assert codex['tool_addition_mode'] == 'with_definitions'
     assert codex['tool_deferral_mode'] == 'with_tool_search'
+    # OpenAIProvider's tuple and string-bound handling has not been verified against the Codex backend.
+    assert codex['json_schema_transformer'] is OpenAIJsonSchemaTransformer
     assert {key: codex[key] for key in dialect} == {
         key: openai_codex_model_profile('gpt-5.6-luna')[key] for key in dialect
     }

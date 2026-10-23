@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
@@ -648,6 +648,8 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
     * all fields in properties must be marked as required
     """
 
+    _strict_supports_length_constraints: ClassVar[bool] = False
+
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict)
         self.root_ref = schema.get('$ref')
@@ -717,6 +719,8 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         # Track strict-incompatible keys
         incompatible_values: dict[str, Any] = {}
         for key in _STRICT_INCOMPATIBLE_KEYS:
+            if self._strict_supports_length_constraints and key in ('minLength', 'maxLength'):
+                continue
             value = schema.get(key, _sentinel)
             if value is not _sentinel:
                 incompatible_values[key] = value
@@ -774,13 +778,13 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                             self.is_strict_compatible = False
 
         if schema_type == 'array':
-            # OpenAI strict mode requires an array to describe its elements' type, via either `items`
-            # (list types) or `prefixItems` (tuple types). A bare `list` produces an empty `items: {}`,
-            # `list[Any]` a boolean `items: true`, and a schema may omit `items` entirely; none of these
-            # give the element a type, so they're rejected by the API in strict mode and there's no way
-            # to repair them without inventing an element type. `items` only types its elements when it's
-            # a schema object carrying a type-bearing keyword (a boolean node, `{}`, or a metadata-only
-            # node like `{'description': ...}` does not).
+            # OpenAI strict mode requires an array to describe its elements' type via `items`. A bare
+            # `list` produces an empty `items: {}`, `list[Any]` a boolean `items: true`, and a schema
+            # may omit `items` entirely; none of these give the element a type, so they're rejected by
+            # the API in strict mode and there's no way to repair them without inventing an element
+            # type. `items` only types its elements when it's a schema object carrying a type-bearing
+            # keyword (a boolean node, `{}`, or a metadata-only node like `{'description': ...}` does
+            # not).
             # See https://github.com/pydantic/pydantic-ai/issues/4425
             items = schema.get('items')
             has_typed_items = isinstance(items, dict) and any(key in items for key in _TYPE_BEARING_KEYS)
@@ -793,3 +797,74 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                 elif self.strict is None:  # pragma: no branch
                     self.is_strict_compatible = False
         return schema
+
+
+class _OpenAIGuardedJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        schema = super().transform(schema)
+        if schema.get('type') == 'array' and schema.get('prefixItems'):
+            # `prefixItems` alone does not satisfy OpenAI's typed-items requirement; keep unnormalized tuple schemas
+            # conservative.
+            if self.strict is True:
+                raise UserError(
+                    'Pydantic AI cannot use this tuple schema with `prefixItems` in OpenAI strict mode. '
+                    'Use a bounded list such as `Annotated[list[int], Field(min_length=4, max_length=4)]`, '
+                    'or set `strict=False`.'
+                )
+            elif self.strict is None:
+                self.is_strict_compatible = False
+        return schema
+
+
+# Selected by `OpenAIProvider.model_profile`, rather than the shared `openai_model_profile`.
+class _OpenAIJsonSchemaTransformer(_OpenAIGuardedJsonSchemaTransformer):  # pyright: ignore[reportUnusedClass]
+    _strict_supports_length_constraints = True
+
+    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
+        super().__init__(schema, strict=strict)
+        self._has_non_definition_ref = False
+        self._normalized_single_item_tuple = False
+
+    def walk(self) -> JsonSchema:
+        self._has_non_definition_ref = False
+        self._normalized_single_item_tuple = False
+        result = super().walk()
+        if self._normalized_single_item_tuple and self._has_non_definition_ref:
+            # This walk has no path context, so a non-definition ref might target a changed `items` or removed
+            # `prefixItems` node. Wait until the full walk to catch refs before or after the array, then rerun the
+            # guarded transformer on the original schema to preserve its reference behavior. The base walk never
+            # visits `not`, `if`/`then`/`else`, `propertyNames` or `contains`, so a ref inside those subtrees misses
+            # this check and can dangle after normalization.
+            transformer = _OpenAIGuardedJsonSchemaTransformer(self.schema, strict=self.strict)
+            result = transformer.walk()
+            self.is_strict_compatible = transformer.is_strict_compatible
+        return result
+
+    def _handle_array(self, schema: JsonSchema) -> JsonSchema:
+        prefix_items: list[JsonSchema | bool] | None = schema.get('prefixItems')
+        if (
+            self.strict is not False
+            and schema.get('type') == 'array'
+            and isinstance(prefix_items, list)
+            and len(prefix_items) == 1
+            and type(max_items := schema.get('maxItems')) is int
+            and max_items == 1
+        ):
+            schema['items'] = prefix_items[0]
+            del schema['prefixItems']
+            self._normalized_single_item_tuple = True
+        return super()._handle_array(schema)
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        if '$dynamicRef' in schema:
+            self._has_non_definition_ref = True
+
+        schema_ref = schema.get('$ref')
+        if (
+            isinstance(schema_ref, str)
+            and schema_ref not in ('#', self.root_ref)
+            and not _TOP_LEVEL_DEFINITION_REF.fullmatch(schema_ref)
+        ):
+            self._has_non_definition_ref = True
+
+        return super().transform(schema)
