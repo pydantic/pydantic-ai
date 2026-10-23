@@ -33,6 +33,7 @@ def task_entry(task: TaskInfo) -> TaskEntry:
         started_at=task.started_at,
         finished_at=task.finished_at,
         background=task.background,
+        backgroundable=task.backgroundable,
         resumable=task.resumable,
         activity=task.activity,
         usage=Usage(

@@ -173,6 +173,8 @@ export interface TaskEntry {
   started_at: string
   finished_at: string | null
   background: boolean
+  /** Whether the Background button can let the run that waits for it go on. */
+  backgroundable: boolean
   resumable: boolean
   /** Its last action, such as `thinking` or `running: shell`. */
   activity: string

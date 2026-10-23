@@ -169,6 +169,32 @@ fields.
 - Anything else the provider returned about a citation, such as Google's confidence scores, is kept as the provider
   sent it in the part's `provider_details['citations']`. Its shape is the provider's and can change.
 
+## Citations in message history
+
+[Saved message history](message-history.md#storing-and-loading-messages-to-json) keeps every citation. When you send
+it back to the same provider, these citations go with the text, so the model knows where its earlier statements came
+from:
+
+| Provider | Citations sent back |
+| --- | --- |
+| Anthropic | Web search citations, except on clients without web search, such as Bedrock |
+| OpenAI Responses | Web and file citations, when message IDs are sent, which is the default for reasoning models. See [`openai_send_reasoning_ids`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_send_reasoning_ids] |
+
+Every other citation stays on the saved messages, but its text goes back as plain text: document and fetched-page
+citations, citations from OpenAI Chat, and history sent to a different provider. So does a citation whose text was
+changed or joined with other text.
+
+If you edit the text of a saved answer, also clear that part's `citations` and its `provider_details['citations']`.
+Pydantic AI leaves out citations whose text clearly changed, but an edit that keeps the same length can go unnoticed.
+
+History that's sent back unchanged goes out the same way every turn, so prompt caching keeps working.
+
+The [Vercel AI adapter](ui/vercel-ai.md#citations) keeps citations when the frontend holds the message history.
+
+!!! warning "The model may not see the source"
+    If a user later asks about "source [1]", the model may see the `[1]` but not what it pointed to. Put the source in
+    the new prompt, or let the model look it up again.
+
 ## Provider support
 
 | Provider | Citations | How to turn them on | Notes |
