@@ -1,6 +1,20 @@
 updates:
 - cooldown:
     default-days: 7
+  directory: /src/pydantic_clai2/web-ui
+  groups:
+    npm-packages:
+      patterns:
+      - "*"
+  labels:
+  - dependencies
+  - web-ui
+  - pkg:clai2
+  package-ecosystem: npm
+  schedule:
+    interval: monthly
+- cooldown:
+    default-days: 7
   directory: /
   groups:
     python-packages:

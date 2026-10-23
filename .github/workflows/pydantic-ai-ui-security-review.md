@@ -1,7 +1,7 @@
 ---
 emoji: "🛡️"
 name: "Pydantic AI UI Security Review"
-description: "Security review of UI-adapter PRs (Vercel AI + AG-UI): audits the client/server trust boundary for outbound leakage and inbound abuse. Inline comments + a non-voting COMMENT-type review summary (CI Review owns the merge-gate verdict until gh-aw check-runs land). Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
+description: "Security review of Pydantic AI UI adapters and CLAI2's local web control UI: audits client/server trust boundaries for leakage and abuse. Inline comments + a non-voting COMMENT-type review summary (CI Review owns the merge-gate verdict until gh-aw check-runs land). Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
 on:
   # Runs on EVERY PR (no `paths:` filter) so the review's check is always
   # reported on the head commit. The UI-path selection moved into the `detect`
@@ -148,8 +148,32 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          files="$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files" --jq '.[].filename')"
-          if printf '%s\n' "$files" | grep -qE '^(pydantic_ai_slim/pydantic_ai/ui/|pydantic_ai_slim/pydantic_ai/_ssrf\.py$|pydantic_ai_slim/pydantic_ai/messages\.py$|pydantic_ai_slim/pydantic_ai/common_tools/web_fetch\.py$|docs/ui/|docs/input\.md$|tests/test_vercel_ai\.py$|tests/test_ag_ui\.py$|tests/test_ui\.py$|tests/test_ui_web\.py$)'; then
+          if ! total="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.changed_files')"; then
+            echo '::error::Could not read the PR changed-file count; refusing an incomplete security review.' >&2
+            exit 1
+          fi
+          if ! [[ "$total" =~ ^(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Invalid PR changed-file count '$total'; refusing an incomplete security review." >&2
+            exit 1
+          fi
+          if [[ ${#total} -gt 4 ]] || { [[ ${#total} -eq 4 ]] && [[ "$total" > 2999 ]]; }; then
+            echo "::error::PR changed-file count is $total; the files API caps responses at 3,000, so refusing an incomplete security review." >&2
+            exit 1
+          fi
+          if ! files="$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files" --jq '.[] | [.filename, (.previous_filename // "")] | @tsv')"; then
+            echo '::error::Could not list PR changed files; refusing an incomplete security review.' >&2
+            exit 1
+          fi
+          retrieved=0
+          if [[ -n "$files" ]]; then
+            retrieved="$(printf '%s\n' "$files" | wc -l | tr -d '[:space:]')"
+          fi
+          if [ "$retrieved" -ne "$total" ]; then
+            echo "::error::Expected $total changed files, received $retrieved; refusing an incomplete security review." >&2
+            exit 1
+          fi
+          # Drain the full input: grep -q can SIGPIPE printf under pipefail and skip the review.
+          if printf '%s\n' "$files" | awk -F '\t' '{print $1; if ($2 != "") print $2}' | grep -E '^(pydantic_ai_slim/pydantic_ai/ui/|pydantic_ai_slim/pydantic_ai/_ssrf\.py$|pydantic_ai_slim/pydantic_ai/messages\.py$|pydantic_ai_slim/pydantic_ai/common_tools/web_fetch\.py$|src/pydantic_clai2/web-ui/|src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/|src/pydantic_clai2/pydantic_clai2/cli/web\.py$|src/pydantic_clai2/clai2_web_README\.md$|src/pydantic_clai2/scripts/check_web_assets\.py$|docs/ui/|docs/input\.md$|docs/web\.md$|docs/harness/clai2\.md$|tests/test_vercel_ai\.py$|tests/test_ag_ui\.py$|tests/test_ui\.py$|tests/test_ui_web\.py$|tests/clai2/test_web[^/]*\.py$|tests/clai2/browser/)' > /dev/null; then
             echo 'touched=true' >> "$GITHUB_OUTPUT"
           else
             echo 'touched=false' >> "$GITHUB_OUTPUT"
@@ -206,3 +230,9 @@ jobs:
      UI security surface touched: ${{ needs.detect.outputs.touched }} -->
 
 ${{ needs.fetch_dynamic_prompt.outputs.dynamic_prompt }}
+
+## CLAI2 local web control UI boundary
+
+Apply this contract whenever the diff touches CLAI2's web UI, backend, tests, or web documentation. For a CLAI2-only diff, inspect its changed code, tests, and docs directly; UI-adapter field lists and review steps do not apply. The per-launch token grants the local user control of that launch, including prompts, tools, sessions, workspaces, and settings. Treat those fields as intended controls and data; do not demand UIAdapter disclosure flags or `sanitize_messages` for this separate local UI.
+
+Audit the real paths that carry attacker-controlled content and authority. Untrusted Markdown, model output, tool output, and plugin content must be sanitized before rendering. External links must use safe opener and referrer behavior. Do not leak the per-launch token to other origins, logs, or unrelated sessions. Require exact Host and API-token checks, plus exact Origin and token checks for WebSockets; reject failures. Check that session watch/input, queued events, and reconnect state stay scoped to the intended session.

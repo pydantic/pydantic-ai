@@ -165,10 +165,13 @@ jobs:
             is_harness "$1" || is_clai2 "$1" || is_non_test_content "$1"
           }
 
-          # `test-clai2-clipboard` runs on macOS and Windows runners, so only for a change that reaches
-          # `pydantic-clai2` or the job itself.
+          # CLAI 2-specific checks run only for a change that reaches `pydantic-clai2` or one of their
+          # own workflow and classifier inputs.
           is_clai2_input() {
-            is_clai2 "$1" || [ "$1" = .github/workflows/ci.yml ]
+            is_clai2 "$1" || case "$1" in
+              .github/workflows/ci.yml|.github/workflows/clai2-web.yml|.github/scripts/test_ci_content_classifier.py) return 0 ;;
+              *) return 1 ;;
+            esac
           }
 
           is_pyright_input() {
@@ -275,6 +278,7 @@ jobs:
           .github/scripts/test_douwebot_config_approval.py
           .github/scripts/test_size_label.py
           .github/scripts/test_ci_content_classifier.py
+          .github/scripts/test_ui_security_detection.py
           .github/scripts/test_gh_aw_engine_pin_bump.py
           .github/scripts/test_shard_durations.py
           .github/scripts/test_ci_matrix.py
@@ -1554,6 +1558,14 @@ jobs:
             uv run --package pydantic-clai2 pytest "${tests[@]}"
           fi
 
+  clai2-web:
+    name: test clai2 web UI
+    needs: classify
+    if: >-
+      needs.classify.outputs.content_only != 'true'
+      && needs.classify.outputs.clai2_changed == 'true'
+    uses: ./.github/workflows/clai2-web.yml
+
   test-fastmcp-4:
     name: test FastMCP 4 compatibility
     needs: classify
@@ -1896,6 +1908,7 @@ jobs:
       - test-fastmcp-4
       - test-harness-browser-use
       - test-clai2-clipboard
+      - clai2-web
       - harness-integration-changes
       - harness-localstack-integration
       - harness-mongodb-integration
@@ -1923,20 +1936,20 @@ jobs:
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
               && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
               || needs.classify.outputs.harness_only == 'true'
-              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 
@@ -2000,6 +2013,7 @@ jobs:
           "$smoke_dir/bin/pai" --help
           "$smoke_dir/bin/clai" --help
           "$smoke_dir/bin/clai2" --help
+          "$smoke_dir/bin/python" -I src/pydantic_clai2/scripts/check_web_assets.py src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
 
       - name: Inspect package version
         id: inspect_package
