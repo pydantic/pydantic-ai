@@ -1351,7 +1351,7 @@ def test_live_call_that_raises_is_answered_with_its_failure() -> None:
 
 
 def test_live_wait_for_reply_waits_for_the_answer_to_a_failed_call() -> None:
-    """A tool that raised still gets its failure sent on GPT-Live, so the exchange goes on to the answer.
+    """A tool that raised still gets its failure sent, on GPT-Live as on every provider, so the exchange goes on.
 
     `wait_for_reply()` waits for the reply that answers the failure, as it does for a result that succeeded, rather
     than returning as the tool raises, with the answer then coming as a reply nobody asked for.
