@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar, cast
+from typing import TypeGuard, TypeVar
 
 import httpx
 import pytest
@@ -260,6 +260,11 @@ def calls_list_issues(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
     return ModelResponse(parts=[TextPart('done')])
 
 
+def is_agent(value: object) -> TypeGuard[Agent[object, object]]:
+    """Whether a docs block bound `agent` to an `Agent`, checked at run time like any `isinstance`."""
+    return isinstance(value, Agent)
+
+
 def tool_returns(result: AgentRunResult[object]) -> list[object]:
     return [part.content for part in result.new_messages()[-2].parts if isinstance(part, ToolReturnPart)]
 
@@ -285,13 +290,14 @@ class TestDocs:
 
         namespace, runs = run_block(quickstart)
         assert len(runs) == 1
-        agent = cast(Agent[None, str], namespace['agent'])
+        agent = namespace['agent']
+        assert is_agent(agent)
         assert tool_returns(agent.run_sync('List my open issues', model=model)) == ['issues']
         assert connections == [('https://mcp.linear.app/mcp/readonly', 'docs-token')]
 
         namespace, _ = run_block(per_user)
-        agent = cast(Agent[Any, str], namespace['agent'])
-        deps_type = cast(Callable[[str | None], object], namespace['Deps'])
+        agent, deps_type = namespace['agent'], namespace['Deps']
+        assert is_agent(agent) and isinstance(deps_type, type)
         assert tool_returns(agent.run_sync('List my open issues', deps=deps_type('user-token'), model=model)) == [
             'issues'
         ]
@@ -300,7 +306,8 @@ class TestDocs:
         assert len(connections) == 2
 
         namespace, _ = run_block(approval)
-        agent = cast(Agent[None, str | DeferredToolRequests], namespace['agent'])
+        agent = namespace['agent']
+        assert is_agent(agent)
         output = agent.run_sync('List my open issues', model=model).output
         assert isinstance(output, DeferredToolRequests)
         assert [call.tool_name for call in output.approvals] == ['list_issues']
