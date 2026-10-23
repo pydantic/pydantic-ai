@@ -12,6 +12,8 @@ and users never produce, or one whose shape needs its own strategy:
 - Values are ones a JSON round trip preserves (no NaN or infinities, no tuples), as a stored history has to.
 - Text in a well-formed history is never blank. Empty and whitespace-only text comes only from the `empty_*`
   damages, so a failure it causes is tied to a damage a test can name.
+- A user prompt's list content has at least one item. An empty list maps to the empty body that F5 pins, so
+  drawing it would only repeat that finding.
 - Tool call ids follow the formats providers emit, and are never `''`. A provider that sends none gets a
   generated `pyd_ai_` id, and an empty id is replaced by a random one at mapping, which no property about
   the body can hold. No provider is known to send one.
