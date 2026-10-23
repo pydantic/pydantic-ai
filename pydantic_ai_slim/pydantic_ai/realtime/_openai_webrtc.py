@@ -25,7 +25,7 @@ import httpx2
 from pydantic import BaseModel, ConfigDict, StrictInt, ValidationError
 from pydantic_core import to_json
 
-from .. import _utils
+from .. import _model_errors, _utils
 from .._http import AsyncHTTPClient, legacy_httpx
 from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
 from .model import RealtimeClientSecret, WebRTCAnswer, WebRTCSession
@@ -42,6 +42,9 @@ HANG_UP_MAX_RETRIES = 1
 #: The failures to reach the provider that a hangup is retried on, from either HTTP client a provider can have.
 _TRANSPORT_ERRORS: tuple[type[Exception], ...] = (httpx2.TransportError,) + (
     (legacy_httpx.TransportError,) if legacy_httpx is not None else ()
+)
+_TIMEOUT_ERRORS: tuple[type[Exception], ...] = (httpx2.TimeoutException,) + (
+    (legacy_httpx.TimeoutException,) if legacy_httpx is not None else ()
 )
 
 
@@ -157,9 +160,12 @@ async def hang_up_call(
     while True:
         try:
             response = await http_client.post(hangup_url, headers=headers, timeout=HANG_UP_TIMEOUT)
-        except _TRANSPORT_ERRORS:
+        except _TRANSPORT_ERRORS as e:
             if not retries_left:
-                raise
+                # As the SDK's own errors are mapped on OpenAI's path.
+                raise _model_errors.connection_error(
+                    model_name, str(e), e, timeout=isinstance(e, _TIMEOUT_ERRORS)
+                ) from e
         else:
             if response.status_code < 500 or not retries_left:
                 _check_hang_up_response(response, model_name)

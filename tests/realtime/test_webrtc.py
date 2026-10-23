@@ -23,7 +23,13 @@ from cassetter import RawRequest, RawResponse
 
 from pydantic_ai import Agent
 from pydantic_ai.agent import WrapperAgent
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import (
+    ModelConnectionError,
+    ModelHTTPError,
+    ModelTimeoutError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.realtime import (
@@ -1124,9 +1130,10 @@ async def test_azure_hang_up_of_a_call_that_already_ended_is_not_an_error(
         ('connect-error', 200, True),
         (503, 200, True),
         ('connect-error', 'connect-error', False),
+        ('timeout', 'timeout', False),
         (500, 500, False),
     ],
-    ids=['connect-error-then-ok', '5xx-then-ok', 'unreachable', 'persistent-5xx'],
+    ids=['connect-error-then-ok', '5xx-then-ok', 'unreachable', 'timed-out', 'persistent-5xx'],
 )
 async def test_azure_hang_up_retries_once_as_the_sdk_does(first: int | str, second: int | str, succeeds: bool) -> None:
     """A failed hangup leaves the call up, so a failure to reach Azure or a 5xx is retried once, like OpenAI's."""
@@ -1136,6 +1143,8 @@ async def test_azure_hang_up_retries_once_as_the_sdk_does(first: int | str, seco
         outcome = outcomes.pop(0)
         if outcome == 'connect-error':
             raise httpx2.ConnectError('unreachable', request=request)
+        if outcome == 'timeout':
+            raise httpx2.ReadTimeout('timed out', request=request)
         assert isinstance(outcome, int)
         return httpx2.Response(outcome)
 
@@ -1150,8 +1159,11 @@ async def test_azure_hang_up_retries_once_as_the_sdk_does(first: int | str, seco
     if succeeds:
         await hang_up
     else:
-        with pytest.raises((httpx2.ConnectError, ModelHTTPError)):
+        # Failures to reach Azure are mapped as on OpenAI's SDK path.
+        expected = {'connect-error': ModelConnectionError, 'timeout': ModelTimeoutError}.get(str(first), ModelHTTPError)
+        with pytest.raises(expected) as exc_info:
             await hang_up
+        assert type(exc_info.value) is expected
     assert outcomes == []
 
 
