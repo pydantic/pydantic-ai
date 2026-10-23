@@ -459,9 +459,25 @@ selected function tools plus all output tools available and also allows text or 
 Tools hidden by [deferred loading](#tool-search) interact with `tool_choice`: a tool that is still
 hidden is ignored when forcing by name, and an explicit choice raises only when every requested
 tool is hidden. `'required'` raises when every function
-tool is hidden. A tool *declared* with its schema deferred can be forced. On providers that carry
-revealed definitions outside the `tools` list (OpenAI Responses `additional_tools`), a revealed
-tool can't be forced by name either, since by-name forcing can only target declared tools.
+tool is hidden.
+
+Whether a deferred tool can be forced by name depends on how its definition reaches the model:
+
+- A tool *declared* with its schema deferred, such as a [tool search](#tool-search) corpus member
+  on a model with native tool search, is not ignored: Pydantic AI sends a `tool_choice` naming it as
+  is. Anthropic accepts the force where it supports forcing (see [Provider Support](#provider-support)).
+  On OpenAI Responses, the API rejects it with a 400 while nothing has revealed the tool, and after
+  the model's own server-executed tool search reveals it. After a [`ToolReturn.tools`][pydantic_ai.messages.ToolReturn] reveal, GPT-5.6
+  and later accept the force and earlier models return the same 400.
+- On OpenAI Responses, a tool withheld until revealed, such as an on-demand capability's tool or a
+  tool search corpus member on a model without native tool search, travels in the
+  `additional_tools` item alone once `load_capability` or another tool's `ToolReturn.tools` reveals
+  it, as does a tool that [appears mid-run](#mid-run-tool-additions). Such a tool can be named in
+  `tool_choice` on every model unless `openai_previous_response_id` or `openai_conversation_id` is
+  set. GPT-5.6 and later accept the name as is. On earlier models, Pydantic AI declares the tool in
+  `tools` for the request whose `tool_choice` names it, so that one request misses the prompt cache. With either setting, Pydantic AI keeps the tool in the item alone:
+  earlier models reject the name with a 400 (`Tool choice '<name>' not found in 'tools' parameter.`),
+  and so does GPT-5.6 once a stored response holds the item.
 
 ### Example
 
@@ -564,7 +580,7 @@ Restricting the available tool set via `tool_choice` can invalidate provider pro
 - **API-level filtering** (cache-preserving): the full tools array is sent and the provider is told to only allow a subset. Used by OpenAI Responses (`allowed_tools`), Google (`allowed_function_names`), and Bedrock and Mistral when forcing a single tool.
 - **Client-side filtering** (breaks cache): the tools array is trimmed before the request. Used when the provider API has no native filter for the given case.
 
-The table below covers the cases where Pydantic AI must filter client-side and therefore breaks cache:
+The table below covers the cases where Pydantic AI must change the tools array client-side and therefore breaks cache:
 
 | Provider | Cache-breaking case |
 |----------|---------------------|
@@ -575,7 +591,7 @@ The table below covers the cases where Pydantic AI must filter client-side and t
 | Mistral | `tool_choice` is a list of multiple tools — the API can only force a single named tool |
 | Cohere | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
 | xAI | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
-| OpenAI Responses | Never — `allowed_tools` handles all cases natively |
+| OpenAI Responses | On models before GPT-5.6, a `tool_choice` (list or `ToolOrOutput`) naming a tool that only the `additional_tools` item declares, such as one `load_capability` revealed or one that [appeared mid-run](#mid-run-tool-additions): that request declares it in `tools`, unless `openai_previous_response_id` or `openai_conversation_id` is set, in which case the API rejects the request (see [Tool Choice](#tool-choice)). `allowed_tools` handles every other case natively |
 | Google | Never — `allowed_function_names` handles all cases natively |
 
 If preserving cache hits matters, prefer providers/cases marked "Never", or use `ToolOrOutput` (which keeps the full set) instead of a restrictive list.
@@ -908,7 +924,7 @@ Tools gated as a bundle are covered by [on-demand capabilities](capabilities/on-
 
 Each recorded reveal also surfaces as a [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent] in the agent event stream and as the corresponding persistent Vercel AI data chunk or AG-UI activity snapshot.
 
-Provider adapters project each availability delta onto their supported history-based reveal mechanism. Anthropic declares each revealed definition in `tools` with `defer_loading=True` — up front in capability-only runs (no search surface can expose them), appended at reveal in mixed runs, which withhold capability-owned definitions until then — and references it from a native `tool_addition` block in the same request. OpenAI Responses carries a revealed definition in an appended `additional_tools` input item: a tool that was never declared travels in the item alone, while a tool already declared as a deferred `tools` entry keeps that entry and the item reveals it. Other models announce the newly available tools when their schemas are already visible, or receive a synthesized tool-search exchange when its result must reveal a withheld schema.
+Provider adapters project each availability delta onto their supported history-based reveal mechanism. Anthropic declares each revealed definition in `tools` with `defer_loading=True` — up front in capability-only runs (no search surface can expose them), appended at reveal in mixed runs, which withhold capability-owned definitions until then — and references it from a native `tool_addition` block in the same request. OpenAI Responses carries a revealed definition in an appended `additional_tools` input item: a tool that was never declared travels in the item alone (on models before GPT-5.6, a request whose `tool_choice` names it declares it in `tools` instead and misses the cache, while with `openai_previous_response_id` or `openai_conversation_id` set it gets a 400; see [Tool Choice](#tool-choice)), while a tool already declared as a deferred `tools` entry keeps that entry and the item reveals it. Other models announce the newly available tools when their schemas are already visible, or receive a synthesized tool-search exchange when its result must reveal a withheld schema.
 
 For the model to find tools well, give them descriptive names with consistent prefixes (`github_*`, `slack_*`, `mortgage_*`) and put the keywords a user might search for in the tool's description. A search returns a handful of matches at a time, so the model may iterate (search → discover → call → search again) — instructions can nudge it: "Search by topic when you don't see a tool you need."
 
@@ -1051,7 +1067,7 @@ A tool can also join a run without being searched for or loaded. It might be add
 
 | Provider | How the new tool arrives | Cache prefix |
 |---|---|---|
-| First-party OpenAI Responses (`OpenAIProvider`) | An `additional_tools` input item carrying its definition | **Stable**: `tools[]` is unchanged |
+| First-party OpenAI Responses (`OpenAIProvider`) | An `additional_tools` input item carrying its definition | **Stable**: `tools[]` is unchanged, except on models before GPT-5.6 for a request whose `tool_choice` names the new tool (see [Tool Choice](#tool-choice)) |
 | Anthropic models with tool search (Sonnet 4.5+, Opus 4.5+, Haiku 4.5+) | A `defer_loading` declaration plus a `tool_addition` block (or a `tool_reference` result on models without mid-conversation tool changes) | **Stable** once the request already declares a deferred tool. Otherwise, on some models (Claude Opus 4.8, for example) the first deferred declaration adds a one-time preamble, which moves the prefix on that request only |
 | Everything else, including older Anthropic models, OpenAI-compatible Responses endpoints (Azure, OpenRouter, and so on), and OpenAI Chat Completions | Added to `tools[]`, plus a note in the conversation that it's now available | **Breaks** from the tool definitions onward on the request where it appears |
 

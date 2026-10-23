@@ -288,18 +288,6 @@ _PULLS = 'https://github.com/pydantic/pydantic-ai/pull/'
 
 
 KNOWN: dict[str, tuple[Known, ...]] = {
-    'CodeMode(dynamic_catalog=True)': (
-        Known('ids', f'{_ISSUES}8965', 'instructions', 'instruction:anonymous@1'),
-        # Discovering a deferred tool rewrites the catalog block in the system prompt and folds the tool into
-        # `run_code` by dropping its declaration. On Responses the native client-executed `tool_search` is also
-        # swapped for the local `search_tools` function, which moves `run_code` up.
-        Known('prefix', f'{_ISSUES}8965', 'system', 'instruction:anonymous@1'),
-        Known('prefix', f'{_ISSUES}8965', 'deferred-tools', 'tool:forecast', providers=('anthropic',)),
-        *(
-            Known('prefix', f'{_ISSUES}8965', 'tools', f'tool:{name}', providers=('openai-responses',))
-            for name in ('forecast', 'tool_search', 'run_code')
-        ),
-    ),
     # The summary goes into the standing system prompt instead of joining history: ahead of the agent's
     # instructions (which it pushes back) on Anthropic and Chat, and as a leading system message on Responses.
     'SummarizingCompaction': (

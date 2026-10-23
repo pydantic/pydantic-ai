@@ -38,6 +38,7 @@ from pydantic_ai.messages import (
     CachePoint,
     DocumentUrl,
     FilePart,
+    FunctionToolResultEvent,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -2538,6 +2539,64 @@ async def test_requests_count_backend_responses_not_spoken_replies() -> None:
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
     assert len(responses) == 2
     assert session.usage.requests == 1
+
+
+async def test_audio_a_delegated_call_splits_from_its_words_is_not_recorded_as_speech() -> None:
+    """Live's transcript runs ahead of its audio, so the end of a sentence can be heard after the call that cut it.
+
+    That audio got a speech part of its own, which history recorded as an empty assistant `SpeechPart`: its words
+    are in the speech before the call.
+    """
+    voice = {'type': 'session.output_audio.delta', 'delta': 'f39/f39/f38='}
+    ws = _FakeWebSocket(
+        _live_frames(
+            _delegation_created('d1'),
+            {
+                'type': 'session.output_transcript.delta',
+                'delta': 'Checking on that.',
+                'start_ms': 0,
+                'end_ms': 1,
+                'event_id': 'e',
+            },
+            voice,
+            {'type': 'response.event', 'event_id': 'e', 'delegation_id': 'd1', 'event': _backend_call('c1')},
+            voice,
+            _backend_completion('d1'),
+        ),
+        delay=0.05,
+    )
+    agent = Agent()
+
+    @agent.tool_plain
+    async def weather() -> str:
+        return 'Sunny.'
+
+    model = OpenAILiveModel(
+        'gpt-live-1', provider='openai', settings=OpenAILiveModelSettings(openai_live_turn_silence_ms=10)
+    )
+    streamed: list[SpeechPart] = []
+    with _patched_connect(ws):
+        async with agent.realtime(model).session() as session:
+            # Once the split-off audio streamed and the call was answered, closing the session ends the reply.
+            answered = False
+            with anyio.fail_after(5):
+                async for event in session:  # pragma: no branch
+                    if isinstance(event, PartStartEvent) and isinstance(event.part, SpeechPart):
+                        streamed.append(event.part)
+                    answered = answered or isinstance(event, FunctionToolResultEvent)
+                    if answered and len(streamed) == 2:
+                        break
+
+    # The audio was still streamed, for playback, as a part of its own.
+    assert len(streamed) == 2
+    calling, returned = session.all_messages()
+    assert calling.parts == snapshot(
+        [
+            SpeechPart(speaker='assistant', transcript='Checking on that.'),
+            ToolCallPart(tool_name='weather', args='{}', tool_call_id='c1'),
+        ]
+    )
+    assert [type(part) for part in returned.parts] == [ToolReturnPart]
 
 
 @pytest.mark.parametrize('reported_zero', [False, True], ids=['missing-usage', 'reported-zero'])
