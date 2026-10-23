@@ -33,8 +33,8 @@ never discarded.
 | [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent] | The provider detected the end of user speech, when the profile declares [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]. |
 | [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] | The provider reported an interrupted model response. |
 | [`RealtimeInputTranscriptionErrorEvent`][pydantic_ai.realtime.RealtimeInputTranscriptionErrorEvent] | One user turn could not be transcribed; the session remains usable. |
-| [`RealtimeOutputSpeechStartEvent`][pydantic_ai.realtime.RealtimeOutputSpeechStartEvent] / [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent] | The model became, or stopped being, audible. These are emitted on a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband), where the provider owns audio playback. |
-| [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] | The exchange is over: the model gave every reply it owed, and no tool remains active. |
+| [`RealtimeOutputSpeechStartEvent`][pydantic_ai.realtime.RealtimeOutputSpeechStartEvent] / [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent] | The model became, or stopped being, audible. These are emitted on a gpt-realtime or Azure OpenAI [WebRTC sideband](deployment.md#browser-webrtc-server-sideband), where the provider owns audio playback. |
+| [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] | The exchange is over: the model gave every reply it owed (or, after a [failure](#the-turn-boundary), never will), and no tool remains active. |
 | [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] | The connection was automatically re-established. |
 | [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] | A recoverable provider error occurred; the session remains usable. |
 
@@ -50,9 +50,9 @@ The first eight rows are [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEv
 [`pydantic_ai.messages`][pydantic_ai.messages] — the same events a
 [standard streamed run](../agent.md#streaming-all-events) yields, so event-handling code written for
 a text agent (rendering parts, logging tool calls) works on a session unchanged. The `Realtime*`
-rows are [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members that only a session emits:
-speech detection, interruption, turn completion, reconnection, and recoverable errors have no
-equivalent in a request-response run.
+rows are [`RealtimeSessionEvent`][pydantic_ai.messages.RealtimeSessionEvent] members, the part of
+`AgentStreamEvent` that only a session emits: speech detection, interruption, turn completion,
+reconnection, and recoverable errors have no equivalent in a request-response run.
 
 A capability's [event stream hooks](../hooks.md#event-stream-hooks) see both kinds flow through the
 same stream; see [Capabilities and hooks](capabilities.md#the-event-stream).
@@ -70,11 +70,15 @@ sent, no answer to a tool's result, and no response still under way.
 Only the response that answers an input settles its reply: a response already under way when the input reached
 the provider never saw it, so it doesn't. Text sent while the model is answering therefore usually gets a reply of
 its own, and the event comes once that reply ends too. How a provider answers such text varies: GPT-Live speaks to
-it in the reply it is giving (see [OpenAI](openai.md#text-is-context-not-a-user-turn)), and some Gemini Live models
+it in the reply it is giving (see [OpenAI](openai.md#typed-text-runs-the-backend)), and some Gemini Live models
 cut their reply off for it (see [Gemini](gemini.md#provider-specific-quirks)).
 
 A response the user cuts off by speaking ends the exchange, as does a response the provider started on its own
 (server-side voice activity detection). The user's transcript can still finish after it.
+
+An exchange that fails also ends with the event, once: when a [tool raises](tools.md#function-tools) and its failure
+doesn't go out to the model, or a tool's result would pass a usage limit, the model never gets what it needs to reply.
+The event follows the exception in the event stream, or comes as the response still under way ends.
 
 ## Reading raw audio events
 

@@ -6,7 +6,14 @@ from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile, openai_realtime_model_profile
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    OpenAIModelProfile,
+    # Keep the provider-specific specialization private; the provider only selects it.
+    _OpenAIJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    openai_model_profile,
+    openai_realtime_model_profile,
+)
 from pydantic_ai.providers import missing_api_key_error
 
 if TYPE_CHECKING:
@@ -64,6 +71,10 @@ class OpenAIProvider(_OpenAICompatibleProvider):
         return merge_profile(
             profile,
             OpenAIModelProfile(
+                # Fine-tuned models keep the conservative string-bound behavior.
+                json_schema_transformer=(
+                    OpenAIJsonSchemaTransformer if model_name.startswith('ft:') else _OpenAIJsonSchemaTransformer
+                ),
                 tool_addition_mode='with_definitions',
                 tool_deferral_mode='with_tool_search',
                 # GPT-5.6 and later document a model-determined floor: a cached prefix stays eligible for
@@ -96,6 +107,12 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 # OpenRouter rejects it with a 400.
                 # https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics
                 openai_responses_supports_prompt_cache_diagnostics=bool(
+                    profile.get('openai_supports_prompt_cache_breakpoints')
+                ),
+                # GPT-5.6 and later, the models with explicit cache breakpoints, accept `reasoning.effort='max'`
+                # (verified live). Set here rather than in `openai_model_profile` because `max` is unverified on
+                # the OpenAI-compatible endpoints that share it.
+                openai_responses_supports_max_reasoning_effort=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
             ),

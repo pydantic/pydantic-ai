@@ -2,6 +2,7 @@
 
 import logging
 import os
+import sqlite3
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
@@ -36,7 +37,14 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
-from pydantic_ai_harness.step_persistence import SqliteStepStore, StepStore
+from pydantic_ai_harness.step_persistence import (
+    ContinuableSnapshot,
+    RunRecord,
+    SqliteStepStore,
+    StepEvent,
+    StepStore,
+    ToolEffectRecord,
+)
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
     ConversationSummary,
@@ -53,6 +61,9 @@ from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
+
+STEERING = 'clai2_steering'
+"""Request metadata marking the user's steering message, so a UI can tell it from input a capability enqueues."""
 _CURRENT_SESSION_ID: ContextVar[str | None] = ContextVar('clai2_session_id', default=None)
 
 
@@ -71,9 +82,45 @@ def session_context(session_id: str) -> Generator[None]:
         _CURRENT_SESSION_ID.reset(token)
 
 
-def step_store(conversations: SqliteConversationStore) -> SqliteStepStore:
+class SessionStepStore(SqliteStepStore):
+    """Step records in `sessions.db`, where a write another process keeps locked out is skipped, not raised.
+
+    Every CLAI on the machine writes to the one `sessions.db`, and SQLite lets one of them write at a time.
+    Step records are a recovery aid beside the saved conversation, which stays the record of the turn,
+    so a run, event, checkpoint or tool effect still locked out after the store's busy timeout is logged
+    and dropped rather than failing the tool call or the turn. Resume then uses an earlier checkpoint.
+    """
+
+    async def register_run(self, record: RunRecord) -> None:
+        await _unless_locked('run', super().register_run(record))
+
+    async def append_event(self, event: StepEvent) -> None:
+        await _unless_locked('step event', super().append_event(event))
+
+    async def save_snapshot(self, snapshot: ContinuableSnapshot) -> None:
+        await _unless_locked('step checkpoint', super().save_snapshot(snapshot))
+
+    async def record_tool_effect(self, record: ToolEffectRecord) -> None:
+        await _unless_locked('tool effect', super().record_tool_effect(record))
+
+
+async def _unless_locked(
+    kind: Literal['run', 'step event', 'step checkpoint', 'tool effect'], write: Awaitable[None]
+) -> None:
+    try:
+        await write
+    except sqlite3.OperationalError as error:
+        # One raised by hand rather than by SQLite carries no code; it is no lock either.
+        code = getattr(error, 'sqlite_errorcode', None)
+        if code is None or code & 0xFF not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+            raise
+        # Below `WARNING`, so mid-turn `logging` does not fall back to printing it over the live display.
+        logging.getLogger(__name__).info('Skipped saving a %s: %s', kind, error)
+
+
+def step_store(conversations: SqliteConversationStore) -> SessionStepStore:
     """Where runs over `conversations`, delegated tasks' included, capture their steps."""
-    return SqliteStepStore(database=conversations.database, max_snapshots_per_run=8)
+    return SessionStepStore(database=conversations.database, max_snapshots_per_run=8)
 
 
 FamilyDefaults = Callable[[str], ModelSettings | None]
@@ -399,7 +446,7 @@ class Session(Generic[DepsT, OutputT]):
         self._record_resumed: Callable[[], None] | None = None
         self._accepting_steering = False
         self._run_context: RunContext[DepsT] | None = None
-        self._pending_steering: list[Sequence[UserContent]] = []
+        self._pending_steering: list[ModelRequest] = []
         self._monty_notes: list[tuple[str, str]] = []
         """Cells the user ran in Monty since the last prompt, with the conversation they ran in."""
         self.on_context_usage: Callable[[int], None] | None = None
@@ -698,10 +745,11 @@ class Session(Generic[DepsT, OutputT]):
             return False
         # A blank text beside images is left out: some providers reject an empty text block.
         content: Sequence[UserContent] = [*([text] if text or not images else []), *images]
+        request = ModelRequest(parts=[UserPromptPart(content if images else text)], metadata={STEERING: True})
         if self._run_context is None:
-            self._pending_steering.append(content)
+            self._pending_steering.append(request)
         else:
-            self._run_context.enqueue(*content, priority='asap')
+            self._run_context.enqueue(request, priority='asap')
         return True
 
     async def run_in_monty(self, code: str) -> MontyCell:
@@ -854,8 +902,8 @@ class Session(Generic[DepsT, OutputT]):
     async def _stream(self, ctx: RunContext[DepsT], events: AsyncIterable[AgentStreamEvent]) -> None:
         self._accepting_steering = True
         self._run_context = ctx
-        for content in self._pending_steering:
-            ctx.enqueue(*content, priority='asap')
+        for request in self._pending_steering:
+            ctx.enqueue(request, priority='asap')
         self._pending_steering.clear()
         if self.on_context_window is not None and (window := ctx.model.context_window):
             self.on_context_window(window)

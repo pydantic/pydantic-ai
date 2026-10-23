@@ -126,6 +126,16 @@ agent = Agent(
 
 `SYS_ADMIN` lets commands in the container mount filesystems, so the container isolates less; use it for code you trust. Commands can read the keys a mount uses, so only keys that expire are handed over; see [commands](cloud-storage.md#commands).
 
+## Use a remote Docker host
+
+The capability runs the `docker` CLI on your machine, so it uses whichever daemon that CLI points at. To run containers on another host, point the CLI there before the agent starts; your code doesn't change:
+
+```bash
+export DOCKER_HOST=ssh://dev@build-box  # or: docker context use build-box
+```
+
+The host needs Docker, and `ssh` must log in without a prompt, through a key or your SSH agent. `DOCKER_HOST` overrides `DOCKER_CONTEXT`, which overrides `docker context use`, so unset the ones you don't use. Paths in `docker_args`, such as a `--volume` source, are paths on that host, and `allow_internet_access` reaches that host's network. Each run reads these settings when it starts, and `destroy` when it's called, so keep them the same while a container is in use.
+
 ## Reattach later
 
 To come back to the container without the message history, store the run's workspace ref and pass it back as `workspace=`:

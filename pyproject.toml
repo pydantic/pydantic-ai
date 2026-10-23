@@ -236,6 +236,10 @@ pillow = "2026-10-16T22:19:00Z"
 # boxlite 0.10.7 is the `boxlite` floor: 0.10.6 has no wheels for Python 3.13 or 3.14.
 # TODO(adtyavrdhn): Remove after 2026-10-25 01:35 UTC.
 boxlite = "2026-10-18T01:35:01Z"
+# prefect 3.9.0 is the `prefect` floor: it is the first release that imports on a current FastAPI.
+# TODO(DouweM): Remove after 2026-10-28 03:46 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+prefect = "2026-10-21T03:46:00Z"
 
 [dependency-groups]
 dev = [

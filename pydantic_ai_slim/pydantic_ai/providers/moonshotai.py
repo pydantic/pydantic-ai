@@ -53,8 +53,7 @@ class MoonshotAIProvider(_OpenAICompatibleProvider):
 
     @property
     def base_url(self) -> str:
-        # OpenAI-compatible endpoint, see MoonshotAI docs
-        return 'https://api.moonshot.ai/v1'
+        return self._base_url
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -71,6 +70,8 @@ class MoonshotAIProvider(_OpenAICompatibleProvider):
         # `'none'`. This is set here, not in `moonshotai_model_profile`, because that profile is also
         # routed through OpenRouter/Heroku, whose gateways don't share this endpoint quirk.
         is_reasoning = bool(profile and profile.get('supports_thinking'))
+        # Probed live on `api.moonshot.ai`; the other Kimi reasoning ids weren't reachable to verify.
+        supports_max_effort = model_name.lower().startswith(('kimi-k3', 'kimi-k2.6', 'kimi-k2.7'))
 
         # As the MoonshotAI API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly.
@@ -86,17 +87,18 @@ class MoonshotAIProvider(_OpenAICompatibleProvider):
                 openai_chat_thinking_field='reasoning_content',
                 openai_chat_send_back_thinking_parts='field',
                 thinking_always_enabled=is_reasoning,
+                openai_chat_supports_max_reasoning_effort=supports_max_effort,
             ),
         )
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: _OpenAIHTTPClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: _OpenAIHTTPClient, base_url: str | None = None) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -105,9 +107,22 @@ class MoonshotAIProvider(_OpenAICompatibleProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
+        """Create a new MoonshotAI provider.
+
+        Args:
+            api_key: The API key for authentication. Defaults to the `MOONSHOTAI_API_KEY`
+                environment variable.
+            base_url: The base URL for requests. Defaults to the `MOONSHOTAI_BASE_URL`
+                environment variable, then `https://api.moonshot.ai/v1`.
+                Use `https://api.moonshot.cn/v1` for the Chinese endpoint.
+            openai_client: An existing `AsyncOpenAI` client to use. Its base URL is used
+                instead of `MOONSHOTAI_BASE_URL`. Cannot be combined with `base_url`.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
+        """
         api_key = api_key or os.getenv('MOONSHOTAI_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
@@ -115,7 +130,12 @@ class MoonshotAIProvider(_OpenAICompatibleProvider):
                 '`MoonshotAIProvider(api_key=...)` to use the MoonshotAI provider.'
             )
 
+        if openai_client is not None and base_url is not None:
+            raise UserError('Cannot provide both `openai_client` and `base_url`')
+
         if openai_client is not None:
             self._client = openai_client
+            self._base_url = str(openai_client.base_url)
         else:
+            self._base_url = base_url or os.getenv('MOONSHOTAI_BASE_URL') or 'https://api.moonshot.ai/v1'
             self._client = self._create_openai_client(base_url=self.base_url, api_key=api_key, http_client=http_client)

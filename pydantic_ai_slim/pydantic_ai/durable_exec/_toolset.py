@@ -897,18 +897,23 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
             durable_registrations=durable_registrations,
             durable_config=durable_config,
         )
-        self._mcp_toolset = wrapped
         self._get_tools_operation = get_tools_operation
         self._get_instructions_operation = get_instructions_operation
         self._call_tool_operation = call_tool_operation
         self._resolve_tool_config = resolve_tool_config
 
+    @property
+    def _mcp_toolset(self) -> MCPToolset[AgentDepsT]:
+        # Read through `wrapped` rather than kept apart, so a per-run copy `_with_wrapped` installs
+        # (an `MCPToolset` whose `auth`/`headers` resolve per run) is the one the run calls.
+        return cast('MCPToolset[AgentDepsT]', self.wrapped)
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        if (
-            self._lifecycle != 'enter-in-durable-unit'
-            or not self._in_durable_context()
-            or (toolset_id := self.id) is None
-        ):
+        if not self._in_durable_context():
+            # No durable unit runs outside the durable context, so whatever the lifecycle, the run
+            # calls the wrapped toolset directly — or its per-run copy, when it resolves one.
+            return self._with_wrapped(await self.wrapped.for_run(ctx))
+        if self._lifecycle != 'enter-in-durable-unit' or (toolset_id := self.id) is None:
             return await super().for_run(ctx)
         # Per-run copy isolates `_run_held` from the process-shared instance; the shallow copy
         # shares the engine-registered operations, so this is only state isolation.
@@ -917,7 +922,9 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         # server is connected to once instead of once per unit and `cache_tools` survives between
         # units. Entry is refcounted by the toolset itself, so concurrent runs sharing this
         # process-wide toolset share its session, and it stays open until the last of them ends.
-        run_copy._run_held = RunHeldToolset(toolset_id, self.wrapped)
+        # An `MCPToolset` whose `auth`/`headers` resolve per run returns its own copy for the run to
+        # hold, so the session is this run's own and opened with this run's credentials.
+        run_copy._run_held = RunHeldToolset(toolset_id, await self.wrapped.for_run(ctx))
         return run_copy
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:

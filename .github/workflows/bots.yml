@@ -1,3 +1,4 @@
+# description: Sets a pull request's size and category labels, and runs douwebot when the douwebot or douwebot:review-agent-config label is applied.
 name: PR Bots
 
 on:
@@ -21,6 +22,13 @@ jobs:
       issues: write
       pull-requests: write
     steps:
+      # pull_request_target must only read generated-file declarations from trusted base code.
+      - name: Checkout base attributes
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
       - name: Calculate PR size and set label
         run: |
           set -euo pipefail
@@ -28,7 +36,15 @@ jobs:
           # Fetch file changes for this PR
           FILES=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --paginate | jq -s 'add')
 
-          # Calculate lines by category (excluding uv.lock and cassettes)
+          # Use Git's attribute matching, including nested rules and overrides.
+          GENERATED=$(echo "$FILES" | jq -j '.[] | .filename, "\u0000"' |
+            git check-attr -z --stdin linguist-generated |
+            jq -Rs 'split("\u0000") | [range(0; length; 3) as $i |
+              select(.[$i + 2] == "true" or .[$i + 2] == "set") | .[$i]]')
+          FILES=$(echo "$FILES" | jq --argjson generated "$GENERATED" '
+            map(select(.filename as $path | $generated | index($path) | not))')
+
+          # Calculate lines by category (excluding generated files, uv.lock and cassettes)
           CODE=$(echo "$FILES" | jq '[.[] | select(
             (.filename | (startswith("tests/") or startswith("docs/") or endswith(".md")) | not) and
             (.filename != "uv.lock") and

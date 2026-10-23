@@ -47,6 +47,7 @@ from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._background_completion import get_background_completion
+from pydantic_ai_harness._task_report import is_task_report
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 from pydantic_ai_harness.guardrails._shared import (
     GuardOutcome,
@@ -112,9 +113,13 @@ def _extract_prompt(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessage
         if completion is not None:
             return completion.content
         return ctx.prompt if isinstance(ctx.prompt, str) else str(ctx.prompt)
+    # Only without a prompt of the run's own. `ctx.prompt` is always guarded, whatever metadata it carries,
+    # including a prompt taken from a request that ends `message_history`. Earlier history is trusted as the
+    # caller's own (untrusted client history goes through a UI adapter first), so a part there that carries a
+    # `SubAgents` task report's metadata is taken for one: a child agent's output, not the prompt.
     for message in reversed(messages):
         for part in reversed(message.parts):
-            if isinstance(part, UserPromptPart):
+            if isinstance(part, UserPromptPart) and not is_task_report(part):
                 completion = get_background_completion(part.content)
                 if completion is not None:
                     return completion.content
@@ -122,7 +127,7 @@ def _extract_prompt(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessage
     return None
 
 
-def _replace_prompt(messages: Sequence[ModelMessage], new_content: str) -> bool:
+def _replace_prompt(messages: Sequence[ModelMessage], new_content: str, *, skip_task_reports: bool) -> bool:
     """Rewrite the most recent user prompt to `new_content`. Returns whether one was found.
 
     A multimodal prompt is refused rather than rewritten. Its `content` is a
@@ -130,11 +135,12 @@ def _replace_prompt(messages: Sequence[ModelMessage], new_content: str) -> bool:
     replacement text alone -- the images, documents and audio the user attached
     would be gone, with nothing in the run to say so.
     Singleton native background completions are rewritten in place, preserving
-    their metadata.
+    their metadata. `skip_task_reports` matches `_extract_prompt`, so the part
+    rewritten is the one the guard saw.
     """
     for message in reversed(messages):
         for part in reversed(message.parts):
-            if isinstance(part, UserPromptPart):
+            if isinstance(part, UserPromptPart) and not (skip_task_reports and is_task_report(part)):
                 if isinstance(part.content, str):
                     part.content = new_content
                     return True
@@ -278,7 +284,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
                     raise UserError(
                         'GuardrailResult.replace() for an input guardrail must provide replacement prompt text (str).'
                     )
-                if not _replace_prompt(request_context.messages, replacement):
+                if not _replace_prompt(request_context.messages, replacement, skip_task_reports=ctx.prompt is None):
                     raise UserError('InputGuardrail could not find a user prompt to redact in the request.')
                 trace_redaction(ctx, direction='input', original=prompt, replacement=replacement)
             case _:  # pragma: no cover - assert_never exhaustiveness guard
