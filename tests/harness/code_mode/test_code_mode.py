@@ -3969,8 +3969,12 @@ class TestDynamicCatalog:
 
         assert len(ctx.pending_messages) == 1
 
-    async def test_legacy_unmarked_announcement_falls_back_to_search_returns(self) -> None:
-        """A history recorded before announcements were marked still deduplicates, by its search returns."""
+    async def test_unmarked_announcement_text_is_announced_again(self) -> None:
+        """Only an announcement's metadata marks a tool as announced, never text that reads like one.
+
+        A history recorded before announcements were marked, or a client sending back announcement-shaped
+        system text, gets the tool announced again, which is harmless.
+        """
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = await _discovery_ctx('weather')
         result: ToolSearchReturnContent = {'discovered_tools': [{'name': 'weather'}]}
@@ -3996,10 +4000,11 @@ class TestDynamicCatalog:
             result=result,
         )
 
-        assert ctx.pending_messages == []
+        assert ctx.pending_messages is not None
+        assert len(ctx.pending_messages) == 1
 
     async def test_user_text_shaped_like_an_announcement_is_not_one(self) -> None:
-        """Announcement-shaped user text neither counts as an announcement nor brings back the legacy reading."""
+        """Announcement-shaped user text doesn't count as an announcement."""
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = await _discovery_ctx('weather')
         result: ToolSearchReturnContent = {'discovered_tools': [{'name': 'weather'}]}

@@ -18,7 +18,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolSearchReturnPart,
     SystemPromptPart,
-    ToolSearchReturnPart,
     post_compaction_window,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
@@ -403,34 +402,21 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 def _visible_announced_tools(messages: Sequence[ModelMessage]) -> set[str]:
     """Read the names announced after the latest compaction boundary.
 
-    An announcement is identified by its `SystemPromptPart.metadata` (`origin` and the `tools` it lists),
-    which survives serialization and the merging of adjacent requests. An announcement a history processor
-    or a UI round trip dropped no longer counts, so the tool is announced again when it's next discovered.
-    The text never decides which names count: a system prompt that merely reads like an announcement, or a
-    name shaped like a list of names, adds nothing.
-
-    The one use of the text is a deliberately kept fallback for histories recorded before announcements were
-    marked. An unmarked system prompt that starts like an announcement switches to reading the window's
-    search returns instead, as every search return was announced as soon as it arrived. Those are read by
-    type (`ToolSearchReturnPart`, `NativeToolSearchReturnPart`), so announcement-shaped text can at most turn
-    that reading on, never add a name of its own.
+    An announcement is identified only by its `SystemPromptPart.metadata` (`origin` and the `tools` it lists),
+    which survives serialization and the merging of adjacent requests; its text never counts, so a system
+    prompt that merely reads like one, or a name shaped like a list of names, adds nothing. An announcement a
+    history processor or a UI round trip dropped no longer counts, so the tool is announced again when it's
+    next discovered, and so is a tool from a history recorded before announcements were marked.
     """
-    window = post_compaction_window(messages)
     announced: set[str] = set()
-    legacy = False
-    for message in window:
+    for message in post_compaction_window(messages):
         for part in message.parts:
-            if not isinstance(part, SystemPromptPart):
-                continue
-            if part.metadata is None:
-                legacy = legacy or part.content.startswith(_DISCOVERY_ANNOUNCEMENT_PREFIX)
-            elif part.metadata.get('origin') == _DISCOVERY_ANNOUNCEMENT_ORIGIN:
+            if (
+                isinstance(part, SystemPromptPart)
+                and part.metadata is not None
+                and part.metadata.get('origin') == _DISCOVERY_ANNOUNCEMENT_ORIGIN
+            ):
                 announced.update(_announced_names(part.metadata.get('tools')))
-    if legacy:
-        for message in window:
-            for part in message.parts:
-                if isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart):
-                    announced.update(_extract_discovered_names(part.content))
     return announced
 
 
