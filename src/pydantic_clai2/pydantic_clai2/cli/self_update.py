@@ -400,10 +400,10 @@ class Updates:
 
         # Cancelling uv halfway could leave the environment half replaced, so let it finish.
         code: int | None = None
-        # Read now: once uv has run, a module imported for the first time is the new build's, which may need
-        # names the old build's modules already in memory lack.
-        served = self.serving()
         try:
+            # Read now: once uv has run, a module imported for the first time is the new build's, which may need
+            # names the old build's modules already in memory lack.
+            served = self.serving()
             with CancelScope(shield=True):
                 await tell('installing')
                 code = await self.run(command, line if report is not None and served is not None else None)
