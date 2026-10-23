@@ -57,7 +57,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, DynamicToolset
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, DynamicToolset, FunctionToolset
 from pydantic_ai.toolsets._instruction_collection import (
     flatten_instruction_contributions,
     framework_appended_instruction_ids,
@@ -1025,13 +1025,18 @@ A later <context> element with the same id replaces the earlier one and stays in
 
     @pytest.mark.parametrize(
         ('composition', 'key'),
-        [('no-id', 'testserver'), ('dynamic-no-id', 'testserver'), ('id', 'docs')],
+        [
+            ('no-id', 'testserver'),
+            ('dynamic-no-id', 'testserver'),
+            ('dynamic-filtered-no-id', 'testserver'),
+            ('id', 'docs'),
+        ],
     )
     async def test_url_server_instructions_are_keyed_by_the_id_or_else_the_host(self, composition: str, key: str):
         """A remote server's instructions append under the toolset's `id`, or its hostname without one.
 
-        A `DynamicToolset` without an `id` passes the built toolset's key along, so its instructions
-        still append rather than arriving unkeyed.
+        A `DynamicToolset` without an `id` passes the built toolset's key along, also through a transparent
+        wrapper like `FilteredToolset`, so its instructions still append rather than arriving unkeyed.
         """
         server: FastMCP[None] = FastMCP('remote_server', instructions='Remote guidance.')
         prefixes: list[str | None] = []
@@ -1055,11 +1060,13 @@ A later <context> element with the same id replaces the earlier one and stays in
                 id='docs' if composition == 'id' else None,
             )
 
-        toolset: AbstractToolset[None] = (
-            DynamicToolset[None](lambda _ctx: build(), per_run_step=False)
-            if composition == 'dynamic-no-id'
-            else build()
-        )
+        toolset: AbstractToolset[None]
+        if composition == 'dynamic-no-id':
+            toolset = DynamicToolset[None](lambda _ctx: build(), per_run_step=False)
+        elif composition == 'dynamic-filtered-no-id':
+            toolset = DynamicToolset[None](lambda _ctx: build().filtered(lambda _ctx, _tool: True), per_run_step=False)
+        else:
+            toolset = build()
         agent = Agent(FunctionModel(model_fn), deps_type=type(None), toolsets=[toolset])
 
         history: list[ModelMessage] = []
@@ -1158,6 +1165,58 @@ A later <context> element with the same id replaces the earlier one and stays in
             if isinstance(message, ModelRequest)
             for part in message.parts
         )
+
+    async def test_an_author_block_sharing_a_derived_key_still_warns_where_appending_isnt_supported(self):
+        """An author's block that ends up with the same id as a host-keyed MCP block is still the author's opt-in.
+
+        The MCP block falls back to unkeyed rewriting, and the author's `on_change='append'` gets the usual
+        warning in a deferred capability, rather than being mistaken for the framework's.
+        """
+        server: FastMCP[None] = FastMCP('remote_server', instructions='Remote guidance.')
+        calls = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'docs'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        app = server.http_app(stateless_http=True, json_response=True)
+        client: httpx.AsyncClient | httpx2.AsyncClient
+        if MCP_SDK_V2:
+            client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
+        else:
+            client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
+        capability = Capability[None](
+            id='docs',
+            defer_loading=True,
+            toolsets=[
+                MCPToolset('http://testserver/mcp', http_client=client, include_instructions=True),
+                FunctionToolset[None](
+                    instructions=InstructionPart(content='Author guidance.', on_change='append'), id='testserver'
+                ),
+            ],
+        )
+        agent = Agent(FunctionModel(model_fn), deps_type=type(None), capabilities=[capability])
+        try:
+            async with app.router.lifespan_context(app):
+                with pytest.warns(
+                    UserWarning,
+                    match=re.escape("deferred capability instructions, so instruction blocks 'toolset:testserver'"),
+                ):
+                    result = await agent.run('Continue.')
+        finally:
+            await client.aclose()
+
+        load_return = next(
+            part
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'load_capability'
+        )
+        assert load_return.content == {'instructions': 'Remote guidance.\n\nAuthor guidance.'}
 
     @pytest.mark.parametrize('composition', ['direct', 'dynamic-with-id'])
     async def test_server_instructions_in_a_deferred_capability_do_not_warn(

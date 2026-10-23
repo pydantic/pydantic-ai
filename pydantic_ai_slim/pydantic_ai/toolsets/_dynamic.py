@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Self, TypeAlias
 from .._run_context import AgentDepsT, RunContext, without_tool_name_path
 from ..messages import InstructionPart
 from ..tools import ToolDefinition
+from ._instruction_collection import framework_appended_instruction_ids
 from .abstract import AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
@@ -136,11 +137,12 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
     def _instruction_children(self) -> Sequence[AbstractToolset[AgentDepsT]]:
         # This toolset speaks for the one its function builds: with an `id`, what that toolset says is
         # keyed by it, and without one it goes out unkeyed. The exception is a built toolset whose
-        # instructions append by the framework's choice, such as an `MCPToolset`'s server instructions:
+        # instructions append by the framework's choice, such as an `MCPToolset`'s server instructions,
+        # also behind transparent wrappers like `FilteredToolset`:
         # unkeyed, they'd be downgraded with a warning on every request, so an id-less dynamic toolset
         # passes that one's own key along instead.
         toolset = self._toolset
-        if self.id is None and toolset is not None and toolset._framework_appended_instruction_ids():
+        if self.id is None and toolset is not None and framework_appended_instruction_ids(toolset):
             return (toolset,)
         return ()
 

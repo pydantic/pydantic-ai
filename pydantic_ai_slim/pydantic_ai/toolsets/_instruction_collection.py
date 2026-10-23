@@ -86,8 +86,24 @@ async def collect_toolset_instructions(
     toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
 ) -> list[InstructionPart]:
     """Collect instruction parts once at the authoring toolset boundary."""
+    parts, _ = await collect_toolset_instructions_with_framework_ids(toolset, ctx)
+    return parts
+
+
+async def collect_toolset_instructions_with_framework_ids(
+    toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
+) -> tuple[list[InstructionPart], set[InstructionId]]:
+    """Collect instruction parts, with the ids of those that append by the framework's choice rather than their author's.
+
+    Read off each surviving contribution, so a block keeps that status only while it's still the one
+    the framework built: an author's block that ends up with the same id as a framework-appended one
+    stays the author's.
+    """
     contributions = await toolset._collect_instruction_contributions(ctx)  # pyright: ignore[reportPrivateUsage]
-    return flatten_instruction_contributions(contributions)
+    flattened = _flatten(contributions)
+    return [part for part, _ in flattened], {
+        part.id for part, framework in flattened if framework and part.id is not None
+    }
 
 
 def flatten_instruction_contributions(
@@ -102,6 +118,13 @@ def flatten_instruction_contributions(
     Separate from the collection itself so a toolset that has already gathered its children can
     apply the rule without re-entering the walk that produced them.
     """
+    return [part for part, _ in _flatten(contributions)]
+
+
+def _flatten(
+    contributions: list[InstructionContribution[AgentDepsT]],
+) -> list[tuple[InstructionPart, bool]]:
+    """Flatten contributions as `flatten_instruction_contributions` does, marking the parts that append by the framework's choice."""
     explicit_owners: dict[ToolsetInstructionSource, AbstractToolset[AgentDepsT]] = {}
     sources_by_key: dict[ToolsetInstructionSource, set[int]] = {}
     for contribution in contributions:
@@ -116,7 +139,8 @@ def flatten_instruction_contributions(
                 f'instructions, so {str(source_id)!r} would address parts from each. '
                 'Toolset `id`s must be unique among all toolsets registered with the same agent.'
             )
-    parts: list[InstructionPart] = []
+    framework_ids_by_source: dict[int, set[InstructionId]] = {}
+    parts: list[tuple[InstructionPart, bool]] = []
     for contribution in contributions:
         if (
             contribution.derived_key
@@ -125,8 +149,16 @@ def flatten_instruction_contributions(
         ):
             # Rewriting, an empty block says nothing, so it's dropped like any other empty rewrite-mode part.
             parts.extend(
-                replace(part, id=None, on_change='rewrite') for part in contribution.parts if part.content.strip()
+                (replace(part, id=None, on_change='rewrite'), False)
+                for part in contribution.parts
+                if part.content.strip()
             )
-        else:
-            parts.extend(contribution.parts)
+            continue
+        source = contribution.source
+        if (framework_ids := framework_ids_by_source.get(id(source))) is None:
+            framework_ids = framework_ids_by_source[id(source)] = framework_appended_instruction_ids(source)
+        parts.extend(
+            (part, part.on_change == 'append' and part.id is not None and part.id in framework_ids)
+            for part in contribution.parts
+        )
     return parts

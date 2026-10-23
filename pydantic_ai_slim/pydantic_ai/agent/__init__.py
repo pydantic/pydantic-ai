@@ -146,7 +146,7 @@ from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
 )
-from ..toolsets._instruction_collection import collect_toolset_instructions, framework_appended_instruction_ids
+from ..toolsets._instruction_collection import collect_toolset_instructions_with_framework_ids
 from ..toolsets._tool_search import parse_discovered_tools
 from ..toolsets.abstract import AGENT_TOOLSET_ID
 from ..toolsets.combined import CombinedToolset
@@ -4191,11 +4191,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # separator, static-before-dynamic ordering, and per-source `id`s as the graph run.
             # KEEP IN SYNC with the graph's `_get_instructions` / `ModelRequestNode`.
             instruction_parts = await _instructions.resolve_sourced_instructions(sourced_instructions, run_context)
-            instruction_parts.extend(await collect_toolset_instructions(tool_manager.toolset, run_context))
+            toolset_parts, framework_toolset_ids = await collect_toolset_instructions_with_framework_ids(
+                tool_manager.toolset, run_context
+            )
+            instruction_parts.extend(toolset_parts)
             if appended := _instructions.explicitly_appended_blocks(
-                sourced_instructions,
-                instruction_parts,
-                framework_toolset_ids=framework_appended_instruction_ids(tool_manager.toolset),
+                sourced_instructions, instruction_parts, framework_toolset_ids=framework_toolset_ids
             ):
                 warnings.warn(
                     "`on_change='append'` is not supported by realtime sessions, so instruction blocks "
