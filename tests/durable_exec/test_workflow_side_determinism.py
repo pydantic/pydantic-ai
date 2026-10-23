@@ -4,7 +4,10 @@ A durable engine replays workflow code to rebuild a run's state, so a call that 
 replay (a clock, a random id, a sleep the engine does not journal) makes the replayed run diverge from
 the one that was recorded. Temporal's sandbox does not catch these in Pydantic AI's own code:
 `PydanticAIPlugin` passes `pydantic_ai` through the sandbox, so core modules run against the real
-`time`, `datetime`, `random` and `uuid`. This test is the static check for them.
+`time`, `datetime`, `random` and `uuid`. This test checks the direct calls: it matches each call in
+the modules below against `_DENYLIST` by the dotted name its imports resolve to. It does not see a
+call made through another name or object, a clock read in a dataclass default factory, or a branch
+on state that differs between the recorded run and the replay; those need a workflow-level test.
 
 **The workflow-side module set.** Under Temporal, everything `TemporalAgent.run` and
 `TemporalDurability.wrap_run` execute outside an activity is workflow code. Running the Temporal
@@ -22,9 +25,11 @@ next -- each of which the trace shows running on the workflow loop:
 - `_output.py`: output processing and validation.
 - `_run_context.py`: the run context and its event emission.
 - `capabilities/combined.py`: hook dispatch across the run's capabilities.
-- `durable_exec/` and `durable_exec/temporal/`: every module the trace shows on the workflow loop.
+- `durable_exec/` and `durable_exec/temporal/`: every module, so a new one is checked without being
+  listed. Their activity-side calls are accepted in `_ACCEPTED`.
 
-Expand it only with the same evidence.
+Expand the core modules only with the same evidence. The set is Temporal's: DBOS and Prefect run their
+clock reads as steps and tasks, which they journal.
 
 **What is denied** is in `_DENYLIST`, each with why replay breaks it. Thread offload
 (`anyio.to_thread.run_sync`, `asyncio.to_thread`, `loop.run_in_executor`) is left out on purpose: it
@@ -61,32 +66,16 @@ WORKFLOW_SIDE_MODULES: tuple[str, ...] = (
     f'{CORE}/capabilities/combined.py',
     f'{CORE}/run.py',
     f'{CORE}/tool_manager.py',
-    f'{CORE}/durable_exec/_base.py',
-    f'{CORE}/durable_exec/_capability_operation.py',
-    f'{CORE}/durable_exec/_operation.py',
-    f'{CORE}/durable_exec/_operation_backend.py',
-    f'{CORE}/durable_exec/_runtime_toolsets.py',
-    f'{CORE}/durable_exec/_toolset.py',
-    f'{CORE}/durable_exec/_utils.py',
-    f'{CORE}/durable_exec/_workspace.py',
-    f'{CORE}/durable_exec/temporal/_activity_execution.py',
-    f'{CORE}/durable_exec/temporal/_agent.py',
-    f'{CORE}/durable_exec/temporal/_durability.py',
-    f'{CORE}/durable_exec/temporal/_dynamic_toolset.py',
-    f'{CORE}/durable_exec/temporal/_function_toolset.py',
-    f'{CORE}/durable_exec/temporal/_mcp_toolset.py',
-    f'{CORE}/durable_exec/temporal/_model.py',
-    f'{CORE}/durable_exec/temporal/_model_errors.py',
-    f'{CORE}/durable_exec/temporal/_operation_backend.py',
-    f'{CORE}/durable_exec/temporal/_replay_safe_tracer_provider.py',
-    f'{CORE}/durable_exec/temporal/_run_context.py',
-    f'{CORE}/durable_exec/temporal/_toolset.py',
-    f'{CORE}/durable_exec/temporal/_transports.py',
+    *sorted(
+        path.relative_to(REPO_ROOT).as_posix()
+        for pattern in ('durable_exec/*.py', 'durable_exec/temporal/**/*.py')
+        for path in (REPO_ROOT / CORE).glob(pattern)
+    ),
 )
 
 _CLOCK = 'reads a clock that has moved by the time the run replays'
 _RANDOM = 'draws randomness that a replay does not reproduce'
-_SLEEP = 'sleeps outside the engine, so the engine does not journal the delay; await `_agent_graph_sleep`, which `set_agent_graph_sleep` routes to the engine'
+_SLEEP = 'waits on the event loop rather than through the engine, so whether a replay keeps the delay depends on the engine; await `_agent_graph_sleep`, which `set_agent_graph_sleep` routes to the engine'
 _THREAD = 'finishes on another thread in an order that a replay does not reproduce'
 _IO = 'performs I/O whose result can differ on replay; do it in an activity'
 
@@ -98,26 +87,48 @@ _DENYLIST: dict[str, str] = {
     'time.monotonic_ns': _CLOCK,
     'time.perf_counter': _CLOCK,
     'time.perf_counter_ns': _CLOCK,
+    'time.process_time': _CLOCK,
+    'time.clock_gettime': _CLOCK,
+    'time.clock_gettime_ns': _CLOCK,
+    'time.localtime': _CLOCK,
+    'time.gmtime': _CLOCK,
+    'time.ctime': _CLOCK,
     'datetime.datetime.now': _CLOCK,
     'datetime.datetime.utcnow': _CLOCK,
     'datetime.datetime.today': _CLOCK,
     'datetime.date.today': _CLOCK,
     'pydantic_ai._utils.now_utc': _CLOCK,
+    'anyio.current_time': _CLOCK,
     'random.': _RANDOM,
     'secrets.': _RANDOM,
     'os.urandom': _RANDOM,
     'uuid.uuid1': _RANDOM,
     'uuid.uuid4': _RANDOM,
+    'uuid.uuid6': _RANDOM,
+    'uuid.uuid7': _RANDOM,
+    'uuid.uuid8': _RANDOM,
     'pydantic_ai._uuid.uuid7': _RANDOM,
     'pydantic_ai._utils.generate_tool_call_id': _RANDOM,
     'asyncio.sleep': _SLEEP,
     'anyio.sleep': _SLEEP,
+    'anyio.sleep_until': _SLEEP,
+    'time.sleep': _SLEEP,
     'threading.Thread': _THREAD,
     'threading.Timer': _THREAD,
     'concurrent.futures.': _THREAD,
     'open': _IO,
     'httpx.Client': _IO,
     'httpx.AsyncClient': _IO,
+    'httpx.request': _IO,
+    'httpx.stream': _IO,
+    'httpx.get': _IO,
+    'httpx.post': _IO,
+    'httpx2.Client': _IO,
+    'httpx2.AsyncClient': _IO,
+    'pydantic_ai._http.create_async_httpx2_client': _IO,
+    'subprocess.': _IO,
+    'os.system': _IO,
+    'os.popen': _IO,
     'socket.': _IO,
     'urllib.request.': _IO,
 }
@@ -125,7 +136,7 @@ _DENYLIST: dict[str, str] = {
 _PRAGMA = re.compile(r'#\s*workflow-nondeterminism-ok:(?P<reason>.*)$')
 
 _RUN_ID = 'fallback id when the run has none; `TemporalDurability` supplies one from `workflow.uuid4()`'
-_TIMESTAMP = 'stamps the `timestamp` metadata of a message the run appends; no branch reads it'
+_TIMESTAMP = 'stamps the `timestamp` of a message the run appends; the run reads it back only in `_is_same_request`, which compares two copies of that message'
 
 # (module, enclosing qualname, callee) -> how many such calls are accepted, and why.
 _ACCEPTED: dict[tuple[str, str, str], tuple[int, str]] = {
@@ -158,7 +169,7 @@ _ACCEPTED: dict[tuple[str, str, str], tuple[int, str]] = {
 
 
 @dataclass(frozen=True)
-class Call:
+class DeniedCall:
     """A denylisted call in one module."""
 
     qualname: str
@@ -169,18 +180,11 @@ class Call:
     """The reason the line's pragma gives, `''` if it gives none, or `None` without a pragma."""
 
 
-def _denial(callee: str) -> str | None:
-    """Why `callee` is denied, or `None` if it is not."""
-    if callee in _DENYLIST:
-        return _DENYLIST[callee]
-    return next((reason for key, reason in _DENYLIST.items() if key.endswith('.') and callee.startswith(key)), None)
-
-
 class _CallFinder(ast.NodeVisitor):
     def __init__(self, source: str, module: str, is_package: bool) -> None:
         self.lines = source.splitlines()
         self.scopes: list[str] = []
-        self.calls: list[Call] = []
+        self.calls: list[DeniedCall] = []
         self.package = module.split('.') if is_package else module.split('.')[:-1]
         tree = ast.parse(source)
         self.aliases = [self.scope_aliases(tree.body)]
@@ -224,14 +228,7 @@ class _CallFinder(ast.NodeVisitor):
             case _:
                 return None
 
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        self.scopes.append(node.name)
-        self.aliases.append(self.scope_aliases(node.body))
-        self.generic_visit(node)
-        self.aliases.pop()
-        self.scopes.pop()
-
-    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> None:
         self.scopes.append(node.name)
         self.aliases.append(self.scope_aliases(node.body))
         self.generic_visit(node)
@@ -239,22 +236,26 @@ class _CallFinder(ast.NodeVisitor):
         self.scopes.pop()
 
     visit_AsyncFunctionDef = visit_FunctionDef
+    visit_ClassDef = visit_FunctionDef
 
     def visit_Call(self, node: ast.Call) -> None:
         callee = self.dotted(node.func)
-        if callee is not None and (denial := _denial(callee)) is not None:
+        if callee is not None and (
+            denial := _DENYLIST.get(callee)
+            or next((reason for key, reason in _DENYLIST.items() if key.endswith('.') and callee.startswith(key)), None)
+        ):
             pragma = _PRAGMA.search(self.lines[node.lineno - 1])
             reason = pragma['reason'].strip() if pragma else None
-            self.calls.append(Call('.'.join(self.scopes) or '<module>', callee, denial, reason))
+            self.calls.append(DeniedCall('.'.join(self.scopes) or '<module>', callee, denial, reason))
         self.generic_visit(node)
 
 
-def nondeterministic_calls(source: str, module: str, *, is_package: bool = False) -> list[Call]:
+def nondeterministic_calls(source: str, module: str, *, is_package: bool = False) -> list[DeniedCall]:
     """The denylisted calls `source`, the code of `module`, makes, in source order."""
     return _CallFinder(source, module, is_package).calls
 
 
-def unexplained_calls(relative: str, calls: list[Call]) -> tuple[list[str], Counter[tuple[str, str, str]]]:
+def unexplained_calls(relative: str, calls: list[DeniedCall]) -> tuple[list[str], Counter[tuple[str, str, str]]]:
     """The problems with the calls in the module at `relative`, and how many calls without a pragma each key has.
 
     A call is explained by a pragma with a reason, or by `_ACCEPTED` up to the number of calls that entry accepts.
@@ -366,7 +367,7 @@ def test_nondeterministic_calls_resolves_imports_and_pragmas():
 
 def test_unexplained_calls_counts_calls_against_accepted_entries():
     """An `_ACCEPTED` entry explains as many calls as it counts, and a further call in the same function fails."""
-    call = Call('resolve_run_id', 'pydantic_ai._uuid.uuid7', _RANDOM, None)
+    call = DeniedCall('resolve_run_id', 'pydantic_ai._uuid.uuid7', _RANDOM, None)
     module = f'{CORE}/_agent_graph.py'
 
     assert unexplained_calls(module, [call])[0] == []
@@ -375,3 +376,87 @@ def test_unexplained_calls_counts_calls_against_accepted_entries():
             'pydantic_ai_slim/pydantic_ai/_agent_graph.py::resolve_run_id calls `pydantic_ai._uuid.uuid7` 2 times and `_ACCEPTED` accepts 1; give the new call a pragma with a reason'
         ]
     )
+
+
+_EVERY_DENIED_CALL = """
+import anyio
+import asyncio
+import concurrent.futures
+import datetime
+import httpx
+import httpx2
+import os
+import random
+import secrets
+import socket
+import subprocess
+import threading
+import time
+import urllib.request
+import uuid
+from pydantic_ai import _http, _utils, _uuid
+
+time.time()
+time.time_ns()
+time.monotonic()
+time.monotonic_ns()
+time.perf_counter()
+time.perf_counter_ns()
+time.process_time()
+time.clock_gettime(0)
+time.clock_gettime_ns(0)
+time.localtime()
+time.gmtime()
+time.ctime()
+datetime.datetime.now()
+datetime.datetime.utcnow()
+datetime.datetime.today()
+datetime.date.today()
+_utils.now_utc()
+anyio.current_time()
+random.random()
+secrets.token_hex()
+os.urandom(8)
+uuid.uuid1()
+uuid.uuid4()
+uuid.uuid6()
+uuid.uuid7()
+uuid.uuid8()
+_uuid.uuid7()
+_utils.generate_tool_call_id()
+asyncio.sleep(1)
+anyio.sleep(1)
+anyio.sleep_until(1)
+time.sleep(1)
+threading.Thread()
+threading.Timer(1, print)
+concurrent.futures.ThreadPoolExecutor()
+open('file')
+httpx.Client()
+httpx.AsyncClient()
+httpx.request('GET', 'url')
+httpx.stream('GET', 'url')
+httpx.get('url')
+httpx.post('url')
+httpx2.Client()
+httpx2.AsyncClient()
+_http.create_async_httpx2_client()
+socket.socket()
+urllib.request.urlopen('url')
+subprocess.run([])
+os.system('')
+os.popen('')
+"""
+
+
+def test_every_denylist_key_matches_the_call_it_names():
+    """Each `_DENYLIST` key catches the real call it is meant for, so a misspelled key cannot pass unnoticed."""
+    callees = [call.callee for call in nondeterministic_calls(_EVERY_DENIED_CALL, 'pydantic_ai.agent', is_package=True)]
+
+    assert len(callees) == sum('(' in line for line in _EVERY_DENIED_CALL.splitlines())
+    unmatched = [
+        key
+        for key in _DENYLIST
+        if not any(callee == key or (key.endswith('.') and callee.startswith(key)) for callee in callees)
+    ]
+    assert unmatched == []

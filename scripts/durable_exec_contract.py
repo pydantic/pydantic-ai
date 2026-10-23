@@ -25,9 +25,13 @@ one of five ways:
 - `projected_field`: an engine class declares a field of the same name as a member of the core class
   one of its methods takes as a parameter, as `ModelRequestContextProjection.from_context` does.
 
-What the walk cannot resolve to a member, such as `getattr(obj, name)`, falls back to the class,
-unless the class has a base outside the walked packages (`BaseModel`, `Exception`), which may define
-the member: those accesses record nothing. The classes in `MEMBER_LEVEL_ONLY` never get a
+A name gets its classes from a parameter or variable annotation, an assignment, a `for` loop over an
+annotated iterable, or `isinstance` narrowing, and a module-level type alias stands for the type it
+names. A name bound any other way, such as a `with ... as` target or a tuple-unpacked loop variable,
+has no class, so a member read through it records nothing. An access on a typed name that the walk
+cannot resolve to a member, such as `getattr(obj, name)`, falls back to the class, unless the class
+has a base outside the walked packages (`BaseModel`, `Exception`), which may define the member:
+those accesses record nothing. The classes in `MEMBER_LEVEL_ONLY` never get a
 class-level entry: nearly every change to core touches them, so a class-level entry would match
 every change.
 
@@ -58,13 +62,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = 'scripts/durable_exec_contract.json'
 WRITE_COMMAND = 'uv run python scripts/durable_exec_contract.py --write'
 
-# Directories on `sys.path` for the packages the walk reads, relative to the repository root.
+# Source roots, relative to the repository root, that `Index` searches for the modules the walk reads.
 SOURCE_ROOTS = ('pydantic_ai_slim', 'src/pydantic_ai_harness')
 CORE_PACKAGE = 'pydantic_ai'
 DURABLE_PACKAGE = 'pydantic_ai.durable_exec'
 
-# Engine name -> glob of its modules, relative to the repository root. `durable_exec` is the shared
-# base every engine builds on (`BaseDurabilityCapability`, the operation backends, the projections).
+# Engine name -> glob of its modules, relative to the repository root. An engine is a package that
+# defines a `BaseDurabilityCapability` subclass; `durable_exec` is the shared base every engine builds
+# on (`BaseDurabilityCapability`, the operation backends, the projections).
 ENGINES: dict[str, str] = {
     'durable_exec': 'pydantic_ai_slim/pydantic_ai/durable_exec/*.py',
     'temporal': 'pydantic_ai_slim/pydantic_ai/durable_exec/temporal/**/*.py',
@@ -85,16 +90,14 @@ MEMBER_LEVEL_ONLY: frozenset[tuple[str, str]] = frozenset(
     }
 )
 
-# Bases that contribute no members a core class could be looked up through.
-_EMPTY_BASES = frozenset({'ABC', 'Generic', 'Protocol', 'object'})
 # Annotation constructors whose arguments, not themselves, are the annotated type.
 _TYPE_WRAPPERS = frozenset(
     {'Annotated', 'ClassVar', 'Final', 'NotRequired', 'Optional', 'ReadOnly', 'Required', 'Type', 'Union', 'type'}
 )
-_TYPE_GUARDS = frozenset({'TypeGuard', 'TypeIs'})
 
 Kind = Literal['import', 'annotation_only', 'override', 'attribute_read', 'projected_field']
 Manifest = dict[str, dict[str, dict[str, list[str]]]]
+_EntrySets = dict[str, dict[str, dict[str, set[str]]]]
 FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
 
 
@@ -144,21 +147,17 @@ class ClassInfo:
 
 
 @dataclass(frozen=True)
-class Function:
+class ModuleValue:
     """A module-level function or variable, the other definitions an import can name."""
 
     module: Module
     name: str
     returns: ast.expr | None
+    value: ast.expr | None = None
+    """A variable's assigned value, which an annotation naming the variable as a type alias stands for."""
 
 
-Symbol = Module | ClassInfo | Function
-
-
-def module_name(path: Path, source_root: Path) -> str:
-    """The dotted module name of `path` under `source_root`."""
-    parts = path.relative_to(source_root).with_suffix('').parts
-    return '.'.join(parts[:-1] if parts[-1] == '__init__' else parts)
+Symbol = Module | ClassInfo | ModuleValue
 
 
 class Index:
@@ -170,42 +169,38 @@ class Index:
         self._classes: dict[int, ClassInfo] = {}
 
     def module(self, name: str) -> Module | None:
-        if name not in self._modules:
-            self._modules[name] = self._load(name)
-        return self._modules[name]
-
-    def _load(self, name: str) -> Module | None:
+        if name in self._modules:
+            return self._modules[name]
+        self._modules[name] = None
         relative = Path(*name.split('.'))
         for source_root in SOURCE_ROOTS:
             for path, is_package in ((relative / '__init__.py', True), (relative.with_suffix('.py'), False)):
                 file = self.root / source_root / path
-                if file.is_file():
-                    tree = ast.parse(file.read_text(encoding='utf-8'), filename=str(file))
-                    module = Module(name, (Path(source_root) / path).as_posix(), is_package, tree)
-                    for statement in _top_level(tree.body):
-                        self._bind(module, statement)
-                    # A function-local import binds module-wide, unless the module binds the name itself.
-                    for node in ast.walk(tree):
-                        if isinstance(node, ast.Import | ast.ImportFrom):
-                            for name, target in self.import_targets(module, node):
-                                module.imports.setdefault(name, target)
-                    return module
+                if not file.is_file():
+                    continue
+                tree = ast.parse(file.read_text(encoding='utf-8'), filename=str(file))
+                module = self._modules[name] = Module(name, (Path(source_root) / path).as_posix(), is_package, tree)
+                for statement in _top_level(tree.body):
+                    match statement:
+                        case ast.ClassDef(name=bound) | ast.FunctionDef(name=bound) | ast.AsyncFunctionDef(name=bound):
+                            module.definitions[bound] = statement
+                        case ast.Assign(targets=targets):
+                            for target in targets:
+                                if isinstance(target, ast.Name):
+                                    module.definitions[target.id] = statement
+                        case ast.AnnAssign(target=ast.Name(id=bound)):
+                            module.definitions[bound] = statement
+                        case ast.Import() | ast.ImportFrom():
+                            module.imports.update(self.import_targets(module, statement))
+                        case _:
+                            pass
+                # A function-local import binds module-wide, unless the module binds the name itself.
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.Import, ast.ImportFrom)):
+                        for bound, target in self.import_targets(module, node):
+                            module.imports.setdefault(bound, target)
+                return module
         return None
-
-    def _bind(self, module: Module, statement: ast.stmt) -> None:
-        match statement:
-            case ast.ClassDef(name=name) | ast.FunctionDef(name=name) | ast.AsyncFunctionDef(name=name):
-                module.definitions[name] = statement
-            case ast.Assign(targets=targets):
-                for target in targets:
-                    if isinstance(target, ast.Name):
-                        module.definitions[target.id] = statement
-            case ast.AnnAssign(target=ast.Name(id=name)):
-                module.definitions[name] = statement
-            case ast.Import() | ast.ImportFrom():
-                module.imports.update(self.import_targets(module, statement))
-            case _:
-                pass
 
     def import_targets(
         self, module: Module, statement: ast.Import | ast.ImportFrom
@@ -232,7 +227,10 @@ class Index:
     def class_info(self, module: Module, node: ast.ClassDef, qualname: str) -> ClassInfo:
         if (info := self._classes.get(id(node))) is None:
             info = self._classes[id(node)] = ClassInfo(module, qualname, node)
-            _collect_members(info)
+            _collect_body_members(info)
+            for method in node.body:
+                if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    _collect_instance_attributes(info.members, method)
         return info
 
     def resolve(self, module: Module, name: str, seen: frozenset[tuple[str, str]] = frozenset()) -> Symbol | None:
@@ -244,11 +242,13 @@ class Index:
             case ast.ClassDef():
                 return self.class_info(module, statement, name)
             case ast.FunctionDef() | ast.AsyncFunctionDef():
-                return Function(module, name, statement.returns)
+                return ModuleValue(module, name, statement.returns)
             case None:
                 pass
+            case ast.Assign(value=value) | ast.AnnAssign(value=value):
+                return ModuleValue(module, name, None, value)
             case _:
-                return Function(module, name, None)
+                return ModuleValue(module, name, None)
         if (target := module.imports.get(name)) is None:
             return self.module(f'{module.name}.{name}')
         target_module, target_name = target
@@ -293,8 +293,34 @@ class Index:
                     *(self.annotation_classes(module, argument) for argument in arguments)
                 )
             case ast.Name() | ast.Attribute():
-                symbol = self.symbol(module, annotation)
-                return frozenset({symbol}) if isinstance(symbol, ClassInfo) else frozenset()
+                match self.symbol(module, annotation):
+                    case ClassInfo() as info:
+                        return frozenset({info})
+                    case ModuleValue(module=alias_module, value=ast.expr() as value):
+                        return self.annotation_classes(alias_module, value)
+                    case _:
+                        return frozenset()
+            case _:
+                return frozenset()
+
+    def element_classes(self, module: Module, annotation: ast.expr | None) -> frozenset[ClassInfo]:
+        """The classes the items of an iterable with this annotation, written in `module`, are instances of."""
+        match annotation:
+            case ast.Constant(value=str(source)):
+                try:
+                    parsed = ast.parse(source, mode='eval').body
+                except SyntaxError:
+                    return frozenset()
+                return self.element_classes(module, parsed)
+            case ast.BinOp(left=left, op=ast.BitOr(), right=right):
+                return self.element_classes(module, left) | self.element_classes(module, right)
+            case ast.Subscript(value=value, slice=index):
+                arguments = index.elts if isinstance(index, ast.Tuple) else [index]
+                if _last_name(value) not in _TYPE_WRAPPERS:
+                    return self.annotation_classes(module, arguments[0])
+                if _last_name(value) == 'Annotated':
+                    arguments = arguments[:1]
+                return frozenset[ClassInfo]().union(*(self.element_classes(module, argument) for argument in arguments))
             case _:
                 return frozenset()
 
@@ -307,7 +333,8 @@ class Index:
             symbol = self.symbol(info.module, target)
             if isinstance(symbol, ClassInfo):
                 resolved.append(symbol)
-            elif _last_name(target) not in _EMPTY_BASES:
+            # These bases contribute no members a core class could be looked up through.
+            elif _last_name(target) not in {'ABC', 'Generic', 'Protocol', 'object'}:
                 closed = False
         return resolved, closed
 
@@ -355,7 +382,8 @@ def _last_name(expr: ast.expr) -> str | None:
             return None
 
 
-def _collect_members(info: ClassInfo) -> None:
+def _collect_body_members(info: ClassInfo) -> None:
+    """The fields, class variables, methods and properties the class body defines."""
     members = info.members
     for statement in info.node.body:
         match statement:
@@ -365,19 +393,15 @@ def _collect_members(info: ClassInfo) -> None:
                 for target in targets:
                     if isinstance(target, ast.Name):
                         members[target.id] = Member(value.func if isinstance(value, ast.Call) else None)
-            case ast.FunctionDef() | ast.AsyncFunctionDef():
-                is_property = any(
+            case ast.FunctionDef() | ast.AsyncFunctionDef() if statement.name not in members:
+                if any(
                     _last_name(decorator) in {'property', 'cached_property'} for decorator in statement.decorator_list
-                )
-                if statement.name not in members:
-                    members[statement.name] = (
-                        Member(statement.returns) if is_property else Member(None, returns=statement.returns)
-                    )
+                ):
+                    members[statement.name] = Member(statement.returns)
+                else:
+                    members[statement.name] = Member(None, returns=statement.returns)
             case _:
                 pass
-    for method in info.node.body:
-        if isinstance(method, ast.FunctionDef | ast.AsyncFunctionDef):
-            _collect_instance_attributes(members, method)
 
 
 def _collect_instance_attributes(members: dict[str, Member], method: FunctionNode) -> None:
@@ -423,7 +447,7 @@ class _Scope:
 class _EngineWalker(ast.NodeVisitor):
     """Records the core dependencies of one engine module."""
 
-    def __init__(self, index: Index, module: Module, engine: str, entries: _Entries) -> None:
+    def __init__(self, index: Index, module: Module, engine: str, entries: _EntrySets) -> None:
         self.index = index
         self.module = module
         self.engine = engine
@@ -454,15 +478,19 @@ class _EngineWalker(ast.NodeVisitor):
     def record(self, definer: ClassInfo | Module, qualname: str, kind: Kind, site: str | None = None) -> None:
         module = definer.module if isinstance(definer, ClassInfo) else definer
         if module.is_core:
-            location = site or self.scopes[-1].qualname
-            self.entries.add(module.path, qualname, kind, self.engine, f'{self.module.path}::{location}')
+            entry = self.entries.setdefault(module.path, {}).setdefault(
+                qualname, {'kinds': set[str](), 'engines': set[str](), 'sites': set[str]()}
+            )
+            entry['kinds'].add(kind)
+            entry['engines'].add(self.engine)
+            entry['sites'].add(f'{self.module.path}::{site or self.scopes[-1].qualname}')
 
     def record_symbol(self, symbol: Symbol | None, kind: Literal['import', 'annotation_only']) -> None:
         """An `import` or `annotation_only` dependency on a named core definition."""
         match symbol:
             case ClassInfo() if not symbol.member_level_only:
                 self.record(symbol, symbol.qualname, kind)
-            case Function():
+            case ModuleValue():
                 self.record(symbol.module, symbol.name, kind)
             case _:
                 pass
@@ -470,7 +498,7 @@ class _EngineWalker(ast.NodeVisitor):
     def record_member(self, expr: ast.expr, name: str) -> None:
         """An `attribute_read` of `name` on whatever `expr` is, falling back to its core classes."""
         classes = self.types(expr)
-        found = [found for info in classes if (found := self.index.lookup(info, name)) is not None]
+        found = [hit for info in classes if (hit := self.index.lookup(info, name)) is not None]
         for definer, _ in found:
             self.record(definer, f'{definer.qualname}.{name}', 'attribute_read')
         if not found and not (name.startswith('__') and name.endswith('__')):
@@ -514,7 +542,7 @@ class _EngineWalker(ast.NodeVisitor):
                 return self.attribute_types(value, attr, returns=True)
             case ast.Call(func=func):
                 symbol = self.index.symbol(self.module, func)
-                if isinstance(symbol, Function):
+                if isinstance(symbol, ModuleValue):
                     return self.index.annotation_classes(symbol.module, symbol.returns)
                 return frozenset({symbol}) if isinstance(symbol, ClassInfo) else frozenset()
             case ast.Await(value=value) | ast.NamedExpr(value=value):
@@ -539,6 +567,21 @@ class _EngineWalker(ast.NodeVisitor):
                 result |= self.index.annotation_classes(definer.module, annotation)
         return result
 
+    def element_types(self, iterable: ast.expr, annotated: Mapping[str, ast.expr | None]) -> frozenset[ClassInfo]:
+        """The classes the items of `iterable` are instances of, from the annotation of the name or member it reads."""
+        match iterable:
+            case ast.Name(id=name):
+                return self.index.element_classes(self.module, annotated.get(name))
+            case ast.Attribute(value=value, attr=attr):
+                result: frozenset[ClassInfo] = frozenset()
+                for info in self.types(value):
+                    if (found := self.index.lookup(info, attr)) is not None:
+                        definer, member = found
+                        result |= self.index.element_classes(definer.module, member.annotation)
+                return result
+            case _:
+                return frozenset()
+
     def bind(self, scope: _Scope, name: str, classes: frozenset[ClassInfo]) -> None:
         if classes:
             scope.locals[name] = scope.locals.get(name, frozenset()) | classes
@@ -552,9 +595,9 @@ class _EngineWalker(ast.NodeVisitor):
                     self.bind(scope, name, self.types(element))
             case ast.Call(func=func, args=[ast.Name(id=name), *_]):
                 match self.index.symbol(self.module, func):
-                    case Function(module=module, returns=ast.Subscript(value=guard, slice=guarded)) if (
-                        _last_name(guard) in _TYPE_GUARDS
-                    ):
+                    case ModuleValue(module=module, returns=ast.Subscript(value=guard, slice=guarded)) if _last_name(
+                        guard
+                    ) in {'TypeGuard', 'TypeIs'}:
                         self.bind(scope, name, self.index.annotation_classes(module, guarded))
                     case _:
                         pass
@@ -573,16 +616,16 @@ class _EngineWalker(ast.NodeVisitor):
             self.visit(decorator)
         for base in node.bases:
             self.visit(base)
-        mro = self.index.mro(info)[0][1:]
+        ancestors = self.index.mro(info)[0][1:]
         for name, member in info.members.items():
             if not member.in_body:
                 continue
-            for ancestor in mro:
+            for ancestor in ancestors:
                 if name in ancestor.members:
                     self.record(ancestor, f'{ancestor.qualname}.{name}', 'override', f'{info.qualname}.{name}')
         fields = [name for name, member in info.members.items() if member.is_field]
         for method in node.body:
-            if isinstance(method, ast.FunctionDef | ast.AsyncFunctionDef):
+            if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 parameters = [*method.args.posonlyargs, *method.args.args][0 if _is_static(method) else 1 :]
                 for parameter in [*parameters, *method.args.kwonlyargs]:
                     for source in self.index.annotation_classes(self.module, parameter.annotation):
@@ -606,11 +649,19 @@ class _EngineWalker(ast.NodeVisitor):
         scope = _Scope(self.qualname(node.name), owner=enclosing.owner)
         arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
         for position, argument in enumerate(arguments):
-            if position == 0 and enclosing.owner is not None and enclosing.qualname == enclosing.owner.qualname:
-                if not _is_static(node):
-                    self.bind(scope, argument.arg, frozenset({enclosing.owner}))
-                    continue
+            owner = enclosing.owner
+            if position == 0 and owner is not None and enclosing.qualname == owner.qualname and not _is_static(node):
+                self.bind(scope, argument.arg, frozenset({owner}))
+                continue
             self.bind(scope, argument.arg, self.index.annotation_classes(self.module, argument.annotation))
+        annotated = {argument.arg: argument.annotation for argument in arguments}
+        annotated.update(
+            {
+                statement.target.id: statement.annotation
+                for statement in ast.walk(node)
+                if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name)
+            }
+        )
         self.scopes.append(scope)
         for statement in ast.walk(node):
             match statement:
@@ -623,6 +674,11 @@ class _EngineWalker(ast.NodeVisitor):
                     self.bind(scope, name, self.types(value))
                 case ast.Call():
                     self.narrow(scope, statement)
+                case (
+                    ast.For(target=ast.Name(id=name), iter=iterable)
+                    | ast.AsyncFor(target=ast.Name(id=name), iter=iterable)
+                ):
+                    self.bind(scope, name, self.element_types(iterable, annotated))
                 case _:
                     pass
         for argument in [*arguments, node.args.vararg, node.args.kwarg]:
@@ -647,8 +703,10 @@ class _EngineWalker(ast.NodeVisitor):
         base = self.index.import_base(self.module, node)
         if (source := self.index.module(base)) is not None:
             for alias in node.names:
-                kind = 'import' if (alias.asname or alias.name) in self.runtime_names else 'annotation_only'
-                self.record_symbol(self.index.resolve(source, alias.name), kind)
+                self.record_symbol(
+                    self.index.resolve(source, alias.name),
+                    'import' if (alias.asname or alias.name) in self.runtime_names else 'annotation_only',
+                )
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         symbol = self.index.symbol(self.module, node.value)
@@ -698,27 +756,15 @@ class _EngineWalker(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-class _Entries:
-    def __init__(self) -> None:
-        self.manifest: dict[str, dict[str, dict[str, set[str]]]] = {}
-
-    def add(self, core_file: str, qualname: str, kind: Kind, engine: str, site: str) -> None:
-        entry = self.manifest.setdefault(core_file, {}).setdefault(
-            qualname, {'kinds': set[str](), 'engines': set[str](), 'sites': set[str]()}
-        )
-        entry['kinds'].add(kind)
-        entry['engines'].add(engine)
-        entry['sites'].add(site)
-
-
 def build_manifest(root: Path = REPO_ROOT) -> Manifest:
     """Walk the engines under `root` and return the manifest of core definitions they depend on."""
     index = Index(root)
-    entries = _Entries()
+    entries: _EntrySets = {}
     for engine, pattern in ENGINES.items():
         for path in sorted(root.glob(pattern)):
             source_root = next(root / source for source in SOURCE_ROOTS if (root / source) in path.parents)
-            module = index.module(module_name(path, source_root))
+            parts = path.relative_to(source_root).with_suffix('').parts
+            module = index.module('.'.join(parts[:-1] if parts[-1] == '__init__' else parts))
             assert module is not None, path
             _EngineWalker(index, module, engine, entries).visit(module.tree)
     return {
@@ -726,7 +772,7 @@ def build_manifest(root: Path = REPO_ROOT) -> Manifest:
             qualname: {key: sorted(values) for key, values in entry.items()}
             for qualname, entry in sorted(definitions.items())
         }
-        for core_file, definitions in sorted(entries.manifest.items())
+        for core_file, definitions in sorted(entries.items())
     }
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 import textwrap
 from collections.abc import Callable, Mapping, Sequence
@@ -27,25 +28,23 @@ Manifest = dict[str, dict[str, dict[str, list[str]]]]
 class _ContractGenerator(Protocol):
     MANIFEST_PATH: str
     WRITE_COMMAND: str
+    ENGINES: dict[str, str]
     build_manifest: Callable[[Path], Manifest]
     render_manifest: Callable[[Manifest], str]
     gates: Callable[[Mapping[str, Sequence[str]]], bool]
     main: Callable[..., int]
 
 
-def _load_generator() -> _ContractGenerator:
-    script = REPO_ROOT / 'scripts' / 'durable_exec_contract.py'
-    spec = importlib.util.spec_from_file_location('durable_exec_contract', script)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    # `dataclasses` looks the defining module up in `sys.modules` while it builds the classes.
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    assert isinstance(module, _ContractGenerator)
-    return module
-
-
-generator = _load_generator()
+_spec = importlib.util.spec_from_file_location(
+    'durable_exec_contract', REPO_ROOT / 'scripts' / 'durable_exec_contract.py'
+)
+assert _spec is not None and _spec.loader is not None
+_module = importlib.util.module_from_spec(_spec)
+# `dataclasses` looks the defining module up in `sys.modules` while it builds the classes.
+sys.modules[_spec.name] = _module
+_spec.loader.exec_module(_module)
+assert isinstance(_module, _ContractGenerator)
+generator = _module
 
 
 def test_manifest_is_current():
@@ -54,6 +53,27 @@ def test_manifest_is_current():
     assert generator.render_manifest(generator.build_manifest(REPO_ROOT)) == committed, (
         f'{generator.MANIFEST_PATH} is stale; run `{generator.WRITE_COMMAND}` and commit the result'
     )
+
+
+def test_engines_cover_every_durability_capability():
+    """Every `durable_exec` subpackage and every module defining a `BaseDurabilityCapability` subclass is walked."""
+    walked = {path for pattern in generator.ENGINES.values() for path in REPO_ROOT.glob(pattern)}
+    durable_exec = REPO_ROOT / 'pydantic_ai_slim/pydantic_ai/durable_exec'
+    subpackages = {
+        path
+        for package in durable_exec.iterdir()
+        if (package / '__init__.py').is_file()
+        for path in package.rglob('*.py')
+    }
+    subclass = re.compile(r'^class \w+\((?:\w+\.)?BaseDurabilityCapability\b', re.MULTILINE)
+    capabilities = {
+        path
+        for root in ('pydantic_ai_slim/pydantic_ai', 'src/pydantic_ai_harness/pydantic_ai_harness')
+        for path in (REPO_ROOT / root).rglob('*.py')
+        if subclass.search(path.read_text(encoding='utf-8'))
+    }
+    assert capabilities
+    assert sorted(str(path.relative_to(REPO_ROOT)) for path in (subpackages | capabilities) - walked) == []
 
 
 def test_manifest_records_the_member_level_contracts():
@@ -154,6 +174,10 @@ _FIXTURE: dict[str, str] = {
             default = Profile()
             first, second = 1, 2
             label = 'model'
+            responses: 'list[Response] | None' = None
+            profiles: Optional[list[Profile]] = None
+            tagged: Annotated[list[Profile], 'tagged'] = []
+            unparsable: 'list[(' = []
 
             def __init__(self, profile: Profile, response: 'Response') -> None:
                 self._profile = profile
@@ -204,6 +228,11 @@ _FIXTURE: dict[str, str] = {
 
         class Diamond(Left, Right):
             pass
+
+
+        ModelAlias = Model
+        Sides = Annotated[Left | Right, 'sides']
+        Pending: Model
         """,
     'pydantic_ai_slim/pydantic_ai/durable_exec/__init__.py': '',
     'pydantic_ai_slim/pydantic_ai/durable_exec/temporal/__init__.py': """
@@ -222,7 +251,7 @@ _FIXTURE: dict[str, str] = {
 
         from pydantic_ai import RunContext, profiles as profile_module, tools
         from pydantic_ai.cycle_a import Looped
-        from pydantic_ai.models import MODEL_NAMES, Diamond, Left, Model, Settings, WrapperModel
+        from pydantic_ai.models import MODEL_NAMES, Diamond, Left, Model, ModelAlias, Pending, Settings, Sides, WrapperModel
         from pydantic_ai.profiles import Profile, Response
         from ...tools import make_context
 
@@ -313,6 +342,32 @@ _FIXTURE: dict[str, str] = {
             lambda: model
 
 
+        async def iterate(
+            models: list[ModelAlias], model: Model, stream: 'AsyncIterator[Sides]', pending: list[Pending], count: int
+        ) -> None:
+            for each in models:
+                each.request
+            async for side in stream:
+                side.missing
+            for response in model.responses:
+                response.text
+            for profile in model.profiles:
+                profile.supports_tools
+            for tagged in model.tagged:
+                tagged.supports_tools
+            for unparsed in model.unparsable:
+                unparsed.missing
+            for character in model.label:
+                character.upper
+            for number in range(count):
+                number.real
+            for left, right in pending:
+                left.label
+            annotated: list[Profile] = []
+            for local in annotated:
+                local.supports_tools
+
+
         def local_import() -> None:
             from pydantic_ai._run_context import RunContext as LocalContext
 
@@ -394,29 +449,36 @@ def test_build_manifest_resolves_every_dependency_form(fixture_repo: Path):
                 ['temporal'],
                 ['<module>', 'module_level'],
             ),
-            'models/__init__.py::Left': (['annotation_only'], ['temporal'], ['<module>']),
+            'models/__init__.py::Left': (['annotation_only', 'attribute_read'], ['temporal'], ['<module>', 'iterate']),
             'models/__init__.py::MODEL_NAMES': (['import'], ['temporal'], ['<module>']),
             'models/__init__.py::Model': (['import'], ['render', 'temporal'], ['<module>', '<module>']),
             'models/__init__.py::Model.__init__': (['override'], ['temporal'], ['TemporalModel.__init__']),
             'models/__init__.py::Model.label': (
                 ['attribute_read'],
                 ['temporal'],
-                ['<module>', 'TemporalModel.stream', 'module_level', 'module_level.nested'],
+                ['<module>', 'TemporalModel.stream', 'iterate', 'module_level', 'module_level.nested'],
             ),
             'models/__init__.py::Model.profile': (
                 ['attribute_read'],
                 ['temporal'],
                 ['TemporalModel.build', 'TemporalModel.request'],
             ),
+            'models/__init__.py::Model.profiles': (['attribute_read'], ['temporal'], ['iterate', 'module_level']),
             'models/__init__.py::Model.request': (
-                ['override'],
+                ['attribute_read', 'override'],
                 ['render', 'temporal'],
-                ['TemporalModel.request', 'RenderModel.request'],
+                ['TemporalModel.request', 'iterate', 'RenderModel.request'],
             ),
-            'models/__init__.py::Right': (['annotation_only'], ['temporal'], ['<module>']),
+            'models/__init__.py::Model.responses': (['attribute_read'], ['temporal'], ['iterate', 'module_level']),
+            'models/__init__.py::Model.tagged': (['attribute_read'], ['temporal'], ['iterate', 'module_level']),
+            'models/__init__.py::Model.unparsable': (['attribute_read'], ['temporal'], ['iterate', 'module_level']),
+            'models/__init__.py::ModelAlias': (['annotation_only'], ['temporal'], ['<module>']),
+            'models/__init__.py::Pending': (['annotation_only'], ['temporal'], ['<module>']),
+            'models/__init__.py::Right': (['annotation_only', 'attribute_read'], ['temporal'], ['<module>', 'iterate']),
             'models/__init__.py::Settings': (['import'], ['temporal'], ['<module>']),
             'models/__init__.py::Settings.broken': (['attribute_read'], ['temporal'], ['module_level']),
             'models/__init__.py::Settings.timeout': (['attribute_read'], ['temporal'], ['module_level']),
+            'models/__init__.py::Sides': (['annotation_only'], ['temporal'], ['<module>']),
             'models/__init__.py::WrapperModel': (['import'], ['temporal'], ['<module>']),
             'models/__init__.py::WrapperModel.request': (
                 ['attribute_read', 'override'],
@@ -429,9 +491,13 @@ def test_build_manifest_resolves_every_dependency_form(fixture_repo: Path):
                 ['TemporalModel.wrapped', 'module_level'],
             ),
             'profiles.py::Profile': (['import'], ['temporal'], ['<module>']),
-            'profiles.py::Profile.supports_tools': (['attribute_read'], ['temporal'], ['TemporalModel.request']),
+            'profiles.py::Profile.supports_tools': (
+                ['attribute_read'],
+                ['temporal'],
+                ['TemporalModel.request', 'iterate'],
+            ),
             'profiles.py::Response': (['annotation_only', 'import'], ['temporal'], ['<module>', 'typed']),
-            'profiles.py::Response.text': (['attribute_read'], ['temporal'], ['TemporalModel.stream']),
+            'profiles.py::Response.text': (['attribute_read'], ['temporal'], ['TemporalModel.stream', 'iterate']),
             'tools.py::is_run_context': (['import'], ['temporal'], ['module_level']),
             'tools.py::make_context': (['import'], ['temporal'], ['<module>', 'module_level']),
         }
@@ -454,8 +520,11 @@ def test_gates_ignores_annotation_only_entries(fixture_repo: Path):
     assert kinds == snapshot(
         {
             'models/__init__.py::Diamond': (['annotation_only', 'attribute_read'], True),
-            'models/__init__.py::Left': (['annotation_only'], False),
-            'models/__init__.py::Right': (['annotation_only'], False),
+            'models/__init__.py::Left': (['annotation_only', 'attribute_read'], True),
+            'models/__init__.py::ModelAlias': (['annotation_only'], False),
+            'models/__init__.py::Pending': (['annotation_only'], False),
+            'models/__init__.py::Right': (['annotation_only', 'attribute_read'], True),
+            'models/__init__.py::Sides': (['annotation_only'], False),
             'profiles.py::Response': (['annotation_only', 'import'], True),
         }
     )
