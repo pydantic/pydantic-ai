@@ -1154,6 +1154,7 @@ class TestMounts:
 
     async def test_the_mounter_runs_as_root_with_the_keys_on_stdin(self, fake_e2b: FakeE2B) -> None:
         backend = await _with_working_dir()
+        backend.check_mount(_mount())
         fake_e2b.responder = lambda command, timeout: ('{"recovered": []}\n', '', 0)
         await backend.ensure_mounts([_mount()])
         commands = fake_e2b.sandboxes[0].commands

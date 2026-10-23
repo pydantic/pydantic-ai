@@ -6,6 +6,7 @@ or awkward to set up there: several runs sharing a sandbox, a mount failing half
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import time
@@ -42,9 +43,8 @@ class Sandbox:
     def _unmount(self, path: str) -> None:
         self.unmounts.append(path)
         del self.mounted[path]
-        marker = os.path.join(path, _helper.MARKER)
-        if os.path.exists(marker):
-            os.remove(marker)
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(os.path.join(path, _helper.MARKER))
 
     def _mount(self, request: dict[str, Any], keys: dict[str, str], owner: os.stat_result) -> None:
         if self.fail_mount:

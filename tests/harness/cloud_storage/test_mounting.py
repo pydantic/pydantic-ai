@@ -77,7 +77,7 @@ def test_docker_needs_fuse() -> None:
 class Sandbox:
     """Answers the mount helper as a sandbox would, recording what it was asked."""
 
-    def __init__(self, reply: dict[str, Any] | None = None) -> None:
+    def __init__(self, reply: dict[str, Any] | str | None = None) -> None:
         self.reply = reply or {'recovered': []}
         self.gone: Exception | None = None
         self.calls: list[tuple[list[str], dict[str, Any]]] = []
@@ -86,13 +86,18 @@ class Sandbox:
         self.calls.append((list(argv), json.loads(stdin)))
         if self.gone is not None:
             raise self.gone
-        return CommandResult(exit_code=0, stdout=f'sudo: banner\n{json.dumps(self.reply)}\n', stderr='')
+        answer = self.reply if isinstance(self.reply, str) else json.dumps(self.reply)
+        return CommandResult(exit_code=0, stdout=f'sudo: banner\n{answer}\n', stderr='')
 
 
 async def test_keys_go_to_the_sandbox_in_rclones_terms() -> None:
     sandbox = Sandbox()
     s3 = S3Filesystem('s3://acme/data/', credentials=EXPIRING, region='eu-west-1')
-    azure = AzureFilesystem(AZURE, credentials={'sas_token': [('sv', '2024'), ('sig', 'x')], 'expires_at': IN_AN_HOUR})
+    azure = AzureFilesystem(
+        AZURE,
+        credentials={'sas_token': [('sv', '2024'), ('sig', 'x')], 'expires_at': IN_AN_HOUR},
+        endpoint='https://acme.blob.example',
+    )
 
     await Mounter(sandbox.run_as_root, attached=False).ensure(
         [Mount('s3', s3, commands=True), Mount('az', azure, commands=True, read_only=True)], '/w'
@@ -100,13 +105,18 @@ async def test_keys_go_to_the_sandbox_in_rclones_terms() -> None:
 
     ((argv, request),) = sandbox.calls
     assert argv[:2] == ['python3', '-c']
+    assert request['mounts'][1]['remote'] == {
+        'type': 'azureblob',
+        'account': 'acme',
+        'endpoint': 'https://acme.blob.example',
+    }
     assert [(mount['path'], mount['root'], mount['read_only']) for mount in request['mounts']] == [
         ('/w/s3', 'acme/data', False),
         ('/w/az', 'data', True),
     ]
     assert list(request['keys'].values()) == [
         {'access_key_id': 'a', 'secret_access_key': 'b', 'session_token': 't'},
-        {'sas_url': 'https://acme.blob.core.windows.net/data?sv=2024&sig=x'},
+        {'sas_url': 'https://acme.blob.example/data?sv=2024&sig=x'},
     ]
 
 
@@ -134,6 +144,10 @@ async def test_the_helpers_refusal_and_recovered_files_reach_the_caller() -> Non
     busy = Sandbox({'error': 'busy', 'message': 'Another run is using this sandbox with different mounts.'})
     with pytest.raises(MountError, match=r'^Another run is using this sandbox'):
         await Mounter(busy.run_as_root, attached=True).ensure([mount], '/w')
+
+    # A helper that never got to answer, such as without Python, is reported with what it printed.
+    with pytest.raises(MountError, match=r'^Could not mount storage in the sandbox: sudo: banner\npython3: not found$'):
+        await Mounter(Sandbox('python3: not found').run_as_root, attached=True).ensure([mount], '/w')
 
     recovered = Sandbox({'recovered': ['/w/.pydantic-ai-recovered/x-data']})
     with pytest.warns(UserWarning, match=r'moved to /w/\.pydantic-ai-recovered/x-data'):
