@@ -168,6 +168,7 @@ def test_profile(model: OpenAILiveModel) -> None:
         supports_interruption=False,
         supports_output_truncation=False,
         supports_text_output=False,
+        supports_audio_output=True,
         supports_session_seeding=True,
         supports_seeding_images=False,
         supports_seeding_audio=False,

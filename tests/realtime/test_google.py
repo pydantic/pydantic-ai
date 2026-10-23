@@ -963,6 +963,36 @@ def test_profile_supports_seeding_audio(model_name: str, seeds_audio: bool) -> N
 
 
 @pytest.mark.parametrize(
+    ('model_name', 'writes', 'speaks'),
+    [
+        ('gemini-2.5-flash-native-audio-latest', False, True),
+        ('gemini-3.8-live', False, True),
+        ('gemini-live-2.5-flash', True, True),
+        ('gemini-robotics-er-2-streaming-preview', True, False),
+        ('models/gemini-robotics-er-2-streaming-preview', True, False),
+    ],
+)
+def test_profile_output_modalities(model_name: str, writes: bool, speaks: bool) -> None:
+    # Verified live: the robotics streaming model rejects `AUDIO` and the native-audio models `TEXT`.
+    profile = GoogleRealtimeModel(model_name).profile
+    assert profile.get('supports_text_output') is writes
+    assert profile.get('supports_audio_output') is speaks
+
+
+@pytest.mark.parametrize('text_output', [False, True])
+def test_output_transcription_is_the_answer_in_a_text_session(text_output: bool) -> None:
+    # A text-only model streams its written answer as `output_transcription` (verified live on
+    # `gemini-robotics-er-2-streaming-preview`), so in a text session it's text output, not speech.
+    conn = GoogleRealtimeConnection(cast('AsyncSession', _RecordingSession()), text_output=text_output)
+    message = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(output_transcription=genai_types.Transcription(text='Paris.'))
+    )
+    assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
+        OutputTranscript(text='Paris.', is_final=False, output_text=text_output)
+    ]
+
+
+@pytest.mark.parametrize(
     ('model_name', 'sees_video_frames'),
     [
         ('gemini-2.5-flash-native-audio-latest', False),

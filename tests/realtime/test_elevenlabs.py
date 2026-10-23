@@ -134,6 +134,7 @@ def test_profile() -> None:
             'supports_interruption': True,
             'supports_output_truncation': True,
             'supports_text_output': False,
+            'supports_audio_output': True,
             'supports_session_seeding': True,
             'supports_webrtc': False,
             'supports_seeding_images': False,

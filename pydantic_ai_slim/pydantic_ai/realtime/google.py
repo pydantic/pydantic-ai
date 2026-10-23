@@ -1447,6 +1447,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 reconnect=reconnect,
                 input_transcription_enabled=self._input_transcription(settings),
                 async_tool_calls=self._async_tool_calls(settings),
+                text_output=settings.get('output_modality', 'audio') == 'text',
             )
         finally:
             if cm is not None:
@@ -1492,8 +1493,13 @@ class GoogleRealtimeConnection(RealtimeConnection):
         input_transcription_enabled: bool = True,
         async_tool_calls: bool = False,
         provider_url: str = '',
+        text_output: bool = False,
     ) -> None:
         self._session = session
+        # Whether the session asked for text rather than audio (`output_modality='text'`). A text-only model
+        # streams its text answer as `output_transcription` (`gemini-robotics-er-2-streaming-preview`, verified
+        # live), which is then the answer itself, written rather than spoken.
+        self._text_output = text_output
         self._profile = profile if profile is not None else DEFAULT_REALTIME_PROFILE
         self._input_transcription_enabled = input_transcription_enabled
         self._reconnects_used = 0
@@ -1988,7 +1994,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
         if content.output_transcription is not None and content.output_transcription.text:
             events.append(
                 OutputTranscript(
-                    text=content.output_transcription.text, is_final=bool(content.output_transcription.finished)
+                    text=content.output_transcription.text,
+                    is_final=bool(content.output_transcription.finished),
+                    output_text=self._text_output,
                 )
             )
         if content.interrupted:

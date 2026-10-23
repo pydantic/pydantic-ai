@@ -7922,6 +7922,30 @@ async def test_agent_realtime_session_allows_text_output_by_default() -> None:
     assert (model.last_model_settings or {}).get('output_modality') == 'text'
 
 
+async def test_agent_realtime_session_defaults_to_text_on_a_model_without_audio_output() -> None:
+    # A model that only writes text (a perception model, say) defaults to text output, which reaches the
+    # connection as the setting, and the session records its answer as text.
+    agent: Agent[None, str] = Agent()
+    conn = FakeRealtimeConnection([OutputTranscript(text='A kiwi.', is_final=True, output_text=True), ResponseDone()])
+    model = FakeRealtimeModel(conn, profile=RealtimeModelProfile(supports_audio_output=False))
+    async with agent.realtime(model).session() as session:
+        _ = [e async for e in session]
+        response = session.new_messages()[0]
+    assert (model.last_model_settings or {}).get('output_modality') == 'text'
+    assert isinstance(response, ModelResponse)
+    assert response.parts == [TextPart(content='A kiwi.')]
+
+
+async def test_agent_realtime_session_rejects_audio_output_on_a_model_without_it() -> None:
+    agent: Agent[None, str] = Agent()
+    model = FakeRealtimeModel(
+        FakeRealtimeConnection([ResponseDone()]), profile=RealtimeModelProfile(supports_audio_output=False)
+    )
+    with pytest.raises(UserError, match="does not support `output_modality='audio'`; it only generates text"):
+        async with agent.realtime(model, model_settings=RealtimeModelSettings(output_modality='audio')).session():
+            pass  # pragma: no cover
+
+
 def _profile_without_text_output() -> RealtimeModelProfile:
     """A profile that never mentions `supports_text_output`, to pin the `True` default."""
     return RealtimeModelProfile(supports_session_seeding=True)
