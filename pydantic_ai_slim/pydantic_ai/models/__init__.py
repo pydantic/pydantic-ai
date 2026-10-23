@@ -116,6 +116,7 @@ from ..messages import (
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
     _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
+    _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
     _render_append_parts,  # pyright: ignore[reportPrivateUsage]
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
@@ -3435,33 +3436,27 @@ def _project_instruction_state(
     window: InstructionBaselinePart | None = None
     values = InstructionValues.at(None)
     loaded = LoadedInstructionValues()
-    loads_start = max(
-        (
-            index
-            for index, message in enumerate(messages)
-            if isinstance(message, ModelResponse) and any(isinstance(part, CompactionPart) for part in message.parts)
-        ),
-        default=-1,
-    )
+    # Loads are folded over the post-compaction window alone, as everywhere else they're derived from history.
+    loads_start = _post_compaction_window_start(messages)
     projected: list[ModelMessage] = []
     for index, message in enumerate(messages):
         if (next_window := advance_instruction_window(window, message)) is not window:
             window = next_window
             values = InstructionValues.at(window)
         if isinstance(message, ModelResponse):
-            for part in message.parts:
-                loaded.observe(part)
+            for part_index, part in enumerate(message.parts):
+                if (index, part_index) >= loads_start:
+                    loaded.observe(part)
             projected.append(message)
             continue
         parts: list[ModelRequestPart] = []
-        for part in message.parts:
-            if loaded.tracks(part):
-                # A change to a loaded capability's block, which no instruction window restates, so it stays in
+        for part_index, part in enumerate(message.parts):
+            in_loads_window = (index, part_index) >= loads_start
+            if in_loads_window and loaded.tracks(part):
+                # A statement of a loaded capability's block, which no instruction window restates, so it stays in
                 # effect until the compaction that ends the load.
-                previous = loaded.apply(part)
-                if index > loads_start:
-                    text = part.render(inline_system=inline_system, previous=previous)
-                    parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
+                text = part.render(inline_system=inline_system, previous=loaded.apply(part))
+                parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
             elif isinstance(part, InstructionDeltaPart):
                 # A change a newer version wrote, which this one can't address, is superseded by the window
                 # the next request opens.
@@ -3469,7 +3464,8 @@ def _project_instruction_state(
                     text = part.render(inline_system=inline_system, previous=values.apply(part))
                     parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
             elif not isinstance(part, InstructionBaselinePart):
-                loaded.observe(part)
+                if in_loads_window:
+                    loaded.observe(part)
                 parts.append(part)
         instructions = message.instructions
         if (

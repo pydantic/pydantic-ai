@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import warnings
 from collections import Counter
-from collections.abc import Collection, Iterable, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Generic, TypeGuard
 
-from pydantic_ai._deferred_capabilities import LoadCapabilityCallPart, LoadCapabilityReturnPart
+from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart, LoadExchanges
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._utils import dataclasses_no_defaults_repr
 from pydantic_ai.exceptions import UserError
@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     ModelResponsePart,
     _instruction_text_hash,  # pyright: ignore[reportPrivateUsage]
+    _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.template import TemplateStr
 
@@ -423,8 +424,9 @@ class LoadedInstructionValues:
     A capability's block, `capability:<id>`, comes into scope with its `load_capability` return, and its
     statements are recorded as [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s with that id:
     the first one on the request after the load, and one for each change since. A load return from an earlier
-    version, which carried the instructions itself, seeds the block with them. A compaction ends every
-    load, as [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] does for loaded tools.
+    version, which carried the instructions itself, seeds the block with them. Only the parts in the
+    [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] are folded, as for loaded tools, so a
+    compaction ends every load.
 
     Unlike the prefix's blocks, a loaded block is not recorded in an
     [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart], so a new instruction window
@@ -434,43 +436,31 @@ class LoadedInstructionValues:
     values: dict[str, str | None] = field(default_factory=dict[str, str | None])
     """Each loaded capability's block text, keyed by its registry id."""
 
-    _loading: dict[str, str] = field(default_factory=dict[str, str], repr=False)
-    """The capability each `load_capability` call seen so far loads, keyed by tool call id."""
+    _loads: LoadExchanges = field(default_factory=LoadExchanges, repr=False)
 
     _changed: set[str] = field(default_factory=set[str], repr=False)
     """The capabilities whose value an instruction change delivered, rather than their load return."""
 
     @classmethod
-    def of(cls, messages: Iterable[ModelMessage]) -> LoadedInstructionValues:
+    def of(cls, messages: Sequence[ModelMessage]) -> LoadedInstructionValues:
         """The values at the end of `messages`."""
         loaded = cls()
-        for message in messages:
-            for part in message.parts:
-                if loaded.tracks(part):
-                    loaded.apply(part)
-                else:
-                    loaded.observe(part)
+        for _, part in loaded_window_parts(messages):
+            if loaded.tracks(part):
+                loaded.apply(part)
+            else:
+                loaded.observe(part)
         return loaded
 
-    def observe(self, part: ModelRequestPart | ModelResponsePart) -> None:
-        """Fold in a part that loads a capability or ends the loads, if `part` is one."""
-        if isinstance(part, CompactionPart):
-            self.values.clear()
-            self._loading.clear()
-            self._changed.clear()
-        elif isinstance(part, LoadCapabilityCallPart):
-            if part.capability_id is not None:
-                self._loading[part.tool_call_id] = part.capability_id
-        elif isinstance(part, LoadCapabilityReturnPart):
-            if (capability_id := self._loading.get(part.tool_call_id)) is not None:
-                # Moved to the end, so the values stay in load order.
-                self.values.pop(capability_id, None)
-                self.values[capability_id] = part.instructions
-                self._changed.discard(capability_id)
-
-    def loaded_by(self, part: LoadCapabilityReturnPart) -> str | None:
-        """The capability a `load_capability` return `observe`d loads, if its call was seen."""
-        return self._loading.get(part.tool_call_id)
+    def observe(self, part: ModelRequestPart | ModelResponsePart) -> str | None:
+        """Fold in `part`, returning the capability it loads if it's a `load_capability` return completing a load."""
+        if (capability_id := self._loads.observe(part)) is not None:
+            assert isinstance(part, LoadCapabilityReturnPart)
+            # Moved to the end, so the values stay in load order.
+            self.values.pop(capability_id, None)
+            self.values[capability_id] = part.instructions
+            self._changed.discard(capability_id)
+        return capability_id
 
     def tracks(self, part: ModelRequestPart | ModelResponsePart) -> TypeGuard[InstructionDeltaPart]:
         """Whether `part` is a change to a loaded capability's block."""
@@ -488,6 +478,22 @@ class LoadedInstructionValues:
         self.values[capability_id] = change.content
         self._changed.add(capability_id)
         return previous
+
+
+def loaded_window_parts(
+    messages: Sequence[ModelMessage],
+) -> Iterator[tuple[int, ModelRequestPart | ModelResponsePart]]:
+    """The parts of `messages` in the post-compaction window, each with the index of the message it's in.
+
+    Loaded capabilities are folded over these alone: `post_compaction_window`'s boundary, with the positions of
+    the messages being walked.
+    """
+    start_message, start_part = _post_compaction_window_start(messages)
+    for index, message in enumerate(messages):
+        if index < start_message:
+            continue
+        for part in message.parts[start_part if index == start_message else 0 :]:
+            yield index, part
 
 
 def _changed_capability_id(change: InstructionDeltaPart) -> str:
@@ -542,20 +548,16 @@ def restate_loaded_instructions(
     """
     loaded = LoadedInstructionValues()
     unstated: dict[str, int] = {}
-    for index, message in enumerate(messages):
-        for part in message.parts:
-            if loaded.tracks(part):
-                unstated.pop(_changed_capability_id(part), None)
-                loaded.apply(part)
-                continue
-            loaded.observe(part)
-            if isinstance(part, CompactionPart):
-                unstated.clear()
-            elif isinstance(part, LoadCapabilityReturnPart) and (capability_id := loaded.loaded_by(part)) is not None:
-                if part.instructions is None and not any(message is target for target in targets):
-                    unstated[capability_id] = index
-                else:
-                    unstated.pop(capability_id, None)
+    for index, part in loaded_window_parts(messages):
+        if loaded.tracks(part):
+            unstated.pop(_changed_capability_id(part), None)
+            loaded.apply(part)
+        elif (capability_id := loaded.observe(part)) is not None:
+            assert isinstance(part, LoadCapabilityReturnPart)
+            if part.instructions is None and not any(messages[index] is target for target in targets):
+                unstated[capability_id] = index
+            else:
+                unstated.pop(capability_id, None)
     if not unstated:
         return list(messages)
     texts = _loaded_texts(parts)
@@ -609,20 +611,20 @@ def _recorded_instruction_values(
     values = InstructionValues.at(baseline)
     loaded = LoadedInstructionValues()
     in_window = False
-    for message in messages:
-        for part in message.parts:
-            if part is baseline:
-                in_window = True
-            elif loaded.tracks(part):
-                # A loaded capability's block is delivered through history, not the prefix: its changes are no
-                # part of this window, and leaving it out of `current` is no withdrawal.
-                loaded.apply(part)
-            elif in_window and isinstance(part, InstructionDeltaPart):
-                if part.id is None:
-                    return None
-                values.apply(part)
-            else:
-                loaded.observe(part)
+    # A baseline opens after the latest compaction, which ends the window before it.
+    for _, part in loaded_window_parts(messages):
+        if part is baseline:
+            in_window = True
+        elif loaded.tracks(part):
+            # A loaded capability's block is delivered through history, not the prefix: its changes are no part of
+            # this window, and leaving it out of `current` is no withdrawal.
+            loaded.apply(part)
+        elif in_window and isinstance(part, InstructionDeltaPart):
+            if part.id is None:
+                return None
+            values.apply(part)
+        else:
+            loaded.observe(part)
     return values.values
 
 
