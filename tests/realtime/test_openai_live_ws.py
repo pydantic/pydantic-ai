@@ -281,9 +281,9 @@ async def test_typed_question_runs_the_agents_tool(
     ] == snapshot(
         [
             ['user-prompt: What is the weather in London?'],
-            ['speech:  Let me check the current weather in', 'tool-call: get_weather {"city":"London"}'],
+            ['speech:  Let me check the current weather in London.', 'tool-call: get_weather {"city":"London"}'],
             ['tool-return: It is foggy and 12 degrees Celsius in London.'],
-            ['speech:  London. It\u2019s foggy and 12 degrees Celsius.'],
+            ['speech:  It\u2019s foggy and 12 degrees Celsius.'],
         ]
     )
     # Closing asked Live to end the session, which it confirmed.

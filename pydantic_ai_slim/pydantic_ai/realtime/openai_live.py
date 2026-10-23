@@ -685,6 +685,11 @@ class _LiveLifecycle(InferredLifecycle):
         finally:
             self._settles = False
 
+    @property
+    def settling_ends_reply(self) -> bool:
+        """Whether a delegation settling now would end the reply under way: it called tools, and goes on past them."""
+        return self._open is not None and self._calls_awaiting_usage
+
     def delegation_settled(self) -> None:
         """The provider message being mapped settles a delegation: it owes nothing more.
 
@@ -811,6 +816,11 @@ class OpenAILiveConnection(RealtimeConnection):
         self._pause_ms: float | None = None
         # The last transcript fragment in each direction, for the space Live leaves out between segments.
         self._last_fragment: dict[Literal['input', 'output'], str] = {'input': '', 'output': ''}
+        # Where on the session timeline the model's transcript last ended.
+        self._last_output_end_ms: int | None = None
+        # The backend usage report of a delegation that settled while Live was mid-sentence, held back until Live
+        # pauses: it ends the reply that called the tools (see `_release_settlement`).
+        self._held_settlement: list[SessionUsage] = []
         # Where on the session timeline the user's transcript last ended.
         self._last_input_end_ms: int | None = None
         self._delegations: dict[str, _Delegation] = {}
@@ -894,7 +904,7 @@ class OpenAILiveConnection(RealtimeConnection):
         if not delegation.response_in_flight:
             # Settled outside any provider message, so no backend usage report follows to end the reply that called
             # the tools: the turn clock, which the delegation no longer holds, ends it.
-            self._settle_delegation(delegation, gave_up=True, in_frame=False)
+            self._settle_delegation(delegation, gave_up=True)
 
     def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
         self._message_history = message_history
@@ -1117,6 +1127,9 @@ class OpenAILiveConnection(RealtimeConnection):
         """
         if self._closed:
             return
+        # A backend report still held back for Live to pause, now that the session has stopped reading.
+        for report in self._release_settlement(ends_reply=False):
+            yield report
         if self._session_end.ended:
             # Live already ended the session; its final usage is yielded unless the session already took it.
             unclaimed, self._session_end.unclaimed = self._session_end.unclaimed, []
@@ -1211,8 +1224,10 @@ class OpenAILiveConnection(RealtimeConnection):
                     except self.transport_errors as e:
                         dropped = e
                 if dropped is not None:
-                    # Nothing under way on the dropped connection will finish, whether or not it is re-dialed.
-                    lost: RealtimeFrame = [*self._lifecycle.connection_lost()]
+                    # Nothing under way on the dropped connection will finish, whether or not it is re-dialed: a
+                    # reply still held open for Live to pause is lost with it, with the backend usage it reported.
+                    held = self._release_settlement(ends_reply=False)
+                    lost: RealtimeFrame = [*(self._frame([*held]) if held else []), *self._lifecycle.connection_lost()]
                     if self._reconnect is None or self._dial is None:
                         # No reconnect policy: a dropped connection is fatal. Surface it as a non-recoverable
                         # error and end the stream, as the other providers do, rather than raising the
@@ -1302,6 +1317,7 @@ class OpenAILiveConnection(RealtimeConnection):
         self._pause_ms = None
         self._last_fragment = {'input': '', 'output': ''}
         self._last_input_end_ms = None
+        self._last_output_end_ms = None
         self._abandoned_calls.update(self._open_calls)
         self._open_calls.clear()
         # (The connection's own drop handling settles the replies they asked for.)
@@ -1354,7 +1370,7 @@ class OpenAILiveConnection(RealtimeConnection):
 
     def _settle_open_turns(self, *, interrupted: bool = False) -> list[RealtimeCodecEvent]:
         """Finalize whichever turns are open, in either direction."""
-        events = self._close_input_turn()
+        events = [*self._release_settlement(ends_reply=not interrupted), *self._close_input_turn()]
         if self._response_open:
             self._response_open = False
             self._pause_ms = None
@@ -1372,6 +1388,26 @@ class OpenAILiveConnection(RealtimeConnection):
 
     def _heard_voice(self) -> None:
         self._last_voice = _now()
+
+    @property
+    def _speaking(self) -> bool:
+        """Whether the model's voice sounded within the last pause's length: it is mid-sentence."""
+        return self._pause_ms is not None and self._pause_ms < _MAX_FORWARDED_PAUSE_MS
+
+    def _release_settlement(self, *, ends_reply: bool = True) -> list[SessionUsage]:
+        """The held usage report of a delegation that settled mid-sentence, which now ends the reply that called it.
+
+        Live goes on with what it was saying as the backend answers, and only then speaks the answer, which the wire
+        doesn't mark. So the reply ends where Live next pauses (as long as `_MAX_FORWARDED_PAUSE_MS`, on its audio or
+        its transcript's timeline), or at anything else that happens first: rather than mid-sentence. With
+        `ends_reply=False` the report is only the reply's, which something else is ending (the session ending, say).
+        """
+        if not self._held_settlement:
+            return []
+        held, self._held_settlement = self._held_settlement, []
+        if ends_reply:
+            self._lifecycle.delegation_settled()
+        return held
 
     def _open_response(self) -> list[RealtimeCodecEvent]:
         """Note that the model is speaking, closing the user turn it is replying to."""
@@ -1442,10 +1478,21 @@ class OpenAILiveConnection(RealtimeConnection):
         Dispatch is on the parsed SDK types rather than the `type` string so each branch narrows to
         the payload it reads.
         """
+        if self._held_settlement and not isinstance(
+            event, (OutputAudioDeltaEvent, OutputTranscriptDeltaEvent, SessionUsageUpdatedEvent, SessionClosedEvent)
+        ):
+            # Something other than the speech going on: the reply that called the tools ends ahead of it. (The session
+            # ending says how it ends, in `_settle_open_turns`.)
+            return [*self._release_settlement(), *self._map_event(event)]
         if isinstance(event, OutputAudioDeltaEvent):
             return self._map_output_audio(_b64decode(event.delta))
         if isinstance(event, OutputTranscriptDeltaEvent):
-            return [*self._open_response(), OutputTranscript(self._fragment('output', event.delta))]
+            paused = self._last_output_end_ms is not None and (
+                event.start_ms - self._last_output_end_ms >= _MAX_FORWARDED_PAUSE_MS
+            )
+            self._last_output_end_ms = event.end_ms
+            released = self._release_settlement() if paused else []
+            return [*released, *self._open_response(), OutputTranscript(self._fragment('output', event.delta))]
         if isinstance(event, InputTranscriptDeltaEvent):
             continues_closed_turn = (
                 self._response_open
@@ -1522,6 +1569,7 @@ class OpenAILiveConnection(RealtimeConnection):
         for delegation in in_flight:
             events.extend(self._response_ended_without_usage(unmeasured_requests=1))
             self._settle_delegation(delegation, gave_up=True)
+            self._lifecycle.delegation_settled()
         events.append(
             RealtimeSessionErrorEvent(
                 message=f'The delegated OpenAI Responses backend did not finish ({code}: {message}).',
@@ -1573,15 +1621,17 @@ class OpenAILiveConnection(RealtimeConnection):
             self._pause_ms = 0.0
             events = self._open_response()
             return [*events, AudioDelta(data=pcm)] if self._forwards_output_audio else events
-        if self._pause_ms is None or not self._forwards_output_audio:
+        if self._pause_ms is None:
             return []
         # A chunk that crosses the allowance is cut at it, on a sample boundary, so the pause forwarded
         # doesn't depend on how Live happened to chunk the track.
         allowed = max(0, int((_MAX_FORWARDED_PAUSE_MS - self._pause_ms) * self._audio_bytes_per_ms) // 2 * 2)
         self._pause_ms += len(pcm) / self._audio_bytes_per_ms
-        if not self._response_open or self._input_open or not allowed:
-            return []
-        return [AudioDelta(data=pcm[:allowed])]
+        # Past the allowance, the model paused: a reply waiting for that to end ends ahead of the rest.
+        released: list[RealtimeCodecEvent] = [] if self._speaking else [*self._release_settlement()]
+        if not self._forwards_output_audio or not self._response_open or self._input_open or not allowed:
+            return released
+        return [AudioDelta(data=pcm[:allowed]), *released]
 
     def _map_delegation(self, event: DelegationCreatedEvent) -> list[RealtimeCodecEvent]:
         delegation = event.delegation
@@ -1625,14 +1675,19 @@ class OpenAILiveConnection(RealtimeConnection):
         delegation = self._delegations.get(delegation_id) if delegation_id is not None else None
         if isinstance(event, (ResponseCompletedEvent, ResponseFailedEvent, ResponseIncompleteEvent)):
             self._pending_reasoning.pop(delegation_id, None)
-            events: list[RealtimeCodecEvent] = self._map_backend_usage(event.response)
+            usage = self._map_backend_usage(event.response)
+            completed = isinstance(event, ResponseCompletedEvent)
             if delegation is not None:
-                if not events:
-                    events = self._response_ended_without_usage(unmeasured_requests=int(event.response.usage is None))
-                self._settle_delegation(delegation, gave_up=not isinstance(event, ResponseCompletedEvent))
-            if not isinstance(event, ResponseCompletedEvent):
-                events.append(_delegation_stopped(event))
-            return events
+                if not usage:
+                    usage = self._response_ended_without_usage(unmeasured_requests=int(event.response.usage is None))
+                if self._settle_delegation(delegation, gave_up=not completed):
+                    if completed and self._speaking and self._lifecycle.settling_ends_reply:
+                        # Live is mid-sentence, saying what it says while the backend works: the reply goes on to
+                        # the end of that, and what Live says after its next pause is the answer.
+                        self._held_settlement.extend(usage)
+                        return []
+                    self._lifecycle.delegation_settled()
+            return [*usage] if completed else [*usage, _delegation_stopped(event)]
         if not isinstance(event, ResponseOutputItemDoneEvent):
             return []
         if isinstance(event.item, ResponseReasoningItem):
@@ -1689,7 +1744,7 @@ class OpenAILiveConnection(RealtimeConnection):
         return events
 
     @staticmethod
-    def _response_ended_without_usage(*, unmeasured_requests: int = 0) -> list[RealtimeCodecEvent]:
+    def _response_ended_without_usage(*, unmeasured_requests: int = 0) -> list[SessionUsage]:
         """The usage report a backend response that ended without mapped usage still makes.
 
         Every backend response is reported exactly once, usage or not: it is a request the backend made
@@ -1701,15 +1756,15 @@ class OpenAILiveConnection(RealtimeConnection):
         """
         return [SessionUsage(RequestUsage(unmeasured_requests=unmeasured_requests))]
 
-    def _settle_delegation(self, delegation: _Delegation, *, gave_up: bool, in_frame: bool = True) -> None:
+    def _settle_delegation(self, delegation: _Delegation, *, gave_up: bool) -> bool:
         """Account for one finished backend response, closing the delegation once it owes nothing.
 
         A delegation suspends the turn clock, so leaving a dead one in the map would keep the session
         from ever reporting another turn boundary: a backend that fails or stops short has to close
         it just as a completed one does.
 
-        `in_frame` says it is settled by the provider message being mapped, whose backend usage report then ends the
-        reply that called the tools (see `_LiveLifecycle.delegation_settled()`).
+        Returns whether the delegation is settled. Settled by a provider message, its backend usage report then ends
+        the reply that called the tools (see `_LiveLifecycle.delegation_settled()`), which is for the caller to say.
         """
         delegation.response_in_flight = False
         if gave_up or delegation.stalled:
@@ -1721,16 +1776,15 @@ class OpenAILiveConnection(RealtimeConnection):
             delegation.pending_tool_calls.clear()
             delegation.continuation_due = False
         if delegation.pending_tool_calls:
-            return  # the last result to come back continues it
+            return False  # the last result to come back continues it
         if delegation.continuation_due:
             self._continuations_due.append(delegation)
-            return
+            return False
         self._delegations.pop(delegation.id, None)
-        if in_frame:
-            self._lifecycle.delegation_settled()
         self._heard_voice()
+        return True
 
-    def _map_backend_usage(self, response: Response) -> list[RealtimeCodecEvent]:
+    def _map_backend_usage(self, response: Response) -> list[SessionUsage]:
         """Accumulate the delegated backend's token usage, priced as the backend.
 
         Live meters its own audio by the second and reports no tokens for it, but the Responses
