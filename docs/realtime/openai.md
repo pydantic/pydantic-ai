@@ -582,20 +582,11 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   `live_delegation_failed`, so the turn still ends. A tool call the failed backend asked for keeps running, and its
   result is recorded in history, but goes nowhere: the turn doesn't wait for it.
 - The backend continues a delegated round only once it has every call's output, and Live has no
-  command to cancel a delegation: left unfinished, the round keeps Live from delegating anything
-  more for the rest of the session. So when a tool raises, the model *does* get a result, as on
-  [Gemini Live](gemini.md#provider-specific-quirks) and unlike on the
-  [other providers](tools.md#function-tools): the call's output is the error history records,
-  `{"error":"The tool raised an unhandled error."}`. The backend carries on (it may try the tool
-  again), and Live speaks what it makes of it. The exception is still raised from the session as
-  usual, but the exchange goes on as it would after a result that succeeded: a
-  [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] that was waiting returns,
-  and [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] arrives, once
-  Live has spoken that answer. When the exception is a
-  [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], nothing goes out, so the round
-  doesn't make another request: Pydantic AI gives it up, and turn boundaries are inferred again. To
-  give the model something better than the generic failure, turn the exception into a result with
-  [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error].
+  command to cancel a delegation. When a [tool raises](tools.md#function-tools), the failure result
+  completes the round as it does on every provider, and the backend carries on (it may try the tool
+  again). When a [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] stops a call,
+  nothing goes out, so the round doesn't make another request: Pydantic AI gives it up, and turn
+  boundaries are inferred again.
 
 ### gpt-realtime {#gpt-realtime-provider-specific-quirks}
 

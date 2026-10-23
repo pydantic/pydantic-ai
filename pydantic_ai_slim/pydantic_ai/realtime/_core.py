@@ -180,7 +180,7 @@ class Interrupted:
 
 @dataclass(frozen=True, kw_only=True)
 class ExchangeAbandoned:
-    """The session hit a failure that stops the model getting what it needs (a tool raised, a limit tripped).
+    """The session hit a failure that stops the model getting what it needs (a limit tripped, a result couldn't go out).
 
     Nothing owed until now is waited for any more; what is asked for afterwards is.
     """
@@ -947,7 +947,7 @@ class SessionCore:
         self._returns[command.tool_call_id] = command.request
         self._settled_calls.add(command.tool_call_id)
         if command.tool_call_id not in self._result_input:
-            # Settled without its result going out (cancelled, or the tool raised).
+            # Settled without its result going out (cancelled, stopped by a usage limit, or its send failed).
             self._call_unanswered(command.tool_call_id)
 
     def _call_unanswered(self, call_id: str) -> None:
@@ -1112,8 +1112,8 @@ class SessionCore:
         """Stop waiting for what is owed (see `ExchangeAbandoned`), ending the exchange under way if nothing else will.
 
         A response still under way, or one that ended in the frame being applied, ends it as it ends (see `end_frame`),
-        as nothing owed before now holds it open. Otherwise no response is coming to end it: the result of a tool that
-        raised doesn't go out, so the model never answers it.
+        as nothing owed before now holds it open. Otherwise no response is coming to end it: a usage limit stopped a tool
+        result from going out, or a failure result couldn't be sent, so the model never answers it.
         """
         owed = self.wait_tokens()
         self._abandoned.update((token.kind, token.key) for token in owed)

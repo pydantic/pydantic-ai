@@ -3821,36 +3821,23 @@ async def test_repeated_malformed_json_args_exceed_tool_retry_budget() -> None:
     assert session._tool_manager.ctx.retries == {'noop': 1}  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_tool_runner_exception_ends_session() -> None:
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
-
-    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
-        raise RuntimeError('kaboom')
-
-    session = RealtimeSession(conn, runner)
-    with pytest.raises(RuntimeError, match='kaboom'):
-        await collect_events(session)
-    assert conn.sent == []
-
-
-class _SendsFailedResults(FakeRealtimeConnection):
-    """A connection whose model can't move on without a result for every call (GPT-Live's delegated backend)."""
+class _RecordsUnanswered(FakeRealtimeConnection):
+    """A connection that records the calls the session settled without sending a result."""
 
     def __init__(self, events: list[RealtimeCodecEvent]) -> None:
         super().__init__(events)
         self.unanswered: list[str] = []
 
-    @property
-    def _sends_failed_tool_results(self) -> bool:
-        return True
-
     def _tool_call_unanswered(self, tool_call_id: str) -> None:
         self.unanswered.append(tool_call_id)
 
 
-async def test_tool_exception_is_sent_as_a_failure_where_the_connection_needs_it() -> None:
-    """The failure history records goes out as the call's result, and the exception is still raised."""
-    conn = _SendsFailedResults([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
+async def test_tool_exception_is_sent_as_a_failure() -> None:
+    """The failure history records goes out as the call's result, never the exception's message.
+
+    The exception is still raised to the consumer.
+    """
+    conn = _RecordsUnanswered([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         raise RuntimeError('kaboom')
@@ -3875,7 +3862,7 @@ async def test_tool_failure_stopped_by_a_usage_limit_sends_nothing() -> None:
 
     The connection is told no result will follow.
     """
-    conn = _SendsFailedResults([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
+    conn = _RecordsUnanswered([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
@@ -3890,7 +3877,7 @@ async def test_tool_failure_stopped_by_a_usage_limit_sends_nothing() -> None:
 async def test_tool_failure_that_cannot_be_sent_tells_the_connection() -> None:
     """The link drops as the failure goes out: the connection is told no result will follow, as for a limit."""
 
-    class _Dropped(_SendsFailedResults):
+    class _Dropped(_RecordsUnanswered):
         transport_errors = (ConnectionResetError,)
 
         async def send_input(self, content: RealtimeInput) -> None:
@@ -3919,7 +3906,9 @@ async def test_tool_runner_base_exception_ends_session() -> None:
     session = RealtimeSession(conn, runner)
     with pytest.raises(ToolFailure, match='kaboom'):
         await collect_events(session)
-    assert conn.sent == []
+    assert conn.sent == snapshot(
+        [ToolResult(tool_call_id='tc', output='{"error":"The tool raised an unhandled error."}', failed=True)]
+    )
 
 
 async def test_tool_runner_base_exception_wins_connection_completion_race() -> None:
@@ -3943,7 +3932,9 @@ async def test_tool_runner_base_exception_wins_connection_completion_race() -> N
     with pytest.raises(ToolFailure, match='kaboom'):
         await collect_events(session)
     assert connection_finished.is_set()
-    assert conn.sent == []
+    assert conn.sent == snapshot(
+        [ToolResult(tool_call_id='tc', output='{"error":"The tool raised an unhandled error."}', failed=True)]
+    )
 
 
 async def test_tool_runner_cancelled_call_ends_cleanly() -> None:
@@ -4593,10 +4584,7 @@ async def test_tool_error_does_not_preempt_send_for_an_active_iterator() -> None
 
 
 async def test_tool_error_delivered_to_send_is_skipped_by_the_iterator() -> None:
-    """Once the receive side has ended, a send raises the parked failure; the iterator then skips it and ends cleanly.
-
-    It still streams the end of the turn the failure ended, which was queued behind the failure.
-    """
+    """Once the receive side has ended, a send raises the parked failure; the iterator then skips it and ends cleanly."""
 
     async def runner(*args: Any) -> str:
         raise ValueError('tool exploded')
@@ -4614,7 +4602,6 @@ async def test_tool_error_delivered_to_send_is_skipped_by_the_iterator() -> None
 
         with pytest.raises(ValueError, match='tool exploded'):
             await session.send('x')
-        assert isinstance(await anext(events), RealtimeTurnCompleteEvent)
         with pytest.raises(StopAsyncIteration):
             await anext(events)
 
@@ -8199,7 +8186,9 @@ async def test_agent_realtime_session_tool_exception() -> None:
     async with agent.realtime(model).session() as session:
         with pytest.raises(ValueError, match='nope'):
             _ = [e async for e in session]
-    assert conn.sent == []
+    assert conn.sent == snapshot(
+        [ToolResult(tool_call_id='tc', output='{"error":"The tool raised an unhandled error."}', failed=True)]
+    )
     assert [(type(message).__name__, message.parts) for message in session.all_messages()] == snapshot(
         [
             (
@@ -9105,7 +9094,11 @@ async def test_agent_realtime_session_retry_limit_advances_across_tool_rounds() 
     retried = results[0]
     assert isinstance(retried, ToolReturnPart) and retried.outcome == 'retried'
     assert str(retried.content).startswith('1 is not allowed')
-    assert conn.sent == [ToolResult(tool_call_id='tc1', output=retried.model_response_str(), failed=True)]
+    # The call that exhausted its retries is answered with the generic failure, as a tool that raised is.
+    assert conn.sent == [
+        ToolResult(tool_call_id='tc1', output=retried.model_response_str(), failed=True),
+        ToolResult(tool_call_id='tc2', output='{"error":"The tool raised an unhandled error."}', failed=True),
+    ]
 
 
 async def test_agent_realtime_session_runs_args_validator() -> None:
@@ -11955,16 +11948,74 @@ async def test_wait_for_reply_counts_merged_response_requests_once() -> None:
         assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_wait_for_reply_returns_when_a_tool_fails_while_the_session_is_iterated() -> None:
-    """A tool that raised ends the session's reply: the result the model was waiting for never comes."""
+async def test_wait_for_reply_waits_for_the_answer_to_a_failed_tool() -> None:
+    """A tool that raised still answers its call, with the generic failure: the exchange goes on to the model's answer.
+
+    `wait_for_reply()` returns once that answer ends, the turn completes once, and the call is not left unanswered.
+    """
+    answered = asyncio.Event()
+
+    class _AnswersTheFailure(_RecordsUnanswered):
+        async def send_input(self, content: RealtimeInput) -> None:
+            await super().send_input(content)
+            if isinstance(content, ToolResult):
+                answered.set()
+
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='c1', tool_name='boom', args='{}')
+            yield ResponseDone()
+            await answered.wait()
+            yield OutputTranscript(text='The tool failed.', is_final=True)
+            yield ResponseDone()
+            await asyncio.Event().wait()
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         raise ValueError('tool exploded')
 
+    conn = _AnswersTheFailure([])
+    session = RealtimeSession(conn, runner)
+    errors: list[BaseException] = []
+    turn_completes = 0
+
+    async def consume() -> None:
+        nonlocal turn_completes
+        while True:
+            try:
+                async for event in session:
+                    if isinstance(event, RealtimeTurnCompleteEvent):
+                        turn_completes += 1
+            except ValueError as e:
+                errors.append(e)
+            # Ends with the session, unless cancelled first.
+            else:  # pragma: lax no cover
+                return
+
+    async with session:
+        events = asyncio.create_task(consume())
+        await session.send('Go.')
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await session.wait_for_reply()
+        assert [str(e) for e in errors] == ['tool exploded']
+        assert answered.is_set()
+        assert session.all_messages()[-1].parts == [SpeechPart(speaker='assistant', transcript='The tool failed.')]
+        await _until(lambda: turn_completes == 1)
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert turn_completes == 1
+        events.cancel()
+    assert conn.unanswered == []
+
+
+async def test_wait_for_reply_returns_when_a_tool_hits_a_usage_limit_while_the_session_is_iterated() -> None:
+    """A tool stopped by a usage limit ends the session's reply: no result goes out, so the answer never comes."""
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
+
     session = RealtimeSession(
         BlockingRealtimeConnection([ToolCall(tool_call_id='c1', tool_name='boom', args='{}')]), runner
     )
-    with pytest.raises(ValueError, match='tool exploded'):
+    with pytest.raises(UsageLimitExceeded):
         async with session:
             await session.send('Go.')
             events = asyncio.create_task(drain_events(session))
@@ -11973,8 +12024,8 @@ async def test_wait_for_reply_returns_when_a_tool_fails_while_the_session_is_ite
             await events
 
 
-async def test_wait_for_reply_after_a_failed_tool_still_waits_for_a_later_reply() -> None:
-    """A failed tool ends only its own exchange: a reply asked for afterwards is waited for as usual."""
+async def test_wait_for_reply_after_an_abandoned_exchange_still_waits_for_a_later_reply() -> None:
+    """A tool stopped by a usage limit ends only its own exchange: a reply asked for later is waited for as usual."""
     answer = asyncio.Event()
 
     class _AnswersLater(FakeRealtimeConnection):
@@ -11985,7 +12036,7 @@ async def test_wait_for_reply_after_a_failed_tool_still_waits_for_a_later_reply(
             yield ResponseDone()
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
-        raise ValueError('tool exploded')
+        raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
 
     session = RealtimeSession(_AnswersLater([]), runner)
     errors: list[BaseException] = []
@@ -11996,7 +12047,7 @@ async def test_wait_for_reply_after_a_failed_tool_still_waits_for_a_later_reply(
             try:
                 async for _ in session:
                     pass
-            except ValueError as e:
+            except UsageLimitExceeded as e:
                 errors.append(e)
             else:
                 return
@@ -12019,8 +12070,8 @@ async def test_wait_for_reply_after_a_failed_tool_still_waits_for_a_later_reply(
             await events
 
 
-async def test_tool_failure_ends_the_wait_for_a_turn_sent_while_it_ran() -> None:
-    """A turn sent while a tool ran waits behind that tool's round, which the failure ends: so does the wait for it.
+async def test_usage_limited_tool_ends_the_wait_for_a_turn_sent_while_it_ran() -> None:
+    """A turn sent while a tool ran waits behind that tool's round, which a usage limit ends: so does the wait for it.
 
     The provider queues a reply asked for during a tool round behind it (SIM-15), so once the result never comes,
     nothing the session can see promises that reply: `wait_for_reply()` returns, and the reply, if it comes, is
@@ -12039,7 +12090,7 @@ async def test_tool_failure_ends_the_wait_for_a_turn_sent_while_it_ran() -> None
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         await fail_now.wait()
-        raise ValueError('tool exploded')
+        raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
 
     session = RealtimeSession(_AnswersTheQueuedTurn([]), runner)
     errors: list[BaseException] = []
@@ -12049,7 +12100,7 @@ async def test_tool_failure_ends_the_wait_for_a_turn_sent_while_it_ran() -> None
             try:
                 async for _ in session:
                     pass
-            except ValueError as e:
+            except UsageLimitExceeded as e:
                 errors.append(e)
             else:
                 return
@@ -12134,16 +12185,16 @@ async def test_reconnect_with_tools_running_leaves_no_reply_to_count() -> None:
         events.cancel()
 
 
-async def test_failed_tool_leaves_no_reply_to_count() -> None:
-    """A tool that raised settles its call without a result, so its response's results can't be answered."""
+async def test_usage_limited_tool_leaves_no_reply_to_count() -> None:
+    """A tool stopped by a usage limit settles its call without a result, so its response's results get no answer."""
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
-        raise ValueError('tool exploded')
+        raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
 
     conn = _ToolBatchConnection([ToolCall(tool_call_id='c1', tool_name='boom', args='{}', response_usage_follows=True)])
     conn.close_response.set()
     session = RealtimeSession(conn, runner)
-    with pytest.raises(ValueError, match='tool exploded'):
+    with pytest.raises(UsageLimitExceeded):
         async with session:
             events = asyncio.create_task(drain_events(session))
             await _until(lambda: bool(session._parked_errors))  # pyright: ignore[reportPrivateUsage]
@@ -12152,8 +12203,8 @@ async def test_failed_tool_leaves_no_reply_to_count() -> None:
             await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
 
 
-async def test_tool_failure_while_another_exchange_streams_still_ends_its_exchange() -> None:
-    """A tool failing while an unrelated reply streams doesn't leave the failed exchange owed."""
+async def test_usage_limited_tool_while_another_exchange_streams_still_ends_its_exchange() -> None:
+    """A usage limit stopping a tool while an unrelated reply streams doesn't leave the abandoned exchange owed."""
     fail_now = asyncio.Event()
     finish_b = asyncio.Event()
 
@@ -12170,7 +12221,7 @@ async def test_tool_failure_while_another_exchange_streams_still_ends_its_exchan
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         await fail_now.wait()
-        raise ValueError('tool exploded')
+        raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
 
     session = RealtimeSession(_BStreamsWhileAFails([]), runner)
     errors: list[BaseException] = []
@@ -12180,7 +12231,7 @@ async def test_tool_failure_while_another_exchange_streams_still_ends_its_exchan
             try:
                 async for _ in session:
                     pass
-            except ValueError as e:
+            except UsageLimitExceeded as e:
                 errors.append(e)
             else:
                 return
