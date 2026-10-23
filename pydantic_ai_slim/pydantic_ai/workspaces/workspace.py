@@ -19,7 +19,7 @@ from .protocol import (
     CommandResult,
     FileEntry,
     SupportsCommands,
-    SupportsComputerUse,
+    SupportsDisplay,
     SupportsFilesystem,
     SupportsRealpath,
     WorkspaceBackend,
@@ -415,7 +415,7 @@ class Workspace(WorkspaceBackend):
     def has_display(self) -> bool:
         """Whether the backend has a display to control, so `screenshot` and `act` can work. Does no I/O."""
         backend = self._backend
-        return isinstance(backend, SupportsComputerUse) and backend.has_display
+        return isinstance(backend, SupportsDisplay) and backend.has_display
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -534,18 +534,14 @@ class Workspace(WorkspaceBackend):
         return posixpath.normpath(path)
 
     @property
-    def _computer(self) -> SupportsComputerUse:
+    def _computer(self) -> SupportsDisplay:
         backend = self._backend
-        if isinstance(backend, SupportsComputerUse):
+        if isinstance(backend, SupportsDisplay):
             return backend
         raise UserError(
-            'This workspace has no display to control. Attach a backend that implements `SupportsComputerUse`, '
+            'This workspace has no display to control. Attach a backend that implements `SupportsDisplay`, '
             'such as a sandbox started with a desktop.'
         )
-
-    async def display_size(self) -> tuple[int, int]:
-        """The screenshot's `(width, height)` in pixels. Raises `UserError` if the workspace has no display."""
-        return await self._computer.display_size()
 
     async def screenshot(self) -> bytes:
         """Capture the whole display as PNG bytes. Raises `UserError` if the workspace has no display."""

@@ -4,7 +4,7 @@ A backend implements [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBacken
 [`SupportsCommands`][pydantic_ai.workspaces.SupportsCommands],
 [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], or both, and optionally
 [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath] and
-[`SupportsComputerUse`][pydantic_ai.workspaces.SupportsComputerUse]. Every backend must:
+[`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]. Every backend must:
 
 - run commands and file operations against one filesystem, when it supports both;
 - report the real exit code: a non-zero exit is a result, never an exception;
@@ -52,7 +52,7 @@ __all__ = (
     'WorkspaceUnavailableError',
     'UnsupportedComputerActionError',
     'SupportsCommands',
-    'SupportsComputerUse',
+    'SupportsDisplay',
     'SupportsFilesystem',
     'SupportsRealpath',
 )
@@ -102,7 +102,7 @@ class WorkspaceReadOnlyError(WorkspaceError, PermissionError):
 
 
 class UnsupportedComputerActionError(WorkspaceError):
-    """A [`SupportsComputerUse`][pydantic_ai.workspaces.SupportsComputerUse] backend can't perform this kind of action."""
+    """A [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay] backend can't perform this kind of action."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -228,7 +228,7 @@ class SupportsRealpath(Protocol):
 
 
 @runtime_checkable
-class SupportsComputerUse(Protocol):
+class SupportsDisplay(Protocol):
     """Optional control of a graphical display: screenshots, mouse, and keyboard.
 
     Without it, the `Workspace` display methods raise `UserError`. A Linux environment with an X server can
@@ -244,12 +244,8 @@ class SupportsComputerUse(Protocol):
         """
         ...
 
-    async def display_size(self) -> tuple[int, int]:
-        """The screenshot's `(width, height)` in pixels: the coordinate space of every action."""
-        ...
-
     async def screenshot(self) -> bytes:
-        """Capture the whole display as PNG bytes, at the size `display_size` reports."""
+        """Capture the whole display as PNG bytes. Its pixels are the coordinate space of every action."""
         ...
 
     async def act(self, action: ComputerAction) -> None:

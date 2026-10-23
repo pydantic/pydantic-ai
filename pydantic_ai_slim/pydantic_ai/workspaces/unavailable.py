@@ -8,7 +8,7 @@ from typing import Never
 from .computer import ComputerAction
 from .protocol import (
     SupportsCommands,
-    SupportsComputerUse,
+    SupportsDisplay,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceUnavailableError,
@@ -17,7 +17,7 @@ from .protocol import (
 __all__ = ('UnavailableWorkspace',)
 
 
-class UnavailableWorkspace(WorkspaceBackend, SupportsCommands, SupportsComputerUse):
+class UnavailableWorkspace(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     """A `WorkspaceBackend` whose operations raise `WorkspaceUnavailableError` with a configured reason."""
 
     def __init__(self, reason: str):
@@ -45,9 +45,6 @@ class UnavailableWorkspace(WorkspaceBackend, SupportsCommands, SupportsComputerU
     def has_display(self) -> bool:
         """Always `False`: there is no environment, so no display."""
         return False
-
-    async def display_size(self) -> Never:
-        raise WorkspaceUnavailableError(self.reason)
 
     async def screenshot(self) -> Never:
         raise WorkspaceUnavailableError(self.reason)

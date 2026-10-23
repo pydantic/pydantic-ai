@@ -13,7 +13,7 @@
             - SupportsCommands
             - SupportsFilesystem
             - SupportsRealpath
-            - SupportsComputerUse
+            - SupportsDisplay
             - X11Computer
             - ComputerAction
             - Click

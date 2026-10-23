@@ -154,7 +154,7 @@ class X11Computer:
     The X server must already be running: starting it is the environment's job (for example an image that runs
     `Xvfb :1`). Needs `xdotool`, `scrot`, `base64`, and `mktemp` in the environment. Text outside ASCII can lose
     characters: `xdotool` types it by remapping keys on the fly. A backend with a desktop
-    implements [`SupportsComputerUse`][pydantic_ai.workspaces.SupportsComputerUse] by delegating to an instance:
+    implements [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay] by delegating to an instance:
 
     ```python {test="skip" lint="skip"}
     async def screenshot(self) -> bytes:
@@ -195,14 +195,6 @@ class X11Computer:
         # xdotool skips a key name the display doesn't know and still succeeds.
         if 'No such key name' in result.stderr:
             raise UnsupportedComputerActionError(f'X11Computer cannot press that key: {result.stderr.strip()}')
-
-    async def display_size(self) -> tuple[int, int]:
-        output = (await self._run(['xdotool', 'getdisplaygeometry'])).stdout.split()
-        try:
-            width, height = output
-            return int(width), int(height)
-        except ValueError:
-            raise WorkspaceError(f'Unexpected `xdotool getdisplaygeometry` output: {" ".join(output)!r}') from None
 
     async def screenshot(self) -> bytes:
         output = (await self._run(_SCREENSHOT)).stdout

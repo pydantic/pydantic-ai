@@ -32,7 +32,7 @@ from .computer import (
 )
 from .protocol import (
     SupportsCommands,
-    SupportsComputerUse,
+    SupportsDisplay,
     SupportsRealpath,
     UnsupportedComputerActionError,
     WorkspaceBackend,
@@ -51,11 +51,19 @@ def _commands(backend: WorkspaceBackend) -> SupportsCommands:
     return backend
 
 
-def _computer(backend: WorkspaceBackend) -> SupportsComputerUse:
+def _computer(backend: WorkspaceBackend) -> SupportsDisplay:
     if not Workspace(backend).has_display:
         pytest.skip('backend has no display')
-    assert isinstance(backend, SupportsComputerUse)
+    assert isinstance(backend, SupportsDisplay)
     return backend
+
+
+async def _screenshot_size(computer: SupportsDisplay) -> tuple[int, int]:
+    """Take a screenshot and read its size: the PNG signature, then the IHDR chunk's width and height."""
+    png = await computer.screenshot()
+    assert png[:8] == b'\x89PNG\r\n\x1a\n'
+    assert png[12:16] == b'IHDR'
+    return struct.unpack('>II', png[16:24])
 
 
 @dataclass(frozen=True)
@@ -577,20 +585,14 @@ class WorkspaceBackendSuite:
         with pytest.raises(WorkspaceUnavailableError):
             await attach_backend(backend.ref).working_dir()
 
-    async def test_screenshot_is_a_png_of_the_display_size(self, backend: WorkspaceBackend) -> None:
-        computer = _computer(backend)
-        width, height = await computer.display_size()
+    async def test_screenshot_is_a_png(self, backend: WorkspaceBackend) -> None:
+        width, height = await _screenshot_size(_computer(backend))
         assert width > 0 and height > 0
-        png = await computer.screenshot()
-        # The PNG signature, then the IHDR chunk, whose first fields are the image's width and height.
-        assert png[:8] == b'\x89PNG\r\n\x1a\n'
-        assert png[12:16] == b'IHDR'
-        assert struct.unpack('>II', png[16:24]) == (width, height)
 
     async def test_every_action_is_performed_or_refused_as_unsupported(self, backend: WorkspaceBackend) -> None:
         """A backend may lack an action kind, but must refuse it with `UnsupportedComputerActionError`."""
         computer = _computer(backend)
-        width, height = await computer.display_size()
+        width, height = await _screenshot_size(computer)
         x, y = width // 2, height // 2
         actions: list[ComputerAction] = [
             MoveMouse(x=x, y=y),

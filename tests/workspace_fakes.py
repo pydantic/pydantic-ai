@@ -16,7 +16,7 @@ from pydantic_ai.workspaces import (
     FileEntry,
     ReadOnlyWorkspace,
     SupportsCommands,
-    SupportsComputerUse,
+    SupportsDisplay,
     SupportsFilesystem,
     UnsupportedComputerActionError,
     Workspace,
@@ -38,8 +38,7 @@ def _png(width: int, height: int) -> bytes:
     return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', header) + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b'')
 
 
-FAKE_DISPLAY_SIZE = (1280, 800)
-FAKE_SCREENSHOT = _png(*FAKE_DISPLAY_SIZE)
+FAKE_SCREENSHOT = _png(1280, 800)
 """A screenshot of the fake display."""
 
 
@@ -371,7 +370,7 @@ class InMemoryProvider:
         return ProviderWorkspaces(self, read_only=read_only)
 
 
-class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsComputerUse):
+class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsDisplay):
     def __init__(self, provider: InMemoryProvider, ref: WorkspaceRef | None) -> None:
         self._provider = provider
         self._ref = ref
@@ -463,10 +462,6 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, Su
     @property
     def has_display(self) -> bool:
         return True
-
-    async def display_size(self) -> tuple[int, int]:
-        await self._files()
-        return FAKE_DISPLAY_SIZE
 
     async def screenshot(self) -> bytes:
         await self._files()

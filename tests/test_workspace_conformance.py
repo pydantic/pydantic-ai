@@ -14,7 +14,7 @@ import pytest
 from pydantic_ai.workspaces import (
     ComputerAction,
     LocalWorkspaceBackend,
-    SupportsComputerUse,
+    SupportsDisplay,
     WorkspaceBackend,
     WorkspaceRef,
     local as local_module,
@@ -128,7 +128,7 @@ class TestRunOnlyWorkspaceBackend(WorkspaceBackendSuite):
         return _local_destroy_environment()
 
 
-class _ProviderFilesAndDisplay(FilesystemOnlyWorkspaceBackend, SupportsComputerUse):
+class _ProviderFilesAndDisplay(FilesystemOnlyWorkspaceBackend, SupportsDisplay):
     """The provider's files and display, without its stub `run`."""
 
     def __init__(self, inner: ProviderBackend) -> None:
@@ -138,9 +138,6 @@ class _ProviderFilesAndDisplay(FilesystemOnlyWorkspaceBackend, SupportsComputerU
     @property
     def has_display(self) -> bool:
         return self._display.has_display
-
-    async def display_size(self) -> tuple[int, int]:
-        return await self._display.display_size()
 
     async def screenshot(self) -> bytes:
         return await self._display.screenshot()

@@ -69,7 +69,6 @@ WorkspaceMethod: TypeAlias = Literal[
     'remove',
     'exists',
     'realpath',
-    'display_size',
     'screenshot',
     'act',
 ]
@@ -104,7 +103,6 @@ class WorkspaceCallResult:
     flag: bool = False
     entries: list[FileEntry] = field(default_factory=list[FileEntry])
     command: CommandResult | None = None
-    size: tuple[int, int] | None = None
     ref: WorkspaceRef | None = None
     error: WorkspaceCallError | None = None
 
@@ -158,8 +156,6 @@ class WorkspaceCall:
                 return WorkspaceCallResult(flag=await workspace.exists(self.path))
             case 'realpath':
                 return WorkspaceCallResult(text=await workspace.realpath(self.path))
-            case 'display_size':
-                return WorkspaceCallResult(size=await workspace.display_size())
             case 'screenshot':
                 return WorkspaceCallResult(data=await workspace.screenshot())
             case 'act':
@@ -370,13 +366,6 @@ class DurableWorkspace(WrapperWorkspace):
         if not self._in_container():
             return await self.wrapped.realpath(path)
         return (await self._call(WorkspaceCall(method='realpath', path=path))).text
-
-    async def display_size(self) -> tuple[int, int]:
-        if not self._in_container():
-            return await self.wrapped.display_size()
-        size = (await self._call(WorkspaceCall(method='display_size'))).size
-        assert size is not None
-        return size
 
     async def screenshot(self) -> bytes:
         if not self._in_container():
