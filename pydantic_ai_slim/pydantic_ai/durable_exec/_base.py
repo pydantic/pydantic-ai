@@ -1841,7 +1841,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return
         with anyio.CancelScope(shield=True), suppress(Exception):
             async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (model, _):
-                if model._withdraws_rejected_suspended_response(response):  # pyright: ignore[reportPrivateUsage]
+                # Other models' suspended jobs are left running, as when the core can't settle them.
+                withdraws = model._withdraws_rejected_suspended_response(response)  # pyright: ignore[reportPrivateUsage]
+                if withdraws:  # pragma: no branch
                     await model.cancel_suspended_response(response)
 
     async def _cancel_suspended_response_operation(self, params: ModelCancelSuspendedResponseParams) -> None:

@@ -971,8 +971,9 @@ async def test_a_pending_response_is_withdrawn_when_exiting_a_wrapper_around_it_
     )
     with pytest.raises(RuntimeError, match='teardown failed'):
         if stream:
-            async with agent.run_stream('Hello') as result:
-                await result.get_output()
+            # The stream fails before it's handed over, as the wrapper is exited before the run ends.
+            async with agent.run_stream('Hello'):
+                raise AssertionError('unreachable')  # pragma: no cover
         else:
             await agent.run('Hello')
     assert wrapped.canceled == [wrapped.created[0].id]
