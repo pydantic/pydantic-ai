@@ -1,5 +1,5 @@
 ---
-description: "Find community capability packages for Pydantic AI, covering SQL analytics, RAG and cloud workspaces."
+description: "Find community capability packages for Pydantic AI, covering SQL analytics and RAG."
 ---
 
 # Third-Party Capabilities
