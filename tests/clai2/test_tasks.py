@@ -858,7 +858,7 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
             yield 'Report read.'
             continued.set()
         elif question := next((text for text in system_texts(last) if 'Automated subagent question' in text), None):
-            match = re.search(r'Task ([0-9a-f]{32})', question)
+            match = re.search(r'task_id="([0-9a-f]{32})"', question)
             assert match is not None
             arguments = f'{{"task_id":"{match[1]}","answer":"cheddar"}}'
             yield {0: DeltaToolCall(name='answer_task', json_args=arguments)}
