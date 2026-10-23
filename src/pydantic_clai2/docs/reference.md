@@ -1930,11 +1930,14 @@ The `coder` plugin loads [Agent Skills](https://agentskills.io/specification)
 1. `.agents/skills` and `.claude/skills` in the project
 2. `~/.agents/skills` and `~/.claude/skills` in your home directory
 
-A project folder is looked for in the directory you launch CLAI in, then in
-each directory above it up to the root of its git repository, nearest first.
-Launched in `repo/src`, CLAI reads `repo/src/.agents/skills`, then
-`repo/.agents/skills`, then the same for `.claude/skills`. Outside a git
-repository, only the launch directory is searched.
+Project folders are looked for in the directory you launch CLAI in, then in
+each directory above it up to the root of its git repository, nearest directory
+first, the way nearer instruction files take precedence. Launched in `repo/src`,
+CLAI reads `repo/src/.agents/skills` and `repo/src/.claude/skills`, then
+`repo/.agents/skills` and `repo/.claude/skills`, so a skill in
+`repo/src/.claude/skills` wins over one with the same name in
+`repo/.agents/skills`. Outside a git repository, only the launch directory is
+searched.
 
 Folders that do not exist are skipped. Skills need a local workspace, so they
 are off on Windows. The model sees each skill's name and
@@ -1961,12 +1964,14 @@ CLAI quietly ignores the other behavioral fields some clients support, such as
 `allowed-tools` or `model`, so skills shared with those clients load as they are.
 
 When two folders have a skill with the same name, the earlier folder wins:
-project skills over personal ones, `.agents` over `.claude`. A skill reached
+project skills over personal ones, nearer directories over further ones, and
+`.agents` over `.claude` in the same directory. A skill reached
 twice, such as through a symlinked `.agents/skills`, or a byte-identical copy,
 counts once. CLAI prints one line for each skipped skill when it starts: a
 malformed `SKILL.md`, or a name another skill already has. It also prints a line
-for a skill folder it skips because it is a file, or holds a `SKILL.md` itself
-(one skill rather than a folder of them); your other folders still load.
+for a skill folder it skips because it is a file, holds a `SKILL.md` itself
+(one skill rather than a folder of them), or can't be read, such as one without
+read permission; your other folders still load.
 
 The model's catalog is read at the start of every turn, so it lists a skill you
 add mid-session. Its `/command` arrives after `/reload` or
@@ -1975,10 +1980,10 @@ under **Skill folders**, as a JSON list of paths; `~/` means your home directory
 and `[]` turns skills off. To turn off single skills, choose **Skills** there:
 each pick turns a skill on or off. A skill that is off is hidden from the model
 and has no `/command`, in every project; skills you add later start on. A
-folder CLAI cannot read when it starts, such as one without read permission,
-turns skills off, with a notice, until the next
-`/reload`; the coding tools still load. A folder that becomes a file or a single
-skill mid-session is left out of the next turn's catalog.
+skill folder that becomes a file, a single skill, or unreadable mid-session is
+left out of the next turn's catalog. A single skill's directory or `SKILL.md`
+that CLAI cannot read when it starts turns skills off, with a notice, until the
+next `/reload`; the coding tools still load.
 
 Skill commands are read on this machine. With a plugin that runs the agent in a
 sandbox, the model's catalog is read from the sandbox's workspace instead, so the

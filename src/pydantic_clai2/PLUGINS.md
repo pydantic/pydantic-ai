@@ -1063,26 +1063,31 @@ directory browser as dialogs in the page.
 in precedence order. It defaults to `[".agents/skills", ".claude/skills",
 "~/.agents/skills", "~/.claude/skills"]`, including for saved `coder`
 declarations that omit it; `~/` means your home directory, a relative path is in
-the project, and `[]` turns skills off. Each relative folder is followed by the
-same folder in each directory above the launch directory, up to the git root,
-nearest first (`CoderSettings.skill_libraries(parents=...)`); outside a git
-repository only the launch directory is used. `coder` binds harness `Skills` with
-`missing_directories='skip'` and `duplicate_names='keep_first'`, so a missing
-folder is skipped, a folder that is a file or a single skill package is skipped
-with a notice, and the earlier of two skills with one name wins. It reads the
-folders once when it loads, in `prepare`, for the `/skill-name` commands and the
-startup notices, and harness reads them again at the start of every turn for the
-model's catalog. With a plugin's capability function in the run, the run's
-workspace is chosen after `Skills` reads its catalog, so `coder` reads the
-catalog from the project directory. A `/skill-name` command reads them again
+the project, and `[]` turns skills off. Relative folders are searched in the
+launch directory and then in each directory above it, up to the git root,
+nearest directory first: every relative folder in one directory comes before any
+in the next, so `src/.claude/skills` wins over the repository's `.agents/skills`
+(`CoderSettings.skill_libraries(parents=...)`). Consecutive relative folders are
+searched together, so they keep their place relative to `~/` and absolute
+folders. Outside a git repository only the launch directory is used. `coder`
+binds harness `Skills` with `missing_directories='skip'` and
+`duplicate_names='keep_first'`, so a missing folder is skipped, a folder that is
+a file, a single skill package, or unreadable is skipped with a notice, and the
+earlier of two skills with one name wins. It reads the folders once when it
+loads, in `prepare`, for the `/skill-name` commands and the startup notices, and
+harness reads them again at the start of every turn for the model's catalog.
+With a plugin's capability function in the run, the run's workspace is chosen
+after `Skills` reads its catalog, so `coder` reads the catalog from the project
+directory. A `/skill-name` command reads them again
 when it runs, so it sends the current `SKILL.md`, and fails with a message when
 the skill is gone.
 Only skills with `user_invocable` (no `user-invocable: false`) get a command;
 harness leaves skills with `disable-model-invocation: true` out of the model's
 catalog. Frontmatter fields harness ignores, such as `allowed-tools`, belong to
 other clients sharing the folders, so `coder` does not report them, and CLAI
-hides harness's run-start warning about them. A folder that cannot be
-read when `coder` loads prints `Skills are off: ...` and leaves skills out. The
+hides harness's run-start warning about them. A skill directory or `SKILL.md`
+that cannot be read when `coder` loads prints `Skills are off: ...` and leaves
+skills out. The
 setting is tagged `coder-skill-folders`, so a CLAI build without it
 ignores a saved value instead of failing to load `coder`.
 

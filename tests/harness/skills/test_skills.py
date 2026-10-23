@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -742,6 +743,40 @@ class TestSkillLibraryLayering:
         assert [str(warning.message) for warning in caught] == [message]
         assert catalog.skipped == (SkippedSkill(path=library, reason='skill_package', message=message),)
 
+    # Mode bits do not bind root, and Windows cannot make a directory unreadable with them.
+    @pytest.mark.skipif(
+        os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0,
+        reason='POSIX mode bits must apply to this process.',
+    )
+    @pytest.mark.parametrize(
+        ('locked', 'mode'),
+        [('.agents/skills', 0o000), ('.agents/skills', 0o300), ('.agents', 0o000)],
+        ids=['no-access', 'not-listable', 'parent-not-traversable'],
+    )
+    async def test_skipping_missing_directories_also_skips_an_unreadable_library(
+        self, tmp_path: Path, locked: str, mode: int
+    ) -> None:
+        # Permissions can change mid-session, which must not fail every later run.
+        _write_skill(tmp_path / '.agents' / 'skills', 'deploy')
+        unreadable = tmp_path / locked
+        _write_skill(tmp_path / '.claude' / 'skills', 'review')
+        skills: Skills[Any] = Skills(['.agents/skills', '.claude/skills'], missing_directories='skip')
+        unreadable.chmod(mode)
+        try:
+            with pytest.warns(UserWarning) as caught:
+                names = await _names(skills, tmp_path)
+            catalog = await skills.load(LocalWorkspaceBackend(tmp_path))
+            with pytest.raises(PermissionError):
+                await _run(Skills('.agents/skills'), tmp_path)
+        finally:
+            unreadable.chmod(0o755)
+
+        assert names == ['review']
+        library = f'{tmp_path.resolve()}/.agents/skills'
+        message = f'Skipping {library}: it is not readable.'
+        assert [str(warning.message) for warning in caught] == [message]
+        assert catalog.skipped == (SkippedSkill(path=library, reason='unreadable', message=message),)
+
     async def test_an_invalid_earlier_skill_does_not_hide_a_valid_one(self, tmp_path: Path) -> None:
         broken = tmp_path / 'project' / 'review'
         broken.mkdir(parents=True)
@@ -770,6 +805,7 @@ class TestSkillsLoad:
         _write_skill(tmp_path / 'personal', 'review')
         _write_skill(tmp_path / 'personal', 'tooled', frontmatter='description: Tooled.\nallowed-tools: Read')
         _write_skill(tmp_path / 'personal', 'broken', frontmatter='not: [valid')
+        _write_skill(tmp_path / 'personal', 'wordy', description='x' * 1025)
         skills: Skills[Any] = Skills(
             ['project', 'personal', 'missing'], duplicate_names='keep_first', missing_directories='skip'
         )
@@ -779,9 +815,17 @@ class TestSkillsLoad:
             catalog = await skills.load(LocalWorkspaceBackend(tmp_path))
 
         workspace = tmp_path.resolve()
-        # Unsupported frontmatter is advice for a run's developer, not a skipped skill.
-        assert [skill.name for skill in catalog.skills] == ['review', 'tooled']
+        # Unsupported frontmatter and overlong descriptions are advice, not skipped skills.
+        assert [skill.name for skill in catalog.skills] == ['review', 'tooled', 'wordy']
         assert catalog.skills[1].ignored_behavioral_fields == ('allowed-tools',)
+        # The same advice a run emits as warnings, for a host that hides them.
+        assert catalog.advice == (
+            'Agent Skill descriptions exceed the 1,024-character limit: wordy (1,025 characters)',
+            'Ignoring unsupported Agent Skill behavioral frontmatter fields: tooled: allowed-tools',
+        )
+        with pytest.warns(UserWarning) as caught:
+            await _run(skills, tmp_path)
+        assert [str(warning.message) for warning in caught][-2:] == list(catalog.advice)
         assert catalog.skills[0].directory == f'{workspace}/project/review'
         assert catalog.skipped == (
             SkippedSkill(
