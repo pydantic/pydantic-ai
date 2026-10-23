@@ -1044,6 +1044,19 @@ saves `unrestricted_filesystem` in the `coder` declaration. Supplied agents are 
 are still run-level capabilities, so self-delegation requires binding `Coder` and
 the capabilities it should carry when constructing that agent.
 
+`task_control` gives delegation task control: `delegate_task` gains `background`
+and `resume`, the model gets `list_tasks`, `message_task`, `answer_task`, and
+`cancel_task`, and a delegated task gets `ask_parent`. It has no effect unless
+`sub_agents` is on. It defaults to `true`, also for saved `coder` declarations
+that omit it, so an upgrade gives a saved `coder` with `sub_agents: true` the
+task tools. Unlike `sub_agents` and `agent_folders`, it turns on no new
+delegation and loads no files: it only controls the tasks that delegation you
+already turned on starts. Set `"task_control": false` in `/plugins configure
+coder` to keep a plain `delegate_task`. `open_stock_agent` turns it off; pass
+`plugin_settings={'coder': {'task_control': True}}` to opt in. The setting is
+tagged `coder-task-control`, so a CLAI build without it ignores a saved value
+instead of failing to load `coder`.
+
 `agent_folders` is stored as a JSON list of folder names or paths for disk-defined
 agents (Claude `*.md` or Codex `*.toml`). A name searches `.agents/<name>`,
 `.claude/<name>`, and `.codex/<name>` in the project, then your home directory;
