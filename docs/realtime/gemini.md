@@ -94,7 +94,6 @@ settings = GoogleRealtimeModelSettings(
     google_voice='Puck',
     google_language_code='en-US',
     google_affective_dialog=True,
-    google_proactive_audio=True,
     google_vad={'start_sensitivity': 'high', 'end_sensitivity': 'low'},
     google_turn_coverage='all_video',
     google_context_compression={'trigger_tokens': 16000, 'target_tokens': 8000},
@@ -104,7 +103,7 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 
 | Setting | Purpose |
 | --- | --- |
-| `google_voice`, `google_language_code`, `google_multi_speaker` | Voice, output language, and per-speaker voices |
+| `google_voice`, `google_language_code` | Voice and output language. `google_multi_speaker` is unsupported on every Live model and raises when the session connects |
 | `google_affective_dialog` | Emotion-aware delivery, on the 2.5 models (not 3.1 Flash Live or the 3.8 models) |
 | `google_proactive_audio` | Model-decided speech on native-audio models; needs a `v1alpha` client (see below). Always on for the 3.8 models |
 | `google_vad` | Exact automatic VAD; fully overrides shared [`turn_detection`](turns.md#automatic-turn-detection) |
@@ -171,8 +170,8 @@ only native tool it supports — no Live model runs native code execution or URL
 [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] nor
 [`WebFetch`][pydantic_ai.capabilities.WebFetch] is advertised in `supported_native_tools`. Give
 those a [`local=` fallback](tools.md#native-tools) and the session runs the local tool instead:
-`CodeExecutionTool(local=...)`, or `WebFetch(native=False, local=True)`, which requires the
-`web-fetch` optional group (`pip/uv-add "pydantic-ai-slim[google-realtime,web-fetch]"`).
+[`NativeOrLocalTool(native=CodeExecutionTool(), local=...)`](../capabilities/overview.md#building-your-own),
+or `WebFetch(native=False, local=True)`, which requires the `web-fetch` optional group (`pip/uv-add "pydantic-ai-slim[google-realtime,web-fetch]"`).
 Google Search grounding takes no domain filters or usage limit, so a `WebSearch` with
 `allowed_domains`, `blocked_domains`, `max_uses`, or `external_web_access=False` set fails before the session connects (see
 [restricting parameters](../native-tools.md#restricting-parameters)).
@@ -183,8 +182,10 @@ The built-in profile describes the speech-to-speech Live models. Gemini also ser
 streaming models on the same endpoint that behave differently — `gemini-robotics-er-2-streaming-preview`,
 for instance, is text-only and rejects audio output. Point a session at one of those and correct the
 facts with [`profile=`](overview.md#provider-support), which resolves like a
-[standard model profile](../models/overview.md#inspecting-a-models-profile), e.g.
-`GoogleRealtimeModel('gemini-robotics-er-2-streaming-preview', profile={'supports_text_output': True})`.
+[standard model profile](../models/overview.md#inspecting-a-models-profile).
+`gemini-robotics-er-2-streaming-preview`, for example, needs `profile={'supports_text_output': True}` to
+allow text output and the `output_modality='text'` setting to ask for it, since a session asks for audio
+by default.
 
 ## Feature support and limitations
 
@@ -252,6 +253,12 @@ drop cut off an exchange the resumed session no longer has (see
   which reports no speech, and for the native-audio models, so there a wait for such text can end with the reply
   already under way. For a model not covered (`gemini-3.8-live-extended-thinking`, say) that cuts its reply off
   this way and reports speech, turn the flag on with `profile=`.
+- A tool call left without a response stays open: a blocking call (the 2.5 native-audio models) keeps the model
+  waiting on it, so no later turn is answered, and a non-blocking one (`gemini-3.8-live`) is made again on the next
+  input. So when a [tool raises](tools.md#function-tools), the model still gets a result, as on GPT-Live: the call's
+  output is the error history records, `{"error":"The tool raised an unhandled error."}`, and the model answers it.
+  The exception is still raised from the session as usual. When the exception is a
+  [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], nothing goes out.
 - Gemini reports response interruption but not user speech-start/end events, so local playback is
   flushed on `RealtimeResponseInterruptedEvent`, and Gemini sessions record no `user speech` span (see
   [Logfire instrumentation](observability.md#logfire-instrumentation)).

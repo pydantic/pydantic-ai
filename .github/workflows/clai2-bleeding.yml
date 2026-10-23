@@ -1,3 +1,4 @@
+# description: Publishes pydantic-clai2 and its pinned workspace sdists, plus clai2-bleeding.json, as the moving clai2-bleeding prerelease.
 name: CLAI2 bleeding
 
 # Publishes what `/update` installs on CLAI's `main` channel: sdists of `pydantic-clai2` and of

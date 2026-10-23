@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import functools
 import json
 import json as _json
 import os
@@ -12,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypeGuard
 
+import anyio
 import httpx
 import pytest
 from httpx import AsyncClient, MockTransport, Request, Response
@@ -159,8 +161,82 @@ class TestDiskMediaStore:
         uri = await store.put(b'with meta', context=MediaContext(metadata={'k': 'v'}))
         sidecar = next(iter(tmp_path.glob('*.meta.json')))
         sidecar.write_text('{"k": 1}')
-        with pytest.raises(ValueError, match='must be str→str'):
+        with pytest.raises(ValueError, match='must map str to str'):
             await store.get_metadata(uri)
+
+    async def test_get_metadata_missing_raises(self, tmp_path: Path) -> None:
+        """A blob that was never stored raises `FileNotFoundError`, like every other store."""
+        store = DiskMediaStore(tmp_path)
+        with pytest.raises(FileNotFoundError):
+            await store.get_metadata(media_uri_for(b'never put'))
+
+    async def test_later_put_with_metadata_replaces_the_sidecar(self, tmp_path: Path) -> None:
+        store = DiskMediaStore(tmp_path)
+        uri = await store.put(b'tagged twice', context=MediaContext(metadata={'writer': 'first'}))
+        await store.put(b'tagged twice', context=MediaContext(metadata={'writer': 'second'}))
+        assert await store.get_metadata(uri) == {'writer': 'second'}
+
+    async def test_concurrent_puts_of_the_same_bytes_all_succeed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Writers racing on one digest each use their own temporary file.
+
+        The first writer's `replace` runs a whole second `put`, which writes and
+        renames its own temporary file, before the first writer renames its own.
+        """
+        store = DiskMediaStore(tmp_path)
+        data = b'raced'
+        context = MediaContext(metadata={'k': 'v'})
+        real_replace = Path.replace
+        interleaved: list[str] = []
+
+        def replace_after_another_writer(self: Path, target: Path) -> Path:
+            if not interleaved:
+                interleaved.append('running')
+                # `put` runs this on a worker thread, so the second writer goes back through the event loop.
+                interleaved.append(anyio.from_thread.run(functools.partial(store.put, data, context=context)))
+            return real_replace(self, target)
+
+        monkeypatch.setattr(Path, 'replace', replace_after_another_writer)
+        uri = await store.put(data, context=context)
+
+        assert interleaved == ['running', uri]
+        assert await store.get(uri) == data
+        assert await store.get_metadata(uri) == {'k': 'v'}
+        assert sorted(p.name for p in tmp_path.iterdir()) == [
+            f'{parse_media_uri(uri)}.bin',
+            f'{parse_media_uri(uri)}.bin.meta.json',
+        ]
+
+    async def test_failed_write_leaves_no_temporary_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        store = DiskMediaStore(tmp_path)
+
+        def fail_replace(self: Path, target: Path) -> Path:
+            raise OSError('disk full')
+
+        monkeypatch.setattr(Path, 'replace', fail_replace)
+        with pytest.raises(OSError, match='disk full'):
+            await store.put(b'never lands')
+        assert list(tmp_path.iterdir()) == []
+
+    async def test_rejects_a_malformed_uri_before_the_key_strategy(self, tmp_path: Path) -> None:
+        """A URI read back from a snapshot is validated even when the strategy splices it in unparsed."""
+        (tmp_path / 'images').mkdir()
+        (tmp_path / 'images' / 'other.bin').write_bytes(b'not addressed by any digest')
+
+        def splice(uri: str, ctx: MediaContext) -> str:
+            return 'images/' + uri.removeprefix('media+sha256://') + '.bin'
+
+        store = DiskMediaStore(tmp_path, key_strategy=splice)
+        stored = await store.put(b'addressed by its digest')
+        assert await store.get(stored) == b'addressed by its digest'
+        forged = 'media+sha256://other'
+        with pytest.raises(ValueError, match='invalid sha256 digest'):
+            await store.get(forged)
+        with pytest.raises(ValueError, match='invalid sha256 digest'):
+            await store.exists(forged)
+        with pytest.raises(ValueError, match='invalid sha256 digest'):
+            await store.get_metadata(forged)
 
 
 class TestSqliteMediaStore:
@@ -195,6 +271,59 @@ class TestSqliteMediaStore:
             uri = await store.put(b'shared conn data')
             assert await store.get(uri) == b'shared conn data'
             assert await store.exists(uri) is True
+        finally:
+            connection.close()
+
+    async def test_shared_connection_put_is_committed(self, tmp_path: Path) -> None:
+        """A put on a default-isolation connection commits, so it survives close and blocks no writer."""
+        database = tmp_path / 'media.db'
+        connection = sqlite3.connect(database, check_same_thread=False)
+        try:
+            uri = await SqliteMediaStore(connection=connection).put(b'committed')
+            assert not connection.in_transaction
+            other = sqlite3.connect(database, timeout=0.1)
+            try:
+                other.execute('CREATE TABLE unrelated (x)')
+                other.commit()
+            finally:
+                other.close()
+        finally:
+            connection.close()
+        assert await SqliteMediaStore(database=database).get(uri) == b'committed'
+
+    async def test_shared_connection_put_leaves_a_caller_transaction_open(self, tmp_path: Path) -> None:
+        """Inside a transaction the caller opened, the caller decides whether the row lands."""
+        database = tmp_path / 'media.db'
+        connection = sqlite3.connect(database, check_same_thread=False)
+        try:
+            store = SqliteMediaStore(connection=connection)
+            await store.exists(media_uri_for(b'schema setup'))
+            connection.execute('BEGIN')
+            uri = await store.put(b'rolled back')
+            assert connection.in_transaction
+            connection.rollback()
+            assert await store.exists(uri) is False
+        finally:
+            connection.close()
+
+    async def test_first_call_inside_a_caller_transaction_commits_none_of_it(self, tmp_path: Path) -> None:
+        """Creating the table on the first call leaves the caller's pending work to the caller."""
+        database = tmp_path / 'media.db'
+        connection = sqlite3.connect(database, check_same_thread=False)
+        try:
+            connection.execute('CREATE TABLE app (x)')
+            connection.commit()
+            connection.execute('INSERT INTO app VALUES (1)')
+            store = SqliteMediaStore(connection=connection)
+            # The first call creates the table, inside the caller's transaction.
+            assert await store.exists(media_uri_for(b'first call')) is False
+            uri = await store.put(b'first call')
+            assert connection.in_transaction
+            connection.rollback()
+            assert connection.execute('SELECT count(*) FROM app').fetchone() == (0,)
+            # The rollback took the media table with it, and the store creates it again.
+            assert await store.exists(uri) is False
+            assert await store.get(await store.put(b'again')) == b'again'
         finally:
             connection.close()
 
@@ -894,6 +1023,171 @@ class TestExternalizeRestoreWalker:
         with pytest.raises(ValueError, match='missing string uri'):
             await restore_media(marker, media_store=store)
 
+    async def test_rejects_trees_that_are_not_json(self, tmp_path: Path) -> None:
+        """A message object or a `dump_python()` tree raises instead of passing through unexternalized."""
+        store = DiskMediaStore(tmp_path)
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content=[BinaryContent(data=b'\x00' * 128, media_type='image/png')])])
+        ]
+        with pytest.raises(TypeError, match='takes a JSON tree, got ModelRequest'):
+            await externalize_media(messages, media_store=store, threshold_bytes=64)
+        with pytest.raises(TypeError, match='takes a JSON tree, got bytes'):
+            await externalize_media(
+                ModelMessagesTypeAdapter.dump_python(messages), media_store=store, threshold_bytes=64
+            )
+        assert list(tmp_path.iterdir()) == []
+
+        json_mode = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+        externalized = await externalize_media(json_mode, media_store=store, threshold_bytes=64)
+        assert '__harness_external_media__' in _json.dumps(externalized)
+
+    @pytest.mark.parametrize(
+        'content',
+        [
+            pytest.param({'__harness_external_media__': True, 'status': 'ok'}, id='marker-key'),
+            pytest.param(
+                {
+                    '__harness_external_media__': True,
+                    '__harness_external_text__': True,
+                    'uri': media_uri_for(b'another blob'),
+                },
+                id='marker-key-pointing-at-a-stored-blob',
+            ),
+            pytest.param({'__harness_external_literal__': {'nested': True}}, id='literal-key'),
+            pytest.param({'outer': {'__harness_external_media__': True, 'x': [1, 2]}}, id='nested-marker-key'),
+        ],
+    )
+    async def test_tool_return_with_reserved_keys_round_trips(self, tmp_path: Path, content: dict[str, object]) -> None:
+        """A tool return that carries the marker's own keys restores as the tool returned it, never as a marker."""
+        store = DiskMediaStore(tmp_path)
+        await store.put(b'another blob')
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[ToolReturnPart(tool_name='fetch', tool_call_id='c1', content=content)])
+        ]
+        dumped: object = _json.loads(ModelMessagesTypeAdapter.dump_json(messages))
+
+        externalized = await externalize_media(dumped, media_store=store, threshold_bytes=64)
+        assert await restore_media(externalized, media_store=store) == dumped
+
+    async def test_externalizing_a_lean_tree_takes_one_restore_per_pass(self, tmp_path: Path) -> None:
+        """A marker in the input is escaped like caller data, never trusted as a marker.
+
+        Trusting it would let a tool return forge one. Each `externalize_media`
+        pass therefore needs its own `restore_media`.
+        """
+        store = DiskMediaStore(tmp_path)
+        node = {'part_kind': 'text', 'content': 'x' * 128}
+        once = await externalize_media(node, media_store=store, threshold_bytes=64)
+        twice = await externalize_media(once, media_store=store, threshold_bytes=64)
+        assert await restore_media(twice, media_store=store) == once
+        assert await restore_media(once, media_store=store) == node
+
+    async def test_externalized_part_inside_a_wrapped_dict_restores(self, tmp_path: Path) -> None:
+        store = DiskMediaStore(tmp_path)
+        node = {
+            '__harness_external_media__': 'caller-value',
+            'image': {'kind': 'binary', 'data': base64.b64encode(b'\x06' * 128).decode('ascii')},
+        }
+        externalized = await externalize_media(node, media_store=store, threshold_bytes=64)
+        assert _is_marker_dict(externalized)
+        assert externalized.keys() == {'__harness_external_literal__', '__harness_external_marker_format__'}
+        assert len(list(tmp_path.glob('*.bin'))) == 1
+        assert await restore_media(externalized, media_store=store) == node
+
+    @pytest.mark.parametrize(
+        'data',
+        [
+            pytest.param('hello', id='not-base64'),
+            pytest.param('aGVsbG8gd29ybGQ=\n', id='trailing-newline'),
+            pytest.param('ab-_ab+/', id='mixed-alphabets'),
+            pytest.param('QR==', id='non-canonical-padding-bits'),
+            pytest.param('é', id='non-ascii'),
+        ],
+    )
+    async def test_binary_shaped_dict_without_canonical_base64_stays_inline(self, tmp_path: Path, data: str) -> None:
+        """A tool dict shaped like `BinaryContent` whose `data` is not canonical base64 is left as it is."""
+        store = DiskMediaStore(tmp_path)
+        node = {'kind': 'binary', 'data': data}
+        assert await externalize_media(node, media_store=store, threshold_bytes=1) == node
+        assert list(tmp_path.iterdir()) == []
+
+    async def test_urlsafe_and_standard_base64_restore_in_their_own_alphabet(self, tmp_path: Path) -> None:
+        store = DiskMediaStore(tmp_path)
+        raw = bytes([0xFB, 0xFF, 0xBF]) * 64
+        urlsafe = {'kind': 'binary', 'data': base64.urlsafe_b64encode(raw).decode('ascii')}
+        standard = {'kind': 'binary', 'data': base64.b64encode(raw).decode('ascii')}
+        assert urlsafe != standard
+
+        urlsafe_marker = await externalize_media(urlsafe, media_store=store, threshold_bytes=64)
+        standard_marker = await externalize_media(standard, media_store=store, threshold_bytes=64)
+        assert _is_marker_dict(urlsafe_marker) and _is_marker_dict(standard_marker)
+        assert urlsafe_marker['__harness_external_urlsafe__'] == 'base64-urlsafe-v1'
+        assert '__harness_external_urlsafe__' not in standard_marker
+
+        assert await restore_media(urlsafe_marker, media_store=store) == urlsafe
+        assert await restore_media(standard_marker, media_store=store) == standard
+
+    async def test_real_binary_content_restores_to_the_identical_dump(self, tmp_path: Path) -> None:
+        store = DiskMediaStore(tmp_path)
+        messages: list[ModelMessage] = [
+            ModelRequest(
+                parts=[UserPromptPart(content=[BinaryContent(data=bytes(range(256)) * 4, media_type='image/png')])]
+            )
+        ]
+        dumped: object = _json.loads(ModelMessagesTypeAdapter.dump_json(messages))
+        externalized = await externalize_media(dumped, media_store=store, threshold_bytes=64)
+        assert '__harness_external_urlsafe__' in _json.dumps(externalized)
+        assert await restore_media(externalized, media_store=store) == dumped
+
+    async def test_pre_wrapper_data_under_the_literal_key_is_not_unwrapped(self, tmp_path: Path) -> None:
+        """Only a stamped wrapper is unwrapped, so a snapshot from before the wrapper keeps its shape."""
+        store = DiskMediaStore(tmp_path)
+        legacy = {'__harness_external_literal__': {'caller': 'data'}}
+        assert await restore_media(legacy, media_store=store) == legacy
+        stamped_by_caller = {
+            '__harness_external_literal__': {'caller': 'data'},
+            '__harness_external_marker_format__': 'v0',
+        }
+        assert await restore_media(stamped_by_caller, media_store=store) == stamped_by_caller
+        not_a_mapping = {'__harness_external_literal__': ['caller'], '__harness_external_marker_format__': 'literal-v1'}
+        assert await restore_media(not_a_mapping, media_store=store) == not_a_mapping
+
+    async def test_unsupported_literal_format_raises(self, tmp_path: Path) -> None:
+        """A wrapper from a later format version fails loudly instead of restoring as caller data."""
+        store = DiskMediaStore(tmp_path)
+        wrapper = {'__harness_external_literal__': {'k': 'v'}, '__harness_external_marker_format__': 'literal-v2'}
+        with pytest.raises(ValueError, match='unsupported format'):
+            await restore_media(wrapper, media_store=store)
+
+    async def test_pre_stamp_marker_keeps_a_caller_urlsafe_field(self, tmp_path: Path) -> None:
+        """A marker written before the URL-safe stamp keeps a caller field of that name and the standard alphabet."""
+        store = DiskMediaStore(tmp_path)
+        raw = bytes([0xFB, 0xFF, 0xBF]) * 8
+        uri = await store.put(raw)
+        marker = {
+            '__harness_external_media__': True,
+            '__harness_external_uri__': uri,
+            'kind': 'binary',
+            '__harness_external_urlsafe__': True,
+        }
+        assert await restore_media(marker, media_store=store) == {
+            'kind': 'binary',
+            '__harness_external_urlsafe__': True,
+            'data': base64.b64encode(raw).decode('ascii'),
+        }
+
+    async def test_caller_owned_urlsafe_key_is_escaped(self, tmp_path: Path) -> None:
+        store = DiskMediaStore(tmp_path)
+        node = {
+            'kind': 'binary',
+            'data': base64.b64encode(b'\x08' * 128).decode('ascii'),
+            '__harness_external_urlsafe__': True,
+        }
+        externalized = await externalize_media(node, media_store=store, threshold_bytes=64)
+        assert _is_marker_dict(externalized)
+        assert '__harness_external_urlsafe__' not in externalized
+        assert await restore_media(externalized, media_store=store) == node
+
 
 class TestSigV4Signer:
     def test_produces_required_headers(self) -> None:
@@ -949,6 +1243,31 @@ class TestSigV4Signer:
         sig_a = sign_request(body=b'aaa', **kwargs)['authorization']  # type: ignore[arg-type]
         sig_b = sign_request(body=b'bbb', **kwargs)['authorization']  # type: ignore[arg-type]
         assert sig_a != sig_b
+
+    @pytest.mark.parametrize('value', ['two  spaces', ' leading', 'trailing ', ' all  three '])
+    def test_header_values_are_canonicalized_like_aws(self, value: str) -> None:
+        """SigV4 trims each header value and collapses whitespace runs before signing.
+
+        S3 canonicalizes the headers it receives the same way, so the signature
+        covers the trimmed, collapsed value while the header is sent as given.
+        """
+
+        def sign(meta: str) -> dict[str, str]:
+            return sign_request(
+                method='PUT',
+                host='s3.amazonaws.com',
+                path='/bucket/key.bin',
+                body=b'payload',
+                region='us-east-1',
+                access_key_id='AKID',
+                secret_access_key='SECRET',
+                extra_signed_headers={'x-amz-meta-note': meta},
+                now=datetime(2026, 10, 19, 12, tzinfo=UTC),
+            )
+
+        signed = sign(value)
+        assert signed['authorization'] == sign(' '.join(value.split()))['authorization']
+        assert signed['x-amz-meta-note'] == value  # sent as given
 
 
 class TestS3MediaStoreWithMockTransport:
@@ -1039,6 +1358,27 @@ class TestS3MediaStoreWithMockTransport:
         signed = request.headers['authorization'].split('SignedHeaders=')[1].split(',')[0]
         assert 'x-amz-meta-origin' in signed
         assert 'x-amz-meta-tenant' in signed
+
+    async def test_put_sends_metadata_keys_lowercased(self) -> None:
+        """A mixed-case metadata key is sent, and so read back, lowercased."""
+        captured: list[Request] = []
+
+        async def handler(request: Request) -> Response:
+            captured.append(request)
+            return Response(200)
+
+        async with AsyncClient(transport=MockTransport(handler)) as client:
+            store = S3MediaStore(
+                bucket='b',
+                endpoint='https://example.com',
+                region='auto',
+                access_key_id='k',
+                secret_access_key='s',
+                client=client,
+            )
+            await store.put(b'mixed-case', context=MediaContext(metadata={'Tenant': 'acme'}))
+        meta_names = [name for name, _ in captured[0].headers.raw if name.startswith(b'x-amz-meta-')]
+        assert meta_names == [b'x-amz-meta-tenant']
 
     async def test_put_rejects_invalid_metadata_key(self) -> None:
         async def handler(request: Request) -> Response:  # pragma: no cover

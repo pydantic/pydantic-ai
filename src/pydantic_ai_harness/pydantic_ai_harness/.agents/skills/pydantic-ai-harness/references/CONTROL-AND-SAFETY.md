@@ -71,9 +71,15 @@ validation/retry. `Coder` already includes it.
 `OutputBlocked`, `GuardrailError` are top-level (`from pydantic_ai_harness import ...`);
 `ToolBlocked`, `ToolCallInfo`, `ToolResultInfo`, `detectors` live in `pydantic_ai_harness.guardrails`.
 
-A guard is a sync or async callable taking the value (optionally preceded by `RunContext`,
-detected from the signature) and returning `bool` (`True` = allow) or a `GuardrailResult`:
-`allow()`, `block(message=None)`, `replace(value)`, `retry(message)`, `approve()`.
+A guard is a sync or async callable taking the value, optionally preceded by `RunContext` (taken
+when a second positional parameter is required, for `*args` with another parameter, or when the
+second has a default and the first is annotated `RunContext`; a first parameter with no annotation,
+`Any`, `object`, or an unresolvable type not naming `RunContext` still gets it, with a
+`HarnessDeprecationWarning`). It
+returns `bool` (`True` = allow) or a `GuardrailResult`: `allow()`, `block(message=None)`,
+`replace(value)`, `retry(message)`, `approve()`. Any other return value (a `'safe'` label, `None`, a
+`numpy.bool_`) is read for truthiness with a `HarnessDeprecationWarning` (a truthy label allows the
+value); return `bool(...)` instead.
 
 | Verdict | `InputGuardrail` | `OutputGuardrail` | `ToolGuardrail.guard` (args) | `ToolGuardrail.result_guard` |
 |---|---|---|---|---|
@@ -110,7 +116,10 @@ print(agent.run_sync('Which key do I use?').output)
 
 `ToolGuardrail(guard=...)` receives a `ToolCallInfo(name, args, tool_call_id)`; `result_guard`
 receives a `ToolResultInfo` (the same fields plus `result`), not the raw result, so wrap a text
-detector with `for_tool_result_text`. `args` is a read-only `mappingproxy` copy: `json.dumps` rejects
+detector with `for_tool_result_text`. `result_guard` also screens a `ModelRetry`/`ToolFailed`
+raised while the tool runs (including inside `CodeMode`), and one raised by hooks of a capability
+ordered inside it (another `position='innermost'` one), except from an error hook; `ToolGuardrail`
+`retry` verdicts are never screened. `args` is a read-only `mappingproxy` copy: `json.dumps` rejects
 it, so serialize or build a `replace` mapping from `dict(call.args)`.
 
 ```python
@@ -184,6 +193,10 @@ Gotchas:
 - Hard-fail instead of graceful: raise `InputBlocked`/`OutputBlocked`/`ToolBlocked(tool_name, reason)`
   (all subclass `GuardrailError`) from the guard; any exception propagates as-is.
 - Input `replace` on a multimodal prompt raises `UserError` (it would drop attachments).
+- `InputGuardrail` screens and rewrites the user's prompt part only. Parts another capability adds to the
+  request (`SystemReminders`, `Planning`, `Memory`) are left alone. A run resumed without a new prompt
+  screens the most recent prompt in the history again.
+- Redaction spans carry `guardrail.replacement` under `trace_include_content`, never the original value.
 - `email` also matches `git@github.com`; on code agents use `personal_data(only=['us_ssn', 'credit_card', 'iban'])`.
 - AWS *secret* keys are not in the defaults; add via `extra=`. Regex detectors do not catch prompt injection.
 - `OutputGuardrail` sees only the final output: under `run_stream()`, chunks are already sent, and
