@@ -61,6 +61,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UsageLimitExceeded,
     UseEnumMemberDocstrings,
+    UserContent,
     UserPromptPart,
     WebCitationSource,
 )
@@ -4216,39 +4217,84 @@ async def test_anthropic_citations_off_for_structured_output(
     assert web_fetch_tool.get('citations') is None
 
 
+@dataclass
+class _ForceToolOnFirstStep(AbstractCapability[Any]):
+    """Forces a tool call on the first step, as in the docs' "force a tool on the first step" example."""
+
+    tool_choice: Literal['required'] | list[str]
+
+    def get_model_settings(self) -> Callable[[RunContext[Any]], ModelSettings]:
+        return lambda ctx: ModelSettings(tool_choice=self.tool_choice) if ctx.run_step == 1 else ModelSettings()
+
+
 @pytest.mark.parametrize(
     'tool_choice',
     [pytest.param('required', id='required'), pytest.param(['save_summary'], id='named-tool')],
 )
+@pytest.mark.parametrize(
+    'cited',
+    [
+        pytest.param(
+            BinaryContent(data=b'Returns are allowed within thirty days.', media_type='text/plain'), id='document'
+        ),
+        pytest.param(NativeTool(WebFetchTool()), id='web-fetch'),
+    ],
+)
 async def test_anthropic_citations_with_forced_tool_raises(
-    allow_model_requests: None, tool_choice: Literal['required'] | list[str]
+    allow_model_requests: None, tool_choice: Literal['required'] | list[str], cited: BinaryContent | NativeTool
 ) -> None:
     """With a forced tool call, Anthropic writes its `<cite>` markup into the tool's arguments, so it's an error.
 
-    The tool is forced for one step by a capability, as in the docs' "force a tool on the first step" example.
     Unit test: the error is raised before any request is sent.
     """
-
-    @dataclass
-    class ForceTool(AbstractCapability[Any]):
-        def get_model_settings(self) -> Callable[[RunContext[Any]], ModelSettings]:
-            return lambda ctx: ModelSettings(tool_choice=tool_choice)
-
     mock_client = MockAnthropic.create_mock(
         completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=5, output_tokens=6))
     )
     agent = Agent(
         AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client)),
-        capabilities=[Citations(), ForceTool()],
+        capabilities=[
+            Citations(),
+            _ForceToolOnFirstStep(tool_choice),
+            *([cited] if isinstance(cited, NativeTool) else []),
+        ],
     )
 
     @agent.tool_plain
     def save_summary(summary: str) -> str:  # pragma: no cover
         return summary
 
+    prompt: list[UserContent] = ['Summarise the policy.', *([cited] if isinstance(cited, BinaryContent) else [])]
     with pytest.raises(UserError, match="`Citations\\(\\)` can't be used with a `tool_choice` that forces a tool call"):
-        await agent.run('Summarise the policy.')
+        await agent.run(prompt)
     assert get_mock_chat_completion_kwargs(mock_client) == []
+
+
+async def test_anthropic_citations_with_forced_tool_and_nothing_to_cite(allow_model_requests: None) -> None:
+    """With no document or Web Fetch tool, the setting doesn't change the request, so a forced tool call is allowed.
+
+    Unit test: it pins that the run goes ahead.
+    """
+    mock_client = MockAnthropic.create_mock(
+        [
+            completion_message(
+                [BetaToolUseBlock(id='1', name='save_summary', input={'summary': 'Thirty days.'}, type='tool_use')],
+                BetaUsage(input_tokens=5, output_tokens=6),
+            ),
+            completion_message([BetaTextBlock(text='Saved.', type='text')], BetaUsage(input_tokens=5, output_tokens=6)),
+        ]
+    )
+    agent = Agent(
+        AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client)),
+        capabilities=[Citations(), _ForceToolOnFirstStep('required')],
+    )
+
+    @agent.tool_plain
+    def save_summary(summary: str) -> str:
+        return summary
+
+    result = await agent.run('Save a summary of the returns policy.')
+
+    assert result.output == 'Saved.'
 
 
 @pytest.mark.parametrize('citations', [pytest.param(False, id='off'), pytest.param(True, id='on')])
