@@ -597,10 +597,42 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
             },
         ),
         (_ToolFailed('failed'), {'message': 'failed', 'kind': 'tool_failed'}),
-        (_RunCancelled('stopped'), {'message': 'stopped', 'timed_out': False, 'kind': 'run_cancelled'}),
         (
-            _RunCancelled('deadline', timed_out=True),
-            {'message': 'deadline', 'timed_out': True, 'kind': 'run_cancelled'},
+            _RunCancelled(
+                'deadline',
+                timed_out=True,
+                new_message_index=0,
+                usage=RunUsage(requests=1),
+                metadata={'tenant': 'acme'},
+                run_id='run-1',
+                conversation_id='conversation-1',
+            ),
+            {
+                'message': 'deadline',
+                'timed_out': True,
+                'messages': [],
+                'new_message_index': 0,
+                'usage': {
+                    'input_tokens': 0,
+                    'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
+                    'cache_read_tokens': 0,
+                    'output_tokens': 0,
+                    'output_reasoning_tokens': 0,
+                    'input_audio_tokens': 0,
+                    'cache_audio_read_tokens': 0,
+                    'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
+                    'details': {},
+                    'cost': None,
+                    'requests': 1,
+                    'tool_calls': 0,
+                },
+                'metadata': {'tenant': 'acme'},
+                'run_id': 'run-1',
+                'conversation_id': 'conversation-1',
+                'kind': 'run_cancelled',
+            },
         ),
     ],
 )
@@ -1102,18 +1134,43 @@ async def test_validation_error_crosses_call_tool_result_boundary() -> None:
 
 @pytest.mark.parametrize('exc_type', [RunCancelled, RunTimedOut])
 async def test_run_cancelled_crosses_call_tool_result_boundary(exc_type: type[RunCancelled]) -> None:
-    """A sub-agent's `RunCancelled` raised in a durable unit is raised again, with its type, on the other side.
+    """A sub-agent's `RunCancelled` raised in a durable unit is raised again, with its type and run state.
 
-    `_ToolCallProcessor._call_tool` then turns it into a failed tool return, as it does in-process.
-    The payload goes through `JSON_CODEC` as it would across a Temporal activity boundary.
+    `_ToolCallProcessor._call_tool` then turns it into a failed tool return, as it does in-process,
+    and tool-execute hooks around the unit see the same exception they would in-process. The payload
+    goes through `JSON_CODEC` as it would across a Temporal activity boundary. Not a VCR test: the
+    exception type and run state never reach a model request, only hooks on the calling side.
     """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('earlier')]),
+        ModelRequest(parts=[UserPromptPart('stop')]),
+        ModelResponse(parts=[TextPart('stopping')]),
+    ]
+    raised = exc_type(
+        'the sub-agent stopped',
+        messages=history,
+        new_message_index=1,
+        usage=RunUsage(requests=1, input_tokens=3),
+        metadata={'tenant': 'acme'},
+        run_id='run-1',
+        conversation_id='conversation-1',
+    )
 
     async def cancelled_sub_agent() -> None:
-        raise exc_type('the sub-agent stopped')
+        raise raised
 
     payload = JSON_CODEC.load(
         CallToolResult, JSON_CODEC.dump(CallToolResult, await wrap_tool_call_result(cancelled_sub_agent()))
     )
     with pytest.raises(exc_type, match='the sub-agent stopped') as exc_info:
         unwrap_recorded_tool_call_result(payload)
-    assert type(exc_info.value) is exc_type
+    reraised = exc_info.value
+    assert type(reraised) is exc_type
+    assert reraised.all_messages() == raised.all_messages()
+    assert reraised.new_messages() == raised.new_messages()
+    assert reraised.usage == raised.usage
+    assert (reraised.metadata, reraised.run_id, reraised.conversation_id) == (
+        {'tenant': 'acme'},
+        'run-1',
+        'conversation-1',
+    )

@@ -4424,8 +4424,8 @@ async def test_prefect_task_wrapped_tool_rejects_cancel() -> None:
 async def test_prefect_task_wrapped_sub_agent_self_cancel_is_a_failed_tool_return() -> None:
     """A sub-agent that cancels itself inside a task-wrapped tool fails that tool call, as it does in-process.
 
-    The task records the cancellation as a result, and the flow side raises it again for the tool
-    executor to turn into a failed tool return.
+    The tool-execute hook around the task also sees the sub-agent's run state on the exception, as it
+    does in-process.
     """
     sub_agent = Agent(TestModel(), name='prefect_self_cancelling_sub_agent')
 
@@ -4434,10 +4434,32 @@ async def test_prefect_task_wrapped_sub_agent_self_cancel_is_a_failed_tool_retur
         ctx.cancel()
         return 'discarded'
 
+    hook_errors: list[str] = []
+
+    async def record(
+        ctx: RunContext[object],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        error: Exception,
+    ) -> Any:
+        if isinstance(error, RunCancelled):
+            hook_errors.append(
+                f'{type(error).__name__}: run_id={error.run_id is not None}, '
+                f'messages={len(error.all_messages())}, requests={error.usage.requests}'
+            )
+        raise error
+
     async def delegate() -> str:
         return (await sub_agent.run('stop')).output
 
-    agent = Agent(TestModel(), name='prefect_sub_agent_cancel', tools=[delegate], capabilities=[PrefectDurability()])
+    agent = Agent(
+        TestModel(),
+        name='prefect_sub_agent_cancel',
+        tools=[delegate],
+        capabilities=[Hooks(tool_execute_error=record), PrefectDurability()],
+    )
 
     @flow
     async def run_agent() -> list[str]:
@@ -4450,6 +4472,7 @@ async def test_prefect_task_wrapped_sub_agent_self_cancel_is_a_failed_tool_retur
         ]
 
     assert await run_agent() == snapshot(['failed: The sub-agent run was cancelled: The agent run was cancelled.'])
+    assert hook_errors == snapshot(['RunCancelled: run_id=True, messages=2, requests=1'])
 
 
 async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest.MonkeyPatch) -> None:

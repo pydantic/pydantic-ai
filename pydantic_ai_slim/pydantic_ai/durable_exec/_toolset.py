@@ -27,11 +27,12 @@ from pydantic_ai.exceptions import (
     ToolFailed,
     UserError,
 )
-from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
+from pydantic_ai.messages import InstructionPart, ModelMessage, ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.toolsets.function import FunctionToolsetTool
+from pydantic_ai.usage import RunUsage
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -370,10 +371,17 @@ class _ToolFailed:
 @dataclass
 class _RunCancelled:
     # A sub-agent run awaited inside the tool cancelled itself; `_ToolCallProcessor._call_tool`
-    # turns the re-raised exception into a failed tool return, as it does in-process.
+    # turns the re-raised exception into a failed tool return, as it does in-process. The run state
+    # crosses too, so tool-execute hooks around the durable call see what they see in-process.
     message: str
     _: KW_ONLY
     timed_out: bool = False
+    messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    new_message_index: int = 0
+    usage: RunUsage = field(default_factory=RunUsage)
+    metadata: dict[str, Any] | None = None
+    run_id: str | None = None
+    conversation_id: str | None = None
     kind: Literal['run_cancelled'] = 'run_cancelled'
 
 
@@ -436,7 +444,17 @@ async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
     except ToolFailed as exc:
         return _ToolFailed(message=exc.message)
     except RunCancelled as exc:
-        return _RunCancelled(message=exc.message, timed_out=isinstance(exc, RunTimedOut))
+        messages = exc.all_messages()
+        return _RunCancelled(
+            message=exc.message,
+            timed_out=isinstance(exc, RunTimedOut),
+            messages=messages,
+            new_message_index=len(messages) - len(exc.new_messages()),
+            usage=exc.usage,
+            metadata=exc.metadata,
+            run_id=exc.run_id,
+            conversation_id=exc.conversation_id,
+        )
     except ValidationError as exc:
         return _ValidationError(
             title=exc.title,
@@ -481,8 +499,24 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
         raise ToolFailed(result.message)
     if isinstance(result, _RunCancelled):
         if result.timed_out:
-            raise RunTimedOut(result.message)
-        raise RunCancelled(result.message)
+            raise RunTimedOut(
+                result.message,
+                messages=result.messages,
+                new_message_index=result.new_message_index,
+                usage=result.usage,
+                metadata=result.metadata,
+                run_id=result.run_id,
+                conversation_id=result.conversation_id,
+            )
+        raise RunCancelled(
+            result.message,
+            messages=result.messages,
+            new_message_index=result.new_message_index,
+            usage=result.usage,
+            metadata=result.metadata,
+            run_id=result.run_id,
+            conversation_id=result.conversation_id,
+        )
     assert_never(result)
 
 

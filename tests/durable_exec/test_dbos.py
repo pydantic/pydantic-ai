@@ -2983,8 +2983,8 @@ async def test_dbos_step_wrapped_tool_rejects_cancel_in_workflow(dbos: DBOS) -> 
 async def test_dbos_step_wrapped_sub_agent_self_cancel_is_a_failed_tool_return(dbos: DBOS) -> None:
     """A sub-agent that cancels itself inside a step-wrapped (dynamic) tool fails that tool call, as it does in-process.
 
-    The step records the cancellation as a result, and the workflow side raises it again for the
-    tool executor to turn into a failed tool return.
+    The tool-execute hook around the step also sees the sub-agent's run state on the exception, as it
+    does in-process.
     """
     sub_agent = Agent(TestModel(), name='dbos_self_cancelling_sub_agent')
 
@@ -2993,6 +2993,23 @@ async def test_dbos_step_wrapped_sub_agent_self_cancel_is_a_failed_tool_return(d
         ctx.cancel()
         return 'discarded'
 
+    hook_errors: list[str] = []
+
+    async def record(
+        ctx: RunContext[object],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        error: Exception,
+    ) -> Any:
+        if isinstance(error, RunCancelled):
+            hook_errors.append(
+                f'{type(error).__name__}: run_id={error.run_id is not None}, '
+                f'messages={len(error.all_messages())}, requests={error.usage.requests}'
+            )
+        raise error
+
     async def delegate() -> str:
         return (await sub_agent.run('stop')).output
 
@@ -3000,7 +3017,7 @@ async def test_dbos_step_wrapped_sub_agent_self_cancel_is_a_failed_tool_return(d
         TestModel(),
         name='dbos_sub_agent_cancel',
         toolsets=[DynamicToolset(lambda ctx: FunctionToolset([delegate]), id='delegate_dynamic')],
-        capabilities=[DBOSDurability()],
+        capabilities=[Hooks(tool_execute_error=record), DBOSDurability()],
     )
 
     @DBOS.workflow()
@@ -3014,6 +3031,7 @@ async def test_dbos_step_wrapped_sub_agent_self_cancel_is_a_failed_tool_return(d
         ]
 
     assert await run_workflow() == snapshot(['failed: The sub-agent run was cancelled: The agent run was cancelled.'])
+    assert hook_errors == snapshot(['RunCancelled: run_id=True, messages=2, requests=1'])
 
 
 async def test_dbos_plain_tool_cancel_works_in_workflow(dbos: DBOS) -> None:
