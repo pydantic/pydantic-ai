@@ -14,6 +14,7 @@ import type {
   PluginRow,
   Project,
   ServerMessage,
+  Steering,
   Switch,
   TaskTranscript,
   Transcript,
@@ -119,6 +120,13 @@ export function sessionApi(id: string | null) {
     /** Enter a prompt or `/command`; `images`, base64-encoded, go with a prompt. */
     send: (text: string, images: readonly string[] = []) =>
       call<Entered>('POST', `${base}/input`, images.length ? { text, images } : { text }),
+    /** Send a prompt to the running turn now, as Alt+Enter at the prompt does; one that cannot steer is entered instead. */
+    steer: (text: string) => call<Steering>('POST', `${base}/steer`, { text }),
+    /** Rewrite a queued input in place; a 404 means it already ran or was removed. */
+    editQueued: (id: string, text: string) => call<void>('PUT', `${base}/queue/${encodeURIComponent(id)}`, { text }),
+    removeQueued: (id: string) => call<void>('DELETE', `${base}/queue/${encodeURIComponent(id)}`),
+    /** Send a queued prompt to the running turn now; `steered: false` leaves it queued. */
+    steerQueued: (id: string) => call<{ steered: boolean }>('POST', `${base}/queue/${encodeURIComponent(id)}/steer`),
     interrupt: () => call<{ interrupted: boolean }>('POST', `${base}/interrupt`),
     /** One of the images a prompt in this session's transcript lists, as a `data:` URL; fetched once per page. */
     image: (id: string) => image(base, id),
@@ -169,8 +177,10 @@ export const api = {
     call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/settings`, { changes, reset }),
   pluginMenu: (name: string) => call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/menu`),
   task: (id: string) => call<TaskTranscript>('GET', `/api/tasks/${id}`),
-  taskAction: (id: string, action: 'stop' | 'background' | 'resume') => call<void>('POST', `/api/tasks/${id}/${action}`),
+  taskAction: (id: string, action: 'stop' | 'background') => call<void>('POST', `/api/tasks/${id}/${action}`),
   steer: (id: string, text: string) => call<{ steered: boolean }>('POST', `/api/tasks/${id}/steer`, { text }),
+  /** Run a finished task again with `text` as your message, on its own; it answers once the task runs. */
+  promptTask: (id: string, text: string) => call<void>('POST', `/api/tasks/${id}/prompt`, { text }),
   panels: () => call<PanelInfo[]>('GET', '/api/panels'),
   workspaces: () => call<WorkspacesInfo>('GET', '/api/workspaces'),
   openWorkspace: (id: string) => call<{ url: string }>('POST', `/api/workspaces/${encodeURIComponent(id)}/open`),

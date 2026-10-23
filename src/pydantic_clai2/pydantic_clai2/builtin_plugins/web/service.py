@@ -76,6 +76,7 @@ from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.runtime.monty_cells import is_monty_cell
 from pydantic_clai2.runtime.project_identity import MISSING, ProjectIdentity, placements, project_identity
 from pydantic_clai2.runtime.session_workspace import workspace_directory
+from pydantic_clai2.runtime.task_prompts import is_task_prompt
 
 THEME = 'display.theme'
 PluginAction = Literal['enable', 'disable', 'reload']
@@ -193,7 +194,7 @@ class WebService:
         return 'running' if session.running else 'idle'
 
     def live_changed(self) -> None:
-        """A session opened, closed, changed state, or switched conversation: tell every browser what changed.
+        """A session opened, closed, changed state or queued input, or switched conversation: tell browsers what changed.
 
         Called synchronously by the live sessions, so it never waits and never raises.
         """
@@ -204,6 +205,8 @@ class WebService:
         if message != self._live_sent:
             self._live_sent = message
             self.hub.publish(message)
+        for channel in self.channels():
+            channel.publish_queue()
         for client in self.hub.connected():
             self.follow(client)
 
@@ -572,6 +575,11 @@ class WebService:
             if task.id == task_id:
                 channel.workers.observe(TaskEvent(task=task))
 
+    async def prompt_task(self, task_id: str, text: str) -> None:
+        """Run a finished task again with `text`, on its own: its session's conversation never sees it."""
+        _, catalog = self._task(task_id)
+        await catalog.prompt(task_id, text)
+
     def steer(self, task_id: str, text: str) -> bool:
         """Send a running task a message, shown in its transcript; `False` once it has finished."""
         channel, catalog = self._task(task_id)
@@ -739,8 +747,11 @@ class Observer(AbstractCapability[None]):
     service: WebService
 
     def _channel(self, ctx: RunContext[None]) -> SessionChannel | None:
-        """The channel of the session whose held conversation this run continues; `None` for a fork or a task."""
-        if DelegationTasks.child_id() is not None:
+        """The channel of the session whose held conversation this run continues; `None` for a fork or a task.
+
+        A run that prompts a task for the user is the task's, which the Workers tree shows.
+        """
+        if DelegationTasks.child_id() is not None or is_task_prompt(ctx):
             return None
         try:
             channel = self.service.current()

@@ -1259,7 +1259,11 @@ calls `host.live.new`). The page watches the session it shows (`LiveSession.watc
 is never closed for being idle; any other live session closes after an idle hour, and clicking it
 again resumes it. The sidebar marks each live session that runs a turn, has input queued behind
 one, or waits for an answer, from the `live` message. Esc and the stop button interrupt the shown
-session only. The process's working directory never changes: each session reads its own as
+session only. Alt+Enter in the composer steers the running turn (`LiveSession.steer`), as at the
+terminal's prompt, and the input queued behind it is listed above the composer from
+`LiveSession.queue`, which the terminal's own queue is: the page edits or removes an entry with
+`edit_queued` and `remove_queued`, and hears of every change through `host.live.subscribe`. A steered
+message shows in the transcript once core delivers it (`EnqueuedMessagesEvent`). The process's working directory never changes: each session reads its own as
 `host.workspace`. `/resume ID` typed in a session still moves that session to the directory `ID`
 was saved in, and `/workspace DIRECTORY` (an existing absolute path) starts a new conversation
 there (`host.sessions.follows_workspace`); its session-scoped plugins load again, each getting
@@ -1288,10 +1292,13 @@ The sidebar's **Workers** tree, under the current session, is what `/tasks` show
 `host.tasks` and `on_task_event`: each delegated task under the one that started it, with its
 agent, model, elapsed time, and last action, and a link from the tool call that started it.
 Clicking one opens its transcript in the main pane, streamed as its run goes; a browser that
-connects meanwhile gets each running task's transcript so far. Its own box steers it
-(`host.tasks.steer`), and Stop, Background, and Resume act as `/tasks` does; Resume asks the
-agent to continue a finished task, as a prompt. Once a task finishes, the page shows its saved
-history (`GET /api/tasks/ID`), and the server keeps no live copy of it.
+connects meanwhile gets each running task's transcript so far. Its own box steers it while it
+runs (`host.tasks.steer`), and Stop and Background act as `/tasks` does. Once a task finishes,
+the page shows its saved history (`GET /api/tasks/ID`), and the server keeps no live copy of it;
+the box then prompts the task on its own (`host.tasks.prompt`), when it can resume: the task
+continues its saved history, its reply streams into its transcript, and the session's
+conversation and the agent never see it. `POST /api/tasks/ID/resume`, which the page no longer
+calls, still asks the agent to resume a finished task, as `/tasks resume` does.
 
 The page follows `/theme`: the `default` theme is Pydantic's own colours, in the
 browser's light or dark mode, and any other palette paints the page as it paints the terminal,
@@ -2686,12 +2693,22 @@ prompt the keyboard does:
   it each time you need it rather than keeping it. `listing()` returns a `TaskInfo` per task,
   each parent before its children: its ID, `parent_id`, `agent`, `model`, `prompt`, `status`
   (`running` or `finished`), `outcome`, start and finish times, whether it runs in the
-  `background`, whether it is `resumable`, its last `activity`, and its `usage`. `history(ID)` is
+  `background`, whether `background(ID)` can act on it (`backgroundable`), whether it is
+  `resumable`, its last `activity`, and its `usage`. `history(ID)` is
   its messages so far. `stop(ID)`, `background(ID)`, and `resume(ID)` act as `/tasks stop`,
   `background`, and `resume` do; `resume` enters the prompt asking the agent to resume it, as
-  `send_input` would. `steer(ID, TEXT)` sends a running task a message, which it reads at its
-  next model request, and returns `False` once it has finished, when `resume` is the way to go
-  on. An ID from another conversation raises `LookupError`.
+  `send_input` would. `await prompt(ID, TEXT)` runs a finished task again with `TEXT` as the
+  user's message, on its own, as the web UI's Workers tree does: it continues the task's saved
+  history with the agent, tools, and model it ran with, saves what it does there, and returns
+  once the task runs, its progress arriving as `on_task_event`. Nothing of it reaches the
+  conversation or the agent, and no turn waits for it, so `background` refuses it. It raises
+  `ValueError` for blank `TEXT`, for a task that is running, starting from a prompt, or cannot
+  resume, such as an `Explore` or `Plan` one, and for one its agent no longer delegates to or
+  whose delegate call fails or is denied, and
+  `RuntimeError` when this CLAI cannot prompt a task on its own; the task stays as it was.
+  `steer(ID, TEXT)` sends a running task a message, which it reads at its next model request,
+  and returns `False` once it has finished, when `prompt` or `resume` is the way to go on. An ID
+  from another conversation raises `LookupError`.
 
 | | `send_input(text)` | `submit_prompt(text)` |
 |---|---|---|
@@ -3630,7 +3647,7 @@ What changes for a process-scoped plugin:
 | `await open(conversation_id)` | the live session holding that saved conversation; when none does, resumes it in a new live session in the folder it was saved in. Concurrent calls for one conversation get the same session. Raises `LookupError` for an unknown conversation, `ValueError` when its folder is gone, and `RuntimeError` where CLAI opens no other sessions |
 | `await new(workspace=None)` | a new live session with a new conversation, in `workspace`, by default the folder CLAI started in. Raises `ValueError` unless `workspace` is an existing absolute folder, and `RuntimeError` where CLAI opens no other sessions |
 | `await close(live_id)` | close a live session, cancelling its turn; its plugins end with `'exit'`. Raises `LookupError` when none is live, and `ValueError` for a session its own driver runs: the one the terminal shows, or the one `clai2 --web` or `clai2 -p` started with. A host built outside CLAI's shell raises `RuntimeError` |
-| `subscribe(listener)` | call `listener()` whenever a session opens or closes, or its running, queued, or watched state may change; returns a function that unsubscribes. It is called synchronously, from the session's own loop, so it must be quick and must not raise |
+| `subscribe(listener)` | call `listener()` whenever a session opens or closes, or its running, queued (including an edit of its queue), or watched state may change; returns a function that unsubscribes. It is called synchronously, from the session's own loop, so it must be quick and must not raise |
 
 Never await `open` or `new` from `on_session_start`: the new session waits for the
 plugins still loading.
@@ -3649,6 +3666,10 @@ A `LiveSession` is one live session:
 | `running` | whether a turn runs in it now |
 | `setting(key)` | a CLAI setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
 | `queued` | how many inputs wait for its running turn or command to end |
+| `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt |
+| `edit_queued(input_id, text)` | rewrite a waiting input in place, as Enter on a recalled one at the prompt does; raises `LookupError` once it has run or was removed, and `ValueError` for blank text |
+| `remove_queued(input_id)` | drop a waiting input; raises `LookupError` once it has run or was removed |
+| `steer(text)` | send `text` to its running turn now, as Alt+Enter at the prompt does; its model reads it at its next request. `False` when nothing takes it: no turn runs, or it is a `/command` or `!` shell line |
 | `watchers` | how many `watch()` calls have not stopped yet |
 | `watch()` | count a watcher, such as a browser showing it, until you call the function it returns; a watched session is never closed for being idle |
 | `send_input(text, images=())` | enter `text` at its prompt, with `images` attached, as its `host.send_input` does |

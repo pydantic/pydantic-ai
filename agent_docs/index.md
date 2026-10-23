@@ -135,4 +135,5 @@ Check these when working in specific areas:
 - **[Async & Concurrency](concurrency.md)**: When spawning tasks, using task groups or cancel scopes, creating locks/events/streams, writing async context managers or generators, crossing a thread or event-loop boundary, or testing any of it
 - **[Message History & Prompt Caching](message-history-and-caching.md)**: When enqueuing, editing, or rendering messages, contributing instructions or tools, wrapping content in tags, or converting history to or from a UI protocol
 - **[Pydantic AI Slim Architecture](pydantic-ai-slim.md)**: When changing agents, tools, output, message history, providers, profiles, capabilities, toolsets, UI adapters, or durable execution
+- **[Provider Adapters](provider-adapters.md)**: When mapping messages to or from a provider's wire format in a model adapter, adding a capability check, or adding a profile flag an adapter reads
 <!-- /braindump -->

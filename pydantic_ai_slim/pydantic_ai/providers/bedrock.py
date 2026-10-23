@@ -20,6 +20,7 @@ from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
@@ -197,6 +198,16 @@ class BedrockModelProfile(ModelProfile, total=False):
     Default: `False` (strict — synthesize a leading user message when history starts with an
     assistant turn).
     """
+    bedrock_supports_citations: bool
+    """Whether this model returns citations for documents with citations enabled.
+
+    Other models reject a request that enables citations (`"This model doesn't support citations."`), so
+    [`citations`][pydantic_ai.settings.ModelSettings.citations] is ignored for them. Verified against
+    Bedrock `us-east-1` on 2026-10-20: Claude models return citations; Amazon Nova, Meta Llama, Mistral Pixtral and
+    DeepSeek reject the request.
+
+    Default: `False`.
+    """
     bedrock_supports_tool_result_status: bool
     """Whether this model accepts the `status` field on a `toolResult` block in Bedrock's Converse API.
 
@@ -217,12 +228,14 @@ class BedrockModelProfile(ModelProfile, total=False):
     Default: `False`.
     """
 
-    bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen', 'xai'] | None
+    bedrock_thinking_variant: Literal['anthropic', 'openai', 'openai_responses', 'qwen', 'xai'] | None
     """Which thinking API shape to use for unified thinking translation.
 
     - `'anthropic'`: Uses `{'thinking': {'type': 'adaptive'}}` for 4.6+ models,
       or `{'thinking': {'type': 'enabled', 'budget_tokens': N}}` for older models.
     - `'openai'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'}`
+    - `'openai_responses'`: Uses `{'reasoning': {'effort': 'none'|'low'|'medium'|'high'|'xhigh'}}`, the Responses API
+      shape that the OpenAI GPT-5.6 and GPT-6 models take on Converse.
     - `'qwen'`: Uses `{'reasoning_config': 'low'|'high'}`
     - `'xai'`: Uses `{'reasoning': {'effort': 'low'|'medium'|'high'|'xhigh'}}`
     - `None`: No unified thinking support.
@@ -283,11 +296,11 @@ class BedrockModelProfile(ModelProfile, total=False):
 
     Bedrock rejects a `cachePoint` directly after some document blocks, so it can't always go at the end:
 
-    - `'anthropic'`: a `cachePoint` may follow a PDF, so it's appended, for a `CachePoint` too. Bedrock renders
-      documents of every other format as text, moves them to the front of the message unless a `cachePoint`
+    - `'anthropic'`: a `cachePoint` may follow a PDF or a document with citations on, so it's appended, for a
+      `CachePoint` too. Bedrock renders documents of every other format as text, moves them to the front of the message unless a `cachePoint`
       precedes them, and rejects a `cachePoint` after them. When the message has no earlier `cachePoint`, an
       automatic `bedrock_cache_messages` cache point goes at the end, with such trailing documents moved ahead of
-      the block before them, unless that's a PDF: the rendered prompt is unchanged, and matches the next request's,
+      the block before them, unless that's a PDF or a document with citations on: the rendered prompt is unchanged, and matches the next request's,
       which no longer has this `cachePoint`, so that request reads the cache.
     - `None`: the `cachePoint` goes before the trailing documents and videos.
 
@@ -331,6 +344,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             # accepts text and images alongside it. See https://github.com/pydantic/pydantic-ai/issues/6081.
             bedrock_tool_result_colocatable_content=frozenset({'text', 'image'}),
             bedrock_supports_leading_assistant_message=True,
+            bedrock_supports_citations=True,
             bedrock_thinking_variant='anthropic',
             bedrock_supports_adaptive_thinking=supports_adaptive,
             bedrock_supports_effort=supports_effort,
@@ -608,8 +622,16 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
         'gpt-6-astra',
         'gpt-6.1-sol',
     }:
-        # Converse rejects `temperature`, `top_p` and `top_k` for these; everything else keeps the defaults.
-        return BedrockModelProfile(bedrock_disallows_sampling_settings=True)
+        # Converse rejects `temperature`, `top_p` and `top_k` for these. Reasoning effort takes the Responses API
+        # shape, `{'reasoning': {'effort': ...}}`: Converse rejects the flat `reasoning_effort` that gpt-oss takes as an
+        # unknown parameter. Which models can turn reasoning off follows the OpenAI profile (GPT-6 Astra and GPT-6.1
+        # Sol reject `effort='none'` here too, verified with live requests).
+        return BedrockModelProfile(
+            bedrock_disallows_sampling_settings=True,
+            bedrock_thinking_variant='openai_responses',
+            supports_thinking=True,
+            thinking_always_enabled=openai_model_profile(model_name).get('thinking_always_enabled', False),
+        )
     # Keep other proprietary GPT models gated until their Converse support is confirmed.
     if not model_name.startswith('gpt-oss'):
         return BedrockModelProfile(bedrock_supported_on_converse=False)

@@ -39,6 +39,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai_harness._message_text import tool_return_text
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
@@ -62,9 +63,9 @@ from pydantic_ai_harness.compaction._shared import (
     estimate_token_count,
     exceeds,
     find_token_cutoff,
+    is_harness_data,
     record_compaction_reclaim,
     resolve_token_trigger,
-    tool_return_text,
     validate_token_trigger,
 )
 from pydantic_ai_harness.compaction._summarizing_compaction import (
@@ -73,7 +74,6 @@ from pydantic_ai_harness.compaction._summarizing_compaction import (
     bridge_summary,
     extract_previous_summary,
     format_transcript,
-    is_harness_data,
     is_summary_part,
     user_prompt_text,
     write_summary,
