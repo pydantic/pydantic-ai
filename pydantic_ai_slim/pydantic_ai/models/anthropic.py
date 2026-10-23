@@ -223,14 +223,16 @@ def _history_fetched_pages(messages: Sequence[ModelMessage]) -> list[tuple[str, 
 
 
 def _fetched_page_url(citation: BetaCitationCharLocation, fetched_pages: Sequence[tuple[str, str]]) -> str | None:
-    """Return the URL of the fetched page a character citation quotes, if any.
+    """Return the URL of the fetched page a character citation quotes, if exactly one page matches.
 
-    Anthropic cites a fetched page like a document, by index and character range, without its URL.
+    Anthropic cites a fetched page like a document, by index and character range, without its URL. When pages with
+    different URLs hold the same text at that range, the citation stays a document source rather than guess.
     """
     if not citation.cited_text:
         return None
     start, end = citation.start_char_index, citation.end_char_index
-    return next((url for url, page in fetched_pages if page[start:end] == citation.cited_text), None)
+    urls = {url for url, page in fetched_pages if page[start:end] == citation.cited_text}
+    return next(iter(urls)) if len(urls) == 1 else None
 
 
 _CITATION_TYPES = frozenset({'web_search_result_location', 'char_location', 'page_location', 'content_block_location'})
