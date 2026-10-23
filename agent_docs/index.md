@@ -23,8 +23,7 @@
 <!-- rule:263 -->
 - Extract repeated logic into helper methods or top-level functions when patterns recur (e.g., streaming vs non-streaming handlers, serialization, part types, message mappings, model adapters) — Prevents duplication bugs and makes changes easier to apply consistently across all code paths (like both streaming and non-streaming handlers)
 <!-- rule:176 -->
-- Scope helpers and constants to their single usage site — define inline or within the class/function that uses them, not at module level — Reduces namespace pollution, clarifies intent, and prevents accidental reuse of implementation details not designed for broader use
-- When you extract a helper to cut a function's cognitive complexity, make it a private method on the class, or a private function next to its only caller; never a nested `def` — complexipy scores a nested `def` as part of the function that defines it, so nesting the helper removes nothing ([Cognitive Complexity](complexity.md))
+- Scope helpers and constants to their single usage site — define inline or within the class/function that uses them, not at module level — Reduces namespace pollution, clarifies intent, and prevents accidental reuse of implementation details not designed for broader use. Exception: make a helper you extract to cut a function's cognitive complexity a private method on the class, or a private function next to its only caller, never a nested `def` ([Extract a method](complexity.md#extract-a-method))
 <!-- rule:345 -->
 - Extract duplicated logic (validation, types, activity definitions, transformations) to parent classes or shared utilities — prevents drift and reduces maintenance burden across implementations — Keeping shared code in one place (like `_call_tool_in_activity` in `TemporalWrapperToolset`) prevents inconsistencies when logic evolves across multiple implementations (`TemporalFunctionToolset`, `TemporalMCPServer`, etc.)
 <!-- rule:284 -->
