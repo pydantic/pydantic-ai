@@ -43,7 +43,11 @@ class SpeculativeCodeUpdateEvent(CapabilityEvent, namespace=CODE_MODE_EVENTS):
 
 @dataclass(kw_only=True)
 class SpeculativeCallLaunchedEvent(CapabilityEvent, namespace=CODE_MODE_EVENTS):
-    """A sandbox tool call started executing while its snippet was still streaming."""
+    """A sandbox tool call was launched while its snippet was still streaming.
+
+    While a parallel `InputGuardrail` is still deciding, the launched call waits for its verdict
+    before it executes, and durations measured from the launch include that wait.
+    """
 
     launch_id: str
     """Identifier shared by this launch's later settled and claimed/evicted events."""
@@ -112,8 +116,10 @@ class SpeculativeCallMissedEvent(CapabilityEvent, namespace=CODE_MODE_EVENTS):
     """The executing snippet dispatched a speculation-eligible call that no launch matched.
 
     Only emitted for calls whose function was eligible to speculate this step; dispatches of
-    never-eligible tools are ordinary calls, not misses. A miss is always safe (the call runs
-    cold), but a systematic miss pattern signals broken claim keying rather than bad luck.
+    never-eligible tools are ordinary calls, not misses. A dispatch also misses when its matching
+    launch started before a call to a tool that is not eligible, since the launch may hold a stale
+    result. A miss is always safe (the call runs cold). In snippets that make no such calls, a
+    systematic miss pattern signals broken claim keying rather than bad luck.
     """
 
     sandbox_function: str
@@ -126,8 +132,9 @@ class SpeculativeCallEvictedEvent(CapabilityEvent, namespace=CODE_MODE_EVENTS):
     """A launch was discarded without being claimed: wasted work.
 
     Emitted when the snippet finishes without dispatching a matching call (untaken branch,
-    rewritten plan). Launches still unclaimed when the run ends are cancelled without an
-    event, since the stream has closed by then.
+    rewritten plan), or when the matching call ran cold because the launch started before a call
+    to a tool that is not eligible. Launches still unclaimed when the run ends are cancelled
+    without an event, since the stream has closed by then.
     """
 
     launch_id: str

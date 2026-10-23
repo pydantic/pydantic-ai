@@ -14,7 +14,6 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded, 
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -405,7 +404,11 @@ class TestAdvisor:
             raise UnexpectedModelBehavior('advisor did not return advice')
 
         def executor(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-            if any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts):
+            if any(
+                isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+                for message in messages
+                for part in message.parts
+            ):
                 return ModelResponse(parts=[TextPart('continued without advice')])
             return ModelResponse(parts=[ToolCallPart('advisor', {'prompt': 'Review this.'})])
 
@@ -524,7 +527,9 @@ class TestAdvisor:
             seen.append(info.model_request_parameters)
             return ModelResponse(parts=[TextPart('done')])
 
-        with pytest.warns(HarnessDeprecationWarning, match=r'`max_uses=2`, .* is ignored') as warned:
+        with pytest.warns(
+            HarnessDeprecationWarning, match=r'`max_uses=2`, .* is ignored\. This will raise `UserError`'
+        ) as warned:
             agent = Agent(
                 _ProviderFunctionModel('openrouter', executor, supports_advisor=True),
                 capabilities=[
