@@ -3260,6 +3260,176 @@ async def test_cross_scope_thinking_override_warning_matches_the_wire(
         assert cross_scope_warnings == []
 
 
+_CROSS_SCOPE_SUMMARY_CASES = [
+    _CrossScopeCase(
+        'anthropic-thinking-display',
+        lambda s: http_probe(
+            lambda c: AnthropicModel(
+                'claude-opus-5-5', provider=AnthropicProvider(api_key=PROBE_KEY, http_client=c), settings=s
+            )
+        ),
+        lambda: AnthropicModelSettings(anthropic_thinking_display='omitted'),
+        True,
+        lambda p: p['body'].get('thinking'),
+        overrides=True,
+        marks=_SKIP_WITHOUT_ANTHROPIC,
+    ),
+    _CrossScopeCase(
+        'anthropic-thinking',
+        lambda s: http_probe(
+            lambda c: AnthropicModel(
+                'claude-opus-5-5', provider=AnthropicProvider(api_key=PROBE_KEY, http_client=c), settings=s
+            )
+        ),
+        lambda: AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'}),
+        True,
+        lambda p: p['body'].get('thinking'),
+        overrides=True,
+        marks=_SKIP_WITHOUT_ANTHROPIC,
+    ),
+    _CrossScopeCase(
+        'google-thinking-config',
+        lambda s: http_probe(
+            lambda c: GoogleModel(
+                'gemini-2.5-flash', provider=GoogleProvider(api_key=PROBE_KEY, http_client=c), settings=s
+            )
+        ),
+        lambda: GoogleModelSettings(google_thinking_config={'thinking_budget': 1000}),
+        True,
+        lambda p: p['body']['generationConfig'].get('thinkingConfig'),
+        overrides=True,
+        marks=_SKIP_WITHOUT_GOOGLE,
+    ),
+    _CrossScopeCase(
+        'groq-reasoning-format',
+        lambda s: legacy_http_probe(
+            lambda c: GroqModel(
+                'openai/gpt-oss-20b', provider=GroqProvider(api_key=PROBE_KEY, http_client=c), settings=s
+            )
+        ),
+        lambda: GroqModelSettings(groq_reasoning_format='hidden'),
+        True,
+        lambda p: p['body'].get('reasoning_format'),
+        overrides=True,
+        marks=_SKIP_WITHOUT_GROQ,
+    ),
+    _CrossScopeCase(
+        'openai-responses-reasoning-summary',
+        lambda s: http_probe(
+            lambda c: OpenAIResponsesModel(
+                'gpt-5', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=c), settings=s
+            )
+        ),
+        lambda: OpenAIResponsesModelSettings(openai_reasoning_summary='detailed'),
+        True,
+        lambda p: p['body'].get('reasoning', {}).get('summary'),
+        overrides=True,
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+    _CrossScopeCase(
+        # The effort sits beside the summary, so it doesn't replace what `thinking_summary` sends.
+        'openai-responses-reasoning-effort',
+        lambda s: http_probe(
+            lambda c: OpenAIResponsesModel(
+                'gpt-5', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=c), settings=s
+            )
+        ),
+        lambda: OpenAIResponsesModelSettings(openai_reasoning_effort='high'),
+        True,
+        lambda p: p['body'].get('reasoning', {}).get('summary'),
+        overrides=False,
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+    _CrossScopeCase(
+        'openrouter-reasoning',
+        lambda s: http_probe(
+            lambda c: OpenRouterModel(
+                'openai/gpt-5', provider=OpenRouterProvider(api_key=PROBE_KEY, http_client=c), settings=s
+            )
+        ),
+        lambda: OpenRouterModelSettings(openrouter_reasoning={'effort': 'low'}),
+        False,
+        lambda p: p['body'].get('reasoning'),
+        overrides=True,
+        marks=_SKIP_WITHOUT_OPENAI,
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in _CROSS_SCOPE_SUMMARY_CASES])
+async def test_cross_scope_thinking_summary_override_warning_matches_the_wire(
+    case: _CrossScopeCase, allow_model_requests: None
+):
+    """A model's setting warns over a request's `thinking_summary` exactly when, at one scope, it changes what's sent.
+
+    The `thinking_summary` counterpart of `test_cross_scope_thinking_override_warning_matches_the_wire`.
+    """
+    setting = case.setting()
+    key = next(iter(setting))
+    summary = ModelSettings(thinking_summary=bool(case.thinking))
+    same_scope = case.probe(None)
+    sent_summary, _ = await _send(same_scope, summary)
+    sent_setting, _ = await _send(same_scope, setting)
+    sent_both, same_scope_warnings = await _send(same_scope, {**setting, **summary})
+    _, cross_scope_warnings = await _send(case.probe(setting), summary)
+
+    assert same_scope_warnings == []
+    if case.overrides:
+        assert case.sent(sent_both) == case.sent(sent_setting) != case.sent(sent_summary)
+        assert cross_scope_warnings == [
+            f"`{key}` from the model's `settings` takes precedence over `thinking_summary={bool(case.thinking)!r}` "
+            f"from the request's `model_settings`. Set `{key}` in the request's `model_settings` instead of "
+            "`thinking_summary`, or remove it from the model's `settings`."
+        ]
+    else:
+        assert case.sent(sent_both) == case.sent(sent_summary)
+        assert cross_scope_warnings == []
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='boto3 not installed')
+@pytest.mark.parametrize(
+    ('variant', 'settings', 'expected'),
+    [
+        ('anthropic', {'bedrock_thinking_display': 'omitted'}, ('bedrock_thinking_display',)),
+        (
+            'anthropic',
+            {'bedrock_additional_model_requests_fields': {'thinking': {'type': 'adaptive'}}},
+            ('bedrock_additional_model_requests_fields',),
+        ),
+        (
+            'openai',
+            {'bedrock_additional_model_requests_fields': {'include_reasoning': True}},
+            ('bedrock_additional_model_requests_fields',),
+        ),
+        (
+            'openai_responses',
+            {'bedrock_additional_model_requests_fields': {'reasoning': {'effort': 'low'}}},
+            ('bedrock_additional_model_requests_fields',),
+        ),
+        ('openai', {'bedrock_thinking_display': 'omitted'}, ()),
+        ('qwen', {'bedrock_additional_model_requests_fields': {'reasoning_config': 'high'}}, ()),
+    ],
+)
+def test_bedrock_settings_overriding_thinking_summary(
+    variant: Any, settings: dict[str, Any], expected: tuple[str, ...]
+):
+    """Mirrors `_add_thinking_fields`: the settings Bedrock lets win over `thinking_summary`, per variant."""
+    model = _bedrock_model(BedrockModelProfile(bedrock_thinking_variant=variant, supports_thinking=True))
+    assert model._settings_overriding_thinking_summary(settings) == expected
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('extra_body', 'expected'),
+    [({'include_reasoning': True}, ('extra_body',)), ({'top_k': 5}, ()), (None, ())],
+)
+def test_openai_chat_extra_body_overriding_thinking_summary(extra_body: Any, expected: tuple[str, ...]):
+    """On vLLM, a request's own `include_reasoning` in `extra_body` wins over `thinking_summary=False`."""
+    model = OpenAIChatModel('qwen3', provider=VLLMProvider(base_url='http://localhost:8000/v1', api_key=PROBE_KEY))
+    settings: dict[str, Any] = {} if extra_body is None else {'extra_body': extra_body}
+    assert model._settings_overriding_thinking_summary(settings) == expected
+
+
 def _mock_openai_chat(model_name: str, settings: ModelSettings) -> tuple[OpenAIChatModel, AsyncOpenAI]:
     client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='4', role='assistant')))
     return OpenAIChatModel(model_name, provider=OpenAIProvider(openai_client=client), settings=settings), client

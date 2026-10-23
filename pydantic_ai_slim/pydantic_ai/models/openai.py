@@ -1892,6 +1892,15 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # `_translate_thinking` sends an explicit effort instead of the one unified `thinking` maps to.
         return ('openai_reasoning_effort',) if model_settings.get('openai_reasoning_effort') else ()
 
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_chat_extra_body` lets keys the request sets in `extra_body` win over the profile's fields that hide
+        # thinking for `thinking_summary=False`.
+        omit_thinking = self.profile.get('openai_chat_omit_thinking_extra_body')
+        extra_body = model_settings.get('extra_body')
+        if omit_thinking and _is_str_dict(extra_body) and any(key in extra_body for key in omit_thinking):
+            return ('extra_body',)
+        return ()
+
     def _supports_tool_forcing(
         self, model_settings: OpenAIChatModelSettings, model_request_parameters: ModelRequestParameters
     ) -> bool:
@@ -3776,6 +3785,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
         # `_translate_thinking` sends an explicit effort instead of the one unified `thinking` maps to.
         return ('openai_reasoning_effort',) if model_settings.get('openai_reasoning_effort') is not None else ()
+
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_translate_thinking` sends an explicit summary instead of the one `thinking_summary` asks for.
+        return ('openai_reasoning_summary',) if model_settings.get('openai_reasoning_summary') else ()
 
     def _get_responses_tool_choice(
         self,

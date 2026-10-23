@@ -11,7 +11,6 @@ import json
 from typing import Any
 
 import pytest
-from cassetter import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, ThinkingPart
@@ -112,7 +111,6 @@ async def test_anthropic_thinking_summary_on_a_budget_based_model(
 async def test_bedrock_claude_thinking_returns_summaries_by_default(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
-    vcr: Cassette,
     model_name: str,
     expected_thinking: dict[str, Any],
 ):

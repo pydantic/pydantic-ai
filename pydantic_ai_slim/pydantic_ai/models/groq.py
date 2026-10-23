@@ -340,6 +340,10 @@ class GroqModel(Model[AsyncGroq]):
             overriding.append('groq_reasoning_effort')
         return tuple(overriding)
 
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_get_reasoning_format` sends an explicit format instead of the one `thinking_summary` maps to.
+        return ('groq_reasoning_format',) if model_settings.get('groq_reasoning_format') else ()
+
     def _translate_thinking(
         self,
         model_settings: GroqModelSettings,

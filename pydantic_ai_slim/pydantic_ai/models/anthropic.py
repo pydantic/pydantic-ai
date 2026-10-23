@@ -1356,6 +1356,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             overriding.append('anthropic_effort')
         return tuple(overriding)
 
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_translate_thinking` sends an explicit thinking config as is, and an explicit `display` wins over the
+        # unified one.
+        overriding = [key for key in ('anthropic_thinking', 'anthropic_thinking_display') if model_settings.get(key)]
+        return tuple(overriding)
+
     def _default_structured_output_mode(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> StructuredOutputMode:

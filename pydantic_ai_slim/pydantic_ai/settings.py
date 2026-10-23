@@ -608,8 +608,9 @@ class ModelSettings(TypedDict, total=False):
     `True` to request them there.
 
     Provider-specific settings (e.g. `anthropic_thinking_display`, `openai_reasoning_summary`,
-    `google_thinking_config`, `groq_reasoning_format`) take precedence over this unified field. Thinking that
-    an API returns anyway is never stripped client-side.
+    `google_thinking_config`, `groq_reasoning_format`) take precedence over this unified field. When one comes from
+    a broader scope than this field, such as the model's `settings` while this is set for a run, a `UserWarning`
+    names both. Thinking that an API returns anyway is never stripped client-side.
 
     Silently ignored by model classes not listed below, and by the listed classes' models that have no such switch.
 

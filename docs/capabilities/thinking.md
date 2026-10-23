@@ -53,7 +53,7 @@ agent = Agent('{{ anthropic:large }}', capabilities=[Thinking(effort='high', sum
 - `False` — ask the API not to return thinking content where it can. The model still thinks, and is billed for it, as configured by `thinking`
 - Unset — when `thinking` enables thinking, summaries are requested where that is safe to do by default: Anthropic, Claude on Bedrock, Google, and Groq. OpenAI's Responses API is left alone, because [reasoning summaries](https://platform.openai.com/docs/guides/reasoning#reasoning-summaries) may require organization verification; set `True` to request them there
 
-Provider-specific settings take precedence, and thinking an API returns anyway is never stripped from the response:
+Provider-specific settings take precedence, with a `UserWarning` naming both when the provider-specific one comes from a broader scope, as for [`thinking`](#unified-thinking-settings). Thinking an API returns anyway is never stripped from the response:
 
 | Provider | Unset, with `thinking` enabled | `True` | `False` | Notes |
 |---|---|---|---|---|

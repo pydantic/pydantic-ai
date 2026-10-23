@@ -905,6 +905,22 @@ class BedrockConverseModel(Model[BaseClient]):
             return ('bedrock_additional_model_requests_fields',)
         return ()
 
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_add_thinking_fields` leaves alone the fields the user set, and `bedrock_thinking_display` wins over the
+        # unified setting on Claude models.
+        variant = self.profile.get('bedrock_thinking_variant', None)
+        overriding: list[str] = []
+        if variant == 'anthropic' and model_settings.get('bedrock_thinking_display'):
+            overriding.append('bedrock_thinking_display')
+        fields = model_settings.get('bedrock_additional_model_requests_fields')
+        if isinstance(fields, Mapping) and (
+            (variant == 'anthropic' and 'thinking' in fields)
+            or (variant == 'openai' and 'include_reasoning' in fields)
+            or (variant == 'openai_responses' and 'reasoning' in fields)
+        ):
+            overriding.append('bedrock_additional_model_requests_fields')
+        return tuple(overriding)
+
     def _default_structured_output_mode(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> StructuredOutputMode:
