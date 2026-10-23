@@ -178,6 +178,11 @@ class Index:
                     module = Module(name, (Path(source_root) / path).as_posix(), is_package, tree)
                     for statement in _top_level(tree.body):
                         self._bind(module, statement)
+                    # A function-local import binds module-wide, unless the module binds the name itself.
+                    for node in ast.walk(tree):
+                        if isinstance(node, ast.Import | ast.ImportFrom):
+                            for name, target in self.import_targets(module, node):
+                                module.imports.setdefault(name, target)
                     return module
         return None
 
@@ -191,19 +196,23 @@ class Index:
                         module.definitions[target.id] = statement
             case ast.AnnAssign(target=ast.Name(id=name)):
                 module.definitions[name] = statement
-            case ast.ImportFrom():
-                base = self.import_base(module, statement)
-                for alias in statement.names:
-                    module.imports[alias.asname or alias.name] = (base, alias.name)
-            case ast.Import():
-                for alias in statement.names:
-                    if alias.asname:
-                        module.imports[alias.asname] = (alias.name, None)
-                    else:
-                        top = alias.name.split('.')[0]
-                        module.imports[top] = (top, None)
+            case ast.Import() | ast.ImportFrom():
+                module.imports.update(self.import_targets(module, statement))
             case _:
                 pass
+
+    def import_targets(
+        self, module: Module, statement: ast.Import | ast.ImportFrom
+    ) -> Iterator[tuple[str, tuple[str, str | None]]]:
+        """Each name an import statement binds, with the module and name it binds to."""
+        if isinstance(statement, ast.ImportFrom):
+            base = self.import_base(module, statement)
+            for alias in statement.names:
+                yield alias.asname or alias.name, (base, alias.name)
+            return
+        for alias in statement.names:
+            top = alias.name.split('.')[0]
+            yield (alias.asname, (alias.name, None)) if alias.asname else (top, (top, None))
 
     @staticmethod
     def import_base(module: Module, statement: ast.ImportFrom) -> str:

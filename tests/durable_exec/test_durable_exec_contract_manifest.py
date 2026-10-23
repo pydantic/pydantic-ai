@@ -310,6 +310,12 @@ _FIXTURE: dict[str, str] = {
 
             nested(Model())
             lambda: model
+
+
+        def local_import() -> None:
+            from pydantic_ai._run_context import RunContext as LocalContext
+
+            LocalContext.kind
         """,
     'src/pydantic_ai_harness/pydantic_ai_harness/__init__.py': '',
     'src/pydantic_ai_harness/pydantic_ai_harness/_shared.py': 'class Shared:\n    value: int = 0\n',
@@ -358,6 +364,7 @@ def test_build_manifest_resolves_every_dependency_form(fixture_repo: Path):
                 ['temporal'],
                 ['TemporalModel.stream', 'module_level'],
             ),
+            '_run_context.py::RunContext.kind': (['attribute_read'], ['temporal'], ['local_import']),
             '_run_context.py::RunContext.retries': (
                 ['attribute_read', 'projected_field'],
                 ['temporal'],

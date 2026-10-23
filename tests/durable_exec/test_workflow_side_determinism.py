@@ -181,32 +181,43 @@ class _CallFinder(ast.NodeVisitor):
         self.lines = source.splitlines()
         self.scopes: list[str] = []
         self.calls: list[Call] = []
-        self.aliases: dict[str, str] = {}
-        package = module.split('.') if is_package else module.split('.')[:-1]
+        self.package = module.split('.') if is_package else module.split('.')[:-1]
         tree = ast.parse(source)
-        for node in ast.walk(tree):
-            match node:
+        self.aliases = [self.scope_aliases(tree.body)]
+        self.visit(tree)
+
+    def scope_aliases(self, body: list[ast.stmt]) -> dict[str, str]:
+        """The names the imports of one scope bind, without those of the functions and classes nested in it."""
+        aliases: dict[str, str] = {}
+        pending: list[ast.AST] = list(body)
+        while pending:
+            match pending.pop(0):
                 case ast.Import(names=names):
                     for alias in names:
                         bound = alias.asname or alias.name.split('.')[0]
-                        self.aliases[bound] = alias.name if alias.asname else bound
+                        aliases[bound] = alias.name if alias.asname else bound
                 case ast.ImportFrom(module=imported, level=0, names=names):
                     for alias in names:
-                        self.aliases[alias.asname or alias.name] = f'{imported}.{alias.name}'
+                        aliases[alias.asname or alias.name] = f'{imported}.{alias.name}'
                 case ast.ImportFrom(module=imported, level=level, names=names):
-                    base = [*package[: len(package) - level + 1], *([imported] if imported else [])]
+                    base = [*self.package[: len(self.package) - level + 1], *([imported] if imported else [])]
                     for alias in names:
-                        self.aliases[alias.asname or alias.name] = '.'.join([*base, alias.name])
-                case _:
+                        aliases[alias.asname or alias.name] = '.'.join([*base, alias.name])
+                case ast.FunctionDef() | ast.AsyncFunctionDef() | ast.ClassDef():
                     pass
-        self.visit(tree)
+                case node:
+                    pending.extend(ast.iter_child_nodes(node))
+        return aliases
+
+    def alias(self, name: str) -> str | None:
+        return next((scope[name] for scope in reversed(self.aliases) if name in scope), None)
 
     def dotted(self, expr: ast.expr) -> str | None:
         match expr:
             case ast.Name(id='open'):
-                return self.aliases.get('open', 'open')
+                return self.alias('open') or 'open'
             case ast.Name(id=name):
-                return self.aliases.get(name)
+                return self.alias(name)
             case ast.Attribute(value=value, attr=attr):
                 base = self.dotted(value)
                 return f'{base}.{attr}' if base is not None else None
@@ -215,12 +226,16 @@ class _CallFinder(ast.NodeVisitor):
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self.scopes.append(node.name)
+        self.aliases.append(self.scope_aliases(node.body))
         self.generic_visit(node)
+        self.aliases.pop()
         self.scopes.pop()
 
     def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         self.scopes.append(node.name)
+        self.aliases.append(self.scope_aliases(node.body))
         self.generic_visit(node)
+        self.aliases.pop()
         self.scopes.pop()
 
     visit_AsyncFunctionDef = visit_FunctionDef
@@ -309,6 +324,12 @@ class Node:
         self.clock.time()
         handlers[0]()
         len(handlers)
+
+
+def local_imports():
+    import datetime
+
+    datetime.date.today()
 """
 
 
@@ -326,6 +347,7 @@ def test_nondeterministic_calls_resolves_imports_and_pragmas():
             ('Node.run.nested', 'uuid.uuid4', None),
             ('Node.run.nested', 'pydantic_ai._uuid.uuid7', None),
             ('Node.run', 'open', None),
+            ('local_imports', 'datetime.date.today', None),
         ]
     )
     assert unexplained_calls('fixture.py', calls)[0] == snapshot(
@@ -337,6 +359,7 @@ def test_nondeterministic_calls_resolves_imports_and_pragmas():
             'fixture.py::Node.run.nested calls `uuid.uuid4`, which draws randomness that a replay does not reproduce',
             'fixture.py::Node.run.nested calls `pydantic_ai._uuid.uuid7`, which draws randomness that a replay does not reproduce',
             'fixture.py::Node.run calls `open`, which performs I/O whose result can differ on replay; do it in an activity',
+            'fixture.py::local_imports calls `datetime.date.today`, which reads a clock that has moved by the time the run replays',
         ]
     )
 
