@@ -247,7 +247,8 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         # `after_node_run` only delivers background outcomes, and no tool runs in the background in a
         # realtime session (`_background_mode` returns `None` when `ctx.realtime`), so the session
         # needs nothing from it. A private core contract until #7190 maps hooks onto sessions.
-        return ()
+        # Measured against this class, so a subclass that adds its own hooks still warns.
+        return self._realtime_uncalled_hooks_overriding(BackgroundTools)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> BackgroundTools[AgentDepsT]:
         return replace(self)

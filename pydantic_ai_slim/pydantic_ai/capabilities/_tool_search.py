@@ -216,7 +216,8 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
         # `before_model_request` records tools a deferred capability load revealed, and a realtime
         # session refuses deferred capabilities that contribute tools when it opens.
-        return ()
+        # Measured against this class, so a subclass that adds its own hooks still warns.
+        return self._realtime_uncalled_hooks_overriding(ToolSearch)
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext

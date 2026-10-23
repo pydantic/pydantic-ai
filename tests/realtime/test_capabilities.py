@@ -1194,6 +1194,24 @@ async def test_one_uncalled_hooks_warning_per_capability() -> None:
         )
 
 
+class _ModelRequestInstrumentation(Instrumentation):
+    async def after_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        return response  # pragma: no cover
+
+
+async def test_subclass_of_exempt_built_in_warns_for_its_own_hooks() -> None:
+    """An exempt built-in is measured against its own class, so hooks a subclass adds still warn."""
+    with pytest.warns(UserWarning) as record:
+        await _drain(
+            Agent[None, str](capabilities=[_ModelRequestInstrumentation()], deps_type=type(None)), _RecordingModel()
+        )
+    assert [str(warning.message) for warning in record] == [
+        _uncalled_hooks_warning("`_ModelRequestInstrumentation` (id='instrumentation')", '`after_model_request`')
+    ]
+
+
 @pytest.mark.parametrize(
     'capabilities',
     [

@@ -316,7 +316,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
         # The model-request hooks only route a run's model calls through the engine inside a durable
         # context and pass through outside one; a realtime session makes no such calls to route.
-        return ()
+        # Measured against this class, so a subclass that adds its own hooks still warns.
+        return self._realtime_uncalled_hooks_overriding(BaseDurabilityCapability)
 
     @property
     def engine_name(self) -> str:

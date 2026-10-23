@@ -197,7 +197,8 @@ class Instrumentation(AbstractCapability[Any]):
 
     def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
         # A realtime session builds its own session and response spans from these settings.
-        return ()
+        # Measured against this class, so a subclass that adds its own hooks still warns.
+        return self._realtime_uncalled_hooks_overriding(Instrumentation)
 
     @classmethod
     def from_spec(

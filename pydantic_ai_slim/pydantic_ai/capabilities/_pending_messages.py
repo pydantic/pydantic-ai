@@ -44,7 +44,8 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
 
     def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
         # A realtime session drains the queue itself, at its own turn boundaries.
-        return ()
+        # Measured against this class, so a subclass that adds its own hooks still warns.
+        return self._realtime_uncalled_hooks_overriding(PendingMessageDrainCapability)
 
     async def before_model_request(
         self,
