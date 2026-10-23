@@ -1,0 +1,204 @@
+"""Run state should be released by reference counting once the application drops it."""
+
+from __future__ import annotations
+
+import asyncio
+import gc
+import weakref
+from collections.abc import AsyncIterator, Generator
+from dataclasses import dataclass
+from typing import Literal
+
+import pytest
+
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tool_manager import ToolManager
+from pydantic_ai.tools import ToolDefinition
+
+
+@dataclass
+class Deps:
+    pass
+
+
+@pytest.fixture
+def no_gc() -> Generator[None]:
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if enabled:
+            gc.enable()
+
+
+async def three_steps(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if sum(isinstance(message, ModelResponse) for message in messages) < 3:
+        return ModelResponse(parts=[ToolCallPart('lookup', {})])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+async def three_streamed_steps(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+    if sum(isinstance(message, ModelResponse) for message in messages) < 3:
+        yield {0: DeltaToolCall(name='lookup', json_args='{}')}
+    else:
+        yield 'done'
+
+
+@pytest.mark.usefixtures('no_gc')
+@pytest.mark.parametrize('complete', [False, True])
+async def test_stream_releases_tool_context_cycles(complete: bool) -> None:
+    managers: list[ToolManager[Deps]] = []
+    agent = Agent(FunctionModel(stream_function=three_streamed_steps), deps_type=Deps)
+
+    @agent.tool
+    async def lookup(ctx: RunContext[Deps]) -> str:
+        assert ctx.tool_manager is not None
+        managers.append(ctx.tool_manager)
+        return 'result'
+
+    deps = Deps()
+    ref = weakref.ref(deps)
+    # Name inference retains its inspection frame independently of the run-data cycles.
+    async with agent.run_stream('hello', deps=deps, infer_name=False) as result:
+        if complete:
+            assert await result.get_output() == 'done'
+    assert managers
+    assert all(manager.ctx is not None and manager.ctx.tool_manager is None for manager in managers)
+    managers.clear()
+    del deps, result
+    if complete:
+        assert ref() is None
+
+
+@pytest.mark.usefixtures('no_gc')
+async def test_completed_run_releases_dependencies() -> None:
+    agent = Agent(FunctionModel(three_steps), deps_type=Deps)
+
+    @agent.tool
+    async def lookup(ctx: RunContext[Deps]) -> str:
+        return 'result'
+
+    deps = Deps()
+    ref = weakref.ref(deps)
+    result = await agent.run('hello', deps=deps)
+    assert result.output == 'done'
+    del deps, result
+    assert ref() is None
+
+
+@pytest.mark.usefixtures('no_gc')
+async def test_deferred_resume_releases_dependencies() -> None:
+    agent = Agent(TestModel(custom_output_text='done'), deps_type=Deps, output_type=[str, DeferredToolRequests])
+
+    @agent.tool(requires_approval=True)
+    async def lookup(ctx: RunContext[Deps]) -> str:
+        return 'result'
+
+    deps = Deps()
+    ref = weakref.ref(deps)
+    deferred = await agent.run('hello', deps=deps)
+    assert isinstance(deferred.output, DeferredToolRequests)
+    resumed = await agent.run(
+        deps=deps,
+        message_history=deferred.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={deferred.output.approvals[0].tool_call_id: True}),
+    )
+    assert resumed.output == 'done'
+    del deps, deferred, resumed
+    assert ref() is None
+
+
+@pytest.mark.usefixtures('no_gc')
+async def test_retained_run_keeps_result_and_messages() -> None:
+    agent = Agent(FunctionModel(three_steps), deps_type=Deps)
+
+    @agent.tool
+    async def lookup(ctx: RunContext[Deps]) -> str:
+        return 'result'
+
+    deps = Deps()
+    ref = weakref.ref(deps)
+    async with agent.iter('hello', deps=deps) as run:
+        async for _ in run:
+            pass
+    del deps
+    assert ref() is not None
+    assert run.result is not None
+    assert run.result.output == 'done'
+    assert run.result.all_messages() == run.all_messages()
+    assert len(run.all_messages()) == 8
+    del run
+    assert ref() is None
+
+
+@pytest.mark.usefixtures('no_gc')
+async def test_retained_contexts_keep_tools() -> None:
+    contexts: list[tuple[RunContext[Deps], dict[str, ToolDefinition]]] = []
+    agent = Agent(FunctionModel(three_steps), deps_type=Deps)
+
+    @agent.instructions
+    async def instructions(ctx: RunContext[Deps]) -> str:
+        contexts.append((ctx, ctx.tools))
+        return 'Use lookup'
+
+    async def prepare(ctx: RunContext[Deps], tool: ToolDefinition) -> ToolDefinition:
+        contexts.append((ctx, ctx.tools))
+        return tool
+
+    @agent.tool(prepare=prepare)
+    async def lookup(ctx: RunContext[Deps]) -> str:
+        contexts.append((ctx, ctx.tools))
+        return 'result'
+
+    deps = Deps()
+    ref = weakref.ref(deps)
+    result = await agent.run('hello', deps=deps)
+    del deps, result
+    assert ref() is not None
+    assert contexts
+    assert all(ctx.tools == tools for ctx, tools in contexts)
+    assert any('lookup' in tools for _, tools in contexts)
+    assert all(ctx.deps is ref() for ctx, _ in contexts)
+    contexts.clear()
+    assert ref() is None
+
+
+@pytest.mark.usefixtures('no_gc')
+@pytest.mark.parametrize('exit_kind', ['break', 'error', 'cancel'])
+async def test_interrupted_iteration_releases_dependencies(exit_kind: Literal['break', 'error', 'cancel']) -> None:
+    contexts: list[RunContext[Deps]] = []
+    agent = Agent(FunctionModel(three_steps), deps_type=Deps)
+
+    @agent.tool
+    async def lookup(ctx: RunContext[Deps]) -> str:
+        contexts.append(ctx)
+        return 'result'
+
+    deps = Deps()
+    ref = weakref.ref(deps)
+    run = None
+    try:
+        async with agent.iter('hello', deps=deps) as run:
+            async for _ in run:
+                if contexts:
+                    break
+            if exit_kind == 'error':
+                raise ValueError('consumer failed')
+            if exit_kind == 'cancel':
+                run.cancel()
+                try:
+                    await anext(run)
+                except asyncio.CancelledError:
+                    pass
+    except ValueError:
+        pass
+    assert run is not None
+    assert run.result is None
+    assert contexts[0].tools.keys() == {'lookup'}
+    contexts.clear()
+    del deps, run
+    assert ref() is None
