@@ -54,11 +54,11 @@ watch_logs() {{
   trap '__harness_watch_stopped=1; kill "$__harness_sleeper" 2> /dev/null' TERM
   __harness_notice="[Log exceeded max_log_bytes=$1; earlier output was cleared.]"
   __harness_interval=$2
-  while [ -z "$__harness_watch_stopped" ] && kill -0 "$$" 2> /dev/null; do
+  while [ -z "$__harness_watch_stopped" ] && [ ! -e "$dir/watch.stop" ] && kill -0 "$$" 2> /dev/null; do
     sleep "$__harness_interval" 2> /dev/null & __harness_sleeper=$!
     [ -z "$__harness_watch_stopped" ] || kill "$__harness_sleeper" 2> /dev/null
     wait "$__harness_sleeper" || [ $? -gt 128 ] || __harness_interval=1
-    [ -z "$__harness_watch_stopped" ] || break
+    [ -z "$__harness_watch_stopped" ] && [ ! -e "$dir/watch.stop" ] || break
     for log in "$out" "$err"; do
       __harness_size=$(( $(wc -c < "$log" 2> /dev/null) + 0 ))
       [ "$__harness_size" -gt $(( ${{#__harness_notice}} + 1 )) ] || continue
@@ -72,6 +72,9 @@ watch_logs() {{
   done
   wait "$__harness_sleeper" 2> /dev/null
 }}
+stop_watcher() {{
+  [ -z "$watcher" ] || {{ true 2> /dev/null > "$dir/watch.stop"; kill "$watcher" 2> /dev/null; wait "$watcher" 2> /dev/null; }}
+}}
 unset __harness_stopped
 trap __harness_stopped=1 TERM
 publish null
@@ -84,7 +87,7 @@ watcher=
 if [ -n "$6" ]; then watch_logs "$6" "$7" & watcher=$!; fi
 if [ -n "$4" ]; then
   __harness_limit_files "$4" || {{
-    [ -z "$watcher" ] || {{ kill "$watcher" 2> /dev/null; wait "$watcher" 2> /dev/null; }}
+    stop_watcher
     echo 'Unable to apply max_file_bytes.' >> "$err"; publish 1; exit 1
   }}
 fi
@@ -93,7 +96,7 @@ fi
   exec sh -c "$3"
 ) < /dev/null >> "$out" 2>> "$err"
 code=$?
-[ -z "$watcher" ] || {{ kill "$watcher" 2> /dev/null; wait "$watcher" 2> /dev/null; }}
+stop_watcher
 publish $code
 """
 """The job's supervisor: arguments are the job directory, the log mode, the command, the file limit, the launcher's PID,
@@ -105,7 +108,8 @@ way (an odd size) or done, even once the log has grown back. The command keeps r
 log (a glob over job logs) reaches the end of it and stops, instead of copying the log into itself until the disk is
 full. A log holding no more than the notice is left alone, so a limit below its size doesn't clear it at every check.
 The watcher starts before `max_file_bytes` applies, since `log_clears` keeps growing, finishes a clear it has started
-when the wrapper stops it, and exits once the wrapper is gone (killed on its own and reaped). It sleeps in a child it
+when the wrapper stops it, and exits once the wrapper is gone (killed on its own and reaped). The wrapper stops it with
+`watch.stop` as well as `TERM`, since a `TERM` sent as the watcher starts can be lost before its trap is set. It sleeps in a child it
 stops and reaps itself, so a stopped job leaves no orphan behind; a `sleep` without fractional seconds gets 1.
 
 The `TERM` trap lets the wrapper outlive a `SIGTERM` sent to the whole group long enough to

@@ -154,6 +154,22 @@ class _ClearedAgainDuringTheReread(LocalWorkspaceBackend):
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
+class _TermIgnored(LocalWorkspaceBackend):
+    """Launches jobs with `SIGTERM` ignored, which a shell can't trap, so no `TERM` stops the log watcher."""
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        if isinstance(command, str) and 'wrapper=' in command:
+            command = f"trap '' TERM\n{command}"
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+
 class _ClearedWhileCounted(LocalWorkspaceBackend):
     """Clears the log, as the watcher would, at the first read from its start once the command has exited."""
 
@@ -306,6 +322,17 @@ class TestShellLogLimits:
                         await anyio.sleep(0.01)
             finally:
                 await toolset.stop_command(run_context(tmp_path), command_id)
+
+    async def test_watcher_stops_without_its_signal(self, tmp_path: Path) -> None:
+        # A `TERM` sent as the watcher starts can be lost before its trap is set; here every one is.
+        with anyio.fail_after(10):
+            output = await call_tool(
+                [Shell[None](denied_commands=[], tools=['shell'], max_log_bytes=2000)],
+                'shell',
+                {'command': 'true', 'timeout': 30},
+                workspace=_TermIgnored(tmp_path),
+            )
+        assert '"exit_code": 0' in output
 
     async def test_watcher_exits_once_the_wrapper_is_killed(self, tmp_path: Path) -> None:
         output = await shell(tmp_path, {'command': 'sleep 0.5', 'mode': 'background'}, max_log_bytes=2000)
