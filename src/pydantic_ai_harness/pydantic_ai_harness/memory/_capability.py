@@ -41,6 +41,7 @@ from pydantic_ai_harness.memory._toolset import (
     MemoryToolOperations,
     MemoryToolset,
     MemoryWriteResult,
+    directory_instruction,
     empty_snapshot_body,
     file_reader,
     read_call,
@@ -350,7 +351,13 @@ class Memory(AbstractCapability[AgentDepsT]):
                 return request_context
 
             has_memory = bool((main is not None and main.content) or subfiles or files_truncated)
-            snapshot = self._render_snapshot(main, subfiles, files_truncated, file_reader(ctx, store, scope))
+            snapshot = self._render_snapshot(
+                main,
+                subfiles,
+                files_truncated,
+                file_reader(ctx, store, scope),
+                reserved=len(directory_instruction(self, store, scope) or ''),
+            )
             rendered = None if snapshot is None else snapshot[0]
             # Memory just emptied could still be shown by anything earlier in the history: an older snapshot, or a
             # summary that kept its facts. So an empty snapshot is skipped only in a fresh conversation, whose history
@@ -384,12 +391,15 @@ class Memory(AbstractCapability[AgentDepsT]):
         subfiles: list[str],
         files_truncated: bool,
         reader: tuple[str, str] | None,
+        *,
+        reserved: int = 0,
     ) -> tuple[str, bool] | None:
         """The framed snapshot, and whether a fresh conversation can skip it, or `None` when it doesn't fit the budget."""
         main_content = '' if main is None else _neutralize(main.content)
         subfiles = [_neutralize(name) for name in subfiles]
         guidance = self._render_guidance()
-        content_budget = snapshot_content_budget(self.max_tokens, guidance)
+        # The `directory` instruction, when there is one, shares `max_tokens` with the guidance and the snapshot.
+        content_budget = snapshot_content_budget(self.max_tokens, guidance) - reserved
         if content_budget <= 0:
             return None
         if not (main_content or subfiles or files_truncated):

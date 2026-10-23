@@ -18,6 +18,7 @@ from pydantic_ai import ModelRetry
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import InstructionChangePolicy, InstructionPart
+from pydantic_ai.realtime.model import RealtimeModel
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import (
@@ -88,6 +89,21 @@ def empty_snapshot_body(heading: str, location: str | None) -> str:
     if location is not None:
         sections.append(f'These files are in `{location}/` in the workspace.')
     return '\n\n'.join([*sections, EMPTY_MEMORY])
+
+
+def directory_instruction(capability: Memory[AgentDepsT], store: MemoryStore, scope: str) -> str | None:
+    """The instruction that says where the run's memory files are, when `read_memory` steps aside for `read_file`.
+
+    That needs a `FileStore` in the run's workspace, injection, and room in `max_tokens` for this text on top of
+    the guidance, with some left for a snapshot; otherwise `read_memory` stays and nothing is said.
+    """
+    directory = run_workspace_directory(store, scope)
+    if directory is None or not capability.inject_memory:
+        return None
+    text = f'Memory files are in `{directory}/` in the workspace; read them with the file-reading tool.'
+    guidance = capability.get_instructions()
+    budget = snapshot_content_budget(capability.max_tokens, guidance if isinstance(guidance, str) else None)
+    return text if budget - len(text) > 0 else None
 
 
 def snapshot_content_budget(max_tokens: int, guidance: str | None) -> int:
@@ -296,42 +312,34 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
             ctx.root_capability.apply(select)
         return run_capability.resolve_scope(ctx)
 
-    def _read_in_place(self, ctx: RunContext[AgentDepsT]) -> tuple[MemoryStore, str] | None:
-        """The run's store and scope when `read_memory` steps aside for the run's file reader, decided from configuration.
-
-        That needs a `FileStore` in the run's workspace, and a snapshot to go with it: with
-        `inject_memory=False`, or guidance that leaves no room for one, `read_memory` stays.
-        """
-        capability = self._capability
-        guidance = capability.get_instructions()
-        budget = snapshot_content_budget(capability.max_tokens, guidance if isinstance(guidance, str) else None)
-        if not capability.inject_memory or budget <= 0:
-            return None
-        store, scope = self._resolve_scope(ctx)
-        return None if run_workspace_directory(store, scope) is None else (store, scope)
-
     async def _prepare_read_memory(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition:
         """Step aside for a tool of `FileSystem`'s `READ_FILE_KIND` when it can read this run's memory files.
 
-        Decided from configuration alone, so the tools stay the same for the whole run; the `directory`
-        instruction tells the model where the files are.
+        Decided from configuration and the run's scope alone, so the tools stay the same for the whole run;
+        the `directory` instruction tells the model where the files are.
         """
-        return tool_def if self._read_in_place(ctx) is None else step_aside_for_read_file(ctx, tool_def)
+        store, scope = self._resolve_scope(ctx)
+        text = directory_instruction(self._capability, store, scope)
+        return tool_def if text is None else step_aside_for_read_file(ctx, tool_def)
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[InstructionPart] | None:
         """Say where the memory files are when `read_memory` steps aside for the run's file reader.
 
-        A block of its own, appended to the history if it ever changes, rather than something only a snapshot
-        says: a run can record no snapshot at all.
+        Returned from the first request on, empty when it has nothing to say, so the block never first appears
+        mid-conversation: a file reader that joins mid-run appends its text instead. The text's length is
+        reserved in `max_tokens` from configuration and the run's scope alone.
         """
         parts = await super().get_instructions(ctx) or []
-        if (scoped := self._read_in_place(ctx)) is not None and (found := file_reader(ctx, *scoped)) is not None:
-            reader, directory = found
-            text = f'Memory files are in `{directory}/` in the workspace; read them with `{reader}`.'
-            # A deferred capability's instructions are delivered once, when it loads, so there's nothing to append.
-            on_change: InstructionChangePolicy = 'rewrite' if self._capability.defer_loading else 'append'
-            parts.append(InstructionPart(text, name='directory', on_change=on_change))
-        return parts or None
+        store, scope = self._resolve_scope(ctx)
+        # Said only while a file reader is on the run, as `read_memory` only steps aside then.
+        has_reader = ctx.tool_name_for_kind(READ_FILE_KIND) is not None
+        text = (directory_instruction(self._capability, store, scope) if has_reader else None) or ''
+        # Deferred instructions are delivered once, when the capability loads, and a realtime session sends
+        # instructions once: neither has anything to append, so the block isn't asked to.
+        rewrite = self._capability.defer_loading or isinstance(ctx.model, RealtimeModel)
+        on_change: InstructionChangePolicy = 'rewrite' if rewrite else 'append'
+        parts.append(InstructionPart(text, name='directory', on_change=on_change))
+        return parts
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools = await super().get_tools(ctx)
