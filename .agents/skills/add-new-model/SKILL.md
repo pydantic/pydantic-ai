@@ -62,6 +62,7 @@ Specifically, for a typical model add, grep for:
 - Every prefix/membership key in the profile module you're editing (e.g. OpenAI's `_REASONING_SUPPORT_BY_PREFIX` keys, Anthropic's inline `model_name.startswith((...))` tuples, xAI's `_GROK_43_REASONING_MODELS`)
 - `KnownModelName` and its provider-block neighbours
 - Snapshot test files: `tests/models/test_model_names.py`, `tests/test_capability_spec.py`
+- Public API compatibility: the release comparison can report a local model-name `Literal` addition as an attribute-value change. Verify that every existing member is unchanged. Add the exact release-bound fingerprint to `.github/api-compatibility-allowlist.json`, with the PR URL and an additive-change explanation. Do not waive removed or changed members as a model-name addition.
 
 Classify each hit:
 - **must update** — model-name lists, dispatch tuples
