@@ -96,7 +96,8 @@ side. A GPT-Live WebRTC sideband re-attaches to the call's own session instead, 
 was away: the conversation, the reply under way, and the tool calls waiting for their results all carry
 over, so it reports `state_restored=True`. Live sends a re-attached sideband the last few seconds of
 events again, which Pydantic AI skips where it already handled them; what happened before that, in a
-longer gap, is lost.
+longer gap, is lost. So on a sideband re-attach, `state_restored=True` means the call's own session carried on,
+not that nothing was missed: a user turn or tool call from a longer gap is not in the history.
 
 Replay sends text, not audio, so a spoken user turn with no transcript (input transcription is off,
 or its transcript never arrived) replays as the text `[The user spoke; no transcript is available.]`.

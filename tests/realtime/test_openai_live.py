@@ -3868,7 +3868,7 @@ async def test_a_send_from_another_task_waits_while_the_receive_loop_sends_a_con
     events = asyncio.create_task(_first_events(connection, 3))
     await dying.continuation_hangs.wait()
     sending = asyncio.create_task(connection.send(ToolResult('call_1', output='14C')))
-    await asyncio.sleep(0.01)
+    await asyncio.sleep(0)
     assert not sending.done()
     dying.release.set()
     await sending
@@ -3885,6 +3885,16 @@ class _ClosableWebSocket(_FakeWebSocket):
         self.closed = True
 
 
+class _SignallingDeadWebSocket(_DeadWebSocket):
+    def __init__(self, frames: list[str]) -> None:
+        super().__init__(frames)
+        self.send_failed = asyncio.Event()
+
+    async def send(self, data: str) -> None:
+        self.send_failed.set()
+        await super().send(data)
+
+
 async def test_a_reattach_that_lands_after_close_is_not_used() -> None:
     """A sideband closed while it re-attaches doesn't take the new socket, which is closed, and its sends don't wait."""
     reattaching, release = asyncio.Event(), asyncio.Event()
@@ -3895,21 +3905,26 @@ async def test_a_reattach_that_lands_after_close_is_not_used() -> None:
         await release.wait()
         return late
 
-    dead = _DeadWebSocket([])
+    dead = _SignallingDeadWebSocket([])
     connection = OpenAILiveConnection(dead, reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
+    tasks_before = asyncio.all_tasks()
     events = asyncio.create_task(_first_events(connection, 1))
     await reattaching.wait()
     sending = asyncio.create_task(connection.send(ToolResult('call_1', output='14C')))
-    await asyncio.sleep(0.01)
+    await dead.send_failed.wait()
     await connection.aclose()
     with pytest.raises(websockets.ConnectionClosedError):
         await sending
     release.set()
-    await asyncio.sleep(0.01)
+    # Closed, the receive loop gives up on re-attaching, and says so.
+    [error] = await events
+    assert isinstance(error, RealtimeSessionErrorEvent) and not error.recoverable
     assert late.closed
     assert late.sent == []
     assert connection._ws is dead  # pyright: ignore[reportPrivateUsage]
-    events.cancel()
+    # Nothing is left running, once the event loop has finalized the stream `_first_events` stopped reading.
+    await asyncio.sleep(0)
+    assert asyncio.all_tasks() <= tasks_before
 
 
 class _ConfirmingWebSocket(_FakeWebSocket):
