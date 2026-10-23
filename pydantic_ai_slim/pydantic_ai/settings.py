@@ -600,7 +600,7 @@ class ModelSettings(TypedDict, total=False):
 
     * Anthropic (documents, including those returned by tools, and Web Fetch), for text output only
     * Bedrock (TXT and PDF documents, including those returned by tools, with Anthropic models), for text output only
-    * xAI (inline citations)
+    * xAI (inline citations), for text output only
 
     Providers that always return citations ignore this setting.
     """

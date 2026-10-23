@@ -141,6 +141,12 @@ Anthropic always cites [web search](native-tools.md#web-search-tool) results, so
 up in structured output even without `Citations()`. The same goes for
 [web fetch](native-tools.md#web-fetch-tool) when you set `enable_citations=True` on the tool.
 
+On xAI, `Citations()` also only asks for citations when your output is text. With citations on, the model answers in
+cited text instead of calling the output tool, so tool output fails, and it can write its `[[1]](https://...)` markers
+into your fields.
+
+On other providers, `Citations()` doesn't change the request, so structured output works the same with or without it.
+
 ## Good to know
 
 - Citations are only on text parts. If your output comes from a [tool call](output.md#output-modes), as structured
