@@ -1242,6 +1242,11 @@ class XaiStreamedResponse(StreamedResponse):
                 content=tool_result_content,
                 tool_call_id=tool_call.id,
                 provider_name=self.system,
+                provider_details=(
+                    {'status': 'failed', 'error': tool_call.error_message}
+                    if tool_call.status == chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_FAILED
+                    else None
+                ),
             )
             if builtin_tool_name == XSearchTool.kind:
                 x_search_return_parts[return_vendor_id] = return_part

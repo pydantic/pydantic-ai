@@ -241,6 +241,71 @@ async def test_xai_interrupted_stream_keeps_tool_result(allow_model_requests: No
     assert response.parts[1].provider_details == {'encrypted_content': 'result'}
 
 
+async def test_xai_streamed_failed_tool_result_replays_failed(allow_model_requests: None):
+    """A server-side tool that fails in a stream is recorded as failed, and the next turn replays it as failed.
+
+    Not a recorded test: a request can't make a server-side tool fail.
+    """
+    in_progress = _web_search_call('call_1', chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_IN_PROGRESS)
+    failed = _web_search_call('call_1', chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_FAILED)
+    failed.error_message = 'search unavailable'
+    stream = [
+        (
+            _accumulated(),
+            _chunk(0, chat_pb2.Delta(role=chat_pb2.MessageRole.ROLE_ASSISTANT, tool_calls=[in_progress])),
+        ),
+        (
+            _accumulated(),
+            _chunk(
+                1,
+                chat_pb2.Delta(role=chat_pb2.MessageRole.ROLE_TOOL, tool_calls=[failed], encrypted_content='result'),
+            ),
+        ),
+        (
+            _accumulated(),
+            _chunk(
+                2,
+                chat_pb2.Delta(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content='The search failed.'),
+                finish_reason=sample_pb2.FinishReason.REASON_STOP,
+            ),
+        ),
+    ]
+    model = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=MockXai.create_mock_stream([stream])))
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool())])
+
+    async with agent.run_stream('Search for pydantic') as result:
+        await result.get_output()
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    return_part = response.parts[1]
+    assert isinstance(return_part, NativeToolReturnPart)
+    assert return_part.provider_details == snapshot(
+        {'status': 'failed', 'error': 'search unavailable', 'encrypted_content': 'result'}
+    )
+
+    sent = await _sent_messages(result.all_messages())
+    assert [message for message in sent if message['role'] == 'ROLE_TOOL'] == snapshot(
+        [
+            {
+                'content': [{'text': ''}],
+                'role': 'ROLE_TOOL',
+                'tool_calls': [
+                    {
+                        'id': 'call_1',
+                        'type': 'TOOL_CALL_TYPE_WEB_SEARCH_TOOL',
+                        'status': 'TOOL_CALL_STATUS_FAILED',
+                        'error_message': 'search unavailable',
+                        'function': {'name': 'web_search', 'arguments': '{"query":"pydantic"}'},
+                    }
+                ],
+                'encrypted_content': 'result',
+                'tool_call_id': 'call_1',
+            }
+        ]
+    )
+
+
 def _search(tool_call_id: str) -> NativeToolCallPart:
     return NativeToolCallPart(
         tool_name='web_search',
