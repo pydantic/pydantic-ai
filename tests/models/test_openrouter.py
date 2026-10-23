@@ -868,7 +868,7 @@ async def test_openrouter_streamed_reasoning_without_details_is_preserved(allow_
     so the chunks are hand-built.
     """
 
-    def chunk(delta: dict[str, Any], *, finish_reason: str | None = None) -> ChatCompletionChunk:
+    def chunk(delta: dict[str, str], *, finish_reason: str | None = None) -> ChatCompletionChunk:
         return _OpenRouterChatCompletionChunk.model_validate(
             {
                 'id': 'gen-123',
