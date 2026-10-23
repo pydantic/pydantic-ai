@@ -109,6 +109,7 @@ from ..capabilities.hooks import EventT, Hooks, OnEventHookFunc
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..capabilities.wrapper import WrapperCapability
 from ..conversation import Conversation
+from ..models import _SettingsLayer  # pyright: ignore[reportPrivateUsage]
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
@@ -2089,8 +2090,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 thinking_checked_model_ids.add(step_model_id)
                 step_model._warn_if_thinking_overridden(  # pyright: ignore[reportPrivateUsage]
                     [
-                        models._SettingsLayer("the model's `settings`", step_model.settings),  # pyright: ignore[reportPrivateUsage]
-                        models._SettingsLayer(  # pyright: ignore[reportPrivateUsage]
+                        _SettingsLayer("the model's `settings`", step_model.settings),
+                        _SettingsLayer(
                             '`override(model_settings=...)`'
                             if model_settings_override is not None
                             else "the agent's `model_settings`",
@@ -2098,10 +2099,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         ),
                         # A capability like `Thinking` sets only `thinking`, so the warning doesn't suggest setting
                         # the provider-specific one there.
-                        models._SettingsLayer(  # pyright: ignore[reportPrivateUsage]
+                        _SettingsLayer(
                             'a capability', None if callable(cap_model_settings) else cap_model_settings, settable=False
                         ),
-                        models._SettingsLayer(  # pyright: ignore[reportPrivateUsage]
+                        _SettingsLayer(
                             "the run's `model_settings`", None if callable(run_model_settings) else run_model_settings
                         ),
                     ]
