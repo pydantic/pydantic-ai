@@ -32,6 +32,7 @@ from pydantic_ai.models import ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .conftest import IsDatetime, IsNow, IsStr
@@ -160,7 +161,8 @@ async def test_stop_during_a_continuation_keeps_the_suspended_segment_usage(stop
 
 
 @pytest.mark.parametrize('stop', ['timeout', 'cancel'])
-async def test_stop_during_a_fallback_keeps_the_rejected_response_usage(stop: str):
+@pytest.mark.parametrize('wrapped', [False, True])
+async def test_stop_during_a_fallback_keeps_the_rejected_response_usage(stop: str, wrapped: bool):
     """A `FallbackModel`-rejected response's usage counts when the run stops while the next model is running."""
     contexts: list[RunContext[object]] = []
 
@@ -177,13 +179,13 @@ async def test_stop_during_a_fallback_keeps_the_rejected_response_usage(stop: st
     def reject_primary(response: ModelResponse) -> bool:
         return response.model_name == 'primary'
 
-    agent = Agent(
-        FallbackModel(
-            FunctionModel(rejected, model_name='primary'),
-            FunctionModel(stop_then_block, model_name='backup'),
-            fallback_on=reject_primary,
-        )
+    model = FallbackModel(
+        FunctionModel(rejected, model_name='primary'),
+        FunctionModel(stop_then_block, model_name='backup'),
+        fallback_on=reject_primary,
     )
+    # A wrapper, like the one instrumentation adds, still lets the `FallbackModel` commit early.
+    agent = Agent(WrapperModel(model) if wrapped else model)
 
     @agent.instructions
     def capture_context(ctx: RunContext[object]) -> None:

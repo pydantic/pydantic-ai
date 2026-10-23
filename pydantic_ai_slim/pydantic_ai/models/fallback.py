@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager, suppress
+from contextlib import AbstractContextManager, AsyncExitStack, asynccontextmanager, nullcontext, suppress
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from functools import cached_property
@@ -21,8 +21,10 @@ from pydantic_ai._instrumentation import (
 )
 from pydantic_ai._model_request_attempts import (
     AttemptStart,
-    commit_failed_attempt,
+    FailedAttemptCommitter,
+    committing_failed_attempts,
     failed_attempt,
+    failed_attempt_committer,
     record_attempt_span,
 )
 from pydantic_ai._run_context import RunContext
@@ -272,6 +274,8 @@ class FallbackModel(Model):
         # the chain then produces is fresh generation superseding the stale suspended turn, so it must
         # be stamped as a replace (see `_stamp_replace_previous`) rather than accumulated onto it.
         rewound = False
+        # Commits each attempt's usage to the agent run as soon as it fails, when the run's request is to this model.
+        commit = failed_attempt_committer(self)
 
         if pinned := self._get_continuation_model(messages):
             # `_get_continuation_model` only returns a model when the last message is a suspended response.
@@ -284,7 +288,7 @@ class FallbackModel(Model):
                 with suppress_unsupported_setting_warnings():
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                 prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
-                with enforce_request_deadline(deadline):
+                with enforce_request_deadline(deadline), _committing_for(pinned, commit):
                     response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 duration = start.elapsed()
@@ -300,7 +304,7 @@ class FallbackModel(Model):
                 messages = _rewind_messages(messages)
                 rewound = True
                 exceptions.append(exc)
-                self._record_failed_attempt(pinned, attempts, exc, start=start, duration=duration)
+                self._record_failed_attempt(pinned, attempts, exc, start=start, duration=duration, commit=commit)
                 # Fall through to normal chain below
             else:
                 if response.state == 'suspended':
@@ -318,13 +322,13 @@ class FallbackModel(Model):
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
                 prepared_messages = model.prepare_messages(messages, model_request_parameters)
                 deadline = start_request_deadline(model, model_settings)
-                with enforce_request_deadline(deadline):
+                with enforce_request_deadline(deadline), _committing_for(model, commit):
                     response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 duration = start.elapsed()
                 if await self._should_fallback(exc):
                     exceptions.append(exc)
-                    self._record_failed_attempt(model, attempts, exc, start=start, duration=duration)
+                    self._record_failed_attempt(model, attempts, exc, start=start, duration=duration, commit=commit)
                     continue
                 self._set_span_attributes(model, prepared_parameters)
                 raise exc
@@ -332,7 +336,7 @@ class FallbackModel(Model):
             duration = start.elapsed()
             if await self._should_fallback(response):
                 rejected_responses.append(response)
-                self._record_failed_attempt(model, attempts, response, start=start, duration=duration)
+                self._record_failed_attempt(model, attempts, response, start=start, duration=duration, commit=commit)
                 continue
 
             if attempts:
@@ -606,8 +610,12 @@ class FallbackModel(Model):
         *,
         start: AttemptStart,
         duration: timedelta,
+        commit: FailedAttemptCommitter | None = None,
     ) -> None:
-        """Append the attempt this request is falling back from to `attempts`, and record it as a span under `chat`."""
+        """Append the attempt this request is falling back from to `attempts`, and record it as a span under `chat`.
+
+        With `commit`, the attempt's usage is also committed to the agent run making the request.
+        """
         # A nested `FallbackModel` recorded the attempts it made itself, and their usage was billed too.
         if isinstance(failure, ModelResponse):
             attempts.extend(failure.failed_attempts or [])
@@ -615,13 +623,19 @@ class FallbackModel(Model):
             attempts.extend(failure.attempts)
         attempt = failed_attempt(model, failure, start=start, duration=duration)
         attempts.append(attempt)
-        # A nested `FallbackModel` committed the attempts it made itself, so only this one is committed here.
-        commit_failed_attempt(attempt)
+        if commit is not None:
+            # A nested `FallbackModel` committed the attempts it made itself, so only this one is committed here.
+            commit(attempt)
         # Only under the `chat` span instrumentation opened for this request, and on its tracer provider.
         if (span := self._fallback_span()) and (policy := open_request_policy()):
             record_attempt_span(
                 attempt, failure, model=model, index=len(attempts) - 1, parent=span, tracer=policy.tracer
             )
+
+
+def _committing_for(model: Model, commit: FailedAttemptCommitter | None) -> AbstractContextManager[None]:
+    """Hand `commit` on to `model`, so a nested `FallbackModel` commits the attempts it makes itself."""
+    return committing_failed_attempts(model, commit) if commit is not None else nullcontext()
 
 
 def _pinned_request_deadline(

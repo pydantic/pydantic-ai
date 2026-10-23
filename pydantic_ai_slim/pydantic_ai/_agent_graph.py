@@ -1893,7 +1893,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
             capture_model_request_span_context(req_ctx)
             try:
-                with committing_failed_attempts(committed.commit):
+                with committing_failed_attempts(req_ctx.model, committed.commit):
                     response = await model_request(
                         req_ctx.model,
                         request_context=req_ctx,

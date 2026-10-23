@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 import json
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
@@ -42,6 +41,7 @@ from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.messages import (
     AgentInstructionSource,
     AgentStreamEvent,
@@ -2147,6 +2147,37 @@ async def test_rejected_usage_survives_an_error_fallback_on_does_not_cover() -> 
     with pytest.raises(ValueError, match='not a fallback error'):
         await Agent(model).run('test', usage=usage)
     assert usage == snapshot(RunUsage(input_tokens=1000, output_tokens=500))
+
+
+async def test_fallback_model_called_by_another_model_commits_nothing_to_the_run() -> None:
+    """A `FallbackModel` that another model calls itself doesn't count its rejected responses towards the run.
+
+    Only the response of the run's own model is counted: here the outer model reports its own usage, and
+    the inner request's rejected response isn't on it, so the run doesn't count it.
+    """
+
+    def rejected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(input_tokens=1000, output_tokens=500))
+
+    def accepted(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('accepted')], usage=RequestUsage(input_tokens=10, output_tokens=5))
+
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'primary'
+
+    inner = FallbackModel(
+        FunctionModel(rejected, model_name='primary'),
+        FunctionModel(accepted, model_name='backup'),
+        fallback_on=reject_primary,
+    )
+
+    async def outer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        inner_response = await direct_model_request(inner, [ModelRequest.user_text_prompt('hi')])
+        assert inner_response.failed_attempts is not None
+        return ModelResponse(parts=[TextPart('outer')], usage=RequestUsage(input_tokens=7, output_tokens=3))
+
+    result = await Agent(FunctionModel(outer)).run('test')
+    assert result.usage == snapshot(RunUsage(input_tokens=7, output_tokens=3, requests=1))
 
 
 async def test_rejected_usage_is_not_counted_twice_before_a_continuation() -> None:

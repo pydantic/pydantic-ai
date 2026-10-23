@@ -28,15 +28,17 @@ from ._instrumentation import (
     span_include_content,
 )
 from .messages import ModelRequestAttempt, ModelResponse
+from .models.wrapper import WrapperModel
 
 if TYPE_CHECKING:
     from .models import Model
 
 __all__ = (
     'AttemptStart',
-    'commit_failed_attempt',
+    'FailedAttemptCommitter',
     'committing_failed_attempts',
     'failed_attempt',
+    'failed_attempt_committer',
     'record_attempt_span',
 )
 
@@ -56,30 +58,46 @@ class AttemptStart:
         return timedelta(microseconds=(perf_counter_ns() - self._monotonic_ns) / 1e3)
 
 
-_failed_attempt_committer: ContextVar[Callable[[ModelRequestAttempt], None] | None] = ContextVar(
+FailedAttemptCommitter = Callable[[ModelRequestAttempt], None]
+"""Commits the usage of a failed attempt at a request to the agent run making it."""
+
+_failed_attempt_committer: ContextVar[tuple[Model, FailedAttemptCommitter] | None] = ContextVar(
     'pydantic_ai.failed_attempt_committer', default=None
 )
 
 
 @contextmanager
-def committing_failed_attempts(commit: Callable[[ModelRequestAttempt], None]) -> Generator[None]:
-    """Hand every attempt that fails in this context to `commit`, as soon as it fails.
+def committing_failed_attempts(model: Model, commit: FailedAttemptCommitter) -> Generator[None]:
+    """Have the request about to be made to `model` hand each attempt that fails to `commit`, as soon as it fails.
 
     The agent graph uses this to count a rejected response's usage towards the run when it's rejected,
     rather than once the request has answered, so a run that's cancelled or times out while a later
-    attempt is still running keeps it.
+    attempt is still running keeps it. Only `model` itself (or the model it wraps) takes the committer:
+    see `failed_attempt_committer`.
     """
-    token = _failed_attempt_committer.set(commit)
+    token = _failed_attempt_committer.set((model, commit))
     try:
         yield
     finally:
         _failed_attempt_committer.reset(token)
 
 
-def commit_failed_attempt(attempt: ModelRequestAttempt) -> None:
-    """Hand an attempt that just failed to the agent run making the request, if any: see `committing_failed_attempts`."""
-    if (commit := _failed_attempt_committer.get()) is not None:
-        commit(attempt)
+def failed_attempt_committer(model: Model) -> FailedAttemptCommitter | None:
+    """The committer for a request to `model`, if the innermost `committing_failed_attempts` is for `model`.
+
+    It's also for `model` when it was for a `WrapperModel` that wraps `model`, at any depth. Any other
+    model making a request inside that scope, such as one that a custom model calls itself, gets
+    `None`: its attempts aren't listed on the response the scope's request ends with, so committing
+    their usage would count usage that request doesn't report.
+    """
+    if (bound := _failed_attempt_committer.get()) is None:
+        return None
+    request_model, commit = bound
+    while request_model is not model:
+        if not isinstance(request_model, WrapperModel):
+            return None
+        request_model = request_model.wrapped
+    return commit
 
 
 def failed_attempt(
