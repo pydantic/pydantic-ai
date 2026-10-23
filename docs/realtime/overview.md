@@ -113,7 +113,8 @@ device ↔ media bridge ↔ RealtimeSession ↔ provider
 
 The *media bridge* is whatever moves audio between the user's device and your backend — a browser
 WebSocket or a telephony bridge. It's how you deploy this beyond a local microphone; see
-[Connecting a frontend](deployment.md) for each setup. On OpenAI and Azure the browser can instead
+[Connecting a frontend](deployment.md) for each setup, and [Hosting the backend](deployment.md#hosting)
+for what the server needs to keep a call open. On OpenAI and Azure the browser can instead
 exchange media with the provider directly over [WebRTC](deployment.md#browser-webrtc-server-sideband),
 with your backend running this same loop over a control-plane sideband rather than a media bridge.
 
@@ -132,7 +133,7 @@ with your backend running this same loop over a control-plane sideband rather th
 - [History and handoff](history.md) covers retained transcripts, audio and images, session seeding,
   and continuing with a standard text agent.
 - [Connecting a frontend](deployment.md) covers the transport options between user devices and your
-  backend.
+  backend, and [hosting](deployment.md#hosting) the long-lived sessions.
 - [Connection lifecycle](lifecycle.md) covers the session lifecycle, reconnection, session limits,
   and errors.
 - [Usage and observability](observability.md) covers usage limits, cost accounting, Logfire, and

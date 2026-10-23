@@ -1,5 +1,5 @@
 ---
-description: "Connect browsers and phone calls to a Pydantic AI realtime voice agent via WebRTC, a WebSocket relay or a Twilio bridge, with keys and tools on your server."
+description: "Connect browsers and phone calls to a Pydantic AI realtime voice agent via WebRTC, a WebSocket relay or a Twilio bridge, and host the long-lived sessions on your server."
 ---
 
 # Connecting a frontend
@@ -15,6 +15,9 @@ client and the provider:
   provider, including Gemini Live, xAI, and ElevenLabs Agents: the browser streams audio to your backend, which owns the
   media bridge.
 - **[SIP / telephony bridge](#siptelephony-bridge)** — for phone calls, via a telephony provider.
+
+[Hosting the backend](#hosting) covers what the server running these sessions needs: long-lived
+connections, routing, timeouts, and draining on deploy.
 
 In every setup the session — with its [tools](tools.md), [history](history.md), and
 [usage limits](observability.md#usage-and-limits) — runs on your backend. Wiring a browser straight
@@ -171,3 +174,50 @@ queued by the session or buffered in the browser.
 Terminate the phone call with a telephony provider such as Twilio, then build the service that
 connects its media stream (e.g. Twilio Media Streams over WebSocket) to the backend session,
 transcoding between the line's codec and PCM16.
+
+## Hosting the backend {#hosting}
+
+A realtime session is not a request. It is a task that holds a WebSocket to the provider open for the
+whole call (on a [WebRTC sideband](#browser-webrtc-server-sideband), the control-plane WebSocket),
+next to the client's own connection in the [relay](#browser-backend-websocket-relay) and telephony
+setups. Each [`session()`][pydantic_ai.agent.AgentRealtime.session] opens its own provider connection,
+and one process can run many sessions on its event loop. Unlike a [standard agent](../production.md#deploy),
+where any instance can continue any conversation, a call lives in the process that holds it: its
+provider connection, running tools, and (on Gemini) resumption handles, which
+[can't be moved to another process](https://github.com/pydantic/pydantic-ai/issues/7302). A WebSocket
+stays on the instance that accepted it, so the relay needs no extra routing; if your app splits one call
+across several requests, route them to the instance holding the session. A client that reconnects
+elsewhere gets a new provider session; to carry the conversation over, store
+[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] and
+[seed](history.md#seeding-a-session) the new session with it.
+
+Set the platform's request or connection timeout above your longest call. Providers cap a connection's
+duration too, and a `reconnect` policy survives that cap on most of them (see
+[provider session limits](lifecycle.md#provider-session-limits)), but nothing recovers the client's
+connection when your platform cuts it: in the relay above, the browser socket closing ends the session.
+Enforce your own maximum call length with a [watchdog](lifecycle.md#ending-a-call) instead.
+
+Scale on concurrent calls rather than request rate; a relay also carries every call's audio through
+the backend, so watch its bandwidth and CPU. A deploy has to drain: stop sending new calls to an
+instance and let its sessions finish before it exits, which can take far longer than the few seconds of
+shutdown grace many platforms give by default. To end calls sooner, end them deliberately:
+[`close()`][pydantic_ai.realtime.RealtimeSession.close] on a relay hangs up the provider session, while
+on a sideband only [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] ends the browser's call.
+A sideband whose process exits without hanging up merely detaches, so the call stays up, and billed,
+with no agent behind it; a proxy that closes the sideband cleanly mid-call is read as the browser
+hanging up (see [Reconnecting](lifecycle.md#reconnecting)).
+
+Long-running compute fits this directly: containers or VMs behind a load balancer that supports
+WebSockets. Platforms that cap requests work within their limits: Cloud Run, for example, counts a
+WebSocket against its request timeout (up to an hour), so set that above your longest call and enable
+session affinity. Request-scoped functions don't fit. With AWS Lambda behind an Amazon API Gateway
+WebSocket API, API Gateway holds the client's connection but invokes the function once per message, so
+no invocation lives long enough to hold the provider connection between messages. The session has to
+run on long-lived compute instead; API Gateway can still front it, but you then route its per-message
+calls to the instance holding each call's session, send audio back through its `@connections` API, and
+live with its two-hour connection limit and text-only frames.
+
+[Browser WebRTC](#browser-webrtc-server-sideband) takes media off your servers: audio flows directly
+between the browser and the provider, and your backend carries only the sideband. That removes the
+bandwidth and media latency from your hosting, but the sideband is still a long-lived connection with
+everything above applying to it.
