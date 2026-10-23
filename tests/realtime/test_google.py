@@ -81,7 +81,7 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
     merge_realtime_profile,
 )
-from pydantic_ai.realtime.lifecycle import AnswersRevised
+from pydantic_ai.realtime.lifecycle import AnswersRevised, InputLost
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -3723,6 +3723,58 @@ async def test_connect_redial_without_a_handle_replays_the_conversation(model_na
                 ('model', [{'text': 'A cat.'}]),
             ]
         )
+
+
+async def test_connect_redial_without_a_handle_asks_again_for_a_lost_typed_turns_reply() -> None:
+    # A typed turn whose reply the drop lost comes last in the replayed conversation. Its reply is asked for
+    # again: the turn goes in as a turn of its own, after the rest of the conversation, which the model answers.
+    first, second = _RecordingSession([]), _RecordingSession([[_turn('cobalt')]])
+    sessions = iter([first, second])
+
+    class _Connect:
+        def __init__(self, session: _RecordingSession) -> None:
+            self._session = session
+
+        async def __aenter__(self) -> _RecordingSession:
+            return self._session
+
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
+
+    class _Live:
+        def connect(self, *, model: str, config: genai_types.LiveConnectConfig) -> _Connect:
+            try:
+                return _Connect(next(sessions))
+            except StopIteration:
+                raise ConnectionClosed(None, None)
+
+    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
+        provider=GoogleProvider(client=client),
+        settings=GoogleRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='The code word is cobalt.')]),
+        ModelResponse(parts=[TextPart(content='Noted.')]),
+        ModelRequest(parts=[UserPromptPart(content='What is the code word?')]),
+    ]
+    async with _connect(model, 'x') as conn:
+        conn.set_message_history(lambda: history)
+        await conn.send('What is the code word?')
+        events = [e async for e in conn]
+
+    def sent(content: dict[str, Any]) -> tuple[list[tuple[str | None, str | None]], bool]:
+        return [(turn.role, turn.parts[0].text) for turn in content['turns']], content['turn_complete']
+
+    assert [sent(content) for content in second.client_content] == [
+        ([('user', 'The code word is cobalt.'), ('model', 'Noted.')], False),
+        ([('user', 'What is the code word?')], True),
+    ]
+    # The replay restored the whole call, and the turn's reply comes from the new session rather than being lost.
+    assert RealtimeSessionReconnectEvent(state_restored=True) in events
+    assert not any(isinstance(e, InputLost) for e in events)
+    assert OutputTranscript(text='cobalt', is_final=True) in events
 
 
 async def test_connect_reconnect_retries_a_redial_that_exceeds_handshake_timeout() -> None:

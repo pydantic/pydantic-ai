@@ -230,7 +230,7 @@ Reconnection uses the latest in-memory server handle and emits `state_restored=T
 drop cut off an exchange the resumed session no longer has (see
 [State restoration](lifecycle.md#state-restoration)). A drop before the server has issued a handle
 dials a fresh session instead and replays the session's local history into it, as on the other
-providers, with `state_restored=False`.
+providers.
 
 !!! note "The connection cap can briefly interrupt a turn"
     Gemini sends `GoAway` shortly before its provider-defined connection cap. Pydantic AI reconnects

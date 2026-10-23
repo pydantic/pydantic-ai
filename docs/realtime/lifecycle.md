@@ -116,9 +116,13 @@ How a reply the drop caught in flight is handled depends on the mechanism. Gemin
 `True` once the server has issued a resumption handle (shortly after connect) but closes the cut
 reply as an interrupted response (keeping any partial transcript in history) before the
 [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] and stays
-quiet until the next input. A drop before the first handle reports `False`, cancels running tools,
-and dials a fresh session with the finalized turns of the session's [message history](history.md)
-replayed into it, so the model keeps the earlier turns. Gemini issues no handle while a tool call is running, so a resumed
+quiet until the next input. A drop before the first handle dials a fresh session instead, with the
+finalized turns of the session's [message history](history.md) replayed into it, so the model keeps
+the earlier turns, and handles a reply in flight the way local replay does (below): a typed turn whose
+reply hadn't started is asked again, so
+[`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] gets its answer from the new
+session, while a reply already streaming is closed as interrupted, running tools are cancelled, and
+`state_restored` is `False`. Gemini issues no handle while a tool call is running, so a resumed
 session never has a call still running at the drop, and never answers its result. Such a call is
 cancelled with an interrupted return, like a call Gemini cancels itself, the resumed session is told
 the call was interrupted, and `state_restored` is `False`. Gemini 2.5 also withholds handles while it
