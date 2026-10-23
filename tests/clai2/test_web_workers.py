@@ -3,6 +3,7 @@
 import asyncio
 import threading
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -228,13 +229,14 @@ def finished_task(web_: Web) -> DelegationTask:
 
 def test_a_prompted_task_runs_beside_a_turn_with_code_mode_on(make_web: MakeWeb) -> None:
     """Code mode folds the delegate tool into `run_code`, except in the run that prompts a task."""
-    holding, release = threading.Event(), asyncio.Event()
+    holding, release, answering = threading.Event(), asyncio.Event(), asyncio.Event()
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         said = prompts(messages)
         if said[0] == 'child':
             tools = {tool.name for tool in info.function_tools}
             assert 'run_code' in tools and 'delegate_task' not in tools, 'the task itself runs in code mode'
+            await answering.wait()
             yield 'docs done'
         else:
             holding.set()
@@ -248,7 +250,12 @@ def test_a_prompted_task_runs_beside_a_turn_with_code_mode_on(make_web: MakeWeb)
         assert web_.post('/api/input', {'text': 'hold'}).json() == {'menu': None}
         assert holding.wait(10)
         record = finished_task(web_)
-        assert web_.post(f'/api/tasks/{record.id}/prompt', {'text': 'and the docs?'}).status_code == 204
+        with ThreadPoolExecutor(1) as pool:
+            prompted = pool.submit(web_.post, f'/api/tasks/{record.id}/prompt', {'text': 'and the docs?'})
+            try:
+                assert prompted.result(10).status_code == 204, 'answered once the task runs, not once it finishes'
+            finally:
+                web_.portal.call(answering.set)
         messages, finished = until_finished(socket)
         assert finished.outcome == 'ok', record.output
         assert not [message for message in messages if isinstance(message, TurnEnded)], 'the turn still runs'
