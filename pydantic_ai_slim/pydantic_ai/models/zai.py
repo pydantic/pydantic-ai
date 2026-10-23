@@ -189,6 +189,12 @@ class ZaiModel(OpenAIChatModel):
         return omit
 
     @override
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # Unified `thinking` always reaches `extra_body`, and `_translate_thinking` drops `openai_reasoning_effort`.
+        del model_settings
+        return ()
+
+    @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _ZaiChatCompletion:
         return _ZaiChatCompletion.model_validate(response.model_dump(warnings=False))
 

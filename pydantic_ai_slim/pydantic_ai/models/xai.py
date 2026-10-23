@@ -2,7 +2,7 @@
 
 import json
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -815,6 +815,10 @@ class XaiModel(Model[AsyncClient]):
         if reasoning_effort is not None:
             return reasoning_effort != 'none'
         return super()._request_thinks(model_settings, model_request_parameters)
+
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # A set `xai_reasoning_effort` replaces the unified mapping in `_create_chat`.
+        return ('xai_reasoning_effort',) if 'xai_reasoning_effort' in model_settings else ()
 
     def _get_tool_choice(
         self,
