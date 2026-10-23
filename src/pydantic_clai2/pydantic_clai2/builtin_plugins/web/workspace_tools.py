@@ -20,7 +20,7 @@ from pydantic_ai import RunContext
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.client import SessionView
-from pydantic_clai2.builtin_plugins.web.local_client import LocalClient
+from pydantic_clai2.builtin_plugins.web.local_client import LocalClient, live_session
 from pydantic_clai2.builtin_plugins.web.protocol import Item, SessionsChanged
 from pydantic_clai2.builtin_plugins.web.workspaces import required_workspaces, workspace_session
 from pydantic_clai2.builtin_plugins.workspaces import Workspaces, describe
@@ -163,18 +163,10 @@ class WorkspaceTools:
 
         The session itself, not the view: it moves before its snapshot reaches the view.
         """
-        try:
-            session = self.service.live.get(live_id)
-        except LookupError:
+        session = live_session(self.service, live_id)
+        if session is None:
             return False
         return works_in(session.workspace, (await self.workspaces().get(workspace_id)).path)
-
-    def _is_live(self, live_id: str) -> bool:
-        try:
-            self.service.live.get(live_id)
-        except LookupError:
-            return False
-        return True
 
     async def disconnect(self, workspace_id: str) -> None:
         """Stop following a workspace's session, which stays open until it is idle."""
@@ -291,7 +283,7 @@ class WorkspaceTools:
             link = self.links.get(workspace)
             await self.disconnect(workspace)
             # Following also ends when it falls too far behind, while the session goes on.
-            if link is None or not self._is_live(link.live_id):
+            if link is None or live_session(self.service, link.live_id) is None:
                 return f'The session of workspace {workspace} closed.'
             return f'Lost track of the session of workspace {workspace}, which is still open. Wait again to follow it.'
         answer = next((item.text for item in reversed(view.items) if item.kind == 'assistant'), '')

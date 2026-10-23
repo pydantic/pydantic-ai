@@ -17,11 +17,20 @@ from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.channel import SessionChannel
 from pydantic_clai2.builtin_plugins.web.live import RESYNC, Client
 from pydantic_clai2.builtin_plugins.web.protocol import DialogClosed, DialogOpened, LiveChanged, ServerMessage, Snapshot
+from pydantic_clai2.plugins import LiveSession
 
 if TYPE_CHECKING:
     from pydantic_clai2.builtin_plugins.web.service import WebService
 
 _MESSAGE: TypeAdapter[ServerMessage] = TypeAdapter(ServerMessage)
+
+
+def live_session(service: 'WebService', live_id: str) -> LiveSession | None:
+    """The live session `live_id` names in `service`'s CLAI; `None` once it closed."""
+    try:
+        return service.live.get(live_id)
+    except LookupError:
+        return None
 
 
 class LocalClient:
@@ -39,11 +48,7 @@ class LocalClient:
         return self.service.channel(self.service.live.get(self.live_id))
 
     def _closed(self) -> bool:
-        try:
-            self.service.live.get(self.live_id)
-        except LookupError:
-            return True
-        return False
+        return live_session(self.service, self.live_id) is None
 
     async def send(self, text: str) -> None:
         """Enter a prompt or `/command`; a bare command that opens a menu in the page raises `ValueError`."""
