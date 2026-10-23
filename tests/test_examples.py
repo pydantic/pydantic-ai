@@ -770,6 +770,9 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
+    # docs/capabilities/thinking.md
+    'Plan the database migration.': 'Export, recreate the schema, import, then verify row counts.',
+    'Now check the plan for anything that could lose data.': 'Take a backup before the import.',
     # docs/workspace.md
     'Explain what fizzbuzz.py does.': 'It prints the numbers 1 to 15, with fizz, buzz or fizzbuzz for multiples of 3 and 5.',
     'Now add a test for it.': 'Added test_fizzbuzz.py.',

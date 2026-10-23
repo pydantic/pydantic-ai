@@ -172,7 +172,7 @@ KNOWN: dict[str, tuple[Known, ...]] = {
 
 ALLOWED: dict[str, Allowed] = {
     'agent:effort_change': Allowed(
-        'docs/thinking.md: an API without a mid-conversation effort channel gets each change as the request-level '
+        'docs/capabilities/thinking.md: an API without a mid-conversation effort channel gets each change as the request-level '
         'effort, which is part of the cache key',
         (('settings', 'setting:reasoning_effort'),),
         max_moves=2,

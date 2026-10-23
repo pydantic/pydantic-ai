@@ -3193,8 +3193,6 @@ def _record_effort_change(
     part it already recorded. A part on this step's own request is replaced rather than followed by another,
     since no response has answered it yet.
     """
-    if not requests:
-        return
     thinking = (model_settings or {}).get('thinking')
     wanted = thinking if isinstance(thinking, str) else None
     targets = list(requests)
@@ -3221,12 +3219,9 @@ def _record_effort_change(
     if unanswered is not None:
         if delta == unanswered:
             return
+        replacement = [] if delta is None else [delta]
         for request in targets:
-            request.parts = [
-                delta if part is unanswered else part
-                for part in request.parts
-                if part is not unanswered or delta is not None
-            ]
+            request.parts = [new for part in request.parts for new in (replacement if part is unanswered else [part])]
     elif delta is not None:
         for request in targets:
             request.parts = [*request.parts, delta]

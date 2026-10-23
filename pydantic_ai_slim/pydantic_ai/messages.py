@@ -3128,7 +3128,7 @@ class ThinkingEffortDeltaPart:
     Responses `configuration_update` item, a per-message Anthropic `output_config`) renders a change in place
     and keeps sending the window's opening effort as the request-level setting. Every other model drops these
     parts and sends the current effort as the request-level setting, as it would without them. See
-    [changing effort mid-conversation](../thinking.md#changing-effort-mid-conversation).
+    [changing effort mid-conversation](../capabilities/thinking.md#changing-effort-mid-conversation).
     """
 
     effort: ThinkingEffort | None

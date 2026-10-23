@@ -52,6 +52,8 @@ from pydantic_ai import (
     TextContent,
     TextPart,
     TextPartDelta,
+    ThinkingEffortDeltaEvent,
+    ThinkingEffortDeltaPart,
     ThinkingPart,
     ThinkingPartDelta,
     ToolAvailabilityDeltaEvent,
@@ -93,6 +95,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import OutputDataT, ToolOutput
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -10378,3 +10381,91 @@ def test_load_messages_never_builds_text_content_with_client_metadata():
     ]
     # Plain text only: no `TextContent`, so no metadata a harness check could match.
     assert contents == [text]
+
+
+def test_thinking_effort_delta_ui_round_trip():
+    """Effort changes ride through the client as activity messages, in the position they were recorded at."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Hi'), ThinkingEffortDeltaPart(effort='low', top_level=True)]),
+        ModelResponse(parts=[TextPart('Hello')]),
+        ModelRequest(parts=[UserPromptPart('Think harder'), ThinkingEffortDeltaPart(effort='high')]),
+        ModelResponse(parts=[TextPart('Done')]),
+    ]
+    dumped = AGUIAdapter.dump_messages(messages)
+    activities = [message for message in dumped if isinstance(message, ActivityMessage)]
+    assert [(activity.activity_type, activity.content) for activity in activities] == snapshot(
+        [
+            ('pydantic_ai_thinking_effort_delta', {'effort': 'low', 'top_level': True}),
+            ('pydantic_ai_thinking_effort_delta', {'effort': 'high', 'top_level': False}),
+        ]
+    )
+    loaded = AGUIAdapter.load_messages(dumped)
+    _sync_load_bookkeeping(messages, loaded)
+    assert loaded == messages
+
+
+@requires_ag_ui('0.1.19')
+def test_malformed_thinking_effort_delta_is_dropped():
+    loaded = AGUIAdapter.load_messages(
+        [
+            UserMessage(id='user-1', content='Hi'),
+            ActivityMessage(id='a-1', activity_type='pydantic_ai_thinking_effort_delta', content={'effort': 'extreme'}),
+        ]
+    )
+    assert [part.part_kind for message in loaded for part in message.parts] == ['user-prompt']
+
+
+async def test_thinking_effort_delta_event_skipped_for_legacy_ag_ui() -> None:
+    event_stream = AGUIEventStream(
+        run_input=create_input(UserMessage(id='user-1', content='Hi')), ag_ui_version='0.1.10'
+    )
+    events = [
+        event
+        async for event in event_stream.handle_thinking_effort_delta(
+            ThinkingEffortDeltaEvent(part=ThinkingEffortDeltaPart(effort='low', top_level=True))
+        )
+    ]
+    assert events == []
+
+
+@requires_ag_ui('0.1.19')
+async def test_thinking_effort_delta_round_trips_through_client_rebuilt_stream() -> None:
+    """A per-step change survives the next turn when the client rebuilds history from the event stream."""
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='look_up', json_args='{}', tool_call_id='c1')}
+        else:
+            yield 'done'
+
+    def effort(ctx: RunContext[Any]) -> ModelSettings:
+        return ModelSettings(thinking='high' if ctx.run_step > 1 else 'low')
+
+    agent = Agent(FunctionModel(stream_function=stream_function), model_settings=effort)
+
+    @agent.tool_plain
+    def look_up() -> str:
+        return 'quiet'
+
+    user = UserMessage(id='user-1', content='go')
+    adapter = AGUIAdapter(agent, create_input(user), ag_ui_version='0.1.19')
+    server_history: list[ModelMessage] = []
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+    ]
+    loaded = AGUIAdapter.load_messages([user, *_reduce_events(events)])
+
+    def effort_parts(messages: list[ModelMessage]) -> list[list[ThinkingEffortDeltaPart]]:
+        return [
+            [part for part in message.parts if isinstance(part, ThinkingEffortDeltaPart)]
+            for message in messages
+            if isinstance(message, ModelRequest)
+        ]
+
+    assert effort_parts(loaded) == snapshot(
+        [[ThinkingEffortDeltaPart(effort='low', top_level=True)], [ThinkingEffortDeltaPart(effort='high')]]
+    )
+    assert effort_parts(loaded) == effort_parts(server_history)

@@ -63,6 +63,7 @@ from pydantic_ai.messages import (
     TextContent,
     TextPart,
     TextPartDelta,
+    ThinkingEffortDeltaPart,
     ThinkingPart,
     ThinkingPartDelta,
     ToolAvailabilityDeltaPart,
@@ -92,6 +93,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
@@ -12791,3 +12793,110 @@ def test_load_messages_never_builds_text_content_with_client_metadata():
     assert isinstance(request, ModelRequest)
     # Plain text: no `TextContent`, so no part metadata a harness check could match.
     assert request.parts == [UserPromptPart(text, timestamp=IsDatetime())]
+
+
+def _effort_history() -> list[ModelMessage]:
+    return [
+        ModelRequest(parts=[UserPromptPart('Hi'), ThinkingEffortDeltaPart(effort='low', top_level=True)]),
+        ModelResponse(parts=[TextPart('Hello')]),
+        ModelRequest(parts=[UserPromptPart('Think harder'), ThinkingEffortDeltaPart(effort='high')]),
+        ModelResponse(parts=[TextPart('Done')]),
+    ]
+
+
+def test_thinking_effort_delta_ui_round_trip():
+    """Effort changes ride through the client, so the next request sends the changes the earlier ones were sent with."""
+    messages = _effort_history()
+    dumped = VercelAIAdapter.dump_messages(messages)
+    assert [part.model_dump(exclude_none=True) for part in dumped[2].parts] == snapshot(
+        [
+            {'type': 'text', 'text': 'Think harder', 'state': 'done'},
+            {'type': 'data-thinking-effort-delta', 'data': {'effort': 'high', 'top_level': False}},
+        ]
+    )
+    reloaded = VercelAIAdapter.load_messages(dumped)
+    _sync_load_bookkeeping(messages, reloaded)
+    assert reloaded == messages
+
+
+@pytest.mark.parametrize(
+    'data',
+    [{'effort': 'extreme'}, {'effort': None}, {'effort': 'high', 'top_level': 'sometimes'}],
+    ids=['unknown-level', 'withdrawal-mid-window', 'malformed-flag'],
+)
+def test_malformed_thinking_effort_delta_is_dropped(data: dict[str, Any]):
+    messages = VercelAIAdapter.load_messages(
+        [
+            UIMessage(
+                id='user-1',
+                role='user',
+                parts=[TextUIPart(text='Hi'), DataUIPart(type='data-thinking-effort-delta', data=data)],
+            )
+        ]
+    )
+    assert [part.part_kind for message in messages for part in message.parts] == ['user-prompt']
+
+
+async def test_thinking_effort_delta_round_trips_through_client_rebuilt_stream() -> None:
+    """A per-step change survives the next turn when the client rebuilds history from the event stream.
+
+    The opening effort is streamed before the first step and the change after the tool result, so the AI SDK keeps
+    both on the assistant message. Loading it back must put each at the end of the request it was recorded on.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='look_up', json_args='{}', tool_call_id='look-1')}
+        else:
+            yield 'done'
+
+    def effort(ctx: RunContext[Any]) -> ModelSettings:
+        return ModelSettings(thinking='high' if ctx.run_step > 1 else 'low')
+
+    agent = Agent(FunctionModel(stream_function=stream_function), model_settings=effort)
+
+    @agent.tool_plain
+    def look_up() -> str:
+        return 'quiet'
+
+    user_message = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Look it up')])
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat-1', messages=[user_message]))
+    server_history: list[ModelMessage] = []
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+        if '[DONE]' not in encoded
+    ]
+    effort_chunks = [event for event in events if event['type'] == 'data-thinking-effort-delta']
+    assert [chunk['data'] for chunk in effort_chunks] == snapshot(
+        [{'effort': 'low', 'top_level': True}, {'effort': 'high', 'top_level': False}]
+    )
+    tool_output = next(event for event in events if event['type'] == 'tool-output-available')
+    text = ''.join(event['delta'] for event in events if event['type'] == 'text-delta')
+
+    # The assistant message the AI SDK builds from these chunks, in stream order.
+    assistant_message = UIMessage(
+        id='assistant-1',
+        role='assistant',
+        parts=[
+            DataUIPart(type=effort_chunks[0]['type'], data=effort_chunks[0]['data']),
+            StepStartUIPart(),
+            ToolOutputAvailablePart(
+                type='tool-look_up', tool_call_id=tool_output['toolCallId'], input={}, output=tool_output['output']
+            ),
+            DataUIPart(type=effort_chunks[1]['type'], data=effort_chunks[1]['data']),
+            StepStartUIPart(),
+            TextUIPart(text=text, state='done'),
+        ],
+    )
+    loaded = VercelAIAdapter.load_messages([user_message, assistant_message])
+    assert [[part.part_kind for part in message.parts] for message in loaded] == [
+        [part.part_kind for part in message.parts] for message in server_history
+    ]
+    assert [part for message in loaded for part in message.parts if isinstance(part, ThinkingEffortDeltaPart)] == [
+        part for message in server_history for part in message.parts if isinstance(part, ThinkingEffortDeltaPart)
+    ]

@@ -465,6 +465,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             and _is_str_dict(part.data)
                             and (effort_part := thinking_effort_delta_from_payload(part.data)) is not None
                         ):
+                            # After the prompt it was recorded behind, as in the server-side history.
+                            flush_user_prompt()
                             builder.add(effort_part)
                     else:  # pragma: no cover
                         raise ValueError(f'Unsupported user message part type: {type(part)}')

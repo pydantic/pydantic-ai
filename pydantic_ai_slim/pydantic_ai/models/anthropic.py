@@ -2687,9 +2687,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     anthropic_messages.append({'role': 'system', 'content': system_content_params})
                 if effort_change is not None:
                     # An effort-only entry carries no content, so the placement rules for mid-conversation system
-                    # entries don't apply to it. After the request's user turn it sets the effort for the reply to
-                    # that turn when the turn has new input; after a turn of only tool results, it takes effect
-                    # from the next user turn with new input. It holds until a later entry replaces it.
+                    # entries don't apply to it, and it goes after the request's text entry, which has to follow the
+                    # user turn directly. After a turn with new input it sets the effort for the reply to that turn;
+                    # after a turn of only tool results, it takes effect from the next user turn with new input. It
+                    # holds until a later entry replaces it.
                     anthropic_messages.append(
                         {'role': 'system', 'content': [], 'output_config': {'effort': effort_change}}
                     )
@@ -4508,7 +4509,8 @@ def _anchor_system_messages(anthropic_messages: list[BetaMessageParam]) -> None:
     truncated right after a server tool call, and the alternative is an unproven exception.
     """
     for index in range(len(anthropic_messages) - 1, -1, -1):
-        if anthropic_messages[index]['role'] != 'system':
+        # An effort-only entry can sit anywhere, so it neither moves nor needs an anchor.
+        if anthropic_messages[index]['role'] != 'system' or _is_effort_entry(anthropic_messages[index]):
             continue
         if index > 0 and anthropic_messages[index - 1]['role'] in ('user', 'system'):
             continue
@@ -4541,7 +4543,8 @@ def _place_system_messages_before_generation(anthropic_messages: list[BetaMessag
     scanning for it finds exactly the entries it wrote, with no bookkeeping to keep in step.
     """
     for index in range(len(anthropic_messages) - 1, -1, -1):
-        if anthropic_messages[index]['role'] != 'system':
+        # An effort-only entry can sit anywhere, so it neither moves nor needs an anchor.
+        if anthropic_messages[index]['role'] != 'system' or _is_effort_entry(anthropic_messages[index]):
             continue
         target = index + 1
         while target < len(anthropic_messages) and anthropic_messages[target]['role'] == 'user':
