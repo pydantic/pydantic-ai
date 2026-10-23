@@ -278,7 +278,7 @@ agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(repl_store=InMemo
 - A timeout, worker crash, or cancelled snippet that resets the REPL keeps the state saved before the run, unless a later snippet in the run builds a new REPL, which is then saved. A cancelled run still saves an idle REPL.
 - A store error does not fail the run: a failed `load` starts a fresh REPL, and a failed `save` leaves the stored state as it was. A `save` still running after 10 seconds is cancelled, but work it handed to a thread may still finish, so write atomically. Each is logged as a warning.
 - Restored state skips the type check a fresh REPL's first snippet gets, since the checker does not know the restored names.
-- The dump holds every live value, so it can be large. To bound it, have `save` drop an oversized state and forget the old one. With `monty_sandbox_url`, a server that keeps sessions returns a record ID instead, which lives as long as the server keeps it, and a server that keeps nothing fails every save with a logged warning.
+- The dump holds every live value, so it can be large. To bound it, have `save` drop an oversized state and forget the old one. With `executor`, a server that keeps sessions returns a record ID instead, which lives as long as the server keeps it, and a server that keeps nothing fails every save with a logged warning.
 - The store is not used under durable execution, where its I/O would run in replayed workflow code.
 
 ## Eager execution
@@ -525,25 +525,47 @@ If these checks pass, inspect the generated code and launch events. Oversized st
 and exhausted parser-work budgets also stop stream scanning; speculation is an optimization,
 not a guarantee that every eligible call starts early.
 
-## Remote workers over WebSockets
+## Run code on a Monty server
 
-Set `monty_sandbox_url` to run sandboxed code on a remote Monty worker instead of a local
-subprocess:
+By default, sandboxed code runs on local Monty worker processes. Set `executor` to run it on a Monty
+server instead:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
+from pydantic_ai_harness.code_mode import MontyServer
 
 agent = Agent(
     '{{ anthropic:medium }}',
-    capabilities=[CodeMode(monty_sandbox_url='wss://sandbox.example.com/monty')],
+    capabilities=[CodeMode(executor=MontyServer('wss://sandbox.example.com/monty'))],
 )
 ```
 
-The URL points to a server that connects each WebSocket to one Monty worker, such as
-[Full Monty](https://pydantic.dev/docs/monty/commercial-support/server/). Use `wss://` unless the
-server is on a network you trust. The connection carries the tool calls your agent executes and
-their results, so anyone who can intercept it can choose what your tools run.
+The server connects each WebSocket to one Monty worker. It can be
+[Full Monty](https://pydantic.dev/docs/monty/commercial-support/server/) running on your own
+infrastructure, or Monty hosted by Pydantic Logfire, whose setup page gives you the server URL and an
+execution key. Pass a key as `auth`, which is sent as `Authorization: Bearer <key>`:
+
+```python {test="skip"}
+import os
+
+from pydantic_ai_harness import CodeMode
+from pydantic_ai_harness.code_mode import MontyServer
+
+code_mode = CodeMode(
+    executor=MontyServer(os.environ['MONTY_SERVER_URL'], auth=os.environ['MONTY_EXECUTION_KEY']),
+)
+```
+
+To send a different key per run, pass a sync or async function of the run context, such as
+`auth=lambda ctx: ctx.deps.monty_key`. It is called once at the start of each run; inside a Temporal
+workflow it runs in workflow code, so it must return the same key when the workflow replays. Pass
+`headers` for anything else a proxy in front of the server needs. A server that refuses the key
+raises `UserError` rather than a retry for the model. In an agent spec, write the server as a
+mapping: `executor: {url: 'wss://...', auth: '...'}`.
+
+Use `wss://` unless the server is on a network you trust. The connection carries the tool calls your
+agent executes and their results, so anyone who can intercept it can choose what your tools run.
 
 Only code execution moves to the worker. Your tools, `mount` directories, `os_access`, and `print`
 output are still handled by the agent's process, and REPL state persists across `run_code` calls
@@ -582,7 +604,7 @@ plain agent from a workflow and register its activities with `PydanticAIPlugin` 
 
 `PydanticAIPlugin` passes `pydantic_monty` through Temporal's workflow sandbox. This makes Monty
 runnable there, but `run_code` still executes in workflow code and is re-executed during replay.
-This works with local workers and with `monty_sandbox_url`. With a remote worker, replay connects
+This works with local workers and with `executor`. With a remote worker, replay connects
 to the worker again, so it must be reachable whenever the workflow replays.
 Model requests and, by default, nested tool calls cross Temporal activity boundaries;
 `asyncio.gather` can schedule nested tool activities concurrently. The REPL is process-local state
