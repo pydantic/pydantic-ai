@@ -515,7 +515,8 @@ def _live_history(sim: LiveSimulation) -> list[list[str]]:
 
 def test_live_reply_goes_on_across_a_delegated_round() -> None:
     """SIM-18: Live goes on speaking while the backend waits for its tool's result ("Okay, checking ... now.", seen
-    live): what it says is the reply that called the tool, ahead of the result, and only the answer follows it."""
+    live): what it says is the reply that called the tool, ahead of the result, and only the answer follows it. The
+    call lands mid-sentence, so the speech is one part, ahead of the call."""
 
     def scenario(sim: LiveSimulation) -> None:
         sim.speak()
@@ -530,7 +531,7 @@ def test_live_reply_goes_on_across_a_delegated_round() -> None:
 
     history: list[list[str]] = []
     run_clean(LiveSimulation(), scenario)
-    assert history == snapshot([['r1w1', 'tool-call call_1', ' r1w2'], ['tool-return call_1'], ['r2w1']])
+    assert history == snapshot([['r1w1 r1w2', 'tool-call call_1'], ['tool-return call_1'], ['r2w1']])
 
 
 def test_live_continuation_call_is_a_response_of_its_own() -> None:
