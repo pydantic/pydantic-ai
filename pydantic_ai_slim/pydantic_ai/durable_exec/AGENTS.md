@@ -79,3 +79,21 @@ and close toolset resources according to `engine_spec.toolset_lifecycles`, inclu
 paths, and verify that resources created inside a durable unit do not escape it. Test replay,
 teardown, control-flow exceptions, persisted-output upgrades, and behavior outside the durable
 context in the engine's own suite.
+
+## Core changes that engines depend on
+
+`scripts/durable_exec_contract.json` lists the core definitions the durable engines import,
+override, read or project, each with the engine sites that depend on it. A manifest hit means your
+core change touches one of those definitions. Open each listed site and confirm it still holds:
+serialized field lists, overridden signatures, projection fields. Add a workflow-level test where
+the engine's runtime behavior depends on the change.
+
+`tests/durable_exec/test_durable_exec_contract_manifest.py` fails when the manifest is stale.
+Regenerate it with `uv run python scripts/durable_exec_contract.py --write` and commit the diff.
+Read the diff: a new entry is a new dependency an engine took on core.
+
+`tests/durable_exec/test_workflow_side_determinism.py` fails when workflow-side code calls a clock,
+a random source, an unjournaled sleep or I/O. Prefer the replay-safe alternative the durability
+capability supplies, or `set_agent_graph_sleep` for delays. When the call is safe, end its line with
+`# workflow-nondeterminism-ok: <reason>` and name why replay cannot diverge. The test docstring
+lists the workflow-side modules and how they were derived.

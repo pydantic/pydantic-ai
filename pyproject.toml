@@ -340,6 +340,7 @@ include = [
     "docs/**/*.py",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/durable_exec_contract.py",
     ".github/scripts/ci_duration.py",
     ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
@@ -483,6 +484,7 @@ include = [
     "src/pydantic_clai2",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/durable_exec_contract.py",
 ]
 # Pyright always skips paths under a dot directory, even ones named here or on its command line, so
 # `.github/scripts` is its own project: `.github/scripts/pyrightconfig.json` extends this one, and
@@ -615,6 +617,7 @@ include = [
     "pydantic_graph/**/*.py",
     "src/pydantic_ai_harness/pydantic_ai_harness/**/*.py",
     "tests/**/*.py",
+    "scripts/durable_exec_contract.py",
 ]
 omit = [
     "tests/example_modules/*.py",
