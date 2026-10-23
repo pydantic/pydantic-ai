@@ -453,8 +453,10 @@ def test_an_mcp_capability_keeps_its_local_toolsets_own_marker(local: str):
     """`MCP(local=...)` with no URL or `id` of its own has no marker to give, so the toolset keeps the one its hostname-derived `id` set."""
     url = 'http://private-tenant.example/mcp'
     capability = MCP[None](local=Client(url) if local == 'client' else StreamableHttpTransport(url))
-    assert isinstance(capability.local, MCPToolset)
-    toolset = cast('MCPToolset[None]', capability.local)
+    # `MCP.local` is typed as every input it accepts; this one was wrapped in an `MCPToolset`.
+    local_toolset: Any = capability.local
+    assert isinstance(local_toolset, MCPToolset)
+    toolset = cast('MCPToolset[None]', local_toolset)
     assert toolset.id == 'private-tenant.example'
     assert toolset._telemetry_url_derived_id == 'private-tenant.example'  # pyright: ignore[reportPrivateUsage]
 
