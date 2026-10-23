@@ -156,8 +156,8 @@ fields.
 - When streaming, citations can arrive after their text: at the end of each text part on Anthropic and OpenAI
   Responses, and at the end of the response on Google and OpenAI Chat. Read citations from the final response.
 - The [AG-UI adapter](ui/ag-ui.md) doesn't send citations to the frontend.
-- Citation URLs, titles and excerpts come from outside sources, so treat them as untrusted. Excerpts can also contain
-  private content from your documents, so choose whether to log them or show them to users.
+- Citation URLs, titles and excerpts come from the sources themselves, and excerpts can include text from your own
+  documents. Check them before you log them or show them to users.
 - Anything else the provider returned about a citation, such as Google's confidence scores, is kept as the provider
   sent it in the part's `provider_details['citations']`. Its shape is the provider's and can change.
 

@@ -591,17 +591,16 @@ class ModelSettings(TypedDict, total=False):
     """
 
     citations: bool
-    """Whether to ask for citations from providers that only return them when asked.
+    """Whether to ask for citations from providers that only cite when asked.
 
-    Citations are put on [`TextPart.citations`][pydantic_ai.messages.TextPart.citations], and the provider's own
-    citation data on the part's `provider_details['citations']`.
+    Citations go on [`TextPart.citations`][pydantic_ai.messages.TextPart.citations].
 
     Supported by:
 
-    * Anthropic (documents, including those returned by tools, and Web Fetch), for text output only
+    * Anthropic: documents, including those returned by tools, and Web Fetch
 
-    Providers that always return citations ignore this setting. On Anthropic, combining it with a `tool_choice` that
-    forces a tool call, in a request with a document or Web Fetch, raises a `UserError`. See
+    Only used when the output is text. A `tool_choice` that forces a tool call raises a `UserError` when the request
+    has something to cite. Providers that always cite ignore this setting. See
     [Citations, tools and structured output](../citations.md#citations-tools-and-structured-output).
     """
 
