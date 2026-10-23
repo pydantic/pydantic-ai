@@ -269,6 +269,43 @@ def _citations_provider_details(citations: Sequence[BetaTextCitation]) -> dict[s
     return {'citations': [citation.model_dump(mode='json') for citation in citations]}
 
 
+def _citations_fit_text(part: TextPart) -> bool:
+    """Whether a text part is still the block Anthropic cited, so its citations can be sent back.
+
+    Anthropic cites whole blocks, so each citation covers the whole text. One that doesn't, because the text was
+    edited or joined with other text, such as by a UI adapter, would vouch for text it never cited.
+    """
+    return bool(part.citations) and all(
+        citation.anchor == ContentCitationAnchor(start=0, end=len(part.content)) for citation in part.citations or []
+    )
+
+
+def _map_citation_for_replay(citation: dict[str, Any]) -> BetaCitationWebSearchResultLocationParam | None:
+    """Rebuild a web search citation Anthropic returned from its raw data on the text part, or return `None`.
+
+    Document citations aren't sent back: they name their document by its position in the request, which changes when
+    history is edited, and the citation can't tell which document it was.
+    """
+    if citation.get('type') != 'web_search_result_location':
+        return None
+    cited_text, url, title = citation.get('cited_text'), citation.get('url'), citation.get('title')
+    encrypted_index = citation.get('encrypted_index')
+    if (
+        not isinstance(cited_text, str)
+        or not isinstance(url, str)
+        or not isinstance(title, str | None)
+        or not isinstance(encrypted_index, str)
+    ):
+        return None
+    return BetaCitationWebSearchResultLocationParam(
+        type='web_search_result_location',
+        url=url,
+        title=title,
+        cited_text=cited_text,
+        encrypted_index=encrypted_index,
+    )
+
+
 def _with_document_citations(
     block: BetaRequestDocumentBlockParam, include_citations: bool
 ) -> BetaRequestDocumentBlockParam:
@@ -348,6 +385,7 @@ try:
         BetaCitationsConfigParamParam,
         BetaCitationsDelta,
         BetaCitationsWebSearchResultLocation,
+        BetaCitationWebSearchResultLocationParam,
         BetaCodeExecutionTool20250825Param,
         BetaCodeExecutionTool20260120Param,
         BetaCodeExecutionToolResultBlock,
@@ -2955,7 +2993,25 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         for response_part in message.parts:
             if isinstance(response_part, TextPart):
                 if response_part.content:
-                    assistant_content_params.append(BetaTextBlockParam(text=response_part.content, type='text'))
+                    text_block = BetaTextBlockParam(text=response_part.content, type='text')
+                    raw_citations = (response_part.provider_details or {}).get('citations')
+                    if (
+                        response_part.provider_name == self.system
+                        and isinstance(raw_citations, list)
+                        and _citations_fit_text(response_part)
+                        # Only web search citations are sent back, and clients without web search, such as Bedrock,
+                        # reject them.
+                        and WebSearchTool in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+                        and (
+                            citations := [
+                                param
+                                for citation in cast(list[object], raw_citations)
+                                if _utils.is_str_dict(citation) and (param := _map_citation_for_replay(citation))
+                            ]
+                        )
+                    ):
+                        text_block['citations'] = citations
+                    assistant_content_params.append(text_block)
             elif isinstance(response_part, ToolCallPart):
                 assistant_content_params.append(
                     BetaToolUseBlockParam(
