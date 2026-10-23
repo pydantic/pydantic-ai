@@ -30,6 +30,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolAvailabilityDeltaPart,
