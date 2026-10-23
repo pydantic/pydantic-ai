@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 import anyio
 from pydantic import Field
 
-from pydantic_ai._computer_use import COMPUTER_KIND, ComputerResult, ComputerToolAction, Wait
+from pydantic_ai._computer_use import COMPUTER_KIND, SAFETY_CHECKS, ComputerResult, ComputerToolAction, Wait
 from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.exceptions import ApprovalRequired, ToolFailed, UserError
 from pydantic_ai.messages import (
@@ -17,12 +17,13 @@ from pydantic_ai.messages import (
     BinaryImage,
     ModelMessage,
     ModelRequest,
+    ToolCallPart,
     ToolReturn,
     ToolReturnPart,
 )
 from pydantic_ai.models import Model
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.tools import AgentDepsT, RunContext, Tool
+from pydantic_ai.tools import AgentDepsT, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import Click, Drag, MoveMouse, Point, Scroll, WorkspaceError, WorkspaceUnavailableError
 
@@ -276,6 +277,15 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 '`ComputerUse` needs a workspace with a display, such as a sandbox capability started with a '
                 "desktop. This run's workspace has none."
             )
+
+    async def before_tool_execute(
+        self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Defer a `computer` call its provider flagged with safety checks until a person approves it."""
+        flagged = tool_def.tool_kind == COMPUTER_KIND.id and (call.provider_details or {}).get(SAFETY_CHECKS)
+        if flagged and not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return args
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext

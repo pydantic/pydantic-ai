@@ -11,7 +11,7 @@ import pytest
 from cassetter import Cassette
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, ToolCallPart, ToolDenied
-from pydantic_ai.capabilities import AbstractCapability, ComputerUse
+from pydantic_ai.capabilities import AbstractCapability, ComputerUse, HandleDeferredToolCalls
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturnPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
@@ -103,23 +103,8 @@ def _done() -> resp.Response:
 CHECK = {'id': 'cu_sc_1', 'code': 'malicious_instructions', 'message': 'The page asks you to send a password.'}
 
 
-async def test_a_safety_check_is_acknowledged_when_the_call_runs(allow_model_requests: None) -> None:
-    provider = InMemoryProvider()
-    client = MockOpenAIResponses.create_mock(
-        [_computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}, safety_checks=[CHECK]), _done()]
-    )
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    agent = Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)])
-
-    assert (await agent.run('Go.')).output == 'done'
-    _, second = get_mock_responses_kwargs(client)
-    (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
-    assert output['acknowledged_safety_checks'] == [CHECK]
-    assert provider.actions == [Click(x=5, y=6)]
-
-
 @pytest.mark.parametrize('approve', [True, False], ids=['approved', 'denied'])
-async def test_with_approval_a_reviewer_sees_the_safety_checks_and_a_denied_call_acknowledges_none(
+async def test_a_call_with_safety_checks_waits_for_a_reviewer_who_sees_them(
     allow_model_requests: None, approve: bool
 ) -> None:
     provider = InMemoryProvider()
@@ -129,7 +114,8 @@ async def test_with_approval_a_reviewer_sees_the_safety_checks_and_a_denied_call
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
     agent = Agent(
         model,
-        capabilities=[provider.capability(), ComputerUse(require_approval=True, settle_seconds=0)],
+        # Without `require_approval`: the checks alone hold the call back.
+        capabilities=[provider.capability(), ComputerUse(settle_seconds=0)],
         output_type=[str, DeferredToolRequests],
     )
 
@@ -201,7 +187,11 @@ async def test_a_call_with_safety_checks_is_sent_again_to_acknowledge_them(allow
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
     agent = Agent(
         model,
-        capabilities=[provider.capability(), ComputerUse(settle_seconds=0)],
+        capabilities=[
+            provider.capability(),
+            ComputerUse(settle_seconds=0),
+            HandleDeferredToolCalls(lambda ctx, requests: requests.build_results(approve_all=True)),
+        ],
         model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
     )
 

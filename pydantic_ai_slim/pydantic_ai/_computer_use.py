@@ -70,6 +70,9 @@ class ComputerResult(TypedDict):
 ComputerContent: TypeAlias = list[str | BinaryImage]
 """What the model sees from a `computer` call: a short summary, then the screenshot."""
 
+SAFETY_CHECKS = 'safety_checks'
+"""The `provider_details` key under which a model adapter puts the checks a provider asks a person to approve."""
+
 COMPUTER_KIND = ToolKind._core('computer', args=ComputerArgs, content=ComputerContent)  # pyright: ignore[reportPrivateUsage]
 """The kind of the `computer` tool, which model adapters send as their provider's native computer tool."""
 
