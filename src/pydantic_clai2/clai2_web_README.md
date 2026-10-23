@@ -238,9 +238,13 @@ set one up.
 When the agent delegates to sub-agents, a **Workers** tree appears under the current session:
 one row per worker, under the worker that started it, with its agent, model, elapsed time, and
 last action. Click one, or the link on the tool call that started it, to watch its transcript
-live; type in its box to steer it (it reads your message at its next model request). Stop,
-Background, and Resume do what `/tasks stop`, `background`, and `resume` do. A finished worker
-shows what it saved; **← Session**, or the session's row, goes back.
+live; type in its box to steer it (it reads your message at its next model request). Stop and
+Background do what `/tasks stop` and `background` do. A finished worker shows what it saved, and
+its box then prompts it on its own, as if it were an agent of its own: it continues from its saved
+history, its reply streams into its transcript, and the session and its agent never see it.
+`POST /api/tasks/{task_id}/resume` still asks the agent to resume it instead, as `/tasks resume`
+does. `Explore` and `Plan` workers are one-shot and take no follow-ups. **← Session**, or the session's
+row, goes back.
 
 <!-- From #10372 -->
 `clai2 --web --port PORT` listens on PORT for that launch (`0` picks a free one). `--token-file PATH`
