@@ -37,8 +37,11 @@ Rendering history into a request must be deterministic and must keep every messa
 ## General
 
 <!-- rule:9 -->
-- Place provider-specific code in `models/{provider}.py`, not shared modules — add functions consistently across all providers even if some are simple — Maintains clear architectural boundaries and prevents shared compatibility layers from accumulating provider-specific logic that becomes hard to maintain
-- Anthropic-only helpers with a long background live in `_anthropic_*.py` siblings (`_anthropic_containers.py`, `_anthropic_bedrock_count_tokens.py`) so a reader of `anthropic.py` is not forced through them
+- Place provider-specific code in the provider's own module (`models/{provider}.py`, or the `models/{provider}/` package), not shared modules — add functions consistently across all providers even if some are simple — Maintains clear architectural boundaries and prevents shared compatibility layers from accumulating provider-specific logic that becomes hard to maintain
+- Turn a provider module into a `models/{provider}/` package once its module-level helpers form concerns that a reader of the `Model` class can skip. `models/anthropic/` is the reference layout:
+  - `__init__.py` holds the `Model` subclass and the public API. List every public name in `__all__`: the API docs render a name that `__init__.py` imports only when `__all__` lists it.
+  - Each other concern gets its own `_*.py` submodule. A submodule name that another module imports has no leading underscore. A name used only inside its submodule keeps the underscore.
+  - The package's own `AGENTS.md` holds the rules for that provider alone. Add a `CLAUDE.md` symlink to it, and list it in the root `AGENTS.md`.
 
 A model should read reveal modes through `self.tool_deferral_mode` and
 `self.tool_addition_mode`, never directly from the corresponding profile keys. An adapter that
