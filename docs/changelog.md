@@ -22,6 +22,15 @@ Functionality deprecated in a V2 release keeps working until V3, and using it ra
 
 Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
 
+### Unreleased: tool schema disclosure and execution eligibility
+
+!!! warning "Compatibility impact"
+    Tool-level `defer_loading=True` now controls schema disclosure only. Calls to known, prepared tools can execute before discovery, including direct model calls and saved Code Mode programs. Previously, these calls received a search-first retry. This intentional behavior change requires a major-release decision under the [Version Policy](version-policy.md); no minor-release exception is claimed.
+
+If your application relied on hidden tools being refused, remove them from the current registry with a `prepare` callback or filtered toolset, or enforce call-specific policy with approval and execution hooks. Owning capabilities must still be active, and calls still undergo validation, hooks, approval, wrappers, and usage accounting. Calling a hidden tool does not disclose its schema.
+
+Use [`RunContext.is_tool_available`][pydantic_ai.tools.RunContext.is_tool_available] for schema disclosure and [`RunContext.is_tool_callable`][pydantic_ai.tools.RunContext.is_tool_callable] for execution eligibility. See [Schema disclosure and execution eligibility](tools-advanced.md#schema-disclosure-and-execution-eligibility).
+
 ### v2.0.0 (2026-06-23)
 
 The stable V2.0 release. There are no new breaking or behavior changes since the betas; the full breaking-change list and recommended upgrade path are in the [v2.0.0b1](#v200b1-2026-05-20) entry below. Install it with:

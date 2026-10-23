@@ -80,10 +80,16 @@ agent = Agent(
 ```
 
 Non-matching tools remain regular tool calls. Some tools always stay native even with `tools='all'`:
-framework control tools, undiscovered deferred (`defer_loading=True`) tools, native fallbacks, and other
+framework control tools, tools owned by inactive capabilities, native fallbacks, and other
 code-execution tools (any tool with `code_arg_name` metadata) -- including `Shell`'s `run_command`, `start_command`, and `shell`, and `CapabilityCreation`'s
 `author_capability`. `Shell`'s `check_command`/`stop_command` and all `FileSystem` tools are folded in.
 Provider-native tools (`native=True`) execute server-side and never reach `run_code`.
+
+Selected tools with `defer_loading=True` are callable by known name before discovery, but their
+signatures stay out of descriptions and the dynamic catalog until disclosed. They remain in the
+Tool Search corpus while hidden. Calling one does not reveal it. `is_tool_callable` determines
+execution eligibility; `is_tool_available` determines schema disclosure. Each call still uses the
+current registry, owner activation, validation, hooks, approval, wrappers, and usage accounting.
 
 With the default `tools='all'`, approval-gated tools and every tool from MCP or hosted-integration
 capabilities (for example `GitHub` or `Linear` write tools) move behind `run_code` too, where an

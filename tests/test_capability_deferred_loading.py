@@ -1386,7 +1386,7 @@ async def test_processor_injected_load_lets_capability_prepare_tools_govern_its_
         # "has the runbook been loaded?" check (`id in ctx.loaded_capability_ids`) answers yes on
         # this step, rather than the capability being active only through dispatch-time evidence.
         assert loaded_ids_seen[0] == snapshot(['secrets'])
-        assert refusals == snapshot(["Unknown tool name: 'secret_op'. Available tools: 'load_capability'"])
+        assert refusals == snapshot(["Unknown tool name: 'secret_op'. Disclosed tools: 'load_capability'"])
     else:
         # The capability never loaded, so the availability gate refuses before any filter is reached.
         assert prepare_tools_calls == snapshot([])
@@ -1530,7 +1530,7 @@ async def test_processor_injected_load_is_governed_when_resuming_a_suspended_res
     assert prepare_tools_calls[0] == snapshot(['secret_op'])
     assert loaded_ids_seen[0] == snapshot(['secrets'])
     assert _refusals(result.all_messages()) == snapshot(
-        ["Unknown tool name: 'secret_op'. Available tools: 'load_capability'"]
+        ["Unknown tool name: 'secret_op'. Disclosed tools: 'load_capability'"]
     )
 
 
@@ -1584,18 +1584,13 @@ async def test_orphaned_reveal_evidence_stripped_by_cleanup_does_not_count_as_re
     assert seen == [set()]
 
 
-async def test_model_calling_a_withheld_tool_is_refused_and_reveals_nothing() -> None:
-    """Calling a hidden tool by (guessed) name is refused, and authors no reveal.
-
-    Hiding is now an availability gate, not just prompt engineering: a tool the model was never
-    shown cannot be executed by guessing its name. The refusal is a retry pointing at search, and
-    a refused call is not a discovery, so the tool stays off the wire afterwards.
-    """
+async def test_model_calling_a_withheld_tool_executes_and_reveals_nothing() -> None:
+    """A known-name call executes without adding a schema reveal to history or the wire."""
     wire_tools: list[list[str]] = []
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         wire_tools.append(sorted(tool.name for tool in info.function_tools))
-        if [part for part in iter_message_parts(messages, ModelRequest, ToolReturnPart) if part.outcome == 'retried']:
+        if list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
             return ModelResponse(parts=[TextPart('done')])
         return ModelResponse(parts=[ToolCallPart(tool_name='hidden_tool', args={}, tool_call_id='guess')])
 
@@ -1603,7 +1598,7 @@ async def test_model_calling_a_withheld_tool_is_refused_and_reveals_nothing() ->
 
     @agent.tool_plain(defer_loading=True)
     def hidden_tool() -> str:
-        return 'secret'  # pragma: no cover
+        return 'secret'
 
     result = await agent.run('guess the hidden tool')
 
@@ -1613,17 +1608,13 @@ async def test_model_calling_a_withheld_tool_is_refused_and_reveals_nothing() ->
         for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
         if part.outcome != 'retried'
     ]
-    assert executions == []
+    assert [(part.tool_name, part.content) for part in executions] == [('hidden_tool', 'secret')]
     refusals = [
         part
         for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
         if part.outcome == 'retried'
     ]
-    assert [str(part.content) for part in refusals] == snapshot(
-        [
-            "Tool 'hidden_tool' is not available yet: search for it first, then call it again once you've seen its schema."
-        ]
-    )
+    assert refusals == []
     deltas = [
         part
         for message in result.all_messages()

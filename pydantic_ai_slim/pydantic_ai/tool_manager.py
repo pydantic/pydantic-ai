@@ -805,14 +805,13 @@ class ToolManager(Generic[AgentDepsT]):
         name = call.tool_name
         tool = self.tools.get(name)
         if tool is None:
-            # Name only what the model can call this turn, the same `is_tool_available` gate the unavailable-tool
-            # check applies, so a name that tool search or `load_capability` has yet to reveal stays out of
-            # this message.
+            # Suggestions disclose only the current model-facing catalog, even though known
+            # names can be called without first revealing their schemas.
             available = sorted(n for n, t in self.tools.items() if self.ctx.is_tool_available(t.tool_def))
             if available:
-                msg = f'Available tools: {", ".join(f"{n!r}" for n in available)}'
+                msg = f'Disclosed tools: {", ".join(f"{n!r}" for n in available)}'
             elif self.tools:
-                msg = 'No tools are available yet: search for the tools you need.'
+                msg = 'No tool schemas are disclosed yet: search for the tools you need.'
             else:
                 msg = 'No tools available.'
             raise _UnknownTool(f'Unknown tool name: {name!r}. {msg}')
@@ -821,36 +820,14 @@ class ToolManager(Generic[AgentDepsT]):
         return name, tool
 
     def _unavailable_reason(self, tool_def: ToolDefinition) -> str | None:
-        """Why this tool cannot be called yet, or `None` when it is available.
-
-        A deferred tool is callable only once the model has been shown it. The message says *not
-        available yet* rather than "unknown tool" so the model searches or loads again instead of
-        concluding the tool does not exist — and the resulting search/load exchange restores the
-        history that justifies the call, which is what keeps a compacted history coherent.
-
-        Both requirements apply to a capability-owned tool: an active capability is what makes
-        its tools *eligible* to be shown, not proof that any of them were. An always-on capability
-        can own search-gated tools, and loading a deferred one reveals its tools through the same
-        availability delta everything else uses — so discovery stays the single answer to "has the
-        model seen this?".
-        """
+        """Why a prepared tool cannot execute, independently of schema disclosure."""
         assert self.ctx is not None
-        if self.ctx.is_tool_available(tool_def):
+        if self.ctx.is_tool_callable(tool_def):
             return None
-        # `is_tool_available` makes the decision, so introspection and execution cannot disagree;
-        # the rest only picks which way to point the model. An inactive capability is named
-        # because loading it is the action to take — searching would not help until it is active.
-        if (capability_id := tool_def.capability_id) is not None and (
-            capability_id not in self.ctx.active_capability_ids
-        ):
-            return (
-                f'Tool {tool_def.name!r} is not available yet: it belongs to capability '
-                f'{capability_id!r}. Call `load_capability` for it first, then call the tool again '
-                "once you've read the capability's instructions."
-            )
         return (
-            f'Tool {tool_def.name!r} is not available yet: search for it first, then call it again '
-            "once you've seen its schema."
+            f'Tool {tool_def.name!r} is not available yet: it belongs to capability '
+            f'{tool_def.capability_id!r}. Call `load_capability` for it first, then call the tool again '
+            "once you've read the capability's instructions."
         )
 
     def _make_validation_success(

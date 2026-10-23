@@ -902,7 +902,7 @@ Pydantic AI prefers native search whenever available because the discovery excha
 
 Every searchable deferred tool remains in the search corpus for the whole run, including tools the model has already discovered. Repeating a search is safe and lets the model recover a tool after its earlier discovery is no longer visible, such as after [compaction](capabilities/compaction.md). With the default keyword strategy, undiscovered matches always rank ahead of already-available ones, so when `max_results` trims the list, an already-available tool never displaces an undiscovered match — it only fills leftover slots.
 
-Toolsets that aggregate or wrap deferred definitions can check visibility with [`ctx.is_tool_available(tool_def)`][pydantic_ai.tools.RunContext.is_tool_available] inside `get_tools`. A definition is available when it is not deferred or its name has been revealed in history. Pass the definition the toolset is holding; the name form applies the same test to the current resolved [`ctx.tools`][pydantic_ai.tools.RunContext.tools] snapshot and is intended for model-request hooks and tool execution.
+Toolsets that aggregate or wrap deferred definitions can check schema disclosure with [`ctx.is_tool_available(tool_def)`][pydantic_ai.tools.RunContext.is_tool_available] inside `get_tools`. A definition is disclosed when its owning capability is active and it is not deferred or has been revealed in history. Pass the definition the toolset is holding; the name form resolves it against the current prepared [`ctx.tools`][pydantic_ai.tools.RunContext.tools] registry.
 
 Tools gated as a bundle are covered by [on-demand capabilities](capabilities/on-demand.md); they are not part of the searchable corpus.
 
@@ -936,6 +936,14 @@ from pydantic_ai.mcp import MCPToolset
 mcp = MCPToolset('http://localhost:8000/mcp')
 agent = Agent('{{ anthropic:medium }}', toolsets=[mcp.defer_loading()])
 ```
+
+### Schema disclosure and execution eligibility
+
+Tool-level `defer_loading=True` controls schema disclosure, not execution permission. A call to a known, prepared tool can execute before discovery, whether it comes directly from the model or through [`ToolManager.handle_call`][pydantic_ai.tool_manager.ToolManager.handle_call], including [Code Mode](harness/code-mode.md). This lets saved code call tools by name in a fresh run without repeating a search. Each call uses the current tool definition, argument validation, hooks, approval requirements, and execution wrappers.
+
+Use [`ctx.is_tool_callable(name)`][pydantic_ai.tools.RunContext.is_tool_callable] or [`ctx.callable_tool_names`][pydantic_ai.tools.RunContext.callable_tool_names] to query execution eligibility. A name must exist in the current prepared registry and its owning capability must be active. The definition form checks owner activation only, so a wrapping toolset can use it before the registry has been assembled. Eligibility does not grant approval or bypass validation. Use a tool's `prepare` callback or a filtered toolset to remove tools that must not be callable, and [tool approval](deferred-tools.md#human-in-the-loop-tool-approval) or execution hooks to enforce call-specific policy.
+
+Executing a hidden tool does not reveal it: its schema remains undisclosed to the model, `discovered_tool_names` stays unchanged, and no availability delta is emitted unless the tool explicitly returns [`ToolReturn(tools=...)`][pydantic_ai.messages.ToolReturn]. Compaction that removes only discovery evidence hides the schema again without revoking execution eligibility. Removing capability-load evidence can still deactivate the owning capability.
 
 ### Configuring `ToolSearch`
 
@@ -994,7 +1002,7 @@ To force the local `keywords` algorithm on a provider that natively supports too
 
 #### Tool-availability history portability
 
-Stored history can describe a tool becoming callable as either a model-driven search or an
+Stored history can describe a tool schema being disclosed as either a model-driven search or an
 application-driven availability change. Pydantic AI preserves that distinction when the history is
 replayed against a different model:
 
@@ -1024,7 +1032,7 @@ into application-driven control. Provider-native availability changes are theref
 that control primitive, a mid-conversation system instruction announces
 `The following tool(s) are now available: {names}` when the schemas are already visible. A complete
 local search exchange is synthesized only when its result must reveal a schema that is actually
-withheld, so the tool does not remain locked behind `defer_loading`.
+withheld, so the model can see its schema despite `defer_loading`.
 
 !!! note "Tool discovery and message history"
     Discovered tools are tracked in typed message parts — search call/result pairs and [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]s. If a [history processor](message-history.md#processing-message-history) strips that evidence, the tools revert to hidden on the next request; see [Processing Message History](message-history.md#processing-message-history) for the preservation contract.

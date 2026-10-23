@@ -103,7 +103,7 @@ def test_dropped_tool_is_not_callable():
     retry = result.all_messages()[2].parts[0]
     assert isinstance(retry, ToolReturnPart)
     assert retry.outcome == 'retried'
-    assert retry.content == "Unknown tool name: 'read_notes'. Available tools: 'read_file'"
+    assert retry.content == "Unknown tool name: 'read_notes'. Disclosed tools: 'read_file'"
 
 
 def test_deferred_tool_counts_as_present():

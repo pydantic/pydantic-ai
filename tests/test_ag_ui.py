@@ -1580,7 +1580,7 @@ async def test_tool_ag_ui_parts() -> None:
                 'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': tool_call_id,
-                'content': "Unknown tool name: 'get_weather'. Available tools: 'get_weather_parts'",
+                'content': "Unknown tool name: 'get_weather'. Disclosed tools: 'get_weather_parts'",
                 'role': 'tool',
             },
             {
