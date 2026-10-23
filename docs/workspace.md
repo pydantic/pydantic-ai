@@ -282,15 +282,17 @@ isolated backend for untrusted commands. On a backend without commands or `Suppo
 
 ## Mounting filesystems
 
-A backend that stores files and runs no commands, such as a bucket, is a
+A backend that stores files and runs no commands, such as an [S3 bucket](harness/cloud-storage.md), is a
 filesystem. Pass it as a run's `workspace=` to make it the whole workspace: file tools work in it, and shell tools
 aren't offered. Or show it as a folder of another workspace with a [`Mount`][pydantic_ai.workspaces.Mount]:
 
-```python {test="skip" lint="skip"}
+```python {lint="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.workspaces import Mount
+from pydantic_ai_harness.cloud_storage import S3Filesystem
 
+exports = S3Filesystem('s3://acme-data/exports/')
 agent = Agent(
     '{{ anthropic:medium }}',
     capabilities=[LocalWorkspace('.', mounts=[Mount('data', exports, read_only=True, description='Daily exports')])],

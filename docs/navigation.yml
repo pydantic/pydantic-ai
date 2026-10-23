@@ -390,6 +390,9 @@ navigation:
           - page: "Bubblewrap Sandbox"
             path: "harness/bubblewrap-sandbox.md"
             slug: "harness/bubblewrap-sandbox"
+          - page: "Cloud Storage"
+            path: "harness/cloud-storage.md"
+            slug: "harness/cloud-storage"
       - section: "Tools & Native Abilities"
         slug: ""
         contents:

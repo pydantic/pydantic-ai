@@ -167,6 +167,7 @@ _CAPABILITY_PAGE_META = {
     'boxlite-sandbox.md': ('boxlite_sandbox', 'BoxLite Sandbox'),
     'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),
     'bubblewrap-sandbox.md': ('bubblewrap_sandbox', 'Bubblewrap Sandbox'),
+    'cloud-storage.md': ('cloud_storage', 'Cloud Storage'),
     'repo-context.md': ('repo_context', 'Repo Context'),
     'repair-tool-arguments.md': ('repair_tool_arguments', 'Repair Tool Arguments'),
     'render-workflows.md': ('render', 'Render Workflows'),

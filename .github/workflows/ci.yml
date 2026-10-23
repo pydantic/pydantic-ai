@@ -1632,6 +1632,7 @@ jobs:
       mongodb: ${{ steps.detect.outputs.mongodb }}
       postgres: ${{ steps.detect.outputs.postgres }}
       redis: ${{ steps.detect.outputs.redis }}
+      cloud_storage: ${{ steps.detect.outputs.cloud_storage }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -1667,6 +1668,7 @@ jobs:
             tests/harness/step_persistence tests/harness/media tests/harness/_postgres_sqlite.py \
             "$H/integration_tests/postgres"
           detect redis "$H/pydantic_ai_harness/spend" tests/harness/spend "$H/integration_tests/redis"
+          detect cloud_storage "$H/pydantic_ai_harness/cloud_storage" tests/harness/cloud_storage "$H/integration_tests/cloud_storage"
 
   harness-localstack-integration:
     name: harness LocalStack integration tests
@@ -1821,6 +1823,42 @@ jobs:
 
       - run: make integration-redis
 
+  harness-cloud-storage-integration:
+    name: harness cloud storage integration tests
+    needs: [harness-integration-changes]
+    # No fork clause: the servers below read no secret.
+    if: >-
+      ${{ always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.cloud_storage == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # An unreachable server is a skip locally and must be a failure here.
+      CLOUD_STORAGE_REQUIRE_LIVE: "1"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-cloud-storage
+
+      # Started here rather than as `services:`, which can't pass the servers their arguments or share one
+      # network, which the mount tests' sandbox joins to reach both.
+      - name: Start SeaweedFS (S3) and Azurite (Azure Blob)
+        run: |
+          docker run -d --name pai-s3 -p 8333:8333 -p 10000:10000 chrislusf/seaweedfs:4.48 server -s3 -dir=/data -volume.max=0
+          # rclone's Azure client sends a newer API version than this Azurite knows.
+          docker run -d --network container:pai-s3 mcr.microsoft.com/azure-storage/azurite:3.35.0 azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+          for port in 8333 10000; do
+            timeout 60 sh -c "until curl -s -o /dev/null http://127.0.0.1:$port/; do sleep 1; done"
+          done
+
+      - run: make integration-cloud-storage
+
   # Release gate: resolve the workspace at the top of the ranges this tag declares and run the
   # suite there, so we can't publish a version whose own dependency ranges already admit an SDK
   # we cannot drive (the `anthropic` 1.0.0 case). Tag refs only — on every other event the job
@@ -1901,6 +1939,7 @@ jobs:
       - harness-mongodb-integration
       - harness-postgres-integration
       - harness-redis-integration
+      - harness-cloud-storage-integration
       - latest-versions-canary
       - coverage
     runs-on: ubuntu-latest
@@ -1923,20 +1962,20 @@ jobs:
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-cloud-storage-integration,latest-versions-canary,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-cloud-storage-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-cloud-storage-integration'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-cloud-storage-integration'
               || needs.classify.outputs.harness_only == 'true'
-              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-cloud-storage-integration'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-cloud-storage-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 
