@@ -62,7 +62,7 @@ agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[GitHub(auth=g
 
 Each run connects as its own user, so concurrent runs never share an account. `read_only`, `lockdown`, `toolsets`, and `url` still apply to every run.
 
-Your app gets each user's token, stores it, and refreshes it. For example, a "Connect GitHub" button that signs them in through your GitHub App with OAuth and saves the user access token to their account, or a settings page where each user pastes their own personal access token. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
+Your app gets each user's token, stores it, and refreshes it. For example, a "Connect GitHub" button that signs them in through your GitHub App with OAuth and saves the user access token to their account, or a settings page where each user pastes their own personal access token. Before each run, load it and put it in the deps, or look it up in the `auth` function, which can be async.
 
 When users differ in more than their credential, such as a user whose organization is on a GitHub Enterprise Cloud data-residency endpoint, build the whole capability for each run with a [dynamic capability](../capabilities/custom.md#dynamically-building-a-capability):
 

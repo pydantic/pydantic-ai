@@ -62,7 +62,7 @@ agent = Agent(
 
 Each run opens its own connections with the token the function returns.
 
-Your app owns the OAuth flow: store each user's refresh token, exchange it for an access token before the run (this can be async), and put that in the deps; the function only reads it. Access tokens expire after about an hour, and the capability does not refresh them: it reads a fixed token once when the agent is created, and a function's token once at the start of each run.
+Your app owns the OAuth flow: store each user's refresh token and exchange it for an access token, either before the run, putting it in the deps, or in the `auth` function, which can be async. Access tokens expire after about an hour, and the capability does not refresh them: it reads a fixed token once when the agent is created, and a function's token once at the start of each run.
 
 With durable execution such as Temporal, read the credential from the run's deps rather than from a global, since the function may run in another process.
 

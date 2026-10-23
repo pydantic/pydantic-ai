@@ -60,7 +60,7 @@ agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[Slack(auth=sl
 
 Each run connects as its own user, so concurrent runs never share an account.
 
-Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Slack" button that signs them in to your Slack app with OAuth and saves their user token (`xoxp-`) to their account. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
+Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Slack" button that signs them in to your Slack app with OAuth and saves their user token (`xoxp-`) to their account. Before each run, load it and put it in the deps, or look it up in the `auth` function, which can be async.
 
 When users differ in more than their credential, such as giving some users read-only access, build the whole capability for each run with a [dynamic capability](../capabilities/custom.md#dynamically-building-a-capability):
 

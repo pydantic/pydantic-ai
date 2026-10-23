@@ -67,7 +67,7 @@ class Grain(AbstractCapability[AgentDepsT]):
     """Routing description used when the capability is loaded on demand."""
 
     auth: str | MCPAuthorizationTokenFunc[AgentDepsT] | None = field(default=None, repr=False)
-    """A Grain access token, `'oauth'` to sign in through the browser locally, or a function of the run context that returns a token.
+    """A Grain access token, `'oauth'` to sign in through the browser locally, or a sync or async function of the run context that returns a token.
 
     Unset, it uses `GRAIN_ACCESS_TOKEN`. A function never does: if it returns `None` or `''`, that run has no Grain tools.
     """

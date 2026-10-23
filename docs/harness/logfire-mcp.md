@@ -61,7 +61,7 @@ agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[LogfireMCP(au
 
 Each run connects as its own user, so concurrent runs never share an account.
 
-Your app stores and refreshes each user's API key or OAuth token. Load it before the run (async is fine) and put it in deps; the function only reads it.
+Your app stores and refreshes each user's API key or OAuth token. Before each run, load it and put it in the deps, or look it up in the `auth` function, which can be async.
 
 When users differ in more than their credential, such as users whose data is in the EU region, or when a user without a credential should get no Logfire instructions either, build the whole capability for each run with a [dynamic capability](../capabilities/custom.md#dynamically-building-a-capability):
 

@@ -99,8 +99,7 @@ Each run connects as its own user, so concurrent runs never share an account.
 
 Your app gets each user's token, stores it, and refreshes it. For example, a
 "Connect Ordinal" button that runs the OAuth flow from [Before you
-start](#before-you-start) and saves the token to their account. Before each run,
-load it (this can be async) and put it in the deps; the function only reads it.
+start](#before-you-start) and saves the token to their account. Before each run, load it and put it in the deps, or look it up in the `auth` function, which can be async.
 
 With durable execution such as Temporal, read the token from the run's deps
 rather than from a global, since the function may run in another process. The

@@ -37,7 +37,7 @@ class GitHub(AbstractCapability[AgentDepsT]):
     """
     description: str | None = 'Use GitHub repositories, issues, and pull requests.'
     auth: str | MCPAuthorizationTokenFunc[AgentDepsT] | None = field(default=None, repr=False)
-    """A GitHub token or a function of the run context that returns one.
+    """A GitHub token or a sync or async function of the run context that returns one.
 
     Unset, it uses `GITHUB_TOKEN`. A function never does: if it returns `None` or `''`, that run has no GitHub tools.
     `'oauth'` raises an error, since GitHub does not support automatic OAuth client registration.

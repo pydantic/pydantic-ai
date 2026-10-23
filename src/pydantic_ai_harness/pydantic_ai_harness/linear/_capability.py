@@ -34,7 +34,7 @@ class Linear(AbstractCapability[AgentDepsT]):
     """
     description: str | None = 'Use Linear issues, projects, and teams.'
     auth: str | MCPAuthorizationTokenFunc[AgentDepsT] | None = field(default=None, repr=False)
-    """A Linear API key or token, or a function of the run context that returns one.
+    """A Linear API key or token, or a sync or async function of the run context that returns one.
 
     `'oauth'` signs in through the browser on your own machine.
 

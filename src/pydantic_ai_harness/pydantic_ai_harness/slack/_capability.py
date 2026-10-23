@@ -33,7 +33,7 @@ class Slack(AbstractCapability[AgentDepsT]):
     """
     description: str | None = 'Use Slack messages, channels, and canvases.'
     auth: str | MCPAuthorizationTokenFunc[AgentDepsT] | None = field(default=None, repr=False)
-    """A Slack user token or a function of the run context that returns one.
+    """A Slack user token or a sync or async function of the run context that returns one.
 
     Unset, it uses `SLACK_USER_TOKEN`. A function never does: if it returns `None` or `''`, that run has no Slack tools.
     """

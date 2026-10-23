@@ -65,7 +65,7 @@ agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[Notion(auth=no
 
 Each run connects as its own user, so concurrent runs never share an account. `read_only` applies to every user.
 
-Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Notion" button that signs them in with Notion OAuth and saves the access token to their account. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
+Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Notion" button that signs them in with Notion OAuth and saves the access token to their account. Before each run, load it and put it in the deps, or look it up in the `auth` function, which can be async.
 
 With durable execution such as Temporal, read the credential from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `notion`, so `defer_loading=True` works without one. To add more than one `Notion` to an agent, give each a distinct `id` and wrap them in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/), since their tool names are the same; two that share an `id` but differ raise an error.
 

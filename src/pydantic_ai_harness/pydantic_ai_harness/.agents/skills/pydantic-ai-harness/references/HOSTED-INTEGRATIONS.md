@@ -35,7 +35,7 @@ uv add "pydantic-ai-harness[github]"   # or linear, notion, slack, google-worksp
 
 All classes except `StackOne` take the same keyword-only fields:
 
-- `auth`: a token string, `'oauth'`, a function `(RunContext) -> str | None`, or `None`.
+- `auth`: a token string, `'oauth'`, a sync or async function `(RunContext) -> str | None`, or `None`.
 - `read_only: bool = False` (absent on `Ordinal` and `DayAI`).
 - `include_instructions: bool = True`: forward the server's own MCP instructions to the agent.
 - `client`: your own FastMCP client or transport, for a custom auth scheme, proxy, or handlers
@@ -63,7 +63,7 @@ agent = Agent(
 | unset, `None`, or `''` | Reads the env var. If that is unset too, `Agent(...)` raises `UserError` at construction. |
 | a string | That token for every run. |
 | `'oauth'` | FastMCP browser sign-in. Local machine only; it would hang a server. Supported where the vendor has OAuth client registration: Linear, Notion, LogfireMCP, Ordinal, Grain, DayAI, PostHog, Pylon. |
-| a function | Called at the start of each run. Its return value is that run's token. `None` or `''` means that run has no tools from this integration. A function never falls back to the env var, and returning `'oauth'` raises `UserError`. |
+| a function | Sync or async, called at the start of each run. Its return value is that run's token. `None` or `''` means that run has no tools from this integration. A function never falls back to the env var, and returning `'oauth'` raises `UserError`. |
 
 Use the function form when one agent serves many users. Read the token from deps, not a global:
 under Temporal/DBOS/Prefect the function can run in another process.

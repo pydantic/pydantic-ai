@@ -63,7 +63,7 @@ class GoogleWorkspace(AbstractCapability[AgentDepsT]):
     """Describes the capability when the agent loads it on demand. Left at its default, it names the selected products."""
 
     auth: str | MCPAuthorizationTokenFunc[AgentDepsT] | None = field(default=None, repr=False)
-    """A Google access token or a function of the run context that returns one.
+    """A Google access token or a sync or async function of the run context that returns one.
 
     Unset, it uses `GOOGLE_ACCESS_TOKEN`. A function never does: if it returns `None` or `''`, that run has no Google
     Workspace tools. `'oauth'` raises an error, since Google does not support automatic OAuth client registration.

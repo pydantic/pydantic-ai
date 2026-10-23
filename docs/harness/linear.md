@@ -61,7 +61,7 @@ agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[Linear(auth=l
 
 Each run opens its own connection. `read_only=True` still applies to every run.
 
-Your app obtains, stores, and refreshes each user's token: a Linear API key the user pastes, or an access token from your own Linear OAuth flow. Load it into the deps before the run, asynchronously if you need to. The `auth` function itself is sync and only reads it.
+Your app obtains, stores, and refreshes each user's token: a Linear API key the user pastes, or an access token from your own Linear OAuth flow. Before each run, load it and put it in the deps, or look it up in the `auth` function, which can be async.
 
 With durable execution such as Temporal, read the token from the run's deps, not a global: the function may run in another process.
 

@@ -59,7 +59,7 @@ class Ordinal(AbstractCapability[AgentDepsT]):
     """Routing description used when the capability is loaded on demand."""
 
     auth: str | MCPAuthorizationTokenFunc[AgentDepsT] | None = field(default=None, repr=False)
-    """An Ordinal access token, `'oauth'` to sign in through the browser locally, or a function of the run context that returns a token.
+    """An Ordinal access token, `'oauth'` to sign in through the browser locally, or a sync or async function of the run context that returns a token.
 
     Unset, it uses `ORDINAL_ACCESS_TOKEN`. A function never does: if it returns `None` or `''`, that run has no Ordinal tools.
     """
