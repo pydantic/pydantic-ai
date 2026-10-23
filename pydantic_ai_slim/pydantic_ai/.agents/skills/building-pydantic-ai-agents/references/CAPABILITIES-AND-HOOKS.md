@@ -54,6 +54,7 @@ Supported effort values:
 - `'medium'`
 - `'high'`
 - `'xhigh'`
+- `'max'`
 
 Whether the thinking comes back readable is a separate setting: `Thinking(summary=True)` (or the `thinking_summary` model setting) asks the provider for a summary of the model's thinking wherever its API has a switch for it, including on models that think without a `thinking` setting, and `summary=False` asks it to leave the thinking out (the model still thinks and is billed for it). Left unset, a `thinking` that enables thinking already asks for summaries on Anthropic, Claude on Bedrock, Google, and Groq; OpenAI's Responses API only returns a reasoning summary with `summary=True`, since summaries may require organization verification. Use this rather than `anthropic_thinking_display` or `openai_reasoning_summary` unless only one provider matters; those take precedence when set.
 

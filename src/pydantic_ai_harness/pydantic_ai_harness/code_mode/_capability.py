@@ -168,7 +168,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     execution mode is sequential. See the Code Mode guide for the mechanics.
     """
 
-    monty_sandbox_url: str | None = None
+    monty_sandbox_url: str | None = field(default=None, repr=False)
     """Run sandboxed code on remote Monty workers reached over this `ws://` or `wss://` URL.
 
     Only execution moves: tool dispatch, mounts, `os_access`, and print capture stay host-side

@@ -326,6 +326,7 @@ try:
     )
     from anthropic.types.model_param import ModelParam
 
+    from ._anthropic_bedrock_count_tokens import BEDROCK_ANTHROPIC_VERSION
 except ImportError as _import_error:
     raise ImportError(
         'Please install `anthropic` to use the Anthropic model, '
@@ -772,7 +773,10 @@ class AnthropicModelSettings(ModelSettings, total=False):
 
 
 def _build_extra_body(
-    model_settings: AnthropicModelSettings, thinking_override: dict[str, object] | None = None
+    model_settings: AnthropicModelSettings,
+    thinking_override: dict[str, object] | None = None,
+    *,
+    bedrock: bool = False,
 ) -> object | None:
     """Merge the sampling settings, and a `thinking` object the SDK cannot type, into `extra_body`.
 
@@ -780,6 +784,12 @@ def _build_extra_body(
     passing one is a `TypeError`. The API still takes them, so they ride in `extra_body` — the route
     the SDK's own migration guide names — rather than being silently dropped. Models that reject them
     never get here: `_drop_unsupported_sampling_settings` has already removed them.
+
+    On the legacy Bedrock client, `anthropic_version` is pinned to `bedrock-2023-05-31`. `anthropic>=2`
+    defaults it to the Messages API version `2026-10-21` instead, which Bedrock rejects with `Invalid API
+    version` for some Claude models (Sonnet 4.5 and Opus 4.5, though not Haiku 4.5, when verified live).
+    The SDK fills the field in only when the body has none. Reported upstream as
+    https://github.com/anthropics/anthropic-sdk-python/issues/2031; drop the pin once that is fixed.
 
     An explicit `extra_body` entry wins over the setting of the same name, preserving the precedence
     the SDK gave it while the parameters were still named arguments.
@@ -789,6 +799,8 @@ def _build_extra_body(
     }
     if thinking_override is not None:
         fields['thinking'] = thinking_override
+    if bedrock:
+        fields['anthropic_version'] = BEDROCK_ANTHROPIC_VERSION
     extra_body = model_settings.get('extra_body')
     if not fields:
         return extra_body
@@ -1538,7 +1550,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     speed=self._effective_speed(model_settings, anthropic_profile),
                     diagnostics=self._cache_diagnostics(messages, model_settings),
                     extra_headers=extra_headers,
-                    extra_body=_build_extra_body(model_settings, thinking_override),
+                    extra_body=_build_extra_body(
+                        model_settings, thinking_override, bedrock=isinstance(client, AsyncAnthropicBedrock)
+                    ),
                 )
 
             async def open_stream() -> _AnthropicEventStream:
@@ -2641,7 +2655,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             user_content_params[:marked_at] or _last_message_content(anthropic_messages), ttl=ttl
                         )
                 if len(user_content_params) > 0:
-                    anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
+                    anthropic_messages.append({'role': 'user', 'content': user_content_params})
                 if mid_conversation_system_prompts or tool_availability_blocks:
                     system_content_params: list[BetaContentBlockParam] = [
                         BetaTextBlockParam(text=content, type='text') for content in mid_conversation_system_prompts
@@ -2651,20 +2665,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     # terminal `CachePoint` lands on the entry's final block, never inside the entry.
                     if system_entry_cache_ttl is not None:
                         self._add_cache_control_to_last_param(system_content_params, ttl=system_entry_cache_ttl)
-                    anthropic_messages.append(BetaMessageParam(role='system', content=system_content_params))
+                    anthropic_messages.append({'role': 'system', 'content': system_content_params})
                 if request_scoped_prompts:
                     # Sent with every request, current or not: once a later user turn exists the API stops
                     # rendering it, and leaving it in place is what keeps the cached prefix and the thinking
                     # blocks bound to it valid. It goes after the request's other system entry so that one
                     # can still carry the request's cache boundary.
                     anthropic_messages.append(
-                        BetaMessageParam(
-                            role='system',
-                            content=[
+                        {
+                            'role': 'system',
+                            'content': [
                                 BetaTextBlockParam(text=content, type='text') for content in request_scoped_prompts
                             ],
-                            clear_at='next_user_message',
-                        )
+                            'clear_at': 'next_user_message',
+                        }
                     )
             elif isinstance(m, ModelResponse):
                 assistant_content_params: list[
@@ -2966,9 +2980,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     insert_at = len(anthropic_messages)
                     while insert_at > 0 and anthropic_messages[insert_at - 1]['role'] == 'system':
                         insert_at -= 1
-                    anthropic_messages.insert(insert_at, BetaMessageParam(role='user', content=carried_thinking_params))
+                    anthropic_messages.insert(insert_at, {'role': 'user', 'content': carried_thinking_params})
                 if len(assistant_content_params) > 0:
-                    anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
+                    anthropic_messages.append({'role': 'assistant', 'content': assistant_content_params})
             else:
                 assert_never(m)
 
@@ -3409,6 +3423,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             effort = resolve_anthropic_effort(
                 model_request_parameters.thinking,
                 supports_xhigh=self.profile.get('anthropic_supports_xhigh_effort', False),
+                supports_max=self.profile.get('anthropic_supports_max_effort', True),
             )
 
         if effort is not None:
@@ -4428,7 +4443,7 @@ def _anchor_system_messages(anthropic_messages: list[BetaMessageParam]) -> None:
         if index > 0 and anthropic_messages[index - 1]['role'] in ('user', 'system'):
             continue
         anthropic_messages.insert(
-            index, BetaMessageParam(role='user', content=[BetaTextBlockParam(text=_USER_ANCHOR_TEXT, type='text')])
+            index, {'role': 'user', 'content': [BetaTextBlockParam(text=_USER_ANCHOR_TEXT, type='text')]}
         )
 
 

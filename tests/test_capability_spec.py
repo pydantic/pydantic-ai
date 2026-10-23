@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -59,13 +59,14 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
+    AbstractNativeTool,
     CodeExecutionTool,
     MCPServerTool,
     WebFetchTool,
     WebSearchTool,
 )
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
-from pydantic_ai.settings import ModelSettings as _ModelSettings
+from pydantic_ai.settings import ModelSettings as _ModelSettings, ToolOrOutput
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -647,11 +648,32 @@ def test_agent_from_spec_capabilities_merged():
     assert any(isinstance(c, ExtraCap) for c in children)
 
 
+def _subclasses(cls: type) -> Iterator[type]:
+    for subclass in cls.__subclasses__():
+        yield subclass
+        yield from _subclasses(subclass)
+
+
+def _open_nested_dataclass_defs(schema: dict[str, Any]) -> dict[str, Any]:
+    """Drop the `additionalProperties: false` that Pydantic 2.14 adds to nested stdlib-dataclass definitions.
+
+    From 2.14, the schema model's `extra='forbid'` also reaches the stdlib dataclasses it nests (the native
+    tool configs and `ToolOrOutput`), where earlier versions left their definitions open. Dropping it from those
+    definitions keeps the snapshot stable across the supported pydantic range; every other definition keeps it.
+    """
+    dataclass_names = {cls.__name__ for cls in _subclasses(AbstractNativeTool)} | {ToolOrOutput.__name__}
+    defs = {
+        name: {k: v for k, v in definition.items() if not (name in dataclass_names and k == 'additionalProperties')}
+        for name, definition in schema['$defs'].items()
+    }
+    return {**schema, '$defs': defs}
+
+
 def test_model_json_schema_with_capabilities():
     # Unit (not VCR): this pins the generated JSON-schema/capabilities mapping, which is built internally
     # from the known-model enum and never produced by any API response — no cassette could exercise it.
     pytest.importorskip('mcp', reason='schema varies without mcp package')
-    schema = AgentSpec.model_json_schema_with_capabilities()
+    schema = _open_nested_dataclass_defs(AgentSpec.model_json_schema_with_capabilities())
     assert remove_schema_descriptions(schema) == snapshot(
         {
             '$defs': {
@@ -1694,7 +1716,7 @@ def test_model_json_schema_with_capabilities():
                         'thinking': {
                             'anyOf': [
                                 {'type': 'boolean'},
-                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'type': 'string'},
                             ],
                             'title': 'Thinking',
                         },
@@ -2189,7 +2211,7 @@ def test_model_json_schema_with_capabilities():
                         'effort': {
                             'anyOf': [
                                 {'type': 'boolean'},
-                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'type': 'string'},
                             ],
                             'title': 'Effort',
                         },
