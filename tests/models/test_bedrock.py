@@ -1996,6 +1996,109 @@ async def test_bedrock_partial_citation_block(
     assert response.parts == ([expected] if expected else [])
 
 
+# Bedrock's titles are the cited document's name.
+_BEDROCK_REPLAY_CITATION: dict[str, Any] = {
+    'location': {'documentChar': {'documentIndex': 0, 'start': 21, 'end': 32}},
+    'sourceContent': [{'text': 'thirty days'}],
+    'title': 'Document 1',
+}
+
+
+@pytest.mark.parametrize(
+    'citation,text,provider_name,kept',
+    [
+        pytest.param(_BEDROCK_REPLAY_CITATION, 'Thirty days.', 'bedrock', True, id='checked'),
+        # Bedrock rejects a citation without a title, so it gets the cited document's name.
+        pytest.param(
+            {key: value for key, value in _BEDROCK_REPLAY_CITATION.items() if key != 'title'},
+            'Thirty days.',
+            'bedrock',
+            True,
+            id='no-title-filled-in',
+        ),
+        pytest.param(
+            {**_BEDROCK_REPLAY_CITATION, 'title': ''}, 'Thirty days.', 'bedrock', True, id='empty-title-filled-in'
+        ),
+        pytest.param('not a citation', 'Thirty days.', 'bedrock', False, id='not-a-dict'),
+        pytest.param(
+            {**_BEDROCK_REPLAY_CITATION, 'sourceContent': []}, 'Thirty days.', 'bedrock', False, id='no-source-content'
+        ),
+        pytest.param(
+            {**_BEDROCK_REPLAY_CITATION, 'sourceContent': None},
+            'Thirty days.',
+            'bedrock',
+            False,
+            id='source-content-none',
+        ),
+        pytest.param(
+            {**_BEDROCK_REPLAY_CITATION, 'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 11}}},
+            'Thirty days.',
+            'bedrock',
+            False,
+            id='range-misses-cited-text',
+        ),
+        # Slicing stops at the end of the document, so this range would select the cited text.
+        pytest.param(
+            {
+                **_BEDROCK_REPLAY_CITATION,
+                'location': {'documentChar': {'documentIndex': 0, 'start': 21, 'end': 100}},
+                'sourceContent': [{'text': 'thirty days from purchase.'}],
+            },
+            'Thirty days.',
+            'bedrock',
+            False,
+            id='range-past-end',
+        ),
+        # What Bedrock returns for a PDF, which isn't sent as text, so it can't be checked.
+        pytest.param(
+            {**_BEDROCK_REPLAY_CITATION, 'location': {'documentPage': {'documentIndex': 0, 'start': 1, 'end': 2}}},
+            'Thirty days.',
+            'bedrock',
+            False,
+            id='pdf-page',
+        ),
+        pytest.param(_BEDROCK_REPLAY_CITATION, '', 'bedrock', False, id='empty-text'),
+        pytest.param(_BEDROCK_REPLAY_CITATION, 'Thirty days.', 'anthropic', False, id='other-provider'),
+    ],
+)
+async def test_bedrock_leaves_out_citations_it_cannot_check(
+    citation: Any, text: str, provider_name: str, kept: bool, bedrock_provider: BedrockProvider
+) -> None:
+    """Replay keeps a citation only when it can check it against a plain-text document in the request.
+
+    Unit test: apart from the PDF page, these citations only come from history edited after Bedrock sent it.
+    Citations that are sent back are covered by recordings in `test_citations.py`.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    [
+                        'What is the return window?',
+                        BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain'),
+                    ]
+                )
+            ]
+        ),
+        ModelResponse(
+            parts=[TextPart(text, provider_name=provider_name, provider_details={'citations': [citation]})],
+            provider_name=provider_name,
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), BedrockModelSettings(citations=True)
+    )
+
+    [replayed] = bedrock_messages[1]['content']
+    if kept:
+        assert replayed == {'citationsContent': {'content': [{'text': text}], 'citations': [_BEDROCK_REPLAY_CITATION]}}
+    else:
+        assert replayed == {'text': text}
+
+
 async def test_bedrock_stream_empty_citation_mapping(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:

@@ -1,0 +1,179 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '410'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: According to the document, what is the return window? Answer in one sentence and cite the document.
+          type: text
+        - citations:
+            enabled: true
+          source:
+            data: The return window is thirty days from purchase.
+            media_type: text/plain
+            type: text
+          type: document
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '739'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-ef339c53572ae6c5084f381c02ac19cf-0483313c8d7a2824-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - citations:
+        - cited_text: The return window is thirty days from purchase.
+          document_index: 0
+          document_title: null
+          end_char_index: 47
+          start_char_index: 0
+          type: char_location
+        text: The return window is thirty days from purchase.
+        type: text
+      id: msg_011CeSu89xkZsqYspF3g9K28
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 569
+        output_tokens: 28
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '790'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: According to the document, what is the return window? Answer in one sentence and cite the document.
+          type: text
+        - citations:
+            enabled: true
+          source:
+            data: The return window is thirty days from purchase.
+            media_type: text/plain
+            type: text
+          type: document
+        role: user
+      - content:
+        - citations:
+          - cited_text: The return window is thirty days from purchase.
+            document_index: 0
+            document_title: null
+            end_char_index: 47
+            start_char_index: 0
+            type: char_location
+          text: The return window is thirty days from purchase.
+          type: text
+        role: assistant
+      - content:
+        - text: Continue.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '853'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-17fca5cc7a2e6d9042fa445ffb74b4f7-8b2a265cf7605e8f-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: |-
+          I'm happy to help! However, I need more context to continue. Could you please clarify what you'd like me to continue with? For example:
+
+          - Would you like more information about the return policy?
+          - Do you have another question about the document?
+          - Would you like me to elaborate on something specific?
+
+          Please let me know how I can assist you further.
+        type: text
+      id: msg_011CeSu8Fj25E9XdaUtd9h2q
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 602
+        output_tokens: 82
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

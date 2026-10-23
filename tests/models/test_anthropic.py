@@ -268,72 +268,95 @@ def test_anthropic_content_block_citation_is_a_document_citation():
     ]
 
 
-_ANTHROPIC_WEB_SEARCH_CITATION: dict[str, Any] = {
-    'type': 'web_search_result_location',
-    'cited_text': 'web excerpt',
-    'url': 'https://example.com',
-    'title': 'Example',
-    'encrypted_index': 'encrypted',
+_ANTHROPIC_REPLAY_CITATION: dict[str, Any] = {
+    'type': 'char_location',
+    'cited_text': 'thirty days',
+    'document_index': 0,
+    'document_title': None,
+    'start_char_index': 21,
+    'end_char_index': 32,
 }
 
 
+# Anthropic cites whole blocks, so a citation of the unchanged block 'Thirty days.' covers all of it.
+_WHOLE_PART_CITATIONS = [
+    Citation(sources=[DocumentCitationSource(excerpts=['thirty days'])], anchor=ContentCitationAnchor(start=0, end=12))
+]
+
+
 @pytest.mark.parametrize(
-    'citation,provider_name,kept',
+    'citation,provider_name,citations_setting,kept',
     [
-        pytest.param(_ANTHROPIC_WEB_SEARCH_CITATION, 'anthropic', True, id='web-search'),
-        pytest.param('not a citation', 'anthropic', False, id='not-a-dict'),
+        pytest.param(_ANTHROPIC_REPLAY_CITATION, 'anthropic', True, True, id='checked'),
+        pytest.param('not a citation', 'anthropic', True, False, id='not-a-dict'),
         pytest.param(
-            {key: value for key, value in _ANTHROPIC_WEB_SEARCH_CITATION.items() if key != 'encrypted_index'},
+            {key: value for key, value in _ANTHROPIC_REPLAY_CITATION.items() if key != 'cited_text'},
             'anthropic',
+            True,
+            False,
+            id='no-cited-text',
+        ),
+        pytest.param(
+            {**_ANTHROPIC_REPLAY_CITATION, 'start_char_index': 0, 'end_char_index': 11},
+            'anthropic',
+            True,
+            False,
+            id='range-misses-cited-text',
+        ),
+        # Slicing stops at the end of the document, so this range would select the cited text.
+        pytest.param(
+            {**_ANTHROPIC_REPLAY_CITATION, 'cited_text': 'thirty days from purchase.', 'end_char_index': 100},
+            'anthropic',
+            True,
+            False,
+            id='range-past-end',
+        ),
+        pytest.param(
+            {
+                'type': 'web_search_result_location',
+                'url': 'https://example.com',
+                'title': 'Example',
+                'cited_text': 'web excerpt',
+            },
+            'anthropic',
+            True,
             False,
             id='web-search-without-encrypted-index',
         ),
-        # A document citation names its document by position, which edited history can point at another document.
-        pytest.param(
-            {
-                'type': 'char_location',
-                'cited_text': 'thirty days',
-                'document_index': 0,
-                'document_title': None,
-                'start_char_index': 21,
-                'end_char_index': 32,
-            },
-            'anthropic',
-            False,
-            id='document',
-        ),
-        pytest.param(_ANTHROPIC_WEB_SEARCH_CITATION, 'bedrock', False, id='other-provider'),
+        # What Anthropic returns for a PDF, whose text isn't sent, so it can't be checked.
+        pytest.param({**_ANTHROPIC_REPLAY_CITATION, 'type': 'page_location'}, 'anthropic', True, False, id='pdf-page'),
+        pytest.param(_ANTHROPIC_REPLAY_CITATION, 'bedrock', True, False, id='other-provider'),
+        # Without the setting, documents are sent without citations enabled, so nothing can be checked against them.
+        pytest.param(_ANTHROPIC_REPLAY_CITATION, 'anthropic', False, False, id='citations-setting-off'),
     ],
 )
-@pytest.mark.parametrize(
-    ('content', 'anchor', 'fits'),
-    [
-        pytest.param('An answer.', ContentCitationAnchor(start=0, end=10), True, id='unchanged'),
-        pytest.param('An edited answer.', ContentCitationAnchor(start=0, end=10), False, id='edited'),
-        # A UI adapter joined this block with the text before it.
-        pytest.param('Before. An answer.', ContentCitationAnchor(start=8, end=18), False, id='joined'),
-        pytest.param('An answer.', None, False, id='citations-removed'),
-    ],
-)
-async def test_anthropic_replays_only_web_search_citations(
-    citation: Any, provider_name: str, kept: bool, content: str, anchor: ContentCitationAnchor | None, fits: bool
+async def test_anthropic_leaves_out_citations_it_cannot_check(
+    citation: Any, provider_name: str, citations_setting: bool, kept: bool
 ):
-    """Web search citations go back to Anthropic while they still cover the whole text, which Anthropic cited.
+    """Replay keeps a citation only when it can check it against a plain-text document in the request.
 
-    Document citations go back as plain text. Unit test: recordings in `test_citations.py` only hold valid web search
-    citations of unchanged text.
+    Unit test: apart from the PDF page, these citations only come from history edited after Anthropic sent it.
+    Citations that are sent back are covered by recordings in `test_citations.py`.
     """
-    citations = [Citation(sources=[WebCitationSource(url='https://example.com')], anchor=anchor)] if anchor else None
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='mock-api-key'))
     history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('Search the web.')]),
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    [
+                        'What is the return window?',
+                        BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain'),
+                    ]
+                )
+            ]
+        ),
         ModelResponse(
             parts=[
                 TextPart(
-                    content,
+                    'Thirty days.',
                     provider_name=provider_name,
                     provider_details={'citations': [citation]},
-                    citations=citations,
+                    citations=_WHOLE_PART_CITATIONS,
                 )
             ],
             provider_name=provider_name,
@@ -342,11 +365,53 @@ async def test_anthropic_replays_only_web_search_citations(
     ]
 
     _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
-        model.prepare_messages(history), ModelRequestParameters(), AnthropicModelSettings()
+        model.prepare_messages(history), ModelRequestParameters(), AnthropicModelSettings(citations=citations_setting)
     )
 
     [replayed] = cast(list[dict[str, Any]], messages[1]['content'])
-    assert replayed.get('citations') == ([_ANTHROPIC_WEB_SEARCH_CITATION] if kept and fits else None)
+    assert replayed.get('citations') == ([_ANTHROPIC_REPLAY_CITATION] if kept else None)
+
+
+async def test_anthropic_replay_doesnt_count_tool_arguments_shaped_like_a_document():
+    """Unit test: a tool argument with `type: 'document'` isn't a document, so it doesn't move the citation's index."""
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='mock-api-key'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Save a note.')]),
+        ModelResponse(
+            parts=[ToolCallPart('save', {'note': {'type': 'document', 'name': 'x'}}, tool_call_id='call_1')],
+            provider_name='anthropic',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('save', 'Saved.', tool_call_id='call_1'),
+                UserPromptPart(
+                    [
+                        'What is the return window?',
+                        BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain'),
+                    ]
+                ),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'Thirty days.',
+                    provider_name='anthropic',
+                    provider_details={'citations': [_ANTHROPIC_REPLAY_CITATION]},
+                    citations=_WHOLE_PART_CITATIONS,
+                )
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), AnthropicModelSettings(citations=True)
+    )
+
+    [replayed] = cast(list[dict[str, Any]], messages[3]['content'])
+    assert replayed['citations'] == [_ANTHROPIC_REPLAY_CITATION]
 
 
 async def test_anthropic_web_search_citations_not_replayed_without_web_search():
@@ -356,6 +421,13 @@ async def test_anthropic_web_search_citations_not_replayed_without_web_search():
     """
     from anthropic import AsyncAnthropicBedrock
 
+    web_search_citation = {
+        'type': 'web_search_result_location',
+        'url': 'https://example.com',
+        'title': 'Example',
+        'cited_text': 'web excerpt',
+        'encrypted_index': 'opaque-index',
+    }
     client = mock_anthropic_client(AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com')
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
     history: list[ModelMessage] = [
@@ -365,7 +437,7 @@ async def test_anthropic_web_search_citations_not_replayed_without_web_search():
                 TextPart(
                     'An answer.',
                     provider_name='anthropic',
-                    provider_details={'citations': [_ANTHROPIC_WEB_SEARCH_CITATION]},
+                    provider_details={'citations': [web_search_citation]},
                     citations=[
                         Citation(
                             sources=[WebCitationSource(url='https://example.com')],

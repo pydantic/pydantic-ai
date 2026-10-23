@@ -1,0 +1,358 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "616"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 4096
+        messages:
+        - role: user
+          content:
+          - text: >-
+              What are the return window and the shipping time? Read the shipping policy
+              first. Answer in two sentences and cite the documents.
+            type: text
+          - source:
+              data: The return window is thirty days from purchase.
+              media_type: text/plain
+              type: text
+            type: document
+            citations:
+              enabled: true
+        model: claude-sonnet-4-5
+        stream: false
+        tool_choice:
+          type: auto
+        tools:
+        - name: read_shipping_policy
+          description: Read the shipping policy document.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-8780d291726989b1d54bfb65dac07508-070a6b43a72033ec-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-sonnet-4-5-20250929
+        id: msg_011Cfh4hFnVUwsy2Xn7BkX3C
+        type: message
+        role: assistant
+        content:
+        - type: tool_use
+          id: toolu_01QwrPC5hdb6sUazBeG8AZs2
+          name: read_shipping_policy
+          input: {}
+          caller:
+            type: direct
+        container: null
+        stop_reason: tool_use
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 1119
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 38
+          service_tier: standard
+          inference_geo: not_available
+        diagnostics: null
+  recorded_at: 2026-10-04T10:47:39.179038+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1022"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 4096
+        messages:
+        - role: user
+          content:
+          - text: >-
+              What are the return window and the shipping time? Read the shipping policy
+              first. Answer in two sentences and cite the documents.
+            type: text
+          - source:
+              data: The return window is thirty days from purchase.
+              media_type: text/plain
+              type: text
+            type: document
+            citations:
+              enabled: true
+        - role: assistant
+          content:
+          - id: toolu_01QwrPC5hdb6sUazBeG8AZs2
+            type: tool_use
+            name: read_shipping_policy
+            input: {}
+        - role: user
+          content:
+          - tool_use_id: toolu_01QwrPC5hdb6sUazBeG8AZs2
+            type: tool_result
+            content:
+            - source:
+                data: Orders ship within two business days.
+                media_type: text/plain
+                type: text
+              type: document
+              citations:
+                enabled: true
+            is_error: false
+        model: claude-sonnet-4-5
+        stream: false
+        tool_choice:
+          type: auto
+        tools:
+        - name: read_shipping_policy
+          description: Read the shipping policy document.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-ca5e8b282b67b02712423803569c3ffa-e2f3067212dcc6ed-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-sonnet-4-5-20250929
+        id: msg_011Cfh4hQoiovZvHUT7uuenP
+        type: message
+        role: assistant
+        content:
+        - citations:
+          - type: char_location
+            cited_text: The return window is thirty days from purchase.
+            document_index: 0
+            document_title: null
+            start_char_index: 0
+            end_char_index: 47
+          type: text
+          text: The return window is thirty days from purchase.
+        - type: text
+          text: " "
+        - citations:
+          - type: char_location
+            cited_text: Orders ship within two business days.
+            document_index: 1
+            document_title: null
+            start_char_index: 0
+            end_char_index: 37
+          type: text
+          text: Orders ship within two business days.
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 1230
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 51
+          service_tier: standard
+          inference_geo: not_available
+        diagnostics: null
+  recorded_at: 2026-10-04T10:47:41.408475+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1639"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 4096
+        messages:
+        - role: user
+          content:
+          - text: >-
+              What are the return window and the shipping time? Read the shipping policy
+              first. Answer in two sentences and cite the documents.
+            type: text
+          - source:
+              data: The return window is thirty days from purchase.
+              media_type: text/plain
+              type: text
+            type: document
+            citations:
+              enabled: true
+        - role: assistant
+          content:
+          - id: toolu_01QwrPC5hdb6sUazBeG8AZs2
+            type: tool_use
+            name: read_shipping_policy
+            input: {}
+        - role: user
+          content:
+          - tool_use_id: toolu_01QwrPC5hdb6sUazBeG8AZs2
+            type: tool_result
+            content:
+            - source:
+                data: Orders ship within two business days.
+                media_type: text/plain
+                type: text
+              type: document
+              citations:
+                enabled: true
+            is_error: false
+        - role: assistant
+          content:
+          - text: The return window is thirty days from purchase.
+            type: text
+            citations:
+            - type: char_location
+              cited_text: The return window is thirty days from purchase.
+              document_index: 0
+              document_title: null
+              start_char_index: 0
+              end_char_index: 47
+          - text: " "
+            type: text
+          - text: Orders ship within two business days.
+            type: text
+            citations:
+            - type: char_location
+              cited_text: Orders ship within two business days.
+              document_index: 1
+              document_title: null
+              start_char_index: 0
+              end_char_index: 37
+        - role: user
+          content:
+          - text: Continue.
+            type: text
+        model: claude-sonnet-4-5
+        stream: false
+        tool_choice:
+          type: auto
+        tools:
+        - name: read_shipping_policy
+          description: Read the shipping policy document.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-939948f5bb087621f756f3ee9e9fe055-42b6022d31a7ca31-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-sonnet-4-5-20250929
+        id: msg_011Cfh4hZYKiypha7KmMzq5H
+        type: message
+        role: assistant
+        content:
+        - type: text
+          text: |-
+            I've already provided the complete answer to your question about the return window and shipping time. Both pieces of information have been cited from the relevant documents:
+
+            1. The return window (30 days from purchase) from document 1
+            2. The shipping time (within two business days) from the shipping policy document
+
+            Is there something else you'd like to know about the return policy or shipping policy?
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 1286
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 85
+          service_tier: standard
+          inference_geo: not_available
+        diagnostics: null
+  recorded_at: 2026-10-04T10:47:44.753685+00:00
