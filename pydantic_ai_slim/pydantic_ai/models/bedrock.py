@@ -1671,12 +1671,20 @@ class BedrockConverseModel(Model[BaseClient]):
         # Most families accept a `status` field on `toolResult` blocks; Writer Palmyra rejects it.
         supports_tool_result_status = profile.get('bedrock_supports_tool_result_status', True)
         # Anthropic models write their `<cite>` markup into tool and prompted output, so citations are only turned on for
-        # text output.
+        # text output, and into a forced tool call's arguments, so that combination is an error.
         include_citations = (
             settings.get('citations', False)
             and profile.get('bedrock_supports_citations', False)
             and model_request_parameters.output_mode == 'text'
         )
+        if include_citations:
+            tool_choice = resolve_tool_choice(settings, model_request_parameters)
+            if tool_choice == 'required' or (isinstance(tool_choice, tuple) and tool_choice[0] == 'required'):
+                raise UserError(
+                    "`Citations()` can't be used with a `tool_choice` that forces a tool call on Anthropic models: "
+                    "the model writes its citation markup into the tool's arguments. "
+                    'Remove `Citations()`, or let the model choose whether to call the tool.'
+                )
 
         # Media returned from a tool that can't live inside a `toolResult` block (see
         # `bedrock_supported_media_kinds_in_tool_returns`) is emitted as a sibling block. Models like

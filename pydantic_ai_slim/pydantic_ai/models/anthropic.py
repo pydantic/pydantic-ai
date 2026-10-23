@@ -157,13 +157,26 @@ def _fetched_page(block: BetaWebFetchToolResultBlock) -> tuple[str, str] | None:
     return None
 
 
+_CITATIONS_WITH_FORCED_TOOL_ERROR = (
+    "`Citations()` can't be used with a `tool_choice` that forces a tool call on Anthropic models: "
+    "the model writes its citation markup into the tool's arguments. "
+    'Remove `Citations()`, or let the model choose whether to call the tool.'
+)
+
+
 def _include_citations(model_settings: ModelSettings, model_request_parameters: ModelRequestParameters) -> bool:
     """Whether the `citations` setting turns on document and Web Fetch citations for this request.
 
     Anthropic rejects citations with native structured output, and writes its `<cite>` markup into tool and prompted
-    output, so they're only turned on for text output.
+    output, so they're only turned on for text output. A forced function tool call gets the same markup in its
+    arguments, so that combination is an error.
     """
-    return model_settings.get('citations', False) and model_request_parameters.output_mode == 'text'
+    if not (model_settings.get('citations', False) and model_request_parameters.output_mode == 'text'):
+        return False
+    tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+    if tool_choice == 'required' or (isinstance(tool_choice, tuple) and tool_choice[0] == 'required'):
+        raise UserError(_CITATIONS_WITH_FORCED_TOOL_ERROR)
+    return True
 
 
 def _history_fetched_pages(messages: Sequence[ModelMessage]) -> list[tuple[str, str]]:
@@ -3030,8 +3043,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         and isinstance(raw_citations, list)
                         and _citations_fit_text(response_part)
                     ):
+                        replayed = cast(list[dict[str, Any]], raw_citations)
+                        # Clients without web search, such as Bedrock, reject web search citations.
+                        if WebSearchTool not in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
+                            replayed = [c for c in replayed if c.get('type') != 'web_search_result_location']
                         # Added once the request is finished, when every document's position is known.
-                        map_context.replayed_citations[id(text_block)] = cast(list[dict[str, Any]], raw_citations)
+                        map_context.replayed_citations[id(text_block)] = replayed
                     assistant_content_params.append(text_block)
             elif isinstance(response_part, ToolCallPart):
                 assistant_content_params.append(
