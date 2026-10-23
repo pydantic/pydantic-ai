@@ -10,14 +10,23 @@ import pytest
 
 pytest.importorskip('obstore')
 
+from obstore.exceptions import GenericError, PermissionDeniedError, UnauthenticatedError
 from obstore.store import AzureStore, GCSStore, S3Store
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import Mount, ReadOnlyWorkspace, Workspace, WorkspaceReadOnlyError, WorkspaceRef
+from pydantic_ai.workspaces import (
+    Mount,
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceReadOnlyError,
+    WorkspaceRef,
+    WorkspaceUnavailableError,
+)
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 from pydantic_ai_harness import FileSystem, Shell
 from pydantic_ai_harness.cloud_storage import AzureFilesystem, GCSFilesystem, S3Filesystem
+from pydantic_ai_harness.cloud_storage._filesystem import _translate_errors  # pyright: ignore[reportPrivateUsage]
 
 from .memory_bucket import MemoryBucket
 
@@ -95,6 +104,29 @@ def test_file_tools_and_mounts_read_the_url_the_same_way() -> None:
     assert azure._rclone_remote() == ({'type': 'azureblob', 'account': 'acct'}, 'c/my f')  # pyright: ignore[reportPrivateUsage]
     assert AzureFilesystem('az://c', account='acct')._rclone_remote()[1] == 'c'  # pyright: ignore[reportPrivateUsage]
     assert _prefix(GCSFilesystem('gs://b/x', endpoint='http://gcs')) == 'x'
+    assert _prefix(S3Filesystem('s3://b/x')) == 'x'
+
+
+async def test_the_root_of_a_bucket_always_exists() -> None:
+    bucket = MemoryBucket()
+    await bucket.make_dir('/')
+    assert await bucket.exists('/')
+
+
+@pytest.mark.parametrize(
+    ('error', 'raised', 'message'),
+    [
+        (PermissionDeniedError('no'), PermissionError, "access to '/a' in s3://b was denied"),
+        (UnauthenticatedError('no'), PermissionError, "access to '/a' in s3://b was denied"),
+        (GenericError('NoSuchBucket'), WorkspaceUnavailableError, 'the bucket in s3://b does not exist'),
+        (GenericError('ContainerNotFound'), WorkspaceUnavailableError, 'the bucket in s3://b does not exist'),
+        (GenericError('throttled'), GenericError, 'throttled'),
+    ],
+)
+def test_cloud_errors_say_what_went_wrong(error: Exception, raised: type[Exception], message: str) -> None:
+    with pytest.raises(raised, match=message):
+        with _translate_errors('s3://b', '/a'):
+            raise error
 
 
 @pytest.mark.parametrize('url', ['s3://b//x/', 's3://b/a/../x', 's3://b/./x', 's3:///x'])
