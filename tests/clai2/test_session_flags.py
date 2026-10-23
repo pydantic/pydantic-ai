@@ -365,14 +365,14 @@ def test_continue_resumes_the_newest_session_here(
         return newest_here
 
     newest_here = asyncio.run(save_all())
-    seen: list[tuple[str | None, bool]] = []
+    seen: list[tuple[str | None, str | None, bool]] = []
 
-    async def launch(*, resume: str | None, fork_session: bool, **_: object) -> int:
-        seen.append((resume, fork_session))
+    async def launch(*, resume: str | None, session_id: str | None, fork_session: bool, **_: object) -> int:
+        seen.append((resume, session_id, fork_session))
         return 0
 
-    async def chat(*args: object, resume: str | None, fork_session: bool, **_: object) -> None:
-        await launch(resume=resume, fork_session=fork_session)
+    async def chat(*args: object, resume: str | None, session_id: str | None, fork_session: bool, **_: object) -> None:
+        await launch(resume=resume, session_id=session_id, fork_session=fork_session)
 
     monkeypatch.setattr(headless, 'run_headless', launch)
     monkeypatch.setattr(web, 'run_web', launch)
@@ -380,12 +380,13 @@ def test_continue_resumes_the_newest_session_here(
     for directory in (here, empty):
         monkeypatch.chdir(directory)
         monkeypatch.setattr(
-            'sys.argv', ['clai2', '--database', str(tmp_path / 'config.db'), '-c', '--fork-session', *mode]
+            'sys.argv',
+            ['clai2', '--database', str(tmp_path / 'config.db'), '-c', '--fork-session', '--session-id', NEW_ID, *mode],
         )
         try:
             _cli.run()
         except SystemExit as exit:
             assert exit.code == 0
-    # With none saved here, there is nothing to copy, so the new session is not a fork.
-    assert seen == [(newest_here, True), (None, False)]
+    # With none saved here, there is nothing to copy: the new session is not a fork, and takes the given ID.
+    assert seen == [(newest_here, NEW_ID, True), (None, NEW_ID, False)]
     assert capsys.readouterr().err == f'No saved session in {empty}; starting a new one.\n'

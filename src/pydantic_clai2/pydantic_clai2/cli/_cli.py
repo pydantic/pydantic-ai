@@ -402,6 +402,8 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         )
     # `--continue` resumes the session it finds at startup, so it is checked as a `--resume` would be.
     resume = '' if args.continue_session else args.resume
+    if args.continue_session and args.session_id is not None and not args.fork_session:
+        parser.error('--session-id can only be combined with --continue when --fork-session is given')
     try:
         args.session_id = launch_session_id(resume=resume, session_id=args.session_id, fork=args.fork_session)
     except ValueError as exc:
