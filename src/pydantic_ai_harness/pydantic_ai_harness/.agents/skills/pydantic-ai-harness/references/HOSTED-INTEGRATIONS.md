@@ -175,9 +175,11 @@ permissions do.
 `'drive'`, `'docs'`, `'sheets'`, `'slides'`, `'calendar'`, `'chat'`, `'people'`. Each service is its own MCP
 server. Tool names are prefixed with the service (`gmail_search_threads`). The default `id` is
 `google-workspace-<sorted services>` (for example `google-workspace-calendar-gmail`), so two instances
-for different services coexist. There is no `client` and no merge: two for the same services collide.
+whose services do not overlap coexist. Overlapping services register the same tool names, so wrap one in
+`PrefixTools`; two for the same services also collide on `id`. There is no `client` and no merge.
 Google does not support automatic client registration, so register your own OAuth client with the
-needed scopes. Access tokens expire after about an hour.
+needed scopes; `auth='oauth'` raises `UserError`. Access tokens expire after about an hour, and the
+capability reads a token once per run (or once at construction for a fixed one), so it never refreshes one.
 
 ```python
 from pydantic_ai import Agent
