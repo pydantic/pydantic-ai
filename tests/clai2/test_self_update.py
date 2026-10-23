@@ -636,7 +636,7 @@ class _NewBuild(MetaPathFinder):
         self, fullname: str, path: Sequence[str] | None, target: ModuleType | None = None
     ) -> ModuleSpec | None:
         if self.installed and fullname.partition('.')[0] in {'pydantic_ai', 'pydantic_ai_harness', 'pydantic_clai2'}:
-            raise ImportError(f'{fullname} would come from the new build')
+            raise ImportError(f'{fullname} would come from the new build')  # pragma: no cover -- the defect
         return None
 
 
