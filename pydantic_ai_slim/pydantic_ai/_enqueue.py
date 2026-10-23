@@ -26,6 +26,7 @@ from .messages import (
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
+    ThinkingEffortDeltaPart,
     ToolAvailabilityDeltaPart,
     ToolReturnPart,
     ToolSearchReturnPart,
@@ -116,6 +117,7 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
                 RetryFeedbackPart,
                 ToolSearchReturnPart,
                 ToolAvailabilityDeltaPart,
+                ThinkingEffortDeltaPart,
                 InstructionDeltaPart,
                 InstructionBaselinePart,
                 SpeechPart,
