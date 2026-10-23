@@ -660,15 +660,25 @@ class TestToolResults:
         assert calls['calls'] == 1
 
     @pytest.mark.parametrize(
-        ('make_result', 'reason'),
+        ('make_result', 'error'),
         [
-            (object, "Unable to serialize unknown type: <class 'object'>"),
-            (_circular_dict, 'Circular reference detected (id repeated)'),
+            (
+                object,
+                snapshot(
+                    "Absurd stores each step result as JSON, and this one could not be serialized: Unable to serialize unknown type: <class 'object'>. If it is a tool result, return a JSON-serializable value from the tool."
+                ),
+            ),
+            (
+                _circular_dict,
+                snapshot(
+                    'Absurd stores each step result as JSON, and this one could not be serialized: Circular reference detected (id repeated). If it is a tool result, return a JSON-serializable value from the tool.'
+                ),
+            ),
         ],
         ids=['unknown-type', 'circular'],
     )
     async def test_unserializable_result_fails_without_rerunning_the_tool(
-        self, absurd: AsyncAbsurd, make_result: Callable[[], object], reason: str
+        self, absurd: AsyncAbsurd, make_result: Callable[[], object], error: str
     ) -> None:
         # The tool has already run when its result fails to serialize, so the failure is checkpointed
         # and a retry raises it again instead of repeating the tool's side effect.
@@ -692,11 +702,7 @@ class TestToolResults:
                 await agent.run('go')
         stored = await checkpoints(absurd, ctx.task_id)
         assert stored['opaque__function_toolset__tools.call_tool:charge'] == {
-            '__pydantic_ai_harness_absurd_tool_result__': {
-                'kind': 'unserializable',
-                'error': f'Absurd stores each step result as JSON, and this one could not be serialized: {reason}. '
-                'If it is a tool result, return a JSON-serializable value from the tool.',
-            }
+            '__pydantic_ai_harness_absurd_tool_result__': {'kind': 'unserializable', 'error': error}
         }
         async with reenter_running_task(absurd, ctx.task_id):
             with pytest.raises(UnserializableStepResultError, match='could not be serialized'):
