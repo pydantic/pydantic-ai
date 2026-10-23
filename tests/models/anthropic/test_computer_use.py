@@ -403,7 +403,7 @@ def _stream(*blocks: Any) -> list[Any]:
 COMPUTER = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind='computer')
 
 
-async def test_a_responses_member_calls_are_one_call_streamed_or_not(allow_model_requests: None) -> None:
+async def test_member_calls_in_one_response_are_one_call_streamed_or_not(allow_model_requests: None) -> None:
     # Anthropic runs a response's member calls as one batch, stopped at the first failure, so text between them
     # doesn't split it.
     blocks = [
