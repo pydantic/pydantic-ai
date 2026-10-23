@@ -343,9 +343,11 @@ class TestComputerUse:
             await agent.run('Go.')
 
     async def test_a_fallback_model_runs_the_tool_in_pixels(self) -> None:
-        # A fallback model has no profile of its own, so neither the grid nor the image check can be read from it.
+        # A fallback model has no profile of its own, so the grid of the models inside it is not read: (5, 6) stays pixels.
         provider = InMemoryProvider()
-        scripted = _scripted([{'type': 'click', 'x': 5, 'y': 6}])
+        scripted = _scripted(
+            [{'type': 'click', 'x': 5, 'y': 6}], profile=ModelProfile(computer_use_coordinate_grid=1000)
+        )
         agent = Agent(
             FallbackModel(scripted, scripted), capabilities=[provider.capability(), ComputerUse(settle_seconds=0)]
         )
