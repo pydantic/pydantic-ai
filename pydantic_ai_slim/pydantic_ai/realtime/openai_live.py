@@ -873,15 +873,15 @@ class OpenAILiveConnection(RealtimeConnection):
         return True
 
     @property
-    def _sends_failed_tool_results(self) -> bool:
-        # A round missing an output never continues, and Live can't cancel the delegation it is in: left so, Live
-        # delegates nothing more for the rest of the session (checked live).
+    def _speech_spans_tool_calls(self) -> bool:
+        # Live talks while its delegated backend works, and the backend's calls land wherever Live is in a sentence, so
+        # ending the speech at each one would cut it mid-sentence (checked live).
         return True
 
     @property
-    def _transcribes_all_output(self) -> bool:
-        # Live always transcribes its speech, but the transcript runs ahead of or behind the audio, so a delegated call
-        # arriving between the two splits a piece of audio from its words (checked live).
+    def _sends_failed_tool_results(self) -> bool:
+        # A round missing an output never continues, and Live can't cancel the delegation it is in: left so, Live
+        # delegates nothing more for the rest of the session (checked live).
         return True
 
     def _tool_call_unanswered(self, tool_call_id: str) -> None:

@@ -652,23 +652,22 @@ class RealtimeConnection(ABC):
         return False
 
     @property
+    def _speech_spans_tool_calls(self) -> bool:
+        """Whether the model's speech goes on through the tool calls it makes, rather than stopping at each one.
+
+        Then a tool call doesn't end the speech part under way: the speech is recorded as one part, ahead of the calls
+        made while it went on, as a standard run orders parts by where they start. Defaults to `False`: a call ends the
+        part before it, and speech after it is a part of its own. Private until the realtime refactor settles.
+        """
+        return False
+
+    @property
     def _sends_failed_tool_results(self) -> bool:
         """Whether a call whose tool raised still needs a result sent, saying it failed, for the model to move on.
 
         For a provider that can't continue, or drop, a round of calls missing one of its results. The session then
         sends the failure history records (unless a usage limit stopped the call). Defaults to `False`: the model
         gets nothing for the call, and the exchange it was part of ends. Private until the realtime refactor settles.
-        """
-        return False
-
-    @property
-    def _transcribes_all_output(self) -> bool:
-        """Whether every word the model speaks reaches the session as transcript, though not always next to its audio.
-
-        Then an assistant speech part with neither transcript nor retained audio, in a response whose other speech has
-        a transcript, is a piece of that speech's audio a tool call split off from its words, and history leaves it
-        out. Defaults to `False`: such a part is recorded, as speech that was never transcribed. Private until the
-        realtime refactor settles.
         """
         return False
 
