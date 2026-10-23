@@ -50,6 +50,7 @@ from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
+    StreamedResponse,
     infer_model,
 )
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -1801,6 +1802,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     async def _model_request_stream_operation(self, params: ModelRequestParams) -> ModelResponse:
         response: ModelResponse | None = None
+        streamed: StreamedResponse | None = None
         try:
             async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (
                 model,
@@ -1814,8 +1816,15 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                         stream=streamed,
                         handler=self._model_stream_event_handler(),
                     )
+                    # Before the stream is closed, so the request is still withdrawn if closing it fails.
+                    response = streamed.get()
+                # Read again, for what closing the stream filled in.
                 response = streamed.get()
         except BaseException:
+            if response is None and streamed is not None:
+                # The stream failed while it was consumed: its request may already have been submitted.
+                with suppress(Exception):
+                    response = streamed.get()
             await self._withdraw_unreturned_response(params, response)
             raise
         self._stamp_response(response, params.messages)

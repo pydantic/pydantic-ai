@@ -4980,15 +4980,22 @@ async def test_dbos_durability_batch_model_withdraws_a_pending_response_a_hook_r
     assert wrapped.canceled == [wrapped.created[0].id]
 
 
+@pytest.mark.parametrize('stream', [False, True], ids=['request', 'request_stream'])
 async def test_dbos_durability_batch_model_withdraws_a_pending_response_whose_wrapper_fails_to_exit(
-    dbos: DBOS,
+    dbos: DBOS, stream: bool
 ) -> None:
-    """A step whose capability wrapper fails to exit after the request returned withdraws the pending request."""
+    """A step whose capability wrapper fails to close after the request returned withdraws the pending request."""
     wrapped = SlowBatchTestModel(pending_checks=10**6)
 
     class FailingExit(WrapperModel):
         async def __aexit__(self, *args: Any) -> bool | None:
             await super().__aexit__(*args)
+            raise RuntimeError('teardown failed')
+
+        @asynccontextmanager
+        async def request_stream(self, *args: Any, **kwargs: Any) -> AsyncGenerator[StreamedResponse]:
+            async with super().request_stream(*args, **kwargs) as streamed:
+                yield streamed
             raise RuntimeError('teardown failed')
 
     @dataclass
@@ -5003,9 +5010,13 @@ async def test_dbos_durability_batch_model_withdraws_a_pending_response_whose_wr
         capabilities=[WrapWithFailingExit(), BatchModelRequests(**FAST_BATCH_SETTINGS), DBOSDurability()],
     )
 
+    async def handle_events(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in events:
+            pass
+
     @DBOS.workflow()
     async def run_durable_agent() -> None:
-        await agent.run('go')
+        await agent.run('go', event_stream_handler=handle_events if stream else None)
 
     with SetWorkflowID(str(uuid.uuid4())), pytest.raises(RuntimeError, match='teardown failed'):
         await run_durable_agent()
