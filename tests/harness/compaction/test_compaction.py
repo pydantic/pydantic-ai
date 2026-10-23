@@ -1122,9 +1122,7 @@ class TestCompaction:
         messages = _retry_history()
         summary, *kept = await comp.compact(messages, _make_ctx(messages))
         assert isinstance(summary, ModelRequest)
-        assert [part.content for part in summary.parts if isinstance(part, SystemPromptPart)] == [
-            f'{SUMMARY_PREFIX}summary'
-        ]
+        assert summary.parts == [_ours('summary')]
         assert kept == messages[1:]
 
     async def test_keep_zero_keeps_the_request_being_answered(self):
