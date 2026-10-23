@@ -382,7 +382,8 @@ class GeminiServer:
             self.truth.add_input((video.data or b'')[-8:].decode(errors='replace'), 'image')
 
     def on_client_content(self, session: _ServerSession, turns: list[gt.Content], turn_complete: bool) -> None:
-        if session.awaits_initial_history:
+        # Reached by a replay with tool rounds, which only randomized exploration drives.
+        if session.awaits_initial_history:  # pragma: lax no cover
             # The conversation, as the session's initial history: nothing new, and nothing for the model to answer.
             session.awaits_initial_history = False
             return
