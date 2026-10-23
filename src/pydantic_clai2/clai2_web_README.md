@@ -238,9 +238,13 @@ set one up.
 When the agent delegates to sub-agents, a **Workers** tree appears under the current session:
 one row per worker, under the worker that started it, with its agent, model, elapsed time, and
 last action. Click one, or the link on the tool call that started it, to watch its transcript
-live; type in its box to steer it (it reads your message at its next model request). Stop,
-Background, and Resume do what `/tasks stop`, `background`, and `resume` do. A finished worker
-shows what it saved; **← Session**, or the session's row, goes back.
+live; type in its box to steer it (it reads your message at its next model request). Stop and
+Background do what `/tasks stop` and `background` do. A finished worker shows what it saved, and
+its box then prompts it on its own, as if it were an agent of its own: it continues from its saved
+history, its reply streams into its transcript, and the session and its agent never see it.
+`POST /api/tasks/{task_id}/resume` still asks the agent to resume it instead, as `/tasks resume`
+does. `Explore` and `Plan` workers are one-shot and take no follow-ups. **← Session**, or the session's
+row, goes back.
 
 <!-- From #10372 -->
 `clai2 --web --port PORT` listens on PORT for that launch (`0` picks a free one). `--token-file PATH`
@@ -256,42 +260,38 @@ says so and nothing restarts. A terminal session with `/web` running comes back 
 
 ## Workspaces
 
-The `workspaces` plugin makes workspaces: a checkout of a repository on its own branch, with its
-own CLAI. Turn it on with `/plugins enable workspaces`, then:
+The `workspaces` plugin makes workspaces: a checkout of a repository on its own branch, for
+sessions of their own. Turn it on with `/plugins enable workspaces`, then:
 
 ```text
 /workspaces create local-worktree ~/code/pydantic-ai main
-/workspaces open pydantic-ai-3f2a9c
 ```
 
 `create KIND [REPO [REF]]` checks out REPO (a local path, or a URL that CLAI clones once and
 fetches afterwards) at REF on a new branch, the kind's `branch_prefix` (`clai-` by default) and
-the ID. `open ID` starts that workspace's own `clai2 --web` in the checkout and opens it in your
-browser; `stop ID` stops it, and `destroy ID` stops it and removes the checkout, unless the kind's
-`teardown` is `keep`, keeping the branch either way. `/workspaces` lists them all, from any
-CLAI: they are kept in CLAI's state directory, and a workspace's CLAI keeps running when the CLAI
-that started it quits. The kinds of workspace are the plugin's settings (`/plugins configure
-workspaces`, or the web UI's plugins panel); `local-worktree`, a Git worktree on this machine,
-is the one backend so far. See [the plugin guide](PLUGINS.md#workspaces-checkouts-with-their-own-clai).
-
-<!-- From #10374 -->
-With `workspaces` on, the web UI's sidebar lists them in a **Workspaces** section, each with its
-CLAI's status and an **Open** button that starts it if needed and opens its page in a new tab.
+the ID. The sidebar lists the checkout under its repository, grouped by that branch as any other
+worktree, so **New session** there starts a session in it, in this same CLAI. `destroy ID` closes
+the sessions open in it and removes the checkout, unless the kind's `teardown` is `keep`, keeping
+the branch either way. `/workspaces` lists them all, from any CLAI: they are kept in CLAI's state
+directory. The kinds of workspace are the plugin's settings (`/plugins configure workspaces`, or
+the web UI's plugins panel); `local-worktree`, a Git worktree on this machine, is the one backend so
+far. See [the plugin guide](PLUGINS.md#workspaces-checkouts-for-sessions-of-their-own).
 
 ## Orchestrator
 
 The web UI has an agent that does that for you: "clone pydantic-ai off main and fix issue #123".
 Click **Orchestrator** in the sidebar, right below **New session**, to open its chat. It is a
 separate agent with its own conversation, and the only one with these tools: it makes workspaces,
-starts each one's CLAI with a prompt, waits for and reads its turns, steers it with more prompts,
-answers its questions, and reports back. It destroys a workspace only after you picked **Destroy
-ID** when it asked, in its chat. It also finds the saved sessions of every project and cleans them
-up by archiving them ("archive every session older than 3 days"), which you can undo. No tool
-deletes a session, and archiving removes no folder or worktree. It needs `workspaces` on, which
-the chat offers to do in one click, and uses the saved default model, the one a new session starts
-with (`/set model NAME` changes it). Its conversation is kept across
-reloads and restarts. The session's own agent gets none of this. See
-[the plugin guide](PLUGINS.md#orchestrator-an-agent-that-runs-workspaces).
+starts a session in each one with a prompt, waits for and reads its turns, steers it with more
+prompts, answers its questions, and reports back. Those sessions are ordinary live sessions, listed
+in the sidebar under their repository; a tool card's **Open** shows one in the main pane, where you
+can follow it or type too. It destroys a workspace only after you picked **Destroy ID** when it
+asked, in its chat. It also finds the saved sessions of every project and cleans them up by
+archiving them ("archive every session older than 3 days"), which you can undo. No tool deletes a
+session, and archiving removes no folder or worktree. It needs `workspaces` on, which the chat
+offers to do in one click, and uses the saved default model, the one a new session starts with
+(`/set model NAME` changes it). Its conversation is kept across reloads and restarts. The session's
+own agent gets none of this. See [the plugin guide](PLUGINS.md#orchestrator-an-agent-that-runs-workspaces).
 
 ## Several live sessions
 

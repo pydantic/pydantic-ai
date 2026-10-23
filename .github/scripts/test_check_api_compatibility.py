@@ -157,6 +157,43 @@ def test_main_warns_for_approved_breakage(
     assert 'Allowed by https://github.com/pydantic/pydantic-ai/pull/123' in output
 
 
+def test_main_skips_the_clai2_web_ui_modules(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    plugins = 'src/pydantic_clai2/pydantic_clai2/builtin_plugins'
+    skipped = [
+        Finding('pydantic_clai2', f'{plugins}/web/__init__.py', 1, 'WebPlugin: Public object was removed'),
+        Finding('pydantic_clai2', f'{plugins}/web/service.py', 2, 'WebService.host: Public object was removed'),
+        Finding('pydantic_clai2', f'{plugins}/workspaces/sessions.py', 3, '<module>: Public object was removed'),
+    ]
+    reported = [
+        Finding('pydantic_clai2', f'{plugins}/web_search.py', 4, 'WebSearch: Public object was removed'),
+        Finding(
+            'pydantic_clai2',
+            'src/pydantic_clai2/pydantic_clai2/plugins/__init__.py',
+            5,
+            'Plugin: Public object was removed',
+        ),
+    ]
+    path = tmp_path / 'allowlist.json'
+    path.write_text('{"allowed_breakages": []}', encoding='utf-8')
+
+    def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
+        return [*skipped, *reported]
+
+    monkeypatch.setattr(check_api_compatibility, 'PACKAGES', {'pydantic_clai2': 'src/pydantic_clai2'})
+    monkeypatch.setattr(check_api_compatibility, 'run_griffe', run_griffe)
+    monkeypatch.setattr('sys.argv', ['check_api_compatibility.py', '--against', 'v2.32.1', '--allowlist', str(path)])
+
+    with pytest.raises(SystemExit, match='1'):
+        check_api_compatibility.main()
+
+    output = capsys.readouterr().out
+    assert [line.split('::')[1] for line in output.splitlines()] == [
+        f'error file={finding.path},line={finding.line}' for finding in reported
+    ]
+
+
 def test_main_rejects_unused_waiver_for_current_baseline(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):

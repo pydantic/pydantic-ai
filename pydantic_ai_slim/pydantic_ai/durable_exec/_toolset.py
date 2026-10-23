@@ -18,7 +18,15 @@ from pydantic_ai._cancel import RunCancellation
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._run_context import ToolNamePath, with_tool_name_path, without_tool_name_path
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UserError
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    RunCancelled,
+    RunTimedOut,
+    ToolFailed,
+    UserError,
+)
 from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -359,6 +367,16 @@ class _ToolFailed:
     kind: Literal['tool_failed'] = 'tool_failed'
 
 
+@dataclass
+class _RunCancelled:
+    # A sub-agent run awaited inside the tool cancelled itself; `_ToolCallProcessor._call_tool`
+    # turns the re-raised exception into a failed tool return, as it does in-process.
+    message: str
+    _: KW_ONLY
+    timed_out: bool = False
+    kind: Literal['run_cancelled'] = 'run_cancelled'
+
+
 def _result_discriminator(value: Any) -> str:
     if isinstance(value, ToolReturn) or (is_str_dict(value) and value.get('kind') == 'tool-return'):
         return 'tool-return'
@@ -391,7 +409,14 @@ class _ToolContentResult:
 
 
 CallToolResult = Annotated[
-    _ApprovalRequired | _CallDeferred | _ModelRetry | _ValidationError | _ToolReturn | _ToolContentResult | _ToolFailed,
+    _ApprovalRequired
+    | _CallDeferred
+    | _ModelRetry
+    | _ValidationError
+    | _ToolReturn
+    | _ToolContentResult
+    | _ToolFailed
+    | _RunCancelled,
     Discriminator('kind'),
 ]
 
@@ -410,6 +435,8 @@ async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
         return _ModelRetry(message=exc.message)
     except ToolFailed as exc:
         return _ToolFailed(message=exc.message)
+    except RunCancelled as exc:
+        return _RunCancelled(message=exc.message, timed_out=isinstance(exc, RunTimedOut))
     except ValidationError as exc:
         return _ValidationError(
             title=exc.title,
@@ -452,6 +479,10 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
         raise ModelRetry(result.message)
     if isinstance(result, _ToolFailed):
         raise ToolFailed(result.message)
+    if isinstance(result, _RunCancelled):
+        if result.timed_out:
+            raise RunTimedOut(result.message)
+        raise RunCancelled(result.message)
     assert_never(result)
 
 
@@ -562,7 +593,8 @@ def unwrap_recorded_tool_call_result(result: Any) -> Any:
         | _CallDeferred
         | _ModelRetry
         | _ValidationError
-        | _ToolFailed,
+        | _ToolFailed
+        | _RunCancelled,
     ):
         return unwrap_tool_call_result(result)
     return result

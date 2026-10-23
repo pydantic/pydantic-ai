@@ -111,15 +111,29 @@ def test_moonshotai_model_profile_thinking():
         assert profile.get('openai_chat_thinking_false_body') == {'thinking': {'type': 'disabled'}}
         assert profile.get('openai_chat_thinking_field') == 'reasoning_content'
         assert profile.get('openai_chat_send_back_thinking_parts') == 'field'
+        assert profile.get('openai_chat_supports_max_reasoning_effort') is (model_name != 'kimi-k2.5')
 
     # Kimi K3 and K2.7 Code always reason, since Moonshot rejects `reasoning_effort='none'` and they have no off switch.
-    for model_name in ('kimi-k2.7-code', 'kimi-k2.7-code-highspeed', 'kimi-k3'):
+    for model_name in (
+        'kimi-k2.7-code',
+        'kimi-k2.7-code-highspeed',
+        'kimi-k3',
+        'kimi-k3.1-pro',
+        'kimi-k3.1-pro-highspeed',
+    ):
         profile = provider.model_profile(model_name)
         assert profile is not None
         assert profile.get('supports_thinking') is True
         assert profile.get('thinking_always_enabled') is True
         assert profile.get('openai_chat_thinking_field') == 'reasoning_content'
         assert profile.get('openai_chat_send_back_thinking_parts') == 'field'
+        assert profile.get('openai_chat_supports_max_reasoning_effort') is True
+
+    # Kimi K3 and K3.1 Pro take `reasoning_effort` `low`, `high` or `max`, so `thinking=False` sends `low`.
+    for model_name in ('kimi-k3', 'kimi-k3.1-pro', 'kimi-k3.1-pro-highspeed'):
+        profile = provider.model_profile(model_name)
+        assert profile is not None
+        assert profile.get('openai_chat_thinking_false_body') == {'reasoning_effort': 'low'}
 
     # Instruct/base models don't reason, so thinking stays off.
     for non_reasoning_model in ('moonshot-v1-8k', 'moonshot-v1-auto', 'kimi-k2-0711-preview', 'kimi-latest'):

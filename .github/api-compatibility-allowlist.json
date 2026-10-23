@@ -1,6 +1,12 @@
 {
   "allowed_breakages": [
     {
+      "against": "v2.60.0",
+      "fingerprint": "5e8f426984cff27ac6dac898c912c13ff573d3ebcfaf224ba731c237d3aae4ee",
+      "reason": "Adds `kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed` to `MoonshotAIModelName`; every existing model name is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11173"
+    },
+    {
       "against": "v2.59.0",
       "fingerprint": "ca884de6c28ed4e97d48cd6c522936a934a38a929e25cb3440f903884b53d9c8",
       "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `inputs=inputs`.",
@@ -43,6 +49,18 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10613"
     },
     {
+      "against": "v2.60.0",
+      "fingerprint": "6cb62e895d59e4833ada607bf2b29b5f945b323505351947e51eaa9f601b6056",
+      "reason": "Adds the new `citations` model setting to `ModelSettingName`; every existing name is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/7434"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "ac9e0aae6d4638a7d65730859d384c202c5d5cabbce0855e6bbce5122c61551b",
+      "reason": "Adds the new `Citations` capability to `CAPABILITY_TYPES`; every existing entry is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/7434"
+    },
+    {
       "against": "v2.59.0",
       "fingerprint": "01c743d24a50d95bf9e6e60708d8e18127f8162acb6c6eb7be934c07d4c76a31",
       "reason": "Adds the 'max' effort level to unified thinking (#9993); existing values are unchanged.",
@@ -79,6 +97,18 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8639"
     },
     {
+      "against": "v2.60.0",
+      "fingerprint": "c81312e615a627a159c2eb68ac28af0518f49dc0e0b5ccd6b2bb2794f77b53b8",
+      "reason": "False positive: `LocalStack.secret_access_key` keeps its `'test'` default and type; `field(..., repr=False)` only hides the value from `repr()`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10828"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "93099b359379bf6b755e2c836a3aa958d7b975b1205daff02f189416ba48d7b3",
+      "reason": "False positive: `LocalStack.container_env` keeps its empty-dict default and type; `repr=False` only hides the value from `repr()`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10828"
+    },
+    {
       "against": "v2.59.0",
       "fingerprint": "1b295e087b0c5d9ce099eef747012b54cb660fed111f5b9c051942f8c5ed9d9f",
       "reason": "Adds `FileUnderstanding` to `CAPABILITY_TYPES`; every existing capability type is unchanged.",
@@ -107,6 +137,12 @@
       "fingerprint": "f5277165732c4c6ae79c0ff3e286f1fbccca262094e6dee75b26bfca7455c244",
       "reason": "False positive: only adds `repr=False` so the credential-bearing URL stays out of `repr`; the attribute's type, default, and constructor parameter are unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "e3cbeaca4cd1a6c06b48a95afcd22e314cd2699e757a3c2b395dd659020b40ae",
+      "reason": "The `iban` pattern in the harness `DEFAULT_PII_PATTERNS` gains a `(?=[A-Za-z]{2}\\d{2})` lookahead ahead of its country-code alternation; it matches exactly the same text and only skips the alternation at positions that cannot start an IBAN.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10841"
     }
   ]
 }
