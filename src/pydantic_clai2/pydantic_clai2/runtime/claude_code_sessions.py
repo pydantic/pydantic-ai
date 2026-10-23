@@ -77,7 +77,7 @@ _OPENING = (
     "sub-agents' reports appear as `<task_output>` blocks."
 )
 _SELF = 'self'
-"""The name CLAI's sub-agents runs its `general-purpose` agent, itself, by."""
+"""The agent name CLAI runs Claude Code's `general-purpose` sub-agents under: itself."""
 
 _STOPPED = 'Stopped in Claude Code before it reported. Its history is saved: resume it to continue.'
 """The output of a sub-agent that never finished in Claude Code."""
