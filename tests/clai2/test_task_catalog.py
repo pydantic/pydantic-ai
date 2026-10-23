@@ -1,15 +1,17 @@
 """`host.tasks`, the `TaskCatalog` over `/tasks`, and the `on_task_event` moment."""
 
 import asyncio
+import gc
 import io
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import anyio
 import pytest
 from rich.console import Console
 
+from pydantic_ai import RunContext, SkipModelRequest
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -19,8 +21,10 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.subagents import DelegationEndEvent, DelegationStartEvent, DelegationTask, DelegationTaskEvent
 from pydantic_clai2._app import create_stock_agent
@@ -29,6 +33,7 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart, TaskEvent, TaskInfo
 from pydantic_clai2.runtime.session_runtime import create_shell
+from pydantic_clai2.runtime.task_prompts import TaskPrompt
 from pydantic_clai2.runtime.tasks import Tasks, resume_prompt
 from pydantic_clai2.ui.rendering.status import Status
 from tests.clai2.test_tasks import task
@@ -231,3 +236,360 @@ async def test_resume_keeps_the_task_stopped_when_the_prompt_refuses() -> None:
     with pytest.raises(RuntimeError, match='line by line'):
         await ui.resume(record.id)
     assert record.user_stopped, "the user's stop holds when the request cannot be entered"
+
+
+READINESS_WAIT_TIMEOUT = 10
+
+
+def this_run(runs: list[asyncio.Task[object]]) -> None:
+    """Keep the run `Tasks.prompt` started, called from its `prompt_task`, so the test can wait for it to end."""
+    run = asyncio.current_task()
+    assert run is not None
+    runs.append(run)
+
+
+async def settled(ui: Tasks, record: DelegationTask, runs: list[asyncio.Task[object]]) -> None:
+    """Wait for the runs `prompt` started to end, after which nothing holds the task back from `background`."""
+    await asyncio.gather(*runs)
+    ui.background(record.id)  # A no-op on a finished task; refused while a prompt's run holds it.
+
+
+def finished(ui: Tasks) -> DelegationTask:
+    record = task()
+    record.status, record.outcome = 'finished', 'ok'
+    ui.owner.records[record.id] = record
+    return record
+
+
+async def test_prompt_runs_a_finished_task_on_its_own() -> None:
+    gates: list[asyncio.Event] = []
+    runs: list[asyncio.Task[object]] = []
+
+    async def work(record: DelegationTask) -> str:
+        gates.append(asyncio.Event())
+        await gates[-1].wait()
+        return 'again'
+
+    async def prompt_task(record: DelegationTask, text: str) -> str:
+        this_run(runs)
+        return await ui.owner.delegate(
+            agent_name=record.agent_name,
+            prompt=text,
+            conversation_id='root',
+            model=None,
+            background=False,
+            resume=record.id,
+            run=work,
+        )
+
+    ui = Tasks(
+        console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None, prompt_task=prompt_task
+    )
+    record = finished(ui)
+    record.user_stopped = True
+    async with ui.router.opened(view=ui):
+        await ui.prompt(record.id, ' and the docs? ')
+        assert (record.status, record.prompt, record.user_stopped) == ('running', 'and the docs?', False)
+        assert not ui.info(record).backgroundable, 'no Background button for it'
+        with pytest.raises(ValueError, match='Nothing waits'):
+            ui.background(record.id)
+        assert ui.focused() is None, 'the status row is left to the main run'
+        assert ui.promote() == 'No foreground tasks. /tasks opens the task inspector.'
+        with pytest.raises(ValueError, match='resumable'):
+            await ui.prompt(record.id, 'not while it runs')
+        gates[-1].set()
+        await settled(ui, record, runs)
+        assert (record.status, record.outcome) == ('finished', 'ok')
+
+        # Closing the session stops a prompted task with the run that prompted it.
+        await ui.prompt(record.id, 'once more')
+        assert record.status == 'running'
+    assert (record.status, record.outcome) == ('finished', 'cancelled')
+
+
+async def test_prompt_refuses_what_it_cannot_run(caplog: pytest.LogCaptureFixture) -> None:
+    ui = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None)
+    record = finished(ui)
+    with pytest.raises(ValueError, match='Type a message'):
+        await ui.prompt(record.id, '  ')
+    with pytest.raises(RuntimeError, match='cannot prompt'):
+        await ui.prompt(record.id, 'hello')
+
+    async def refuse(record: DelegationTask, text: str) -> str:
+        raise ValueError('no delegate tool')
+
+    ui.prompt_task = refuse
+    record.user_stopped = True
+    with pytest.raises(ValueError, match='no delegate tool'):
+        await ui.prompt(record.id, 'hello')
+    assert record.user_stopped, "the user's stop holds when the task never ran"
+    assert not caplog.records, 'the caller heard it'
+    ui.background(record.id)  # The run that never started it is forgotten too.
+
+    runs: list[asyncio.Task[object]] = []
+
+    async def fail_after_starting(record: DelegationTask, text: str) -> str:
+        this_run(runs)
+        record.status = 'running'
+        await ui.observe(DelegationTaskEvent(task=record))
+        record.status = 'finished'
+        raise RuntimeError('broke after it started')
+
+    ui.prompt_task = fail_after_starting
+    await ui.prompt(record.id, 'hello')
+    await settled(ui, record, runs)
+    assert [entry.getMessage() for entry in caplog.records] == [f'Prompting task {record.id} failed']
+
+
+async def test_a_run_prompted_again_is_not_forgotten_by_the_one_before() -> None:
+    """A task may settle before the run that prompted it ends, and be prompted again meanwhile."""
+    ending: list[asyncio.Event] = []
+    runs: list[asyncio.Task[object]] = []
+
+    async def prompt_task(record: DelegationTask, text: str) -> str:
+        this_run(runs)
+        record.status = 'running'
+        await ui.observe(DelegationTaskEvent(task=record))
+        record.status = 'finished'
+        ending.append(asyncio.Event())
+        await ending[-1].wait()
+        return 'done'
+
+    ui = Tasks(
+        console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None, prompt_task=prompt_task
+    )
+    record = finished(ui)
+    await ui.prompt(record.id, 'first')
+    await ui.prompt(record.id, 'second')
+    (first, second), (first_run, second_run) = ending, runs
+    first.set()
+    await first_run
+    with pytest.raises(ValueError, match='Nothing waits'):
+        ui.background(record.id)  # Still the second run's.
+    second.set()
+    await settled(ui, record, [second_run])
+
+
+async def test_a_prompt_whose_caller_is_cancelled_still_restores_a_stop_it_never_lifted(tmp_path: Path) -> None:
+    """Its run outlives a cancelled caller, as a web request the browser drops, and settles the task alone."""
+    blocked, fail = asyncio.Event(), asyncio.Event()
+    runs: list[asyncio.Task[object]] = []
+    unretrieved: list[dict[str, object]] = []
+
+    async def prompt_task(record: DelegationTask, text: str) -> str:
+        this_run(runs)
+        blocked.set()
+        await fail.wait()
+        raise ValueError('no delegate tool')
+
+    ui = Tasks(
+        console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=tmp_path, prompt_task=prompt_task
+    )
+    record = finished(ui)
+    record.user_stopped = True
+    loop = asyncio.get_running_loop()
+    handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda loop, context: unretrieved.append(context))
+    try:
+        caller = asyncio.create_task(ui.prompt(record.id, 'hello'))
+        await blocked.wait()
+        assert not record.user_stopped, 'prompting lifted the stop'
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(ValueError, match='starting from a prompt'):
+            await ui.prompt(record.id, 'not while the first one starts')
+        fail.set()
+        await asyncio.wait(runs)
+        del runs[:], caller
+        gc.collect()
+    finally:
+        loop.set_exception_handler(handler)
+    assert unretrieved == [], 'nobody is left to hear it'
+    assert record.user_stopped, "the user's stop holds when the task never ran"
+    assert '"user_stopped":true' in (tmp_path / f'{record.id}.json').read_text().replace(' ', '')
+    with pytest.raises(ValueError, match='no delegate tool'):
+        await ui.prompt(record.id, 'it can be prompted again')
+
+
+async def test_a_failed_prompt_keeps_a_stop_the_user_sent_while_it_started() -> None:
+    blocked, fail = asyncio.Event(), asyncio.Event()
+
+    async def prompt_task(record: DelegationTask, text: str) -> str:
+        blocked.set()
+        await fail.wait()
+        raise ValueError('no delegate tool')
+
+    ui = Tasks(
+        console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None, prompt_task=prompt_task
+    )
+    record = finished(ui)
+    caller = asyncio.create_task(ui.prompt(record.id, 'hello'))
+    await blocked.wait()
+    await ui.stop(record.id)
+    fail.set()
+    with pytest.raises(ValueError, match='no delegate tool'):
+        await caller
+    assert record.user_stopped, 'the stop the user sent after prompting is newer than the one prompting lifted'
+
+
+async def test_a_prompt_still_starting_when_the_session_closes_never_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    saving, release = asyncio.Event(), asyncio.Event()
+    prompted: list[str] = []
+
+    async def prompt_task(record: DelegationTask, text: str) -> str:
+        prompted.append(text)
+        return 'ran'
+
+    ui = Tasks(
+        console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None, prompt_task=prompt_task
+    )
+    record = finished(ui)
+    record.user_stopped = True
+    save = ui.owner.save
+
+    async def held(record: DelegationTask) -> None:
+        saving.set()
+        await release.wait()
+        await save(record)
+
+    monkeypatch.setattr(ui.owner, 'save', held)
+    caller = asyncio.create_task(ui.prompt(record.id, 'hello'))
+    await saving.wait()
+    await ui.stop_prompts()
+    release.set()
+    with pytest.raises(RuntimeError, match='closed before the task could start'):
+        await caller
+    assert record.user_stopped, "the user's stop holds when the task never ran"
+    await ui.prompt(record.id, 'again')
+    assert prompted == ['again'], 'only the prompt sent after the close ran'
+
+
+async def test_a_prompt_its_session_stops_before_the_task_starts_keeps_the_stop() -> None:
+    blocked = asyncio.Event()
+
+    async def prompt_task(record: DelegationTask, text: str) -> object:
+        blocked.set()
+        return await asyncio.Event().wait()
+
+    ui = Tasks(
+        console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None, prompt_task=prompt_task
+    )
+    record = finished(ui)
+    record.user_stopped = True
+    caller = asyncio.create_task(ui.prompt(record.id, 'hello'))
+    await blocked.wait()
+    await ui.stop_prompts()
+    with pytest.raises(RuntimeError, match='closed before the task could start'):
+        await caller
+    assert record.user_stopped, "the user's stop holds when the task never ran"
+
+
+async def test_a_prompt_whose_task_another_run_started_still_reports_the_close(monkeypatch: pytest.MonkeyPatch) -> None:
+    saving, release = asyncio.Event(), asyncio.Event()
+    ui = Tasks(
+        console=Console(file=io.StringIO()),
+        conversation_id=lambda: 'root',
+        directory=None,
+        prompt_task=lambda record, text: asyncio.sleep(0),
+    )
+    record = finished(ui)
+    save = ui.owner.save
+
+    async def held(record: DelegationTask) -> None:
+        saving.set()
+        await release.wait()
+        await save(record)
+
+    monkeypatch.setattr(ui.owner, 'save', held)
+    caller = asyncio.create_task(ui.prompt(record.id, 'hello'))
+    await saving.wait()
+    # Another run of the session resumes the task while the prompt still waits on `allow_resume`.
+    record.status = 'running'
+    await ui.deliver(DelegationTaskEvent(task=record))
+    await ui.stop_prompts()
+    release.set()
+    with pytest.raises(RuntimeError, match='closed before the task could start'):
+        await caller
+
+
+@pytest.mark.parametrize(
+    ('outcome', 'refused'),
+    [('success', None), ('retried', 'no'), ('failed', 'no'), ('denied', 'no'), ('interrupted', 'no')],
+)
+async def test_a_task_prompt_reads_any_unsuccessful_delegate_return_as_a_refusal(
+    outcome: Literal['success', 'retried', 'failed', 'denied', 'interrupted'], refused: str | None
+) -> None:
+    """A delegate call that failed, was denied or was interrupted resumed nothing, as a retried one did not."""
+    script = TaskPrompt(agent_name='worker', task_id='t1', text='hello')
+    returned = ToolReturnPart(tool_name='delegate_task', content='no', tool_call_id='c1', outcome=outcome)
+    request_context = ModelRequestContext(
+        model=TestModel(),
+        messages=[ModelRequest(parts=[returned])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    ctx = RunContext[object](deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
+    never: asyncio.Future[ModelResponse] = asyncio.get_running_loop().create_future()
+    with pytest.raises(SkipModelRequest) as skipped:
+        await script.wrap_model_request(ctx, request_context=request_context, handler=lambda request_context: never)
+    assert skipped.value.response.parts == [TextPart('done')]
+    assert script.refused == refused
+
+
+async def test_a_task_starting_from_a_prompt_takes_no_second_one() -> None:
+    """It reads `finished` until its run starts it, as an agent run does after a model request."""
+    gate = asyncio.Event()
+    runs: list[asyncio.Task[object]] = []
+
+    async def work(record: DelegationTask) -> str:
+        await gate.wait()
+        return 'again'
+
+    async def prompt_task(record: DelegationTask, text: str) -> str:
+        this_run(runs)
+        return await ui.owner.delegate(
+            agent_name=record.agent_name,
+            prompt=text,
+            conversation_id='root',
+            model=None,
+            background=False,
+            resume=record.id,
+            run=work,
+        )
+
+    ui = Tasks(
+        console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None, prompt_task=prompt_task
+    )
+    record = finished(ui)
+    async with ui.router.opened(view=ui):
+        # The first prompt returns once the task starts, not once it ends, which waits on `gate`.
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            first, second = await asyncio.gather(
+                ui.prompt(record.id, 'first'), ui.prompt(record.id, 'second'), return_exceptions=True
+            )
+        assert first is None
+        assert isinstance(second, ValueError) and 'starting from a prompt' in str(second)
+        assert (record.status, record.prompt) == ('running', 'first')
+        with pytest.raises(ValueError, match='Nothing waits'):
+            ui.background(record.id)
+        gate.set()
+        await settled(ui, record, runs)
+        assert (record.status, record.outcome) == ('finished', 'ok')
+
+
+async def test_a_session_that_delegates_nothing_prompts_no_task(tmp_path: Path) -> None:
+    shell = create_shell(
+        create_stock_agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    with pytest.raises(RuntimeError, match='delegates no tasks'):
+        await shell.session.prompt_task(agent_name='self', task_id='a' * 32, text='hello')

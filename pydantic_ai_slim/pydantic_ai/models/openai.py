@@ -2539,6 +2539,47 @@ def _map_responses_citations(
     return citations or None
 
 
+def _map_responses_citations_for_replay(
+    citations: object, text: str
+) -> list[responses.response_output_text_param.Annotation]:
+    """Rebuild the URL and file citation annotations OpenAI returned from their raw data on the text part.
+
+    Annotations that can't be rebuilt are left out.
+    """
+    annotations: list[responses.response_output_text_param.Annotation] = []
+    for citation in cast(list[Any], citations) if isinstance(citations, list) else []:
+        if not _utils.is_str_dict(citation):
+            continue
+        if citation.get('type') == 'url_citation':
+            url, title = citation.get('url'), citation.get('title')
+            start, end = citation.get('start_index'), citation.get('end_index')
+            # The range covers the link the model wrote into its answer, so it must still contain the URL. OpenAI
+            # accepts a range that has moved or runs past the text, so a range edited history moved is left out here.
+            if (
+                isinstance(url, str)
+                and url  # OpenAI rejects an empty URL or file ID
+                and isinstance(title, str)
+                and isinstance(start, int)
+                and isinstance(end, int)
+                and 0 <= start <= end <= len(text)
+                and url in text[start:end]
+            ):
+                annotations.append(
+                    responses.response_output_text_param.AnnotationURLCitation(
+                        type='url_citation', url=url, title=title, start_index=start, end_index=end
+                    )
+                )
+        elif citation.get('type') == 'file_citation':
+            file_id, filename, index = citation.get('file_id'), citation.get('filename'), citation.get('index')
+            if isinstance(file_id, str) and file_id and isinstance(filename, str) and isinstance(index, int):
+                annotations.append(
+                    responses.response_output_text_param.AnnotationFileCitation(
+                        type='file_citation', file_id=file_id, filename=filename, index=index
+                    )
+                )
+    return annotations
+
+
 def _responses_citations_provider_details(
     annotations: Sequence[responses.response_output_text.Annotation],
 ) -> dict[str, Any]:
@@ -4407,7 +4448,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             message_item['content'] = [
                                 *message_item['content'],
                                 responses.ResponseOutputTextParam(
-                                    text=item.content, type='output_text', annotations=[]
+                                    text=item.content,
+                                    type='output_text',
+                                    # Citations are only replayed with the message ID of the output they came from.
+                                    annotations=_map_responses_citations_for_replay(
+                                        (item.provider_details or {}).get('citations'), item.content
+                                    ),
                                 ),
                             ]
                             if send_phase:
@@ -4518,7 +4564,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     type='web_search_call',
                                 )
                                 openai_messages.append(web_search_item)
-                            elif (  # pragma: no cover
+                            elif (
                                 item.tool_name == FileSearchTool.kind
                                 and item.tool_call_id
                                 and (args := item.args_as_dict())
