@@ -304,7 +304,8 @@ def _conversation(entries: list[JsonObject], *, main: bool) -> list[JsonObject]:
         (
             e
             for e in reversed(entries)
-            if e.get('type') in ('user', 'assistant') and not (main and e.get('isSidechain'))
+            # An attachment can come last: a message queued while the model worked, which no reply has answered yet.
+            if e.get('type') in ('user', 'assistant', 'attachment') and not (main and e.get('isSidechain'))
         ),
         None,
     )

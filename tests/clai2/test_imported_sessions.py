@@ -3,6 +3,7 @@
 import json
 import os
 from collections.abc import Sequence
+from dataclasses import replace
 from io import StringIO
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from pydantic import TypeAdapter
 from rich.console import Console
 from termflow.tui.completion import CompleteEvent, Document
 from termflow.tui.keys import Key
@@ -504,6 +506,41 @@ async def test_resume_by_id_saves_sub_agents_before_the_task_owner_opens(tmp_pat
         assert {task.id for task in owner.records.values()} == {
             task.id for task in claude_code_sessions.tasks(path, service.session.summary.id)
         }
+
+
+async def test_reimport_keeps_a_task_resumed_on_disk(tmp_path: Path) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    path = claude_agent_session(tmp_path)
+    await save_import(
+        store, find_import('claude', CLAUDE_ID), delegations=DelegationTasks(directory=tmp_path / 'tasks')
+    )
+    review = claude_code_sessions.tasks(path, 'conversation')[0]
+    saved = tmp_path / 'tasks' / f'{review.id}.json'
+    resumed = replace(review, run_id='f' * 32, output='Resumed')
+    saved.write_bytes(TypeAdapter(DelegationTask).dump_json(resumed))
+    # A later launch's owner has not opened, so only the file says the task was resumed.
+    await save_import(
+        store, find_import('claude', CLAUDE_ID), delegations=DelegationTasks(directory=tmp_path / 'tasks')
+    )
+    assert TypeAdapter(DelegationTask).validate_json(saved.read_bytes()).output == 'Resumed'
+
+
+def test_claude_code_import_keeps_a_message_queued_last(tmp_path: Path) -> None:
+    path = write_jsonl(
+        tmp_path / 'queued.jsonl',
+        [
+            claude_entry('u1', None, 'user', 'Start'),
+            claude_entry('a1', 'u1', 'assistant', [{'type': 'text', 'text': 'Working'}], model='claude-opus-5'),
+            claude_attachment(
+                'q1',
+                'a1',
+                {'type': 'queued_command', 'commandMode': 'prompt', 'prompt': 'Also this', 'origin': {'kind': 'human'}},
+            ),
+        ],
+    )
+    *_, last = claude_code_sessions.messages(path)
+    assert isinstance(last, ModelRequest) and isinstance(last.parts[0], UserPromptPart)
+    assert last.parts[0].content == 'Also this'
 
 
 def test_tail_records_skip_the_cut_line(tmp_path: Path) -> None:

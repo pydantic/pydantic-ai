@@ -17,6 +17,7 @@ from uuid import UUID, uuid5
 
 import anyio
 from anyio.to_thread import run_sync
+from pydantic import TypeAdapter
 
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
@@ -194,6 +195,19 @@ def merge(
     return entries[:limit]
 
 
+_TASK = TypeAdapter(DelegationTask)
+
+
+async def _saved_task(delegations: DelegationTasks, task_id: str) -> DelegationTask | None:
+    """The task as saved on disk, which an owner that has not opened yet does not hold."""
+    if delegations.directory is None:
+        return None
+    try:
+        return _TASK.validate_json(await anyio.Path(delegations.directory / f'{task_id}.json').read_bytes())
+    except (OSError, ValueError):
+        return None
+
+
 async def save_import(
     store: SqliteConversationStore, imported: ImportedSession, *, delegations: DelegationTasks | None = None
 ) -> str:
@@ -236,7 +250,8 @@ async def save_import(
             await anyio.Path(delegations.directory).mkdir(parents=True, exist_ok=True)
         for task in tasks:
             # Resuming a task gives it a new run ID; until then, it is the copy an earlier import saved.
-            if (saved_task := delegations.records.get(task.id)) is None or saved_task.run_id == task.run_id:
+            saved_task = delegations.records.get(task.id) or await _saved_task(delegations, task.id)
+            if saved_task is None or saved_task.run_id == task.run_id:
                 delegations.records[task.id] = task
                 await delegations.save(task)
     telemetry.record('conversation imported', source=imported.source, messages=len(messages), tasks=len(tasks))
