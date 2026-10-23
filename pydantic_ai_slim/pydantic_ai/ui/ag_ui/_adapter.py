@@ -529,7 +529,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     builder.add(feedback if feedback is not None else SystemPromptPart(content=system_msg.content))
 
                 case AssistantMessage(content=content, tool_calls=tool_calls_list):
-                    if content:
+                    # An empty answer still keeps its place as a response, so the request after it doesn't
+                    # merge into the one before it.
+                    if content or (content == '' and not tool_calls_list):
                         builder.add(TextPart(content=content))
                     if tool_calls_list:
                         for tool_call in tool_calls_list:

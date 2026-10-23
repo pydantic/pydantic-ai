@@ -3650,6 +3650,38 @@ def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
     assert (retry_part.content, retry_part.retry.cause) == ('Please try again', 'model_retry')
 
 
+def test_dump_load_roundtrip_empty_response() -> None:
+    """An empty answer reloads as its own response, so the request after it doesn't merge into the one before it."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Question')]),
+        ModelResponse(parts=[TextPart(content='')]),
+        ModelRequest(parts=[UserPromptPart(content='Answer, please.')]),
+        ModelResponse(parts=[TextPart(content='Sorry, here is the answer.')]),
+    ]
+
+    reloaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(original))
+    _sync_load_bookkeeping(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_load_messages_empty_content_with_tool_calls_adds_no_text() -> None:
+    """An assistant message with empty content that makes tool calls loads as just the calls."""
+    messages: list[Message] = [
+        UserMessage(id='user-1', content='Question'),
+        AssistantMessage(
+            id='assistant-1',
+            content='',
+            tool_calls=[ToolCall(id='call-1', function=FunctionCall(name='get_weather', arguments='{}'))],
+        ),
+        ToolMessage(id='tool-1', content='Sunny', tool_call_id='call-1'),
+    ]
+
+    assert [[part.part_kind for part in msg.parts] for msg in AGUIAdapter.load_messages(messages)] == snapshot(
+        [['user-prompt'], ['tool-call'], ['tool-return']]
+    )
+
+
 def test_dump_messages_preserves_part_order() -> None:
     """Dumping a `ModelRequest` keeps `ToolReturnPart`s interleaved with user prompts (regression for #5964).
 
