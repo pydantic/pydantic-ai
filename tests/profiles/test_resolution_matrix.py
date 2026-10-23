@@ -83,6 +83,9 @@ with try_import() as xai_imports:
 with try_import() as openai_imports:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.profiles.openai import (
+        _OpenAIJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.alibaba import AlibabaProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cerebras import CerebrasProvider
@@ -348,7 +351,7 @@ def test_openai_gpt_5_4():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_image_output': True,
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'json_schema_transformer': _OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
@@ -394,7 +397,7 @@ def test_openai_gpt_5_6():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_image_output': True,
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'json_schema_transformer': _OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
@@ -434,7 +437,7 @@ def test_openai_gpt_6_astra():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_image_output': True,
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'json_schema_transformer': _OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
@@ -581,7 +584,7 @@ def test_openai_gpt_4o():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_image_output': True,
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'json_schema_transformer': _OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
@@ -602,7 +605,7 @@ def test_openai_o3_mini():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_image_output': True,
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'json_schema_transformer': _OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,

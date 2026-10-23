@@ -19,6 +19,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.github import GITHUB_MCP_URL, GitHub
 
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
@@ -52,8 +53,12 @@ DepsT = TypeVar('DepsT')
 
 
 def transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
-    assert isinstance(toolset, MCPToolset)
-    result = toolset.client.transport
+    """The HTTP transport of the one MCP connection in `toolset`, looking through wrappers such as the read-only filter."""
+    leaves: list[AbstractToolset[DepsT]] = []
+    toolset.apply(leaves.append)
+    [connection] = leaves
+    assert isinstance(connection, MCPToolset)
+    result = connection.client.transport
     assert isinstance(result, StreamableHttpTransport)
     return result
 
@@ -132,6 +137,18 @@ class TestGitHub:
     def test_custom_id_is_forwarded(self, capability: GitHub[str | None]) -> None:
         assert capability.get_toolset().id == 'work-github'
 
+    @pytest.mark.parametrize(
+        'capability',
+        [
+            GitHub[str | None](id='work-github', auth='token', read_only=True),
+            GitHub[str | None](id='work-github', auth=per_user_token, read_only=True),
+        ],
+        ids=['token', 'function'],
+    )
+    def test_hosted_read_only_keeps_the_id(self, capability: GitHub[str | None]) -> None:
+        # Durable execution finds a run's held connection by the toolset's `id`.
+        assert capability.get_toolset().id == 'work-github'
+
     def test_defer_loading_needs_no_id(self, server: FastMCP) -> None:
         Agent(TestModel(), capabilities=[GitHub(client=server, defer_loading=True)])
 
@@ -141,6 +158,20 @@ class TestGitHub:
             match="Capability id 'github' is used by multiple GitHub capabilities that disagree on 'auth', 'read_only'",
         ):
             Agent(TestModel(), capabilities=[GitHub(auth='a'), GitHub(auth='b', read_only=True)])
+
+    @pytest.mark.parametrize('unset', [None, ''])
+    def test_unset_id_connects_under_the_default_id(self, unset: str | None) -> None:
+        assert GitHub[str | None](id=unset, auth='token').get_toolset().id == 'github'
+
+    def test_unset_ids_are_not_combined(self) -> None:
+        # Without an id there is nothing to combine on, so differing settings keep working as separate connections.
+        Agent(
+            TestModel(),
+            capabilities=[
+                GitHub(id=None, auth='token', toolsets=['repos'], include_instructions=False),
+                GitHub(id=None, auth='token', toolsets=['issues'], include_instructions=False),
+            ],
+        )
 
     @pytest.mark.parametrize(
         ('capability', 'include'),
@@ -170,10 +201,32 @@ class TestGitHub:
         monkeypatch.setenv('GITHUB_TOKEN', 'environment-token')
         assert bearer(GitHub().get_toolset()) == 'Bearer environment-token'
 
-    def test_missing_token_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_missing_token_raises_when_the_agent_is_built(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv('GITHUB_TOKEN', raising=False)
         with pytest.raises(UserError, match='Set `GITHUB_TOKEN`'):
-            GitHub().get_toolset()
+            Agent(TestModel(), capabilities=[GitHub()])
+
+    @pytest.mark.parametrize('auth', ['oauth', None], ids=['auth', 'environment'])
+    def test_oauth_token_raises(self, auth: str | None, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv('GITHUB_TOKEN', 'oauth')
+        capability = GitHub[str | None](auth=auth)
+        with pytest.raises(UserError, match="GitHub needs a token, not 'oauth'"):
+            capability.get_toolset()
+
+    @pytest.mark.parametrize(
+        'url',
+        ['https:///mcp', 'api.githubcopilot.com/mcp', 'ftp://api.githubcopilot.com/mcp/'],
+    )
+    def test_url_must_be_https(self, url: str) -> None:
+        with pytest.raises(UserError, match=r"`url` must be an `https://` URL; got '"):
+            GitHub(auth='token', url=url)
+
+    @pytest.mark.parametrize('url', ['http://api.githubcopilot.com/mcp/', 'http://127.0.0.1:8082/mcp'])
+    def test_plain_http_url_is_deprecated(self, url: str) -> None:
+        with pytest.warns(HarnessDeprecationWarning, match='sends the GitHub token unencrypted') as record:
+            capability = GitHub(auth='token', url=url)
+        assert record[0].filename == __file__
+        assert transport(capability.get_toolset()).url == url
 
     def test_empty_toolsets_raise(self) -> None:
         with pytest.raises(UserError, match='at least one tool group'):
@@ -202,6 +255,15 @@ class TestGitHub:
         url = 'https://copilot-api.acme.ghe.com/mcp'
         assert transport(GitHub(auth='token', url=url).get_toolset()).url == url
 
+    async def test_hosted_read_only_keeps_only_marked_tools(self, server: FastMCP) -> None:
+        # Stand in a server that ignores `X-MCP-Readonly` for the hosted connection, to show the client-side filter.
+        def ignore_header(leaf: AbstractToolset[None]) -> AbstractToolset[None]:
+            return MCPToolset[None](server) if isinstance(leaf, MCPToolset) else leaf
+
+        toolset = GitHub[None](auth='token', read_only=True).get_toolset().visit_and_replace(ignore_header)
+        result = await Agent(TestModel(), deps_type=type(None), toolsets=[toolset]).run('Use the tools')
+        assert result.output == '{"read_resource":"read"}'
+
 
 class TestPerRunAuth:
     async def test_each_run_connects_with_its_own_credential(self) -> None:
@@ -219,7 +281,7 @@ class TestPerRunAuth:
 
     async def test_provider_returning_oauth_raises(self) -> None:
         capability = GitHub[str | None](auth=per_user_token)
-        with pytest.raises(UserError, match="must return an API key or token, not 'oauth'"):
+        with pytest.raises(UserError, match="GitHub needs a token, not 'oauth'"):
             await connections_for(capability, 'oauth')
 
     async def test_read_only_applies_per_run(self) -> None:
