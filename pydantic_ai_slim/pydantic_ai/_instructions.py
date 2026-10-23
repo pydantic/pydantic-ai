@@ -483,12 +483,26 @@ class LoadedInstructionValues:
         a UI client can edit and sanitization keeps, so a diff against it could quote the client's text in the
         system voice: the first change after a load is rendered in full.
         """
-        capability_id = _loaded_block_capability_id(change.id)
-        assert capability_id is not None
+        capability_id = _changed_capability_id(change)
         previous = self.values[capability_id] if capability_id in self._changed else None
         self.values[capability_id] = change.content
         self._changed.add(capability_id)
         return previous
+
+
+def _changed_capability_id(change: InstructionDeltaPart) -> str:
+    """The capability a change `LoadedInstructionValues.tracks` accepted is to."""
+    capability_id = _loaded_block_capability_id(change.id)
+    assert capability_id is not None
+    return capability_id
+
+
+def loaded_part_capability_id(part: InstructionPart) -> str | None:
+    """The loaded capability an instruction part belongs to, as `resolve_loaded_capability_instructions` keys it."""
+    if part.id is None:
+        return None
+    source = part.id.source
+    return source.id if isinstance(source, CapabilityInstructionSource) else None
 
 
 def _loaded_block_capability_id(instruction_id: InstructionId | None) -> str | None:
@@ -503,8 +517,8 @@ def _loaded_texts(parts: Sequence[InstructionPart]) -> dict[str, str | None]:
     """Each loaded capability's joined text, from its parts as `resolve_loaded_capability_instructions` keys them."""
     grouped: dict[str, list[InstructionPart]] = {}
     for part in parts:
-        if part.id is not None and isinstance(source := part.id.source, CapabilityInstructionSource):
-            grouped.setdefault(source.id, []).append(part)
+        if (capability_id := loaded_part_capability_id(part)) is not None:
+            grouped.setdefault(capability_id, []).append(part)
     return {
         capability_id: InstructionPart.join([part for part in group if part.content])
         for capability_id, group in grouped.items()
@@ -531,7 +545,7 @@ def restate_loaded_instructions(
     for index, message in enumerate(messages):
         for part in message.parts:
             if loaded.tracks(part):
-                unstated.pop(_loaded_block_capability_id(part.id) or '', None)
+                unstated.pop(_changed_capability_id(part), None)
                 loaded.apply(part)
                 continue
             loaded.observe(part)
