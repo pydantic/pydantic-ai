@@ -107,6 +107,18 @@
       "fingerprint": "f5277165732c4c6ae79c0ff3e286f1fbccca262094e6dee75b26bfca7455c244",
       "reason": "False positive: only adds `repr=False` so the credential-bearing URL stays out of `repr`; the attribute's type, default, and constructor parameter are unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "7b7bb0edeaf04acbcebcda52de0cd901a4673cf5e38fba4a38dbc26ad616f2a2",
+      "reason": "Adds `ThinkingEffortDeltaPart` to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11111"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "d2ab7cdec5b31249c317a9e385fa50cdb0cbd005f82b572a4a343c98b4431e83",
+      "reason": "Adds `ThinkingEffortDeltaEvent` to `HandleResponseEvent`; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11111"
     }
   ]
 }
