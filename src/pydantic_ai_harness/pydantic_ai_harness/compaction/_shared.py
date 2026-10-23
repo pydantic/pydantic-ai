@@ -901,10 +901,18 @@ def split_legacy_memory(messages: list[ModelMessage]) -> list[ModelMessage]:
             if not isinstance(part, UserPromptPart) or isinstance(part.content, str) or len(part.content) < 2:
                 parts.append(part)
                 continue
-            user = [item for item in part.content if not _is_legacy_memory(item)]
-            if user:
-                parts.append(replace(part, content=user))
-            parts.extend(replace(part, content=[item]) for item in part.content if _is_legacy_memory(item))
+            # In order: each snapshot its own part, and the user's items between them kept together.
+            group: list[UserContent] = []
+            for item in part.content:
+                if not _is_legacy_memory(item):
+                    group.append(item)
+                    continue
+                if group:
+                    parts.append(replace(part, content=group))
+                    group = []
+                parts.append(replace(part, content=[item]))
+            if group:
+                parts.append(replace(part, content=group))
         out.append(replace(message, parts=parts))
     return out
 

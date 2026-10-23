@@ -182,9 +182,10 @@ class Memory(AbstractCapability[AgentDepsT]):
         clone._run_continues = _continues_earlier_work(ctx)
         store, scope = clone._resolve_scope(ctx)
         clone._resolved_scope = (store.bind(ctx.workspace) if isinstance(store, FileStore) else store, scope)
-        # The snapshot the model sees as the run starts, captured before any compaction hook can drop it, so a
-        # run that continues earlier work can put back the same one.
-        clone._run_snapshot = _latest_snapshot(post_compaction_window(ctx.messages), snapshot_metadata(scope, self.id))
+        # The latest snapshot recorded in the history the run starts with, before any compaction hook runs, so a run
+        # that continues earlier work can put back the same one after the boundary. Taken from the whole history:
+        # a provider can compact in the very response that asked for the approval being resumed.
+        clone._run_snapshot = _latest_snapshot(ctx.messages, snapshot_metadata(scope, self.id))
         return clone
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:

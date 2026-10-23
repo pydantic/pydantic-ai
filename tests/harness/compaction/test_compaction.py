@@ -5500,6 +5500,10 @@ class TestHarnessData:
         assert _kept_texts(compacted.messages) == user_texts
         if order != 'memory_only':
             assert '<message role="user">\nWhat is on my list?\n</message>' in prompt
+            # The transcript keeps the order they were written in.
+            memory_at = prompt.index('<harness_data origin="pydantic-ai-harness.memory.v1">')
+            user_at = prompt.index('<message role="user">\nWhat is on my list?')
+            assert (memory_at < user_at) == (order == 'memory_first')
 
     @pytest.mark.parametrize('memory_first', [True, False])
     async def test_first_user_message_kept_by_default_is_split_from_legacy_memory(self, memory_first: bool) -> None:

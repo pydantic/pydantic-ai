@@ -2078,6 +2078,43 @@ class TestInjection:
         assert len(sent) == 2
         assert _memory_contexts(sent[1]) == [snapshot]
 
+    @pytest.mark.skipif(not provider_imports(), reason='anthropic not installed')
+    async def test_approval_resume_after_native_compaction_restores_the_snapshot_past_the_boundary(self) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- likes tea')
+        sent: list[list[ModelMessage]] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(messages)
+            if len(sent) == 1:
+                # Anthropic compacts in the same response that asks for the approval.
+                return ModelResponse(
+                    parts=[
+                        CompactionPart(content='A summary without the memory.', provider_name='anthropic'),
+                        ToolCallPart('lookup', {}, tool_call_id='lookup'),
+                    ]
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        def lookup() -> str:
+            return 'found'
+
+        agent = Agent(FunctionModel(model), capabilities=[Memory(store=store)], output_type=[str, DeferredToolRequests])
+        agent.tool_plain(requires_approval=True)(lookup)
+        first = await agent.run('what do I like?')
+        [snapshot] = _memory_contexts(first.all_messages())
+
+        await agent.run(
+            message_history=first.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={'lookup': True}),
+        )
+
+        # The resumed request carries the snapshot after the boundary, where Anthropic still sends it.
+        trimmed = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key='x'))._trim_before_compaction(  # pyright: ignore[reportPrivateUsage]
+            sent[1]
+        )
+        assert _memory_contexts(trimmed) == [snapshot]
+
     async def test_memory_loaded_mid_run_waits_for_the_next_prompt(self) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- likes tea')
