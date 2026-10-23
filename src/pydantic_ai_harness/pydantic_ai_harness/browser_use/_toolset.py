@@ -23,7 +23,6 @@ from pydantic_ai_harness.browser_use._settings import BrowserAgentSettings
 
 try:
     from browser_use import Agent as _BrowserUseAgent, Tools
-    from browser_use.agent.views import AgentHistoryList
     from browser_use.browser import BrowserProfile, BrowserSession
     from browser_use.browser.profile import DOMAIN_OPTIMIZATION_THRESHOLD
     from browser_use.llm.base import BaseChatModel
@@ -336,8 +335,7 @@ class BrowserAgentHistory(Protocol):
     `structured_output` is the final result parsed against the configured output
     schema (`None` when no schema was configured; raises a pydantic
     `ValidationError` when the result does not parse). A real `AgentHistoryList`
-    satisfies this protocol as-is; for one, `browse_web` also reads the verdict of
-    browser-use's judge.
+    satisfies this protocol as-is.
     """
 
     def final_result(self) -> None | str:
@@ -452,8 +450,8 @@ class BrowserAgentFactory(Protocol):
         ...  # pragma: no cover
 
 
-def _safe_tools(settings: BrowserAgentSettings, *, has_secrets: bool) -> Tools[None]:
-    """Return tools without unapproved file reads or uploads, and without `evaluate` beside secrets.
+def _safe_tools(settings: BrowserAgentSettings) -> Tools[None]:
+    """Return tools without unapproved file reads or uploads.
 
     browser-use 0.13.7's `read_file` action calls `FileSystem.read_file_structured`,
     which imports pypdf 6.10.2 for PDFs. Re-evaluate this restriction when
@@ -465,7 +463,7 @@ def _safe_tools(settings: BrowserAgentSettings, *, has_secrets: bool) -> Tools[N
     the `evaluate` action could therefore send a substituted value to any origin, so it is
     removed.
     """
-    excluded = ['read_file', 'upload_file', *(['evaluate'] if has_secrets else [])]
+    excluded = ['read_file', 'upload_file']
     if settings.tools is None:
         return Tools(exclude_actions=excluded, display_files_in_done_text=settings.display_files_in_done_text)
     for action in excluded:
@@ -496,6 +494,9 @@ def default_browser_agent(request: BrowserTask) -> BrowserAgent:
     pass through unchanged.
     """
     settings = request.settings
+    if request.sensitive_data is not None:
+        # A no-op for a request `browse_web` built; it covers a `BrowserTask` built by hand.
+        settings = _without_evaluate(settings)
     # Explicit type arguments: `Agent`'s context and structured-output type
     # variables are unconstrained by this call, and neither is used here.
     # Signal handling stays off: the sub-agent must not install its own SIGINT
@@ -509,7 +510,7 @@ def default_browser_agent(request: BrowserTask) -> BrowserAgent:
         sensitive_data=request.sensitive_data,
         extend_system_message=request.extend_system_message,
         enable_signal_handler=False,
-        tools=_safe_tools(settings, has_secrets=request.sensitive_data is not None),
+        tools=_safe_tools(settings),
         override_system_message=settings.override_system_message,
         max_failures=settings.max_failures,
         max_actions_per_step=settings.max_actions_per_step,
@@ -551,22 +552,6 @@ def default_browser_agent(request: BrowserTask) -> BrowserAgent:
         generate_gif=settings.generate_gif,
         demo_mode=settings.demo_mode,
     )
-
-
-def _judge_rejection(history: BrowserAgentHistory) -> str | None:
-    """The judge's failure reason when browser-use's judge rejected the final result, else `None`.
-
-    browser-use attaches the judge's verdict to the final action result without changing the
-    agent's own success flag, so `is_successful()` alone reports a run the judge failed as a
-    success. Only a real `AgentHistoryList` carries a verdict. Called only for a history
-    with a final result, which browser-use reads from that same last action result.
-    """
-    if not isinstance(history, AgentHistoryList):
-        return None
-    judgement = history.history[-1].result[-1].judgement
-    if judgement is None or judgement.verdict:
-        return None
-    return judgement.failure_reason or 'no reason given'
 
 
 def _disable_browser_use_telemetry(agent: BrowserAgent) -> None:
@@ -726,13 +711,6 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         # answer.
         if history.is_successful() is False:
             return f'The browser agent could not fully complete the task. Its final result: {answer}'
-        rejection = _judge_rejection(history)
-        if rejection is not None:
-            return (
-                f"The browser agent reported success, but browser-use's judge rejected the result "
-                f'({self._redact(rejection)}). '
-                f'Its final result: {answer}'
-            )
         return answer
 
     def _render_answer(self, result: str, history: BrowserAgentHistory) -> str:
@@ -792,9 +770,23 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         return self._render_result(history)
 
     def _redact_json(self, value: JsonValue) -> JsonValue:
-        """`value` with every secret in its strings replaced; any other leaf holding one becomes a redacted string."""
+        """`value` with every secret in its strings replaced; any other leaf holding one becomes a redacted string.
+
+        Raises `ModelRetry` when two keys of one object redact to the same text, which a
+        placeholder shared by domain-scoped secrets allows, rather than dropping one of them.
+        """
         if isinstance(value, dict):
-            return {self._redact(key): self._redact_json(item) for key, item in value.items()}
+            redacted_object: dict[str, JsonValue] = {}
+            for key, item in value.items():
+                redacted_key = self._redact(key)
+                if redacted_key in redacted_object:
+                    raise ModelRetry(
+                        'The browser agent finished, but more than one key in its result redacts to '
+                        f'`{redacted_key}`, so redacting it would drop an entry. '
+                        'Ask for a result that is not keyed by secret values.'
+                    )
+                redacted_object[redacted_key] = self._redact_json(item)
+            return redacted_object
         if isinstance(value, list):
             return [self._redact_json(item) for item in value]
         if isinstance(value, str):

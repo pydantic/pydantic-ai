@@ -1,3 +1,4 @@
+# description: Runs Claude Code when an owner, member, or collaborator mentions @claude on an issue or pull request.
 name: '@claude'
 
 on:

@@ -75,9 +75,9 @@ print(result.output)
 
 Each `browse_web` call runs the sub-agent's loop to completion in a browser
 session. The tool result is the sub-agent's final text. When the sub-agent
-stops without finishing (repeated failures), reports its own result incomplete,
-or has its result rejected by browser-use's judge, the tool says so instead of
-presenting a partial answer as a clean one.
+stops without finishing (repeated failures) or reports its own result
+incomplete, the tool says so instead of presenting a partial answer as a clean
+one.
 
 ## The sub-agent's model
 
@@ -116,8 +116,8 @@ Two cost knobs to know about:
   on each of its model calls. Use `'auto'` to follow the model's declared
   vision support, or `False` for text-heavy tasks on a budget.
 - browser-use runs a **judge** model call at the end of each task by default,
-  evaluating the result; the tool reports a result the judge rejects. Disable it
-  with `BrowserAgentSettings(use_judge=False)` if that extra call matters.
+  evaluating the result. Disable it with
+  `BrowserAgentSettings(use_judge=False)` if that extra call matters.
 
 ## Agent settings
 
@@ -217,7 +217,8 @@ whenever `sensitive_data` is configured, BrowserUse:
   base64, or a change of letter case, are not matched. Every occurrence is
   replaced, including inside other words, so a very short value can garble the
   result. Schema output stays valid JSON: a non-string field holding a secret
-  becomes its placeholder string.
+  becomes its placeholder string, and an object with two keys that redact alike
+  raises `ModelRetry` instead of dropping one.
 
 A domain-scoped secret is still substituted into a navigation made from its own
 domain, so add `allowed_domains` to bound where such a request can go.
@@ -384,7 +385,7 @@ substitute a fake in tests so nothing launches a browser. It receives a
 resolved `settings`, and returns the agent to run:
 
 ```python
-from browser_use import Agent as BrowserUseAgent, Tools
+from browser_use import Agent as BrowserUseAgent
 
 from pydantic_ai_harness import BrowserUse
 from pydantic_ai_harness.browser_use import BrowserAgent, BrowserTask
@@ -400,8 +401,8 @@ def factory(request: BrowserTask) -> BrowserAgent:
         sensitive_data=request.sensitive_data,
         extend_system_message=request.extend_system_message,
         enable_signal_handler=False,
-        # Page scripts can send a substituted secret anywhere, so drop `evaluate` beside secrets.
-        tools=Tools(exclude_actions=['evaluate']) if request.sensitive_data else None,
+        # Arrives without `evaluate` when secrets are set: page scripts could send one anywhere.
+        tools=request.settings.tools,
         use_judge=request.settings.use_judge,
         skill_ids=['*'],
     )
@@ -416,9 +417,9 @@ factory, `default_browser_agent`, forwards all of `settings`). The factory
 must not start or stop the session itself; the tool owns the session
 lifecycle. `request.sensitive_data` arrives with flat values keyed by the
 allowlist entries; when it is set, `request.settings.tools` arrives without
-browser-use's `evaluate` action. A factory that builds its own `Tools` or agent
-must exclude `evaluate` itself, as the example does: the capability cannot
-enforce it on tools it never sees.
+browser-use's `evaluate` action, so forward it as the example does. A factory
+that builds its own `Tools` or agent must exclude `evaluate` itself: the
+capability cannot enforce it on tools it never sees.
 
 ## BrowserUse vs PlaywrightBrowser
 

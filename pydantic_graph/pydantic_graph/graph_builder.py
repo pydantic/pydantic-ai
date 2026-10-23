@@ -939,7 +939,15 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 if branch_source in {Any, object}:
                     inputs_match = True
                 elif get_origin(branch_source) is Literal:
-                    inputs_match = inputs in get_args(branch_source)
+                    literal_values = get_args(branch_source)
+                    if isinstance(inputs, int):
+                        # `True == 1`, but `Literal[True]` and `Literal[1]` are distinct choices: match bools only to bools.
+                        literal_values = tuple(
+                            v
+                            for v in literal_values
+                            if not isinstance(v, int) or isinstance(v, bool) == isinstance(inputs, bool)
+                        )
+                    inputs_match = inputs in literal_values
                 else:
                     try:
                         inputs_match = isinstance(inputs, branch_source)

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import anyio
 import pytest
@@ -14,6 +17,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
+    CommandResult,
     ReadOnlyWorkspace,
     Workspace,
     WorkspaceOutputLimitError,
@@ -21,10 +25,13 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapSandbox
+from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend, _backend as ssh_backend
 from pydantic_ai_harness.ssh_workspace._backend import _STOP  # pyright: ignore[reportPrivateUsage]
 
 from .._fake_remote_tools import FakeRemoteTools, install_fake_remote_tools
+from .._tool_calls import call_tool
 
 pytestmark = [
     pytest.mark.anyio,
@@ -35,6 +42,15 @@ pytestmark = [
 @pytest.fixture
 def tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeRemoteTools:
     return install_fake_remote_tools(tmp_path, monkeypatch)
+
+
+@pytest.fixture
+def skip_time(monkeypatch: pytest.MonkeyPatch) -> Callable[[float], None]:
+    """Moves the clock the backend reads forward, so a test uses up a timeout without waiting it out."""
+    clock = ssh_backend.anyio.current_time
+    skipped: list[float] = []
+    monkeypatch.setattr(ssh_backend.anyio, 'current_time', lambda: clock() + sum(skipped))
+    return skipped.append
 
 
 async def test_commands_and_files_reach_the_remote_working_dir(tools: FakeRemoteTools, tmp_path: Path) -> None:
@@ -177,14 +193,14 @@ async def test_resolving_the_working_dir_counts_against_the_first_timeout(
     tools: FakeRemoteTools, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The stop after the timeout reaches a host that stalls too (for 30 seconds), so it gives up
-    # after its grace period, shortened here from 2 seconds.
+    # after its grace period, shortened here from 2 seconds. The bound only has to tell that from the stall.
     monkeypatch.setattr(ssh_backend, '_STOP_TIMEOUT', 0.5)
     started = anyio.current_time()
 
     with pytest.raises(WorkspaceTimeoutError):
         await SSHWorkspaceBackend('slow').run(['true'], timeout=0.5)
 
-    assert anyio.current_time() - started < 2.5
+    assert anyio.current_time() - started < 10
 
 
 async def test_stderr_from_a_background_child_after_the_command_is_kept(tools: FakeRemoteTools) -> None:
@@ -210,13 +226,107 @@ async def test_a_background_child_cannot_replace_the_exit_code(tools: FakeRemote
     assert '__pydantic_ai_ssh_done__0' in result.stderr
 
 
+@pytest.mark.parametrize('sandboxed', [False, True], ids=['ssh', 'bubblewrap'])
+async def test_a_long_quote_heavy_shell_command_starts(tools: FakeRemoteTools, tmp_path: Path, sandboxed: bool) -> None:
+    """A model's 60 KB inline script full of single quotes runs (#10758).
+
+    Shell-quoting turns every `'` into `'"'"'`, and Linux caps one argument at 128 KiB (macOS caps all of them
+    together at 1 MiB), so the script must not reach `ssh` as an argument, nor the host as a quoted one.
+    """
+    remote = SSHWorkspace[None]('box', working_dir=str(tmp_path))
+    output = await call_tool(
+        [BubblewrapSandbox[None](remote) if sandboxed else remote, Shell[None](tools=['shell'])],
+        'shell',
+        {'command': ': ' + "'a' " * 15_000 + '\necho started'},
+    )
+
+    assert output.startswith('started\n')
+
+
+async def test_a_command_reading_stdin_sees_eof_not_the_rest_of_the_script(tools: FakeRemoteTools) -> None:
+    """The script reaches the host on stdin, but the command reads none of it."""
+    result = await SSHWorkspaceBackend('box').run('cat; printf after', shell=True)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, 'after', '')
+
+
+@pytest.mark.parametrize(('destination', 'timeout'), [('box', None), ('chatty', 10.0)])
+async def test_an_ssh_that_does_not_forward_its_input_gets_the_script_as_an_argument(
+    tools: FakeRemoteTools, destination: str, timeout: float | None
+) -> None:
+    """`-n` (as `-f` and `StdinNull` do) gives `ssh` an empty input, so the script goes on the command line, as before."""
+    backend = SSHWorkspaceBackend(destination, ssh_args=['-n'])
+
+    first = await backend.run('printf first', shell=True, timeout=timeout)
+    second = await backend.run('printf second', shell=True, timeout=timeout)
+
+    assert (first.stdout, second.stdout) == ('first', 'second')
+    # Only the first attempt, which resolved the working directory and ran nothing, went on the input. The tag
+    # stays an argument of the remote `sh`, where a stop finds it.
+    tag = r'__pydantic_ai_ssh_job_[0-9a-f]{16}'
+    on_input, *as_argument = tools.ssh_commands
+    assert re.fullmatch(rf'/bin/sh -s {tag}', on_input)
+    assert len(as_argument) == 3
+    assert all(re.fullmatch(rf"/bin/sh -c '.*' {tag}", command, re.DOTALL) for command in as_argument)
+
+
+async def test_concurrent_first_commands_over_an_ssh_that_does_not_forward_its_input_all_run(
+    tools: FakeRemoteTools,
+) -> None:
+    """Each falls back on its own: one finding out first doesn't make the others' empty attempts look like failures."""
+    backend = SSHWorkspaceBackend('box', ssh_args=['-n'])
+    outputs: list[str] = []
+
+    async def run(text: str) -> None:
+        outputs.append((await backend.run(f'printf {text}', shell=True)).stdout)
+
+    async with anyio.create_task_group() as group:
+        for text in ('a', 'b', 'c'):
+            group.start_soon(run, text)
+
+    assert sorted(outputs) == ['a', 'b', 'c']
+
+
+async def test_a_timeout_used_up_by_the_input_attempt_never_starts_the_command(
+    tools: FakeRemoteTools, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, skip_time: Callable[[float], None]
+) -> None:
+    backend = SSHWorkspaceBackend('box', working_dir=str(tmp_path), ssh_args=['-n'])
+    runner = backend._runner  # pyright: ignore[reportPrivateUsage]
+    run = runner.run
+
+    async def slow_run(*args: Any, **kwargs: Any) -> CommandResult:
+        result = await run(*args, **kwargs)
+        skip_time(10)
+        return result
+
+    monkeypatch.setattr(runner, 'run', slow_run)
+
+    with pytest.raises(
+        WorkspaceTimeoutError, match=r'^command timed out after 5s while connecting and was not started$'
+    ):
+        await backend.run(['touch', 'started'], timeout=5)
+    assert not (tmp_path / 'started').exists()
+    # No second connection was wasted on the command, and the next one goes straight to the argument form.
+    assert len(tools.ssh_commands) == 1
+    assert (await backend.run('printf ok', shell=True)).stdout == 'ok'
+    assert [command.startswith('/bin/sh -c ') for command in tools.ssh_commands] == [False, True, True]
+
+
+async def test_a_login_that_runs_nothing_and_exits_0_is_unavailable(tools: FakeRemoteTools) -> None:
+    """As before stdin carried the script: a host whose login ignores the command (a `ForceCommand`) runs none."""
+    with pytest.raises(
+        WorkspaceUnavailableError, match=r'^SSH workspace ignoring is unavailable: `ssh` exited with code 0$'
+    ):
+        await SSHWorkspaceBackend('ignoring').working_dir()
+
+
 async def test_a_timeout_used_up_while_connecting_never_starts_the_command(
-    tools: FakeRemoteTools, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tools: FakeRemoteTools, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, skip_time: Callable[[float], None]
 ) -> None:
     backend = SSHWorkspaceBackend('box', working_dir=str(tmp_path))
 
     async def slow_resolve(*, timeout: float | None) -> str:
-        await anyio.sleep(0.3)
+        skip_time(0.3)
         return str(tmp_path)
 
     monkeypatch.setattr(backend, '_resolve_working_dir', slow_resolve)
@@ -232,7 +342,7 @@ async def test_an_empty_argv_is_rejected(tools: FakeRemoteTools) -> None:
 
 
 async def test_a_timeout_is_raised_about_on_time(tools: FakeRemoteTools) -> None:
-    """Stopping the remote command costs one round trip, not the `SIGKILL` grace period."""
+    """Stopping the remote command costs one round trip, not a 2-second grace period."""
     backend = SSHWorkspaceBackend('box')
     await backend.working_dir()
     started = anyio.current_time()
@@ -240,8 +350,9 @@ async def test_a_timeout_is_raised_about_on_time(tools: FakeRemoteTools) -> None
     with pytest.raises(WorkspaceTimeoutError):
         await backend.run(['sleep', '30'], timeout=0.5)
 
-    # About 0.6s here; waiting out the grace period would make it at least 1.5s.
-    assert anyio.current_time() - started < 1.45
+    # About 0.6s here. The fake runs the command locally, so the timeout's kill already ends it and the stop finds
+    # nothing to kill. Waiting out a 2-second grace (the stop's timeout, the reap, a held pipe) takes 2.5s or more.
+    assert anyio.current_time() - started < 2.4
 
 
 async def test_the_capability_attaches_by_ref_only_to_its_own_host(tools: FakeRemoteTools, tmp_path: Path) -> None:

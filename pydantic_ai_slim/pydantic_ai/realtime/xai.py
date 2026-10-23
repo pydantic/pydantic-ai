@@ -44,6 +44,9 @@ try:
         ConversationItem,
         ConversationItemAdded,
         ConversationItemCreatedEvent,
+        InputAudioBufferCommittedEvent,
+        InputAudioBufferSpeechStartedEvent,
+        InputAudioBufferSpeechStoppedEvent,
         RealtimeConversationItemFunctionCall,
         RealtimeConversationItemFunctionCallOutput,
         RealtimeResponseUsage,
@@ -59,7 +62,6 @@ except ImportError as _import_error:  # pragma: no cover
         '`pip install "pydantic-ai-slim[xai-realtime]"`'
     ) from _import_error
 
-from .._instrumentation import get_instructions
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import BinaryAudio, ModelMessage, RealtimeSessionErrorEvent
@@ -67,12 +69,13 @@ from ..models import ModelRequestParameters
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._lifecycle import InputId
+from ._lifecycle import InputId, LifecycleEvent, ResponseStarted
 from ._openai_lifecycle import AudioCommit, OpenAILifecycle
 from ._openai_protocol import (
     INPUT_AUDIO_BUFFER_APPEND_EVENT,
     INPUT_AUDIO_BUFFER_CLEAR_EVENT,
     INPUT_AUDIO_BUFFER_COMMIT_EVENT,
+    ProtocolResponse,
     client_event_id,
     config_interrupts_response_on_speech,
     connect_openai_protocol,
@@ -84,7 +87,7 @@ from ._openai_protocol import (
     tool_def_to_openai,
     turn_detection_config,
 )
-from ._utils import inject_trace_context, resolve_advertised_tools
+from ._utils import inject_trace_context, resolve_advertised_tools, session_instructions
 from .codec import (
     CancelResponse,
     ClearAudio,
@@ -260,6 +263,53 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     return event
 
 
+class _XaiVadLifecycle(OpenAILifecycle):
+    """The OpenAI lifecycle under xAI's server VAD, which can take back a stop.
+
+    xAI commits a spoken turn a few hundred milliseconds after its VAD hears it stop, and starts the reply in
+    between. If the user speaks again before the commit, xAI reports `speech_started` again for the same item, and
+    drops the reply it started without ever ending it: no `response.done` comes for it (recorded live). So the turn
+    goes on, as the turn already under way rather than a new one, and the dropped reply ends here, cancelled, as a
+    barge-in would cancel it.
+    """
+
+    def __init__(self, *, transcribes: bool) -> None:
+        super().__init__(transcribes=transcribes, acknowledges_commits=False)
+        self._stopped: dict[str, str | None] = {}
+        """Spoken turns VAD heard stop and hasn't committed yet, each with the reply xAI started for it, if any."""
+
+    def speech_stopped(self, data: dict[str, Any]) -> list[LifecycleEvent]:
+        if item_id := InputAudioBufferSpeechStoppedEvent.model_validate(data).item_id:  # pragma: no branch
+            self._stopped[item_id] = None
+        return super().speech_stopped(data)
+
+    def response_created(
+        self, response: ProtocolResponse, *, outstanding: tuple[str, tuple[InputId, ...]] | None
+    ) -> list[LifecycleEvent]:
+        events = super().response_created(response, outstanding=outstanding)
+        for event in events:
+            if isinstance(event, ResponseStarted) and event.user_turn_id in self._stopped:
+                self._stopped[event.user_turn_id] = event.response_id
+        return events
+
+    def speech_started(self, data: dict[str, Any]) -> list[LifecycleEvent]:
+        item_id = InputAudioBufferSpeechStartedEvent.model_validate(data).item_id
+        if item_id not in self._stopped:
+            return super().speech_started(data)
+        # The user goes on with the turn VAD heard stop: it is under way again.
+        reply = self._stopped.pop(item_id)
+        self._speaking[item_id] = None
+        if reply is None or reply not in self._open:
+            return []
+        # The reply xAI started at the stop is dropped: the turn is unanswered until the reply to its new stop.
+        self._unclaimed_turn = item_id
+        return [self._end(reply, 'cancelled', None, None)]
+
+    def audio_committed(self, data: dict[str, Any]) -> list[LifecycleEvent]:
+        self._stopped.pop(InputAudioBufferCommittedEvent.model_validate(data).item_id, None)
+        return super().audio_committed(data)
+
+
 class XaiRealtimeConnection(OpenAIRealtimeConnection):
     """A live WebSocket connection to the xAI Grok Voice realtime API.
 
@@ -304,9 +354,11 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         )
         # With turn detection off, xAI doesn't commit audio it heard no speech in, so a commit it never acknowledged
         # is a turn only if it did. With it on, xAI ignores a commit of ours altogether (no acknowledgement, no error;
-        # checked live): it commits only what its VAD hears.
-        self._lifecycle = OpenAILifecycle(
-            transcribes=input_transcription_enabled, commits_need_speech=manual_turns, acknowledges_commits=manual_turns
+        # checked live): it commits only what its VAD hears, and can take back the stop it heard (`_XaiVadLifecycle`).
+        self._lifecycle = (
+            OpenAILifecycle(transcribes=input_transcription_enabled, commits_need_speech=True)
+            if manual_turns
+            else _XaiVadLifecycle(transcribes=input_transcription_enabled)
         )
         self._conversation_id = conversation_id
         # xAI reports `billable_audio_seconds` as the conversation's running total, not the response's own
@@ -699,7 +751,7 @@ class XaiRealtimeModel(RealtimeModel):
         settings = cast('XaiRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         reconnect = settings.get('reconnect')
         handshake_timeout = settings.get('handshake_timeout', 30.0)
-        instructions = get_instructions(messages, model_request_parameters) or ''
+        instructions = session_instructions(messages, model_request_parameters)
         session_config = self._session_config(
             instructions=instructions, tools=model_request_parameters.function_tools, model_settings=settings
         )
