@@ -195,7 +195,7 @@ async def test_prefect_concurrent_workspace_runs_keep_their_environments_on_retr
         owner = await workspace.read_text('owner.txt')
         if label == 'right':
             right_finished.set()
-        else:
+        elif attempts:
             left_replayed.set()
         results[label] = result.run_id, workspace.ref.id, owner
 
