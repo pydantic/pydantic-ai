@@ -499,11 +499,6 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     ) and not model_name.startswith('gpt-5.4-nano')
     supported_native_tools = _OPENAI_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _OPENAI_BASE_BUILTINS
 
-    # The native `computer` tool is accepted by the same families, verified live 2026-10-22 on gpt-5.4, gpt-5.4-mini,
-    # gpt-5.5, gpt-5.6 and the four GPT-6 models; gpt-5.4-nano and gpt-5.2 reject it with a 400.
-    # See https://developers.openai.com/api/docs/guides/tools-computer-use.
-    supports_computer_tool = supports_tool_search
-
     # Explicit prompt cache breakpoints are supported on gpt-5.6 and later models, on both the
     # Chat Completions and Responses APIs. Like the other gates in this function, this enumerates
     # known versions rather than matching open-endedly.
@@ -531,7 +526,6 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_responses_supports_reasoning_context=reasoning.supports_context,
         openai_supports_phase=supports_phase,
         openai_supports_prompt_cache_breakpoints=supports_prompt_cache_breakpoints,
-        openai_supports_computer_tool=supports_computer_tool,
         openai_supports_minimal_reasoning_effort=not model_name.startswith(('gpt-5.6', *_GPT_6_MODEL_PREFIXES)),
         supported_native_tools=supported_native_tools,
     )

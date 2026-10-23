@@ -44,12 +44,8 @@ async def main():
 
 Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them.
 
-On a model trained with a computer tool of its own, the `computer` tool is sent as that native tool, so the model uses
-the vocabulary it was trained on: OpenAI's `computer` tool on GPT-5.4 and later. Every other model with image input
-gets the same tool as a function. OpenAI can attach safety checks to a call, which then
-[waits for approval](#settings); approving it acknowledges the checks to OpenAI. With `keep_screenshots` set, each
-request changes earlier history, so OpenAI's `openai_previous_response_id` sends the whole conversation again instead
-of continuing from the last response.
+GPT-5.4 and later, except GPT-5.4 nano, on OpenAI's own API get `computer` as OpenAI's native computer tool, the
+format they were trained on. Every other model that accepts images gets it as a function tool.
 
 ## Requirements
 

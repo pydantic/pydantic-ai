@@ -342,7 +342,6 @@ def test_bedrock_mantle_profiles() -> None:
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_phase': True,
             'openai_supports_prompt_cache_breakpoints': True,
-            'openai_supports_computer_tool': True,
             'bedrock_mantle_interface': 'openai-responses',
             'openai_supports_minimal_reasoning_effort': False,
             'openai_responses_tool_call_ids_are_response_scoped': True,

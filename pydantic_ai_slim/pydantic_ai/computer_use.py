@@ -85,8 +85,7 @@ COMPUTER_KIND = ToolKind._core('computer', args=_ComputerArgs, content=_Computer
 def computer_tool(model_request_parameters: ModelRequestParameters) -> ToolDefinition | None:
     """The `computer` tool among a request's tools, which a model adapter may send as its provider's native tool.
 
-    Only a tool the request shows in full: a deferred, withheld or history-added one stays a function tool, which
-    has those forms.
+    `None` unless the tool is fully visible in this request: a deferred or withheld one stays a function tool.
     """
     tool = next((t for t in model_request_parameters.function_tools if t.tool_kind == COMPUTER_KIND.id), None)
     if tool is None or model_request_parameters.visibility_of(tool.name) != 'visible':
