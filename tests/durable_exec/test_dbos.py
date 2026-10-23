@@ -45,7 +45,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai._run_context import get_current_run_context
+from pydantic_ai._run_context import EventStreamBuffer, get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import MCP, Capability, DynamicCapability, Hooks
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -2841,6 +2841,54 @@ class DBOSStepProgressEvent(CustomEvent, name='dbos_step_progress'):
     label: str
 
 
+@dataclass(kw_only=True)
+class DBOSDecisionEvent(CapabilityEvent, namespace='dbos_test', name='decision', dispatch='immediate'):
+    decided: bool = False
+
+
+async def test_dbos_emission_handler_waits_for_immediate_listeners(dbos: DBOS) -> None:
+    handled: list[bool] = []
+    observed: list[bool] = []
+
+    class Decisions(AbstractCapability[object]):
+        id = 'decisions'
+
+        async def on_event(self, ctx: RunContext[object], *, event: AgentStreamEvent) -> None:
+            if isinstance(event, DBOSDecisionEvent):
+                await asyncio.sleep(0)
+                event.decided = True
+
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            event = DBOSDecisionEvent()
+            for _ in range(3):
+                await ctx.emit(event)
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSDecisionEvent):
+                handled.append(event.decided)
+
+    async def observe(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSDecisionEvent):
+                observed.append(event.decided)
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='immediate_emission',
+        capabilities=[Decisions(), ProcessEventStream(observe), DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    await run_workflow()
+    assert handled == [True] * 3
+    assert observed == [True] * 3
+
+
 async def test_dbos_workflow_level_emit_reaches_durable_handler(dbos: DBOS) -> None:
     """A capability event emitted at workflow level reaches the durability handler's own step."""
     seen: list[str] = []
@@ -2872,7 +2920,145 @@ async def test_dbos_workflow_level_emit_reaches_durable_handler(dbos: DBOS) -> N
     assert seen == ['start']
 
 
-async def test_dbos_step_emit_is_allowed(dbos: DBOS) -> None:
+async def test_dbos_emitted_events_precede_tool_steps_on_replay(dbos: DBOS) -> None:
+    handled: list[str] = []
+    observed: list[str] = []
+    handled_all = asyncio.Event()
+    step_calls: list[int] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                handled.append(event.label)
+                if len(handled) == 3:
+                    handled_all.set()
+
+    async def observe(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                observed.append(event.label)
+
+    @DBOS.step()
+    async def record(index: int) -> None:
+        # The live step yields until the consumer handles every emission. On replay this wait
+        # disappears, exposing any race between handler steps and the tool's second step.
+        await handled_all.wait()
+        step_calls.append(index)
+
+    async def work(ctx: RunContext[object]) -> str:
+        event = DBOSStepProgressEvent(label='progress')
+        for _ in range(3):
+            await ctx.emit(event)
+        await record(1)
+        await record(2)
+        return 'done'
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='emitted_event_order',
+        tools=[work],
+        capabilities=[ProcessEventStream(observe), DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('run')).output
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        assert await run_workflow() == 'done'
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    fork = await dbos.fork_workflow_async(workflow_id, steps[-1]['function_id'])
+    assert await fork.get_result() == 'done'
+    assert handled == ['progress'] * 3  # Checkpointed handlers do not execute again on replay.
+    assert observed == ['progress'] * 6  # Workflow-side observers see every replayed emission.
+    assert step_calls == [1, 2]
+
+
+async def test_dbos_emit_then_wait_delivers_to_both_handlers(dbos: DBOS) -> None:
+    delivered = asyncio.Event()
+    handled: list[str] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                assert ctx.run_step == 1
+                handled.append(event.label)
+
+    async def observe(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                delivered.set()
+
+    async def work(ctx: RunContext[object]) -> str:
+        await ctx.emit(DBOSStepProgressEvent(label='live'))
+        assert handled == ['live']
+        await delivered.wait()
+        return 'done'
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='emit_then_wait',
+        tools=[work],
+        capabilities=[ProcessEventStream(observe), DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    await run_workflow()
+    assert handled == ['live']
+
+
+@pytest.mark.parametrize('error_type', [RuntimeError, asyncio.CancelledError])
+async def test_dbos_emission_handler_cleanup(dbos: DBOS, error_type: type[BaseException]) -> None:
+    contexts: list[RunContext[object]] = []
+    fail = True
+    handled: list[str] = []
+
+    class EmittingCapability(AbstractCapability[object]):
+        id = 'cleanup_emitter'
+
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            contexts.append(ctx)
+            await ctx.emit(DBOSCheckpointEvent(label='start'))
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        nonlocal fail
+        async for event in stream:
+            if isinstance(event, DBOSCheckpointEvent):
+                if fail:
+                    fail = False
+                    raise error_type('handler stopped')
+                handled.append(event.label)
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='emission_cleanup',
+        capabilities=[EmittingCapability(), DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('run')).output
+
+    with pytest.raises(error_type, match='handler stopped'):
+        await run_workflow()
+    buffer = contexts[0]._event_stream_buffer  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(buffer, EventStreamBuffer)
+    assert buffer.emit_handler is None
+    assert buffer.emit_handler_active is None
+    assert buffer.pending_emit_handlers == {}
+    assert await run_workflow() == 'done'
+    assert handled == ['start']
+
+
+@pytest.mark.parametrize('durable_handler', [False, True])
+async def test_dbos_step_emit_is_allowed(dbos: DBOS, durable_handler: bool) -> None:
     """`ctx.emit()` from inside a step is allowed, unlike `ctx.enqueue()`.
 
     Enqueueing is rejected because a replayed step drops the message and changes what the model
@@ -2883,6 +3069,7 @@ async def test_dbos_step_emit_is_allowed(dbos: DBOS) -> None:
     process killed mid-workflow.
     """
     observed: list[str] = []
+    handled: list[str] = []
 
     @DBOS.step()
     async def record(label: str) -> str:
@@ -2899,12 +3086,20 @@ async def test_dbos_step_emit_is_allowed(dbos: DBOS) -> None:
             if isinstance(event, DBOSStepProgressEvent):
                 observed.append(event.label)
 
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                handled.append(event.label)
+
     agent = Agent(
         TestModel(),
         deps_type=object,
         name='dbos_step_emit',
         tools=[emitter],
-        capabilities=[ProcessEventStream(observe), DBOSDurability[object]()],
+        capabilities=[
+            ProcessEventStream(observe),
+            DBOSDurability[object](event_stream_handler=handler if durable_handler else None),
+        ],
     )
 
     @DBOS.workflow()
@@ -2914,6 +3109,7 @@ async def test_dbos_step_emit_is_allowed(dbos: DBOS) -> None:
     await run_workflow()
 
     assert observed == ['one']
+    assert handled == (['one'] if durable_handler else [])
 
 
 async def test_dbos_non_streaming_model_request_rejects_enqueue(dbos: DBOS) -> None:
