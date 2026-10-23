@@ -1,8 +1,8 @@
 # `pydantic_ai.realtime`
 
 Support for **realtime, bidirectional speech-to-speech models** (OpenAI Realtime, OpenAI GPT-Live,
-Azure OpenAI, Gemini Live, xAI Grok Voice, and any other provider that streams audio in and out over
-a persistent connection).
+Azure OpenAI, Gemini Live, xAI Grok Voice, Eleven Realtime, ElevenLabs Agents, and any other provider that
+streams audio in and out over a persistent connection).
 
 Unlike [`Model`][pydantic_ai.models.Model], which is request-response, a realtime model opens a
 long-lived connection: you stream audio (or text/images) in, and consume audio, transcripts, and
@@ -236,8 +236,8 @@ turned out not to answer to a later one, as `InferredLifecycle` does for a respo
 settles inputs sent while a response was under way that it answers after all, as GPT-Live does by speaking to text
 in the reply it is giving. Neither moves anything in history.
 
-A provider can also give up on tool calls before their results are in: Eleven Realtime does once another response
-starts, and GPT-Live when its delegated backend fails. The connection then names them in a
+A provider can also give up on tool calls before their results are in: Eleven Realtime does once it starts a reply to
+the user, and GPT-Live when its delegated backend fails. The connection then names them in a
 [`ToolCallsAbandoned`][pydantic_ai.realtime.lifecycle.ToolCallsAbandoned]: the tools keep running and their results
 are recorded, but no reply to them is waited for, so the exchange ends with the reply that is under way. Unlike a
 [`ToolCallCancelled`][pydantic_ai.realtime.codec.ToolCallCancelled], it doesn't stop them.
@@ -266,6 +266,7 @@ The lower-level codec vocabulary is documented in
 [`pydantic_ai.realtime.codec`](realtime/codec.md), and each provider in its own module:
 [`pydantic_ai.realtime.openai`](realtime/openai.md), [`pydantic_ai.realtime.openai_live`](realtime/openai_live.md),
 [`pydantic_ai.realtime.google`](realtime/google.md), [`pydantic_ai.realtime.xai`](realtime/xai.md),
-[`pydantic_ai.realtime.azure`](realtime/azure.md), and [`pydantic_ai.realtime.elevenlabs_agents`](realtime/elevenlabs_agents.md).
+[`pydantic_ai.realtime.azure`](realtime/azure.md), [`pydantic_ai.realtime.elevenlabs`](realtime/elevenlabs.md),
+and [`pydantic_ai.realtime.elevenlabs_agents`](realtime/elevenlabs_agents.md).
 
 ::: pydantic_ai.realtime

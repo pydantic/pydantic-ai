@@ -520,6 +520,18 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
 
+    established_tool_names: set[str] | None = dataclasses.field(default=None, repr=False)
+    """Immediately-available function tools the run's `tools` section was established with.
+
+    Set at the run's first model request from that request's tool population, minus any tool history
+    already shows arriving through a `ToolAvailabilityDeltaPart` (a newcomer from an earlier run keeps
+    travelling the way it arrived). A later tool outside this set is a mid-run newcomer: it gets a delta
+    and goes on the tool-addition channel instead of into `tools`. See `_record_tool_population_changes`.
+
+    Not persisted and not needed to be: it is re-derived the same way when a run is revived, and
+    durable replay re-executes the same steps against the same history.
+    """
+
     # Resolved once before the graph starts; never changes during the run.
     workspace: Workspace
     carried_workspace_ref: WorkspaceRef | None = None
@@ -848,29 +860,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         self, messages: list[_messages.ModelMessage], run_context: RunContext[DepsT]
     ) -> None:
         """Reevaluate any `SystemPromptPart` with dynamic_ref in the provided messages by running the associated runner function."""
-        # Only proceed if there's at least one dynamic runner.
-        if self.system_prompt_dynamic_functions:
-            for index, msg in enumerate(messages):
-                if isinstance(msg, _messages.ModelRequest):
-                    reevaluated_message_parts: list[_messages.ModelRequestPart] = []
-                    for part in msg.parts:
-                        if isinstance(part, _messages.SystemPromptPart) and part.dynamic_ref:
-                            # Look up the runner by its ref
-                            if runner := self.system_prompt_dynamic_functions.get(  # pragma: lax no cover
-                                part.dynamic_ref
-                            ):
-                                # To enable dynamic system prompt refs in future runs, use a placeholder string
-                                updated_part_content = await runner.run(run_context)
-                                part = _messages.SystemPromptPart(
-                                    updated_part_content or '', dynamic_ref=part.dynamic_ref, metadata=part.metadata
-                                )
-
-                        reevaluated_message_parts.append(part)
-
-                    # Replace the whole message instead of assigning to msg.parts so
-                    # caller-owned message_history objects are never mutated in place.
-                    if reevaluated_message_parts != msg.parts:
-                        messages[index] = replace(msg, parts=reevaluated_message_parts)
+        await _system_prompt.reevaluate_dynamic_system_prompts(
+            messages, self.system_prompt_dynamic_functions, run_context
+        )
 
     async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.SystemPromptPart]:
         """Build the initial system-prompt messages for the conversation."""
@@ -1365,8 +1357,8 @@ async def model_request_stream(
 
     Under the bundled durable-execution capabilities (Temporal/DBOS/Prefect) this runs in
     workflow code: the capability swaps `request_context.model` for a wrapper whose
-    `request_stream` drains one segment inside its own activity/step/task and replays its
-    buffered events, so the composite below stitches per-segment replays.
+    `request_stream` drains one segment inside its own activity/step/task and replays that
+    segment's final response, so the composite below stitches per-segment replays.
 
     The yielded stream is a composite that stitches the (possibly suspended → complete)
     segments into one continuous stream: it opens a `model.request_stream(...)` per segment
@@ -2082,6 +2074,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     conversation_id=ctx.state.conversation_id,
                 )
 
+            # Diff the tools this request will actually carry — after the hooks, which may have changed them —
+            # and record newcomers where both this request and the persisted history will carry them.
+            model_request_parameters = _record_tool_population_changes(
+                ctx, model_request_parameters, messages, _history_recording_targets(ctx, messages)
+            )
+
             # Instruction parts are request configuration, but the message recording the
             # current step must still reflect what was actually sent. Append-on-change blocks are
             # resolved against the processed history: only a baseline that survived processing can
@@ -2136,7 +2134,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # This pass folds a `ModelRequest` that `prepare_messages` inserted into the request ahead of
             # it, behind that request's `CachePoint`, so an inserted message isn't guaranteed to reach the
             # wire as a turn of its own. A rewrite that needs its own turn belongs in the adapter, where
-            # the rendered position is known (see the carried reasoning in `AnthropicModel._map_message`).
+            # the rendered position is known (see the carried reasoning in
+            # `AnthropicModel._append_model_response_turns`).
             messages = (
                 _clean_message_history(prepared, repair_last_response=True) if prepared is not messages else prepared
             )
@@ -2203,6 +2202,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 and suspended.state == 'suspended'
             ):
                 raise exceptions.UserError('Processed history must end with a suspended `ModelResponse` to resume.')
+
+            # A continuation completes a turn the provider already has, so nothing is appended to it.
+            model_request_parameters = _record_tool_population_changes(ctx, model_request_parameters, messages, ())
 
             # A processor may have deliberately rewritten persistent history from the request
             # view, putting the suspended continuation seed back at the tail. Trim the live
@@ -2340,11 +2342,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
             # More model responses may provide priceable usage, so only warn after the run successfully finishes.
             ctx.deps.usage_limits.check_cost(ctx.state.usage, warn_if_cost_unavailable=False)
-            # For a continuation chain (Anthropic `pause_turn`, OpenAI background mode) the merged
-            # response sums usage across segments (see `_check_continuation_usage`), so this caps the
-            # chain's combined input rather than any single segment's — conservative, not lenient.
-            # A response a provider SDK merged from several requests (Google long decode) is checked against
-            # the input of the first; see `context_input_tokens`.
+            # The limit caps context size, so it reads `context_input_tokens`: `usage.input_tokens`, except for
+            # a response whose usage sums several model requests. A Google long decode is checked against its
+            # first request's input, and an Anthropic response that reported its sampling passes against its
+            # last pass's. An Anthropic `pause_turn` chain sums usage across segments (see
+            # `_check_continuation_usage`), so it is checked against that sum, unless the last segment stamped its
+            # context size: then against that segment's.
             for response in responses:
                 ctx.deps.usage_limits.check_per_request_input_tokens(context_input_tokens(response))
 
@@ -3084,6 +3087,85 @@ def _revealed_tool_names(
     # `RunContext` to ask — but it must keep answering exactly what `is_tool_available` answers.
     inactive_capability_ids = deferred_capability_ids - loaded_capability_ids
     return {name for name in discovered if name in owner_by_name and owner_by_name[name] not in inactive_capability_ids}
+
+
+def _record_tool_population_changes(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+    parameters: models.ModelRequestParameters,
+    messages: list[_messages.ModelMessage],
+    requests: Sequence[_messages.ModelRequest],
+) -> models.ModelRequestParameters:
+    """Diff this step's tool population against what the model has been given, and record the difference.
+
+    It runs on the parameters `before_model_request` hooks return, so it compares what requests
+    actually carry, and appends to the outgoing history's last request after history processing; a
+    processor sees the delta from the next step on.
+
+    This is the one place a mid-run change to the set of immediately-available function tools enters
+    history, whatever caused it: a `FunctionToolset.add_function()` call from inside a tool, a dynamic
+    toolset or MCP server returning a different list, a `prepare_tools` hook letting a tool through.
+    Each newcomer is named in a `ToolAvailabilityDeltaPart` appended to this step's request, and
+    marked in `introduced_tool_names` so visibility resolution delivers it on the provider's
+    tool-addition channel rather than rewriting `tools`, the request's first cache section.
+
+    What the model has been given is `established_tool_names` plus whatever the deltas in `messages`,
+    the outgoing history after the hooks, name in its post-compaction window. Reading history is what
+    makes this idempotent: a retried request, a revived run, or a durable replay finds the delta it
+    already recorded and doesn't record it again. A compaction or history processor that removed the
+    delta, including one that ran in this step's hooks, gets it recorded once more, since the model no
+    longer has it. Reading the run's `discovered_tool_names` instead would miss that, as it is refreshed
+    before the hooks run: the tool would go into `tools` for this request and leave it on the next.
+
+    Each delta recorded is also emitted as a `ToolAvailabilityDeltaEvent`, once however many requests
+    carry it, so a UI that rebuilds history from the event stream keeps it.
+
+    Deferred tools are left to the reveal machinery that already owns them, and a tool that leaves the
+    population is not recorded (removals are https://github.com/pydantic/pydantic-ai/issues/6985).
+    Callability is untouched: `RunContext.is_tool_available` reads the tool's own definition, which
+    this doesn't change.
+
+    The delta goes on each of `requests` (see `_history_recording_targets`), and also on the outgoing tail
+    when none of them is inside the post-compaction window of `messages`. They are empty on a
+    continuation, which completes a turn the provider has already seen and so must not grow. A
+    continuation is always its run's first request (a turn suspended mid-run is continued inside the
+    model request), so the population it carries is what establishes `established_tool_names`: the only
+    newcomers there are tools an earlier delta named, which are still marked so they keep their channel.
+
+    When no plainly visible tool is declared — on the first request, or because every established tool
+    has left the population — there is no `tools` section to protect, so the tools present establish it
+    without a delta.
+    """
+    immediate = [tool.name for tool in parameters.function_tools if not tool.defer_loading]
+    discovered = parse_discovered_tools(messages)
+    established = ctx.deps.established_tool_names
+    if established is None:
+        established = ctx.deps.established_tool_names = {name for name in immediate if name not in discovered}
+    if established.isdisjoint(immediate) and not parameters.output_tools and not parameters.native_tools:
+        # Nothing plainly visible is declared — none yet, or every established tool has since left — so
+        # there is no `tools` section to protect, and a request whose only tools are deferred is one
+        # Anthropic rejects. The tools present now establish it.
+        established.update(immediate)
+    introduced = [name for name in immediate if name not in established]
+    if not introduced:
+        return parameters
+
+    announced = [name for name in introduced if name not in discovered]
+    if announced and requests:
+        delta = _messages.ToolAvailabilityDeltaPart(tools_added=announced)
+        targets = list(requests)
+        window = _messages.post_compaction_window(messages)
+        if not any(message is target for message in window for target in targets):
+            # A hook added a compaction after the persisted tail without persisting it, so a delta there
+            # would be outside what the model works from: put it on the outgoing tail too.
+            outgoing = messages[-1]
+            assert isinstance(outgoing, _messages.ModelRequest)
+            targets.append(outgoing)
+        for request in targets:
+            request.parts = [*request.parts, delta]
+        ctx.state.event_stream_buffer.append(_messages.ToolAvailabilityDeltaEvent(part=delta))
+        # Shared by reference with the run's `RunContext`s, so tool calls this step dispatches see the reveal.
+        ctx.deps.discovered_tool_names.update(announced)
+    return replace(parameters, introduced_tool_names=set(introduced))
 
 
 def _with_outgoing_reveal_state(

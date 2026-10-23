@@ -66,7 +66,7 @@ default) or `'off'`, the key only reads; `'sync'` also needs write access to age
 1. Create the agent in the [ElevenLabs dashboard](https://elevenlabs.io/app/agents) or through the ElevenLabs API,
    and copy its id.
 2. Under *Security* > *Overrides* in the agent's settings, turn on *System prompt* if the Pydantic AI agent has
-   instructions, plus the toggle of each override setting you use (see [Settings](#settings)).
+   instructions or a system prompt, plus the toggle of each override setting you use (see [Settings](#settings)).
 3. Under *Advanced* > *Client events*, add `context_usage`, which reports context usage and marks where a spoken
    response ends (see [Usage and cost](#usage-and-cost)).
 4. Pick a [tool synchronization](#tool-synchronization) mode: with the default, `'error'`, a difference between the
@@ -121,7 +121,7 @@ To choose the backup LLMs, set it to `{"preference": "override", "order": [...]}
 Pydantic AI is the source of truth wherever ElevenLabs allows a per-conversation override, and
 fails loudly where it does not:
 
-- **Instructions**: when the Pydantic AI agent defines instructions, the ElevenLabs agent must
+- **Instructions**: when the Pydantic AI agent defines instructions or a system prompt, the ElevenLabs agent must
   permit the *System prompt* override; otherwise the preflight raises a
   [`UserError`][pydantic_ai.exceptions.UserError] naming the exact toggle. Without local
   instructions, the ElevenLabs-side prompt is inherited silently.
@@ -228,7 +228,8 @@ at connect time:
 - `'error'` (default): raise a [`UserError`][pydantic_ai.exceptions.UserError] describing every
   difference (missing, extra, or differing tools), so the two can never silently disagree.
 - `'sync'`: make the workspace match Pydantic AI over REST before dialing: create missing client
-  tools, update differing ones, and re-point the agent's `tool_ids`. A differing tool that another
+  tools, update differing ones, and re-point the agent's `tool_ids`, which detaches client tools the run
+  doesn't define (server-side webhook, MCP, and system tools stay attached). A differing tool that another
   agent also uses isn't changed under it: this agent gets a copy of its own. This mutates workspace
   state shared by every conversation with the agent, which is why it is opt-in. Treat it as a
   deploy-time step — a warm-up connect after a tool change — rather than something a customer's
@@ -506,12 +507,16 @@ the connection sends an empty audio append (which adds no audio) after 45 second
   (`['cheerful']`). Only lowercase words in square brackets count as tags, so citations (`[1]`), Markdown links, and
   placeholders like `[Your Name]` stay in the text. Set `elevenlabs_strip_audio_tags=False` to keep the transcript
   as ElevenLabs sends it.
-- When a response starts while a tool call is still running (because the user spoke, say), ElevenLabs abandons
-  the call: its result never reaches the model, and a response asked for after it never comes. The session then
+- When ElevenLabs replies to something the user said while a tool call is still running, it abandons the call: its
+  result never reaches the model, and a response asked for after it never comes. The session then
   gets a recoverable [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] of type
   `'tool_calls_abandoned'` naming the calls. The tool keeps running and its result is still recorded in history, but
   no reply to it is waited for: [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] and
   [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] come when the response that cut in ends.
+- ElevenLabs makes parallel tool calls as back-to-back responses of one call each, and answers all their results
+  with one reply, which the session waits for once:
+  [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] and
+  [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] come when it ends.
 - `eleven_realtime_v1_max` sometimes answers a question that needs a tool with two responses: a spoken preamble
   ("Let me check the weather…") that completes on its own, then the tool call in a response nobody asked for.
   Nothing links the two, so [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] and
