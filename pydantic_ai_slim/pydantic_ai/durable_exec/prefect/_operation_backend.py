@@ -37,7 +37,8 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
             sequence_key = (
                 f'{self._event_sequence_key}:capability:{len(capability_id)}:{capability_id}{operation_id.operation}'
             )
-            if operation_id == WORKSPACE_OPERATION_ID:
+            # Custom capability operations can use the same persisted ID as the workspace binding.
+            if operation_id is WORKSPACE_OPERATION_ID:
                 # The projection carries the workspace's own run ID, including after the run ends.
                 # Concurrent runs can arrive in a different order when a flow retries.
                 run_id = cache_key[-1]
