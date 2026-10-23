@@ -1,3 +1,4 @@
+# description: Marks and later closes inactive issues labeled question or more info, and pull requests labeled awaiting author revision.
 name: 'Close stale issues and PRs'
 on:
   schedule:

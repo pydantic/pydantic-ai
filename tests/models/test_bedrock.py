@@ -44,6 +44,7 @@ from pydantic_ai import (
     RetryFeedbackPart,
     RetryInfo,
     RunContext,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -7320,6 +7321,22 @@ async def test_document_url_unsupported_format(bedrock_provider: BedrockProvider
 
     with pytest.raises(UserError, match='Unsupported document format: rtf'):
         await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+
+async def test_response_speech_part_raises_user_error(bedrock_provider: BedrockProvider):
+    """An unconverted `SpeechPart` in a response raises the `UserError` that names `prepare_messages`.
+
+    `Agent` runs `prepare_messages`, which converts it, so only a direct `Model.request()` reaches this mapping.
+    """
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Hi there')]),
+    ]
+
+    with pytest.raises(UserError, match='`SpeechPart` cannot be sent to this model as-is'):
+        await model._map_messages(messages, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
 
 
 async def test_uploaded_file_unsupported_video_media_type(
