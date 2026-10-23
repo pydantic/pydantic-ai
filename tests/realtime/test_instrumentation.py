@@ -947,6 +947,25 @@ async def test_interrupt_records_lifecycle_span_with_audio_offset() -> None:
     assert dict(interrupt.attributes or {}) == {'pydantic_ai.realtime': True, 'played_ms': 1500}
 
 
+async def test_interrupt_at_playback_without_truncation_records_the_offset() -> None:
+    # Without output truncation (xAI), no position goes to the provider, but the span still records how far
+    # playback got, as history does.
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _Connection([AudioDelta(b'a' * 4800), AudioDelta(b'b' * 4800)], hold_open=True),
+        _ok_runner,
+        instrumentation=settings,
+        profile=RealtimeModelProfile(supports_interruption=True, supports_output_truncation=False),
+    )
+    async with session:
+        stream = session.stream_audio()
+        await anext(stream)  # the second chunk stays buffered and unheard
+        assert await session.interrupt(played_bytes=4800) is True
+
+    interrupt = next(s for s in exporter.get_finished_spans() if s.name == 'interrupt')
+    assert dict(interrupt.attributes or {}) == {'pydantic_ai.realtime': True, 'played_ms': 100}
+
+
 async def test_interrupt_without_offset_records_bare_lifecycle_span() -> None:
     # A cancel without truncation (no `played_ms`) still records the `interrupt` marker, with no
     # null attribute — just the realtime marker every session span carries.
