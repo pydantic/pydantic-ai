@@ -112,9 +112,12 @@ Without one, or once the policy's reconnects are used up, the session raises a
 - xAI documents `conversation.item.truncate` and confirms it with `conversation.item.truncated`,
   but in our testing it only takes effect once the response has ended, and not reliably even then.
   Sent just before the cancel, as barge-in needs, it changes nothing, so the profile reports
-  `supports_output_truncation=False`. `interrupt(played_bytes=...)` still discards the unheard audio
-  and cancels the response, while a plain `interrupt()` only cancels. Either way xAI keeps everything
-  generated up to the cancel, which can be more than the user heard.
+  `supports_output_truncation=False`. `interrupt(played_bytes=...)` (and `handle_barge_in=True`) still
+  discards the unheard audio, cancels the response, and records the reply in history as interrupted
+  with `interrupted_at_ms` where playback stopped, as on OpenAI, including a reply that had finished
+  generating before the user spoke over it. A plain `interrupt()` only cancels. Either way xAI keeps
+  everything generated up to the cancel, which can be more than the user heard, so the model may take
+  the whole reply as heard.
 - With turn detection on, xAI commits a spoken turn a few hundred milliseconds after it hears the user
   stop, and starts its reply in between. If the user carries on before the commit, xAI continues the same
   turn and drops that reply without ending it. So

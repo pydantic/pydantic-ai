@@ -107,6 +107,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     ToolVisibility,
+    _declare_lone_newcomers,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_suffix_start,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
@@ -144,19 +145,31 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
 }
 
 
+def _native_tool_is_a_tools_entry(tool: AbstractNativeTool) -> bool:
+    """Whether `_add_native_tools` sends this native tool as an entry in the request's `tools`.
+
+    An MCP server goes in `mcp_servers` instead, and a custom tool search strategy is served by the
+    `search_tools` function tool, which `function_tools` already carries.
+    """
+    if isinstance(tool, MCPServerTool):
+        return False
+    return not (isinstance(tool, ToolSearchTool) and tool.strategy == 'custom')
+
+
 def _revealed_deferred_tool_order(
     messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
 ) -> list[str]:
     """Order revealed non-corpus deferred entries at the tail by their first reveal in history.
 
     Deferred entries are outside Anthropic's cache key, so this is a determinism rule, not a cache rule.
+    A mid-run newcomer (`introduced_tool_names`) is declared deferred for the same reason and joins them.
     """
     tool_defs = model_request_parameters.tool_defs
     return [
         name
         for name in discovered_tool_names_in_order(messages)
         if name in tool_defs
-        and tool_defs[name].defer_loading
+        and (tool_defs[name].defer_loading or name in model_request_parameters.introduced_tool_names)
         and tool_defs[name].with_native is None
         and model_request_parameters.visibility_of(name) == 'deferred'
     ]
@@ -311,6 +324,7 @@ try:
     )
     from anthropic.types.model_param import ModelParam
 
+    from ._anthropic_bedrock_count_tokens import BEDROCK_ANTHROPIC_VERSION
 except ImportError as _import_error:
     raise ImportError(
         'Please install `anthropic` to use the Anthropic model, '
@@ -744,7 +758,10 @@ class AnthropicModelSettings(ModelSettings, total=False):
 
 
 def _build_extra_body(
-    model_settings: AnthropicModelSettings, thinking_override: dict[str, object] | None = None
+    model_settings: AnthropicModelSettings,
+    thinking_override: dict[str, object] | None = None,
+    *,
+    bedrock: bool = False,
 ) -> object | None:
     """Merge the sampling settings, and a `thinking` object the SDK cannot type, into `extra_body`.
 
@@ -752,6 +769,12 @@ def _build_extra_body(
     passing one is a `TypeError`. The API still takes them, so they ride in `extra_body` — the route
     the SDK's own migration guide names — rather than being silently dropped. Models that reject them
     never get here: `_drop_unsupported_sampling_settings` has already removed them.
+
+    On the legacy Bedrock client, `anthropic_version` is pinned to `bedrock-2023-05-31`. `anthropic>=2`
+    defaults it to the Messages API version `2026-10-21` instead, which Bedrock rejects with `Invalid API
+    version` for some Claude models (Sonnet 4.5 and Opus 4.5, though not Haiku 4.5, when verified live).
+    The SDK fills the field in only when the body has none. Reported upstream as
+    https://github.com/anthropics/anthropic-sdk-python/issues/2031; drop the pin once that is fixed.
 
     An explicit `extra_body` entry wins over the setting of the same name, preserving the precedence
     the SDK gave it while the parameters were still named arguments.
@@ -761,6 +784,8 @@ def _build_extra_body(
     }
     if thinking_override is not None:
         fields['thinking'] = thinking_override
+    if bedrock:
+        fields['anthropic_version'] = BEDROCK_ANTHROPIC_VERSION
     extra_body = model_settings.get('extra_body')
     if not fields:
         return extra_body
@@ -1416,6 +1441,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         A non-streaming request is streamed anyway when the SDK requires it for its `max_tokens`, so its response
         can be a stream too.
         """
+        model_request_parameters = self._declare_newcomers_left_alone(model_settings, model_request_parameters)
         # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
         # entries are then appended in history order; Anthropic excludes them from its cache key.
         revealed_tool_order = _revealed_deferred_tool_order(messages, model_request_parameters)
@@ -1495,7 +1521,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     speed=self._effective_speed(model_settings, anthropic_profile),
                     diagnostics=self._cache_diagnostics(messages, model_settings),
                     extra_headers=extra_headers,
-                    extra_body=_build_extra_body(model_settings, thinking_override),
+                    extra_body=_build_extra_body(
+                        model_settings, thinking_override, bedrock=isinstance(client, AsyncAnthropicBedrock)
+                    ),
                 )
 
             async def open_stream() -> _AnthropicEventStream:
@@ -1648,8 +1676,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # tools are never revealed, so a (forged or replayed) delta naming one renders nothing
         # and must not add the beta either.
         function_tool_defs = {tool_def.name: tool_def for tool_def in model_request_parameters.function_tools}
+        declared_tool_defs, _ = self._tool_choice_declarations(model_settings, model_request_parameters)
         if self.tool_addition_mode == 'by_reference' and any(
-            name in model_request_parameters.declared_tool_defs
+            name in declared_tool_defs
             and name in function_tool_defs
             and model_request_parameters.visibility_of(name) != 'visible'
             for message in messages
@@ -1812,7 +1841,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # `_add_native_tools` keeps off the wire below), and replaying advisor blocks without the tool
         # definition would 400.
         map_parameters = replace(
-            model_request_parameters,
+            self._declare_newcomers_left_alone(model_settings, model_request_parameters),
             native_tools=[tool for tool in model_request_parameters.native_tools if not isinstance(tool, AdvisorTool)],
         )
 
@@ -2255,16 +2284,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 )
         return tools, mcp_servers, beta_features
 
-    def _prepare_tools_and_tool_choice(
+    def _tool_choice_declarations(
         self,
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[list[BetaToolUnionParam], BetaToolChoiceParam | None]:
-        """Determine which tools to send and the API tool_choice value.
-
-        Returns:
-            A tuple of (filtered_tools, tool_choice).
-        """
+    ) -> tuple[dict[str, ToolDefinition], BetaToolChoiceParam]:
+        """The tool definitions to declare, after any `tool_choice` restriction, and the API `tool_choice` value."""
         tool_defs = model_request_parameters.declared_tool_defs
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
@@ -2295,7 +2320,38 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 tool_choice = {'type': 'auto'} if tool_choice_mode == 'auto' or not supports else {'type': 'any'}
         else:
             assert_never(resolved_tool_choice)
+        return tool_defs, tool_choice
 
+    def _declare_newcomers_left_alone(
+        self, model_settings: AnthropicModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> ModelRequestParameters:
+        """Declare mid-run newcomers plainly when `tool_choice` leaves no other plainly declared tool.
+
+        Resolution keeps a newcomer deferred while another tool is plainly declared, but a `tool_choice`
+        restriction can filter that tool out of the request, leaving only deferred declarations, which
+        Anthropic rejects. Applied before the tools and messages are mapped, so the newcomer's reveal
+        blocks are dropped along with its `defer_loading` flag.
+        """
+        tool_defs, _ = self._tool_choice_declarations(model_settings, model_request_parameters)
+        return _declare_lone_newcomers(
+            model_request_parameters,
+            tool_defs.keys(),
+            wire_native_tools=[
+                tool for tool in model_request_parameters.native_tools if _native_tool_is_a_tools_entry(tool)
+            ],
+        )
+
+    def _prepare_tools_and_tool_choice(
+        self,
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[list[BetaToolUnionParam], BetaToolChoiceParam | None]:
+        """Determine which tools to send and the API tool_choice value.
+
+        Returns:
+            A tuple of (filtered_tools, tool_choice).
+        """
+        tool_defs, tool_choice = self._tool_choice_declarations(model_settings, model_request_parameters)
         if not tool_defs:
             return [], None
 
@@ -2382,7 +2438,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # today — the framework's only generator reads `function_tools`, and the UI adapters round-trip
         # names from it — so this changes no current behavior. It keeps the filter honest against the
         # wire regardless, rather than silently dropping a block whenever the two sets diverge.
-        declared_tool_names = set(model_request_parameters.declared_tool_defs)
+        # Read after the `tool_choice` restriction, which leaves tools out of the request: a reveal naming
+        # one of those would be just as unknown as one naming a tool that's gone.
+        declared_tool_names = set(self._tool_choice_declarations(model_settings, model_request_parameters)[0])
         # Only the opening `SystemPromptPart`s in the first request are the run's own system prompt and
         # hoist to the top-level `system` parameter. Later ones are mid-conversation operator instructions:
         # where we support them they reach us verbatim (rather than `<system>`-tagged by `prepare_messages`)
@@ -2568,7 +2626,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             user_content_params[:marked_at] or _last_message_content(anthropic_messages), ttl=ttl
                         )
                 if len(user_content_params) > 0:
-                    anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
+                    anthropic_messages.append({'role': 'user', 'content': user_content_params})
                 if mid_conversation_system_prompts or tool_availability_blocks:
                     system_content_params: list[BetaContentBlockParam] = [
                         BetaTextBlockParam(text=content, type='text') for content in mid_conversation_system_prompts
@@ -2578,20 +2636,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     # terminal `CachePoint` lands on the entry's final block, never inside the entry.
                     if system_entry_cache_ttl is not None:
                         self._add_cache_control_to_last_param(system_content_params, ttl=system_entry_cache_ttl)
-                    anthropic_messages.append(BetaMessageParam(role='system', content=system_content_params))
+                    anthropic_messages.append({'role': 'system', 'content': system_content_params})
                 if request_scoped_prompts:
                     # Sent with every request, current or not: once a later user turn exists the API stops
                     # rendering it, and leaving it in place is what keeps the cached prefix and the thinking
                     # blocks bound to it valid. It goes after the request's other system entry so that one
                     # can still carry the request's cache boundary.
                     anthropic_messages.append(
-                        BetaMessageParam(
-                            role='system',
-                            content=[
+                        {
+                            'role': 'system',
+                            'content': [
                                 BetaTextBlockParam(text=content, type='text') for content in request_scoped_prompts
                             ],
-                            clear_at='next_user_message',
-                        )
+                            'clear_at': 'next_user_message',
+                        }
                     )
             elif isinstance(m, ModelResponse):
                 assistant_content_params: list[
@@ -2893,9 +2951,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     insert_at = len(anthropic_messages)
                     while insert_at > 0 and anthropic_messages[insert_at - 1]['role'] == 'system':
                         insert_at -= 1
-                    anthropic_messages.insert(insert_at, BetaMessageParam(role='user', content=carried_thinking_params))
+                    anthropic_messages.insert(insert_at, {'role': 'user', 'content': carried_thinking_params})
                 if len(assistant_content_params) > 0:
-                    anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
+                    anthropic_messages.append({'role': 'assistant', 'content': assistant_content_params})
             else:
                 assert_never(m)
 
@@ -4300,10 +4358,7 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
                 block['type'] in ('server_tool_use', 'mcp_tool_use')
                 and block['id'] not in returned_native_tool_call_ids
             )
-            tool_search = block.get('name') in ('tool_search_tool_bm25', 'tool_search_tool_regex')
-            if unpaired and (not suffix_is_tool_result_only or tool_search):
-                # Tool search is retried instead of preserved in flight because Bedrock rejects
-                # that shape even though the direct Anthropic API accepts other native tools there.
+            if unpaired and not suffix_is_tool_result_only:
                 # Keep a cache boundary on the nearest preceding cacheable block. Moving it
                 # forward would cache content the user placed outside the boundary. If no such
                 # block exists, the boundary disappears with the block that carried it.
@@ -4359,7 +4414,7 @@ def _anchor_system_messages(anthropic_messages: list[BetaMessageParam]) -> None:
         if index > 0 and anthropic_messages[index - 1]['role'] in ('user', 'system'):
             continue
         anthropic_messages.insert(
-            index, BetaMessageParam(role='user', content=[BetaTextBlockParam(text=_USER_ANCHOR_TEXT, type='text')])
+            index, {'role': 'user', 'content': [BetaTextBlockParam(text=_USER_ANCHOR_TEXT, type='text')]}
         )
 
 

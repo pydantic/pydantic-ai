@@ -1,20 +1,60 @@
 from __future__ import annotations as _annotations
 
+import dataclasses
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import ClassVar, Literal, assert_never
+from typing import ClassVar, Literal, assert_never, cast
 
 from pydantic import JsonValue
 
 from .. import _model_errors
+from .._framing import TOOL_RESULT_TAG, close_tag, neutralize_tags, open_tag
 from .._http import to_httpx2_timeout
+from .._thinking_part import render_replayed_thinking
 from ..exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
-from ..profiles import ModelProfileSpec
+from ..messages import (
+    ERROR_OUTCOMES,
+    BaseToolReturnPart,
+    BinaryContent,
+    CachePoint,
+    CompactionPart,
+    FilePart,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
+    ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    ModelResponsePart,
+    MultiModalContent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
+    SpeechPart,
+    SystemPromptPart,
+    TextContent,
+    TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
+)
+from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles.decision import decision_model_profile
 from ..providers import Provider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
-from . import get_user_agent
+from . import (
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
+    get_user_agent,
+)
 from ._sdk_retries import with_max_retries
 from .decision import (
     ChoiceAnswer,
@@ -55,8 +95,21 @@ try:
     from openai.types.decision_input_message_param import DecisionInputMessageParam
     from openai.types.decision_input_part_union_param import DecisionInputPartUnionParam
     from openai.types.decision_input_text_param import DecisionInputTextParam
+    from openai.types.responses import (
+        EasyInputMessageParam,
+        ResponseFunctionCallOutputItemListParam,
+        ResponseFunctionToolCallParam,
+        ResponseInputImageParam,
+        ResponseInputItemParam,
+        ResponseInputMessageContentListParam,
+        ResponseInputTextParam,
+    )
+    from openai.types.responses.image_detail import ImageDetail
+    from openai.types.responses.response_input_image_content_param import ResponseInputImageContentParam
+    from openai.types.responses.response_input_param import FunctionCallOutput
+    from openai.types.responses.response_input_text_content_param import ResponseInputTextContentParam
 
-    from ..providers.openai_decisions import OpenAIDecisionsProvider
+    from ..providers.openai import OpenAIProvider
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the OpenAI Decisions model, '
@@ -147,7 +200,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         self,
         model_name: OpenAIDecisionsModelName,
         *,
-        provider: Literal['openai-decisions'] | OpenAIDecisionsProvider = 'openai-decisions',
+        provider: Literal['openai', 'openai-decisions'] | OpenAIProvider = 'openai-decisions',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -155,13 +208,15 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
 
         Args:
             model_name: The name of the OpenAI model to use, such as `gpt-6-luna`.
-            provider: The provider to use for the API's URL and key.
-            profile: The model profile to use. Defaults to one selected by the provider.
+            provider: The provider to use for the API's URL and key: an
+                [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], as for the other OpenAI models, or
+                `'openai'` or `'openai-decisions'` (the default), which both create one.
+            profile: The model profile to use. Defaults to a decision model's profile for the model name.
             settings: Model-specific settings used as defaults for this model.
         """
         self._model_name = model_name
         if isinstance(provider, str):
-            provider = OpenAIDecisionsProvider()
+            provider = OpenAIProvider()
         self._provider = provider
         super().__init__(settings=settings, profile=profile)
 
@@ -180,8 +235,19 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
 
     @property
     def system(self) -> str:
-        """The system / model provider."""
-        return self._provider.name
+        """The system / model provider: `'openai-decisions'`, whatever the provider is called.
+
+        The Decisions API shares OpenAI's URL with the Responses API, so this name is what tells its responses apart:
+        genai-prices prices the endpoint as its own provider, and an
+        [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] continuing the conversation must not
+        take a decision response, which has no Responses ID to continue from, for one of its own.
+        """
+        return 'openai-decisions'
+
+    def _provider_model_profile(self) -> ModelProfile:
+        # The provider profiles a model name such as `gpt-6-luna` as a Responses API model, whose structured output,
+        # thinking and caching this endpoint has none of.
+        return decision_model_profile(self.model_name)
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to the `/v1/decisions` endpoint."""
@@ -189,26 +255,13 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         if all(name.lower() != 'user-agent' for name in extra_headers):
             extra_headers['User-Agent'] = get_user_agent()
         self._check_request_limits(image_count=len(request.images), question_count=len(request.questions))
-        decision_input: str | list[DecisionInputMessageParam] = _text(request.state)
-        if request.images:
-            content: list[DecisionInputPartUnionParam] = [
-                DecisionInputTextParam(type='input_text', text=decision_input)
-            ]
-            for index, image in enumerate(request.images, start=1):
-                if not image.is_image:
-                    raise UserError(
-                        'OpenAI Decisions supports image evidence only; `request.images` contains a non-image.'
-                    )
-                image_input = DecisionInputImageParam(type='input_image', image_url=image.data_uri)
-                if metadata := image.vendor_metadata:
-                    image_input['detail'] = metadata.get('detail', 'auto')
-                content.extend(
-                    (
-                        DecisionInputTextParam(type='input_text', text=f'<image {index}>:'),
-                        image_input,
-                    )
-                )
-            decision_input = [DecisionInputMessageParam(role='user', content=content)]
+        if any(not image.is_image for image in request.images):
+            raise UserError('OpenAI Decisions supports image evidence only; `request.images` contains a non-image.')
+        decision_input = (
+            _Conversation(request.images, self.profile).items(request.messages)
+            if request.messages
+            else _state_input(request)
+        )
         try:
             response = await with_max_retries(self.client, model_settings).decisions.with_raw_response.create(
                 model=self._model_name,
@@ -263,6 +316,208 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
             # The body carries no ID of its own.
             provider_response_id=response.request_id,
         )
+
+
+def _state_input(request: DecisionRequest) -> str | list[DecisionInputMessageParam]:
+    """A request without a conversation, as its `state` in one user message with each image after its label."""
+    text = _text(request.state)
+    if not request.images:
+        return text
+    content: list[DecisionInputPartUnionParam] = [DecisionInputTextParam(type='input_text', text=text)]
+    for index, image in enumerate(request.images, start=1):
+        image_input = DecisionInputImageParam(type='input_image', image_url=image.data_uri)
+        if metadata := image.vendor_metadata:
+            image_input['detail'] = metadata.get('detail', 'auto')
+        content.extend((DecisionInputTextParam(type='input_text', text=f'<image {index}>:'), image_input))
+    return [DecisionInputMessageParam(role='user', content=content)]
+
+
+class _Conversation:
+    """A conversation as the Responses API input items the Decisions API reads.
+
+    The API takes `message`, `function_call`, `function_call_output`, `custom_tool_call` and
+    `custom_tool_call_output` items, and refuses `reasoning` items, an assistant message with anything but text,
+    and a tool output whose call is not in the same input. Its SDK type and guide still describe user messages
+    only; OpenAI confirmed the native items in https://github.com/pydantic/pydantic-ai/issues/10950.
+
+    No item IDs are sent: the API keeps no state between requests, so an ID only ties an item to a response the
+    Decisions API never produced.
+    """
+
+    def __init__(self, images: Sequence[BinaryContent], profile: ModelProfile):
+        self._images = iter(enumerate(images, start=1))
+        self._profile = profile
+        self._items: list[ResponseInputItemParam] = []
+
+    def items(self, messages: Sequence[ModelMessage]) -> str | list[DecisionInputMessageParam]:
+        calls = {
+            part.tool_call_id
+            for message in messages
+            if isinstance(message, ModelResponse)
+            for part in message.parts
+            if isinstance(part, ToolCallPart | NativeToolCallPart)
+        }
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                for part in message.parts:
+                    self._request_part(part, calls)
+            else:
+                for part in message.parts:
+                    self._response_part(part, calls)
+        if next(self._images, None) is not None:
+            raise UserError('`request.images` holds more images than `request.messages` refers to.')
+        match self._items:
+            case [{'role': 'user', 'content': str(text)}]:
+                # A lone text prompt goes as the plain text the API documents.
+                return text
+            case _:
+                # The SDK still types `input` as user messages only; see the class docstring.
+                return cast(list[DecisionInputMessageParam], self._items)
+
+    def _image(self) -> tuple[int, BinaryContent, ImageDetail]:
+        """The next image the messages refer to, its `<image N>` index, and its detail level."""
+        try:
+            index, image = next(self._images)
+        except StopIteration:
+            raise UserError('`request.messages` refers to more images than `request.images` holds.') from None
+        return index, image, (image.vendor_metadata or {}).get('detail', 'auto')
+
+    def _output(self, part: BaseToolReturnPart) -> ResponseFunctionCallOutputItemListParam:
+        """A tool output that carries files, as the text and images it is made of, in order.
+
+        A failed one's text goes in one error wrapper, as without files, so each image is referenced inside it by
+        its `<image N>` label and follows it with that label, as the `state` does.
+        """
+        output: ResponseFunctionCallOutputItemListParam = []
+        if part.outcome in ERROR_OUTCOMES:
+            labelled: list[str] = []
+            images: ResponseFunctionCallOutputItemListParam = []
+            for item in part.content_items(mode='str', wrap_if_error=False):
+                if isinstance(item, str):
+                    labelled.append(item)
+                else:
+                    index, image, detail = self._image()
+                    labelled.append(f'<image {index}>')
+                    images.append(ResponseInputTextContentParam(type='input_text', text=f'<image {index}>:'))
+                    images.append(
+                        ResponseInputImageContentParam(type='input_image', image_url=image.data_uri, detail=detail)
+                    )
+            text = dataclasses.replace(part, content=labelled).model_response_str()
+            return [ResponseInputTextContentParam(type='input_text', text=text), *images]
+        for item in part.content_items(mode='str'):
+            if isinstance(item, str):
+                output.append(ResponseInputTextContentParam(type='input_text', text=item))
+            else:
+                _, image, detail = self._image()
+                output.append(
+                    ResponseInputImageContentParam(type='input_image', image_url=image.data_uri, detail=detail)
+                )
+        return output
+
+    def _user(self, items: Sequence[str | MultiModalContent]) -> None:
+        if len(items) == 1 and isinstance(text := items[0], str):
+            self._items.append(EasyInputMessageParam(role='user', content=text))
+            return
+        content: ResponseInputMessageContentListParam = []
+        for item in items:
+            if isinstance(item, str):
+                content.append(ResponseInputTextParam(type='input_text', text=item))
+            else:
+                _, image, detail = self._image()
+                content.append(ResponseInputImageParam(type='input_image', image_url=image.data_uri, detail=detail))
+        self._items.append(EasyInputMessageParam(role='user', content=content))
+
+    def _message(self, role: Literal['assistant', 'system', 'developer'], content: str) -> None:
+        self._items.append(EasyInputMessageParam(role=role, content=content))
+
+    def _request_part(self, part: ModelRequestPart, calls: set[str]) -> None:
+        if isinstance(part, SystemPromptPart):
+            self._message('system', part.content)
+        elif isinstance(part, UserPromptPart):
+            prompt: list[str | MultiModalContent] = []
+            for item in [part.content] if isinstance(part.content, str) else part.content:
+                if isinstance(item, str):
+                    prompt.append(item)
+                elif isinstance(item, TextContent):
+                    prompt.append(item.content)
+                elif isinstance(item, CachePoint):
+                    pass  # A marker for models that cache a prompt prefix; there is nothing in it to send.
+                else:
+                    prompt.append(item)
+            self._user(prompt)
+        elif isinstance(part, ToolReturnPart):
+            self._tool_return(part, calls)
+        elif isinstance(part, RetryFeedbackPart):
+            # The application speaking, after the latest request: as a user message it would read as a newer
+            # request, the one under judgement.
+            self._message('developer', part.model_response())
+        # TODO(v3): remove `RetryPromptPart`
+        elif isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+            # A direct `request()` skips `prepare_messages`; send the deprecated part as what it always meant.
+            self._request_part(_translate_legacy_retry_part(part), calls)
+        elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):  # pragma: no cover
+            raise _unprojected_instruction_delta_error()
+        elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+            raise _unprepared_part_error(part)
+        elif isinstance(part, SpeechPart):  # pragma: no cover
+            raise _unconverted_speech_part_error()
+        else:
+            assert_never(part)
+
+    def _tool_return(self, part: BaseToolReturnPart, calls: set[str]) -> None:
+        if part.tool_call_id in calls:
+            output = self._output(part) if part.files else part.model_response_str()
+            self._items.append(
+                FunctionCallOutput(type='function_call_output', call_id=part.tool_call_id, output=output)
+            )
+        else:
+            # A trimmed or compacted history can keep a result without its call, which the API refuses natively. It
+            # goes on the user channel instead, framed as the tool's so it doesn't read as the user's own words.
+            framed: list[str | MultiModalContent] = [
+                open_tag(TOOL_RESULT_TAG, tool_name=part.tool_name, tool_call_id=part.tool_call_id),
+                *(neutralize_tags(item) if isinstance(item, str) else item for item in part.content_items(mode='str')),
+                close_tag(TOOL_RESULT_TAG),
+            ]
+            self._user(framed)
+
+    def _response_part(self, part: ModelResponsePart, calls: set[str]) -> None:
+        if isinstance(part, TextPart):
+            self._message('assistant', part.content)
+        elif isinstance(part, ThinkingPart):
+            # Thinking a provider only returned encrypted, as a `signature` with no text, has nothing to show.
+            if part.content:
+                self._message('assistant', render_replayed_thinking(part.content, self._profile)[0])
+        elif isinstance(part, ToolCallPart | NativeToolCallPart):
+            self._items.append(
+                ResponseFunctionToolCallParam(
+                    type='function_call',
+                    call_id=part.tool_call_id,
+                    name=part.tool_name,
+                    arguments=part.args_as_json_str(),
+                )
+            )
+        elif isinstance(part, NativeToolReturnPart):
+            self._tool_return(part, calls)
+        elif isinstance(part, CompactionPart):
+            if part.content:
+                self._message('assistant', part.content)
+        elif isinstance(part, FilePart):
+            # An assistant message takes only text, so the file goes in a user message after the reference to it.
+            index, image, detail = self._image()
+            self._message('assistant', f'<image {index}>')
+            self._items.append(
+                EasyInputMessageParam(
+                    role='user',
+                    content=[
+                        ResponseInputTextParam(type='input_text', text=f'<image {index}>:'),
+                        ResponseInputImageParam(type='input_image', image_url=image.data_uri, detail=detail),
+                    ],
+                )
+            )
+        elif isinstance(part, SpeechPart):  # pragma: no cover
+            raise _unconverted_speech_part_error()
+        else:
+            assert_never(part)
 
 
 def _text(value: JsonValue) -> str:

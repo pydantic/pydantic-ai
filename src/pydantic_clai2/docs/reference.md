@@ -1822,8 +1822,10 @@ Use foreground delegation when the answer is needed immediately, and background
 delegation for independent work. Give each child a self-contained task with
 paths, constraints, and expected evidence. A background acceptance receipt is
 not a result. CLAI delivers a settled child's report through core's native
-queued-message API, marked as automated, untrusted task data. Reports are not
-user instructions or permission grants. In the interactive stock CLI, a report
+queued-message API, as the child's output framed as `<task_output>` task
+data, never in system voice. Reports are not user
+instructions or permission grants, and the transcript, `/rewind` and the web
+history don't show them as prompts you typed. In the interactive stock CLI, a report
 that arrives while idle automatically continues the parent. No extra user prompt
 is needed, and your unfinished draft and queued input are preserved. Reports
 arriving during a turn use that run's queue; completed reports are not replayed.
@@ -2314,6 +2316,12 @@ many sessions run at once.
 - **Status dots.** A dot beside a live session in the sidebar shows that it runs a
   turn, that input waits behind its turn, or that it asks you a question.
 - **Esc** and the stop button interrupt the session you are looking at, and only it.
+- **Steering and the queue.** As at the terminal's prompt, Enter queues a message
+  while a turn runs and Alt+Enter (Option+Enter), or the bolt button, steers the turn
+  with it; Alt+Enter with nothing typed steers the oldest queued message. The page
+  lists what waits above the composer, whether it was queued there or in the
+  terminal, and you can edit, steer, or remove each message before it runs. The
+  terminal's queue rows follow those changes.
 - **Idle closing.** A session closes after an hour with no turn, no queued input,
   no background fork or delegated task, and no browser or terminal showing it. Its
   conversation stays saved: click it to resume it. The session `clai2 --web`

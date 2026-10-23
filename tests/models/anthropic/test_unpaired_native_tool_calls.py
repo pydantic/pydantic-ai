@@ -32,7 +32,13 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.capabilities import NativeTool, ToolSearch
-from pydantic_ai.messages import CachePoint, ModelResponsePart, NativeToolSearchCallPart, ThinkingPart
+from pydantic_ai.messages import (
+    CachePoint,
+    ModelResponsePart,
+    NativeToolSearchCallPart,
+    NativeToolSearchReturnPart,
+    ThinkingPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import MCPServerTool, WebSearchTool
 
@@ -247,9 +253,9 @@ CASES = [
         ),
     ),
     Case(
-        # Bedrock rejects the in-flight shape the direct API tolerates, and a search is cheap to redo,
-        # so tool search is the one native tool whose unpaired call drops even while in flight.
-        'in-flight-tool-search-call-drops-anyway',
+        # Kept like any other native call: the result arrives at the start of the next response,
+        # and dropping the call makes the model repeat the search.
+        'in-flight-tool-search-call-is-kept',
         [
             ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
             ModelResponse(
@@ -263,11 +269,11 @@ CASES = [
             ModelRequest(parts=[ToolReturnPart(tool_name='add', content='4', tool_call_id=_TOOL_CALL_ID)]),
         ],
         follow_up=False,
-        expected_call_ids=[_TOOL_CALL_ID],
+        expected_call_ids=['srv_orphan', _TOOL_CALL_ID],
         expected=snapshot(
             [
                 ('user', ['text']),
-                ('assistant', ['tool_use']),
+                ('assistant', ['server_tool_use', 'tool_use']),
                 ('user', ['tool_result']),
             ]
         ),
@@ -665,12 +671,13 @@ async def test_dropped_call_hands_its_cache_boundary_to_the_block_before_it():
 
 
 async def test_orphaned_tool_search_call_is_dropped_through_an_agent_run(allow_model_requests: None):
-    """The tool-search drop reaches the wire through an agent run, not only through the mapper.
+    """A tool search left unpaired by a finished turn is dropped through an agent run, not only through the mapper.
 
-    Anthropic occasionally emits a `tool_search_tool_*` server tool use alongside a client `tool_use`
-    and ends the turn before delivering the corresponding result block
+    Anthropic emits a `tool_search_tool_*` server tool use alongside a client `tool_use` and ends the
+    turn before delivering the result block
     (https://github.com/anthropics/anthropic-sdk-python/issues/1325), so this is the shape a
-    `ToolSearch()` run actually stores. Reported by @kclisp on PR #5143.
+    `ToolSearch()` run stores when it stops there. The new prompt ends the in-flight window, so the
+    call has to drop for the request to be accepted.
     """
     mock_client = MockAnthropic.create_mock(
         completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=5))
@@ -706,6 +713,69 @@ async def test_orphaned_tool_search_call_is_dropped_through_an_agent_run(allow_m
 
     assert message_shape(get_mock_chat_completion_kwargs(mock_client)[0]) == snapshot(
         [('user', ['text']), ('assistant', ['tool_use']), ('user', ['tool_result', 'text'])]
+    )
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('transport', ['direct', 'bedrock', 'mantle'])
+async def test_in_flight_tool_search_call_is_answered_in_the_next_response(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    request: pytest.FixtureRequest,
+    transport: str,
+):
+    """A tool search the model runs alongside a client tool call is kept, and its result arrives next.
+
+    The API stops for the client tool without returning the search result
+    (https://github.com/anthropics/anthropic-sdk-python/issues/1325) and delivers it at the start of
+    the next response, as long as the request still carries the call. Dropping the call made the
+    model search again (https://github.com/pydantic/pydantic-ai/issues/10966). Recorded on the direct
+    API, the legacy Bedrock InvokeModel API and Claude Platform on AWS, which all accept the shape.
+    """
+    if transport == 'bedrock':
+        client = request.getfixturevalue('anthropic_bedrock_client')
+        model = AnthropicModel('global.anthropic.claude-opus-5-5', provider=AnthropicProvider(anthropic_client=client))
+    elif transport == 'mantle':
+        client = request.getfixturevalue('anthropic_bedrock_mantle_client')
+        model = AnthropicModel('anthropic.claude-opus-5-5', provider=AnthropicProvider(anthropic_client=client))
+    else:
+        model = anthropic_model('claude-opus-5-5', capture=True)
+    agent = Agent(model, capabilities=[ToolSearch()])
+
+    @agent.tool_plain
+    def send_status(message: str) -> str:
+        """Send a status update to the user."""
+        return 'sent'
+
+    @agent.tool_plain(defer_loading=True)
+    def pay_rent() -> str:
+        """Pay this month's rent."""
+        return 'paid'
+
+    result = await agent.run(
+        'Do two things in parallel in this single response, without waiting for either: '
+        "call `send_status` with message 'starting', and search for a tool that can pay rent. "
+        'Then pay the rent.'
+    )
+
+    responses = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
+    assert [
+        [part.part_kind for part in response.parts if not isinstance(part, ThinkingPart)] for response in responses
+    ] == (
+        snapshot(
+            [
+                ['tool-call', 'builtin-tool-call'],
+                ['builtin-tool-return', 'tool-call'],
+                ['text'],
+            ]
+        )
+    )
+    [search_call] = [part for part in responses[0].parts if isinstance(part, NativeToolSearchCallPart)]
+    [search_return] = [part for part in responses[1].parts if isinstance(part, NativeToolSearchReturnPart)]
+    assert search_return.tool_call_id == search_call.tool_call_id
+    assert message_shape(request_capture.bodies()[1]) == snapshot(
+        [('user', ['text']), ('assistant', ['tool_use', 'server_tool_use']), ('user', ['tool_result'])]
     )
 
 
