@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TypeGuard, TypeVar
 
 import httpx
@@ -215,9 +215,17 @@ class TestLinear:
         assert isinstance(transport(Linear(auth='oauth').get_toolset()).auth, OAuth)
 
 
+async def per_user_token_async(ctx: RunContext[str | None]) -> str | None:
+    """The same as `per_user_token`, for an app that loads the token asynchronously."""
+    return ctx.deps
+
+
 class TestPerRunAuth:
-    async def test_each_run_connects_with_its_own_credential(self) -> None:
-        capability = Linear[str | None](auth=per_user_token)
+    @pytest.mark.parametrize('auth', [per_user_token, per_user_token_async], ids=['sync', 'async'])
+    async def test_each_run_connects_with_its_own_credential(
+        self, auth: Callable[[RunContext[str | None]], str | None | Awaitable[str | None]]
+    ) -> None:
+        capability = Linear[str | None](auth=auth)
         [alice] = await connections_for(capability, 'alice-token')
         [bob] = await connections_for(capability, 'bob-token')
         assert (bearer(alice), bearer(bob)) == ('Bearer alice-token', 'Bearer bob-token')
