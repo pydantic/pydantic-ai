@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import httpx
 import httpx2
@@ -386,20 +387,28 @@ async def test_url_derived_mcp_name_is_masked_if_run_fails_before_model_request(
     assert history[1].parts[0].tool_name == tool_name
 
 
-@pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
-@pytest.mark.parametrize('include_content', [True, False])
-async def test_a_url_mcp_toolsets_hostname_derived_id_is_masked(include_content: bool) -> None:
-    """An `MCPToolset` built from a URL without an `id` takes its hostname, which telemetry masks like other URL-derived ids.
-
-    It reaches spans as tool definitions' `toolset_id` and as the server instructions' id; neither carries it.
-    """
+@pytest.fixture
+def guidance_server_app() -> Any:
+    """An MCP server with instructions and one tool, as an HTTP app built outside the event loop."""
     server = FastMCP('test', instructions='server guidance')
 
     @server.tool
     def ping() -> str:
-        return 'pong'
+        return 'pong'  # pragma: no cover
 
-    app = server.http_app(stateless_http=True, json_response=True)
+    return server.http_app(stateless_http=True, json_response=True)
+
+
+@pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_a_url_mcp_toolsets_hostname_derived_id_is_masked(
+    include_content: bool, guidance_server_app: Any
+) -> None:
+    """An `MCPToolset` built from a URL without an `id` takes its hostname, which telemetry masks like other URL-derived ids.
+
+    It reaches spans as tool definitions' `toolset_id` and as the server instructions' id; neither carries it.
+    """
+    app = guidance_server_app
     client: httpx.AsyncClient | httpx2.AsyncClient
     if is_mcp_sdk_v2():
         client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
