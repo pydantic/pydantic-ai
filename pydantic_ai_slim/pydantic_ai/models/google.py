@@ -2040,7 +2040,7 @@ def _can_echo_server_side_tool_part(tool_call_id: str, *, supports_tool_combinat
 
     1. The model doesn't support tool combination (pre-Gemini-3) — those models never emit
        `tool_call`/`tool_response` parts and reject them in request bodies.
-    2. The `tool_call_id` was synthesized by pydantic-ai (the `pyd_ai_` prefix from
+    2. The `tool_call_id` was synthesized by pydantic-ai (the `TOOL_CALL_ID_PREFIX` prefix from
        [`generate_tool_call_id`][pydantic_ai._utils.generate_tool_call_id]) — i.e. the part was
        reconstructed from `grounding_metadata` / `url_context_metadata` and never had a real
        Google id. Gemini rejects unknown ids, so message histories built before this round-trip
@@ -2048,7 +2048,7 @@ def _can_echo_server_side_tool_part(tool_call_id: str, *, supports_tool_combinat
     """
     if not supports_tool_combination:
         return False
-    return not tool_call_id.startswith('pyd_ai_')
+    return not tool_call_id.startswith(_utils.TOOL_CALL_ID_PREFIX)
 
 
 def _process_part(

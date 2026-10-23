@@ -1457,7 +1457,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
                     provider_details=thinking_part.provider_details,
                 )
         else:
-            return super()._map_thinking_delta(choice)
+            yield from super()._map_thinking_delta(choice)
 
     @override
     def _map_provider_details(self, chunk: chat.ChatCompletionChunk) -> dict[str, Any] | None:
