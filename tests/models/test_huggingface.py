@@ -101,6 +101,41 @@ def test_huggingface_hidden_tools_stay_off_the_wire():
     assert [tool['function']['name'] for tool in tools] == ['visible']
 
 
+async def test_no_tools_sends_tools_as_none(allow_model_requests: None):
+    """With no tools declared, `tools` must be passed as None so the client omits the field.
+
+    Regression test for #11177: an empty list goes on the wire as `"tools": []`,
+    which vLLM-backed inference providers reject with a 400.
+    """
+    c = completion_message(ChatCompletionOutputMessage(content='response', role='assistant'))
+    mock_client = MockHuggingFace.create_mock(c)
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='<redacted>'))
+    agent = Agent(model)
+
+    await agent.run('a request')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['tools'] is None
+    assert kwargs['tool_choice'] is None
+
+
+async def test_declared_tools_are_still_sent(allow_model_requests: None):
+    """Tools declared on the agent are still sent as a non-empty list."""
+    c = completion_message(ChatCompletionOutputMessage(content='response', role='assistant'))
+    mock_client = MockHuggingFace.create_mock(c)
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='<redacted>'))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_location(loc_name: str) -> str:
+        return loc_name
+
+    await agent.run('a request')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert [tool['function']['name'] for tool in kwargs['tools']] == ['get_location']
+
+
 @dataclass
 class MockHuggingFace:
     completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
