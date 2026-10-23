@@ -38,10 +38,12 @@ async def test_code_interpreter_stream_preserves_initial_code(
 
     Synthetic events make the provider's intermittent nonempty seed deterministic.
     """
+    call_id = 'ci_1'
+    container_id = 'cntr_1'
     code = (seed or '') + ''.join(deltas)
     added_item = responses.ResponseCodeInterpreterToolCall(
-        id='ci_1',
-        container_id='cntr_1',
+        id=call_id,
+        container_id=container_id,
         code=seed,
         status='in_progress',
         type='code_interpreter_call',
@@ -56,7 +58,7 @@ async def test_code_interpreter_stream_preserves_initial_code(
         *(
             responses.ResponseCodeInterpreterCallCodeDeltaEvent(
                 delta=delta,
-                item_id='ci_1',
+                item_id=call_id,
                 output_index=0,
                 type='response.code_interpreter_call_code.delta',
                 sequence_number=index,
@@ -65,7 +67,7 @@ async def test_code_interpreter_stream_preserves_initial_code(
         ),
         responses.ResponseCodeInterpreterCallCodeDoneEvent(
             code=code,
-            item_id='ci_1',
+            item_id=call_id,
             output_index=0,
             type='response.code_interpreter_call_code.done',
             sequence_number=len(deltas) + 2,
@@ -96,7 +98,7 @@ async def test_code_interpreter_stream_preserves_initial_code(
     assert isinstance(call_part, NativeToolCallPart)
     assert isinstance(return_part, NativeToolReturnPart)
     assert isinstance(call_part.args, str)
-    assert json.loads(call_part.args) == {'container_id': 'cntr_1', 'code': code}
+    assert json.loads(call_part.args) == {'container_id': container_id, 'code': code}
     assert (
         sum(isinstance(event, PartStartEvent) and isinstance(event.part, NativeToolCallPart) for event in events) == 1
     )
