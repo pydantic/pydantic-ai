@@ -133,7 +133,9 @@ The shared `input_transcription_model` setting controls whether user speech reac
 | A model ID | Pins a dedicated transcription model on providers that support one. |
 | `None` | Disables input transcription. |
 
-OpenAI, Azure OpenAI, and xAI use dedicated transcription models. Gemini uses native transcription,
+OpenAI gpt-realtime, Azure OpenAI, and xAI use dedicated transcription models. OpenAI GPT-Live and
+Eleven Realtime always transcribe and take no transcription model: `None` leaves transcription on, and
+a pinned model ID raises. Gemini uses native transcription,
 configured with `google_input_transcription`: a pinned model ID in the shared setting is ignored
 (native transcription stays on), and only `None` turns it off. ElevenLabs Agents transcribes with the ASR
 configured on the agent: a pinned model ID is ignored too, and `None` raises, since the agent's pipeline needs the

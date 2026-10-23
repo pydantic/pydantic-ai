@@ -60,6 +60,8 @@ from ..messages import (
     CompactionPart,
     FilePart,
     FinishReason,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -70,7 +72,8 @@ from ..messages import (
     RealtimeInputSpeechStartEvent,
     RealtimeInputTranscriptionErrorEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -81,12 +84,19 @@ from ..messages import (
     ToolReturnPart,
     UserContent,
     UserPromptPart,
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models._speech import assistant_speech_text
 from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..tools import ToolDefinition
-from ._utils import seed_pcm_audio, seed_speech_content, seed_user_content
+from ._utils import (
+    seed_pcm_audio,
+    seed_retry_feedback_text,
+    seed_speech_content,
+    seed_user_content,
+    wrap_seeded_system_prompts,
+)
 from .codec import (
     AudioDelta,
     InputRejected,
@@ -555,8 +565,9 @@ async def seed_items(
     Text, transcripts, images, retained user audio, thinking, and function-tool rounds are replayed in
     part order. Thinking becomes tag-wrapped assistant text; its signature and `provider_details` are
     provider-session-bound and are not replayed. Native-tool parts are metadata about how an answer was
-    produced and are skipped while the answer itself is retained. `SystemPromptPart`s are routed through
-    the session `instructions` field, and `CachePoint`s are ignored.
+    produced and are skipped while the answer itself is retained. The standing system prompt the
+    history opens with is routed through the session `instructions` field, a later `SystemPromptPart` is
+    seeded as `<system>`-tagged user text, and `CachePoint`s are ignored.
 
     Retained user audio is decoded by the new session's configured input-audio format. Assistant audio
     cannot be inserted by the API, so assistant speech requires a transcript. Any other content that
@@ -568,7 +579,7 @@ async def seed_items(
     supports_images = profile.get('supports_seeding_images', False)
     supports_audio = profile.get('supports_seeding_audio', False)
 
-    for message in messages:
+    for message in wrap_seeded_system_prompts(messages):
         if isinstance(message, ModelRequest):
             items.extend(
                 await _seed_request_items(
@@ -605,9 +616,16 @@ async def _seed_request_items(
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for part in parts:
-        if isinstance(part, (SystemPromptPart, ToolAvailabilityDeltaPart)):
+        # TODO(v3): remove `RetryPromptPart`. Translated ahead of the branches, so a tool-bound legacy
+        # retry seeds through the `ToolReturnPart` branch below like the retried return it always meant.
+        if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+            part = _translate_legacy_retry_part(part)
+        if isinstance(
+            part, (SystemPromptPart, InstructionDeltaPart, InstructionBaselinePart, ToolAvailabilityDeltaPart)
+        ):
             # System prompts are seeded through session instructions, and tool-availability news
             # from a prior standard run is stale here: the session advertises its own tools.
+            # Instruction deltas likewise belong to the standard run; the session resolves current instructions.
             continue
         elif isinstance(part, UserPromptPart):
             if content := _user_content_items(
@@ -646,19 +664,8 @@ async def _seed_request_items(
                 )
             ):
                 items.append(_message_item('user', content))
-        elif isinstance(part, RetryPromptPart):
-            output = part.model_response()
-            if part.tool_name is None:
-                items.append(_message_item('user', [_text_content('input_text', output)]))
-            else:
-                _require_seeded_call(part.tool_name, tool_call_id=part.tool_call_id, seeded_calls=seeded_calls)
-                items.append(
-                    {
-                        'type': 'function_call_output',
-                        'call_id': _seed_call_id(part.tool_call_id, call_ids),
-                        'output': output,
-                    }
-                )
+        elif isinstance(part, RetryFeedbackPart):
+            items.append(_message_item('user', [_text_content('input_text', seed_retry_feedback_text(part))]))
         else:
             assert_never(part)
     return items
@@ -783,7 +790,7 @@ def _is_function_call_only(output: Sequence[ConversationItem | _ProtocolResponse
     return bool(output) and all(item.type == 'function_call' for item in output)
 
 
-def _response_status_reason(response: ProtocolResponse) -> str | None:
+def response_status_reason(response: ProtocolResponse) -> str | None:
     """Return the raw terminal `status_details.reason`, when present."""
     status_details = response.status_details
     return (
@@ -803,7 +810,7 @@ def response_finish_reason(response: ProtocolResponse) -> FinishReason | None:
     if status == 'completed':
         return 'tool_call' if _is_function_call_only(response.output) else 'stop'
     if status == 'incomplete':
-        reason = _response_status_reason(response)
+        reason = response_status_reason(response)
         if reason == 'max_output_tokens':
             return 'length'
         if reason == 'content_filter':
@@ -847,7 +854,7 @@ def response_failed_error(response: ProtocolResponse) -> RealtimeSessionErrorEve
 def response_provider_details(response: ProtocolResponse) -> dict[str, Any]:
     """Retain the raw response status, incomplete reason, and failure error for provider fidelity."""
     details: dict[str, Any] = {'status': response.status}
-    if (reason := _response_status_reason(response)) is not None:
+    if (reason := response_status_reason(response)) is not None:
         details['finish_reason'] = reason
     if (error := _response_status_error(response)) is not None:
         details['error'] = error.model_dump(exclude_none=True)
@@ -1010,6 +1017,13 @@ def _map_input_transcription_event(
         content_index=event.content_index,
     )
 
+
+ACTIVE_RESPONSE_ERROR_CODE = 'conversation_already_has_active_response'
+"""The `error` code refusing a `response.create` that arrives while another response is under way."""
+
+ACTIVE_RESPONSE_RETRIES = 3
+"""How many times in a row the connection asks again for a response the provider refused as another one was under
+way (one server VAD started on its own) before it gives up on it."""
 
 _CLIENT_EVENT_ID_RE = re.compile(r'pydantic_ai\.(content|response)\.(\d+(?:-\d+)*)')
 _CLIENT_ITEM_ID_RE = re.compile(r'pydantic_ai_item_(\d+)')

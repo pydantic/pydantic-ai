@@ -271,6 +271,9 @@ def render_call(event: FunctionToolCallEvent) -> RenderableType:
 def render_answer(event: AskUserAnsweredEvent) -> RenderableType:
     """Leave a record of what was picked in the transcript, since the menu itself is gone."""
     text = Text()
+    if event.failed:
+        text.append('● The question failed', style=theme.color(theme.MUTED))
+        return text
     if event.response.cancelled:
         text.append('● You declined to answer', style=theme.color(theme.MUTED))
         return text

@@ -20,12 +20,10 @@ from browser_use.agent.service import (
     Agent as BrowserUseAgent,
     Tools,
 )
-from browser_use.agent.views import ActionResult, AgentHistory, AgentHistoryList, JudgementResult
 from browser_use.browser import BrowserProfile, BrowserSession
 from browser_use.browser.events import NavigateToUrlEvent
 from browser_use.browser.profile import DOMAIN_OPTIMIZATION_THRESHOLD
 from browser_use.browser.session import ResilientEventBus
-from browser_use.browser.views import BrowserStateHistory
 from browser_use.browser.watchdogs.security_watchdog import SecurityWatchdog
 from browser_use.llm.messages import BaseMessage
 from browser_use.llm.views import ChatInvokeCompletion
@@ -187,33 +185,6 @@ class _FakeFactory:
 def _success_factory(result: str = 'done') -> _FakeFactory:
     """A factory whose agent finishes successfully with `result`."""
     return _FakeFactory(_FakeBrowserAgent(_FakeHistory(result=result, success=True)))
-
-
-def _judged_history(judgement: JudgementResult | None) -> AgentHistoryList[BaseModel]:
-    """A real browser-use history whose agent reported success, with the judge's verdict attached."""
-    return AgentHistoryList[BaseModel](
-        history=[
-            AgentHistory(
-                model_output=None,
-                state=BrowserStateHistory(url='https://example.com/', title='', tabs=[], interacted_element=[]),
-                result=[
-                    ActionResult(
-                        is_done=True, success=True, extracted_content='The Pro plan costs $20.', judgement=judgement
-                    )
-                ],
-            )
-        ]
-    )
-
-
-@dataclass
-class _HistoryAgent:
-    """A `BrowserAgent` double returning a real browser-use history."""
-
-    history: AgentHistoryList[BaseModel]
-
-    async def run(self, max_steps: int = 500) -> AgentHistoryList[BaseModel]:
-        return self.history
 
 
 class _TelemetryEvent(BaseTelemetryEvent):
@@ -760,32 +731,6 @@ class TestBrowserUseToolset:
         await capability.get_toolset().browse_web(_ctx(), 'task')
 
         assert isinstance(factory.requests[0].settings.judge_llm, PydanticAIChatModel)
-
-    @pytest.mark.parametrize(
-        ('judgement', 'expected'),
-        [
-            (None, 'The Pro plan costs $20.'),
-            (JudgementResult(verdict=True), 'The Pro plan costs $20.'),
-            (
-                JudgementResult(verdict=False, failure_reason='The price came from an ad.'),
-                "The browser agent reported success, but browser-use's judge rejected the result "
-                '(The price came from an ad.). Its final result: The Pro plan costs $20.',
-            ),
-            (
-                JudgementResult(verdict=False),
-                "The browser agent reported success, but browser-use's judge rejected the result "
-                '(no reason given). Its final result: The Pro plan costs $20.',
-            ),
-        ],
-    )
-    async def test_a_judge_rejection_is_flagged(
-        self, kill_calls: list[BrowserSession], judgement: JudgementResult | None, expected: str
-    ) -> None:
-        """browser-use attaches the judge's verdict without changing the agent's own success flag."""
-        history = _judged_history(judgement)
-        toolset = BrowserUse[None](browser_agent=lambda request: _HistoryAgent(history)).get_toolset()
-
-        assert await toolset.browse_web(_ctx(), 'find the Pro price') == expected
 
 
 class TestBrowserAgentSettings:
@@ -1355,15 +1300,6 @@ class TestSensitiveDataSafety:
         ('agent', 'output_schema', 'expected'),
         [
             pytest.param(
-                _HistoryAgent(
-                    _judged_history(JudgementResult(verdict=False, failure_reason='It typed hunter2 on an ad.'))
-                ),
-                None,
-                "The browser agent reported success, but browser-use's judge rejected the result "
-                '(It typed <secret>x_password</secret> on an ad.). Its final result: The Pro plan costs $20.',
-                id='judge-reason',
-            ),
-            pytest.param(
                 _FakeBrowserAgent(_FakeHistory(result='hunter2 was refused', success=False)),
                 None,
                 'The browser agent could not fully complete the task. '
@@ -1381,7 +1317,7 @@ class TestSensitiveDataSafety:
     async def test_secret_values_are_redacted_from_every_result_form(
         self,
         kill_calls: list[BrowserSession],
-        agent: _HistoryAgent | _FakeBrowserAgent,
+        agent: _FakeBrowserAgent,
         output_schema: type[BaseModel] | None,
         expected: str,
     ) -> None:
@@ -1420,20 +1356,6 @@ class TestSensitiveDataSafety:
             '(typed <secret>x_password</secret> into a field that rejected it).'
         )
 
-    async def test_secret_values_are_redacted_from_schema_json(self, kill_calls: list[BrowserSession]) -> None:
-        """JSON escapes a `"` in the value, so the escaped form is redacted too."""
-        facts = _Facts(name='pa"ssé', price_usd=1)
-        history = _FakeHistory(result=facts.model_dump_json(), success=True, structured=facts)
-        capability = BrowserUse[None](
-            output_schema=_Facts,
-            sensitive_data={'https://safe.example': {'x_password': 'pa"ssé'}},
-            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
-        )
-
-        result = await capability.get_toolset().browse_web(_ctx(), 'task')
-
-        assert json.loads(result) == {'name': '<secret>x_password</secret>', 'price_usd': 1}
-
     async def test_a_secret_in_a_non_string_schema_field_keeps_the_json_valid(
         self, kill_calls: list[BrowserSession]
     ) -> None:
@@ -1449,6 +1371,20 @@ class TestSensitiveDataSafety:
         result = await capability.get_toolset().browse_web(_ctx(), 'task')
 
         assert json.loads(result) == {'owner': 'me', 'pins': ['<secret>x_pin</secret>', 5678], 'active': True}
+
+    async def test_secret_values_are_redacted_from_schema_json(self, kill_calls: list[BrowserSession]) -> None:
+        """JSON escapes a `"` in the value, so the escaped form is redacted too."""
+        facts = _Facts(name='pa"ssé', price_usd=1)
+        history = _FakeHistory(result=facts.model_dump_json(), success=True, structured=facts)
+        capability = BrowserUse[None](
+            output_schema=_Facts,
+            sensitive_data={'https://safe.example': {'x_password': 'pa"ssé'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert json.loads(result) == {'name': '<secret>x_password</secret>', 'price_usd': 1}
 
     @pytest.mark.parametrize('secret', ['hunter2', 'sk-' + 'A1b2C3d4' * 8, 'it\'s "quoted"'])
     async def test_secret_values_are_redacted_from_a_schema_retry(

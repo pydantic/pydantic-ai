@@ -19,6 +19,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import time
 import warnings
+from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager, suppress
 from dataclasses import KW_ONLY, dataclass, field
@@ -39,11 +40,11 @@ except ImportError as _import_error:
         'you can use the `google-realtime` optional group - `pip install "pydantic-ai-slim[google-realtime]"`'
     ) from _import_error
 
-from .._instrumentation import get_instructions
 from .._utils import generate_tool_call_id
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
+    ERROR_OUTCOMES,
     INTERRUPTED_TOOL_RETURN_CONTENT,
     AudioUrl,
     BinaryAudio,
@@ -55,6 +56,8 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -67,7 +70,8 @@ from ..messages import (
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -80,8 +84,12 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
-from ..models import ModelRequestParameters, download_item
+from ..models import (
+    ModelRequestParameters,
+    download_item,
+)
 from ..models._speech import assistant_speech_text
 
 # Reuse the classic `GoogleModel`'s native tool mappers so a realtime turn's grounding / code-execution
@@ -110,7 +118,7 @@ from ..settings import ThinkingEffort, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._inferred_lifecycle import InferredLifecycle
-from ._lifecycle import LifecycleEvent, RealtimeFrame, StaleEvent
+from ._lifecycle import InputId, LifecycleEvent, RealtimeFrame, StaleEvent
 from ._utils import (
     DEFAULT_MAX_RECONNECTS,
     inject_trace_context,
@@ -118,8 +126,11 @@ from ._utils import (
     require_pcm_audio,
     resolve_advertised_tools,
     seed_pcm_audio,
+    seed_retry_feedback_text,
     seed_speech_content,
     seed_user_content,
+    session_instructions,
+    wrap_seeded_system_prompts,
 )
 from .codec import (
     AudioDelta,
@@ -353,6 +364,16 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     boundary, so the exchange isn't reported complete before the answer is spoken. Set by default on
     Vertex AI only, where it was verified.
     """
+    google_input_cuts_off_reply: bool
+    """Whether text or a tool result that reaches the model mid-generation cuts the reply off. Default: `False`.
+
+    The model then reports the reply `interrupted` and complete (cancelling the tool calls it was waiting on, on
+    `gemini-3.1-flash-live-preview`) and answers the input in the next turn, so the cut-off reply answers only the
+    request that started it. Verified live for `gemini-3.1-flash-live-preview` and `gemini-3.8-live`, which also report
+    the user's speech (`voice_activity`) when that is what cut the reply off. Vertex's `gemini-live-2.5-flash` cuts
+    a reply off too, but doesn't say whether speech did it, so it is left off; the native-audio models finish the
+    reply instead, and answer the input after it.
+    """
     google_supports_async_tool_call_scheduling: bool
     """Whether the model takes a `scheduling` field on an async tool call's result. Default: `False`.
 
@@ -390,9 +411,8 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     google_supports_seeding_function_parts: bool
     """Whether seeded tool calls and results go in as native function parts. Default: `False`.
 
-    When `True`, prior [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s,
-    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]s, and tool
-    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]s are seeded as `function_call` and
+    When `True`, prior [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s and
+    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]s are seeded as `function_call` and
     `function_response` parts, sent as the session's initial history (`history_config`), rather than
     projected as readable text. True of the Gemini 3.8 Live models. `gemini-2.5-flash-native-audio-*`
     rejects function parts in seeded turns, and `gemini-3.1-flash-live-preview` loses history seeded
@@ -566,7 +586,8 @@ async def _seed_turns(
     because they describe provider-executed work whose answer text is already retained.
 
     Thinking signatures and `provider_details` are provider-session-bound and are not replayed.
-    `SystemPromptPart`s are routed through `system_instruction`, and `CachePoint`s are ignored. User
+    The standing system prompt the history opens with is routed through `system_instruction`, a later
+    `SystemPromptPart` is seeded as `<system>`-tagged user text, and `CachePoint`s are ignored. User
     speech is seeded as its transcript, or as its retained 16 kHz audio on a model whose profile sets
     `supports_seeding_audio`; on other models (Gemini 2.5 rejects audio in seeded turns) speech
     requires a transcript. Other unrepresentable content raises [`UserError`][pydantic_ai.exceptions.UserError].
@@ -574,7 +595,7 @@ async def _seed_turns(
     turns: list[genai_types.Content] = []
     supports_images = profile.get('supports_seeding_images', False)
     supports_audio = profile.get('supports_seeding_audio', False)
-    for message in messages:
+    for message in wrap_seeded_system_prompts(messages):
         if isinstance(message, ModelRequest):
             parts = await _seed_request_parts(
                 message.parts,
@@ -602,9 +623,17 @@ async def _seed_request_parts(
 ) -> list[genai_types.Part]:
     parts: list[genai_types.Part] = []
     for part in message_parts:
-        if isinstance(part, (SystemPromptPart, ToolAvailabilityDeltaPart)):
+        # TODO(v3): remove `RetryPromptPart`. Translated ahead of the branches rather than inside one
+        # of them, so a tool-bound legacy retry seeds through the `ToolReturnPart` branch below and
+        # reads exactly like the retried return the framework emits for the same failure.
+        if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+            part = _translate_legacy_retry_part(part)
+        if isinstance(
+            part, (SystemPromptPart, InstructionDeltaPart, InstructionBaselinePart, ToolAvailabilityDeltaPart)
+        ):
             # System prompts are seeded through session instructions, and tool-availability news
             # from a prior standard run is stale here: the session advertises its own tools.
+            # Instruction deltas likewise belong to the standard run; the session resolves current instructions.
             continue
         elif isinstance(part, UserPromptPart):
             parts.extend(
@@ -632,7 +661,7 @@ async def _seed_request_parts(
                 # Gemini's function response has an `error` key for a failed call, as on a standard request.
                 response = (
                     {'error': part.model_response_str(wrap_if_error=False)}
-                    if part.outcome == 'failed'
+                    if part.outcome in ERROR_OUTCOMES
                     else {'output': output}
                 )
                 parts.append(
@@ -654,20 +683,8 @@ async def _seed_request_parts(
                         )
                     )
                 )
-        elif isinstance(part, RetryPromptPart):
-            output = part.model_response()
-            if part.tool_name is None:
-                parts.append(genai_types.Part(text=output))
-            elif function_parts:
-                parts.append(
-                    genai_types.Part(
-                        function_response=genai_types.FunctionResponse(
-                            id=part.tool_call_id, name=part.tool_name, response={'error': output}
-                        )
-                    )
-                )
-            else:
-                parts.append(genai_types.Part(text=f'[Tool {part.tool_call_id}: {part.tool_name} error: {output}]'))
+        elif isinstance(part, RetryFeedbackPart):
+            parts.append(genai_types.Part(text=seed_retry_feedback_text(part)))
         else:
             assert_never(part)
     return parts
@@ -1293,7 +1310,7 @@ class GoogleRealtimeModel(RealtimeModel):
     ) -> AsyncGenerator[GoogleRealtimeConnection]:
         client = self._provider.client
         settings = cast('GoogleRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
-        instructions = get_instructions(messages, model_request_parameters) or ''
+        instructions = session_instructions(messages, model_request_parameters)
         # Transparent reconnect needs session resumption, so the server restores state on re-dial;
         # a `reconnect` policy requests it automatically (see `_session_resumption_enabled`). An
         # explicit opt-out alongside a policy would silently reconnect into a model that remembers
@@ -1446,6 +1463,15 @@ class _TypedTurn:
     sending: bool = True
 
 
+class _CutOffLifecycle(InferredLifecycle):
+    """The inferred lifecycle of a Gemini Live model that cuts its reply off for an input that reaches it mid-generation.
+
+    See `GoogleRealtimeModelProfile.google_input_cuts_off_reply`.
+    """
+
+    inputs_cut_off_replies = True
+
+
 class GoogleRealtimeConnection(RealtimeConnection):
     """A live connection to the Gemini Live API, backed by a `google-genai` session."""
 
@@ -1500,6 +1526,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # after the exchange that answered it ended. A handle's arrival time says nothing about which inputs it
         # covers, but a server that withholds handles mid-turn only issues one once a turn is over.
         self._uncovered_typed_turns: list[_TypedTurn] = []
+        # How much audio has gone out on this connection, in seconds: where Gemini's `voice_activity` offsets point.
+        self._audio_seconds = 0.0
+        # Where in that audio each recent input other than audio went out, oldest first (see `_voice_activity`).
+        self._sent_at: deque[tuple[float, InputId]] = deque(maxlen=64)
         # Whether the server withholds handles while it works on a turn, seen as an update without a
         # handle while a typed turn is outstanding. Gemini 2.5 takes up every typed turn that way, and a
         # session resumed from the handle before it doesn't have the turn. 3.8 never does, and (verified
@@ -1543,7 +1573,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # completes.
         self._tool_call_turn_unanswered = False
         # Which response, user turn, and input each message is about (see `frames()`).
-        self._lifecycle = InferredLifecycle(transcribes=input_transcription_enabled)
+        cuts_off = cast('GoogleRealtimeModelProfile', self._profile).get('google_input_cuts_off_reply', False)
+        self._lifecycle = (_CutOffLifecycle if cuts_off else InferredLifecycle)(transcribes=input_transcription_enabled)
 
     @property
     def _can_reconnect(self) -> bool:
@@ -1555,10 +1586,23 @@ class GoogleRealtimeConnection(RealtimeConnection):
         )
 
     @property
+    def _talks_through_tool_calls(self) -> bool:
+        # A model whose asynchronous calls' results cut into what it's saying (`scheduling: INTERRUPT`) keeps
+        # talking in the turn that made them while they run (recorded on the native-audio models). Extended
+        # thinking, which takes no scheduling, ends what it says before the call and answers after the result.
+        return self._async_tool_calls_enabled and self._async_tool_call_scheduling_enabled
+
+    @property
     def _answers_tool_calls_per_response(self) -> bool:
         # A blocking tool-call frame is answered once, when every call has its result. A non-blocking
         # call's result cuts into the speech on its own, so it may get an answer of its own.
         return not self._async_tool_calls_enabled
+
+    @property
+    def _sends_failed_tool_results(self) -> bool:
+        # A call left without a response stays open: a blocking call holds the model waiting on it, so no later
+        # turn is answered (2.5), and a non-blocking one is made again on every later input (3.8). Checked live.
+        return True
 
     @property
     def input_transcription_enabled(self) -> bool:
@@ -1593,6 +1637,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 if turn is not None and turn in self._uncovered_typed_turns:
                     self._uncovered_typed_turns.remove(turn)
                 raise
+            if isinstance(content, BinaryAudio):
+                self._audio_seconds += len(content.data) / (2 * INPUT_SAMPLE_RATE)
+            else:
+                self._sent_at.append((self._audio_seconds, input_index))
         if turn is not None:
             turn.sending = False
         # Gemini acknowledges nothing: where the input joined the conversation is known now, if it is.
@@ -1777,6 +1825,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 unanswered = [turn.input_index for turn in uncovered if not turn.answered]
                 lost_typed_turns = unanswered[1:] if self._turn_open else unanswered
                 self._uncovered_typed_turns = []
+                # The new session's audio, and the offsets it reports, start over.
+                self._audio_seconds = 0.0
+                self._sent_at.clear()
                 # Losing a call or a turn loses the exchange it belongs to, so that isn't a restored state.
                 state_restored = state_resumed and not lost_tool_calls and not uncovered
                 if await self._try_reconnect():
@@ -1959,8 +2010,26 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # (matching OpenAI's codec, which emits usage before the turn boundary).
         return events
 
+    def _voice_activity(self, activity: genai_types.VoiceActivity | None) -> None:
+        """Gemini 3.x heard the user start (or stop) speaking, at `audio_offset` into the audio sent.
+
+        It reports that just ahead of the `interrupted` that cuts a reply off for speech, and not for a typed turn that
+        does (seen live). Inputs sent before that point in the audio can't have cut the reply off; the reply answers
+        them. (The report can be read only after inputs sent since, so where it is read says nothing.)
+        """
+        if activity is None or activity.voice_activity_type != genai_types.VoiceActivityType.ACTIVITY_START:
+            return
+        offset = activity.audio_offset
+        if offset is None or not offset.endswith('s'):
+            self._lifecycle.speech_heard()
+            return
+        seconds = float(offset.removesuffix('s'))
+        before = [input_id for at, input_id in self._sent_at if at < seconds]
+        self._lifecycle.speech_heard(after=before[-1] if before else -1)
+
     def _map_message(self, message: genai_types.LiveServerMessage) -> list[RealtimeCodecEvent]:
         events: list[RealtimeCodecEvent] = []
+        self._voice_activity(message.voice_activity)
         if message.server_content is not None:
             events.extend(self._map_server_content(message.server_content))
         if message.tool_call is not None:
@@ -1978,13 +2047,14 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 self._turn_open = True
                 # Every call in the frame belongs to one model response, which Gemini answers once all of
                 # them have results. `response_usage_follows` keeps them together until the frame's usage
-                # below closes the response.
+                # below closes the response, unless the model talks on in it while they run.
                 events.append(
                     ToolCall(
                         tool_call_id=call_id,
                         tool_name=name,
                         args=to_json(call.args or {}).decode(),
-                        response_usage_follows=True,
+                        response_usage_follows=not self._talks_through_tool_calls,
+                        response_continues=self._talks_through_tool_calls,
                     )
                 )
         if message.tool_call_cancellation is not None and (cancelled_ids := message.tool_call_cancellation.ids):
@@ -2009,7 +2079,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     )
                 )
             )
-        elif message.tool_call is not None and message.tool_call.function_calls:
+        elif message.tool_call is not None and message.tool_call.function_calls and not self._talks_through_tool_calls:
             # A tool-call frame carries no usage of its own (the turn's usage comes with a later
             # `turn_complete`), but the calls above were promised some: an empty report closes their
             # response now, since Gemini answers only once it has their results.

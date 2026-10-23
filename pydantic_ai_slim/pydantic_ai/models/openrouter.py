@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Annotated, Any, Literal, TypeAlias, cast
@@ -8,7 +8,7 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, override
 
-from .. import usage
+from .. import _model_errors, usage
 from .._utils import is_str_dict
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
@@ -83,7 +83,7 @@ _CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_f
 }
 
 # https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
-_OPENROUTER_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high', 'none']] = {
+_OPENROUTER_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high', 'max', 'none']] = {
     True: 'medium',
     False: 'none',
     'minimal': 'low',
@@ -91,6 +91,8 @@ _OPENROUTER_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high', 'no
     'medium': 'medium',
     'high': 'high',
     'xhigh': 'high',
+    # OpenRouter snaps `max` to the highest effort each routed model supports.
+    'max': 'max',
 }
 
 
@@ -271,7 +273,7 @@ class OpenRouterReasoning(TypedDict, total=False):
     token limits, but not both simultaneously.
     """
 
-    effort: Literal['xhigh', 'high', 'medium', 'low', 'minimal', 'none']
+    effort: Literal['max', 'xhigh', 'high', 'medium', 'low', 'minimal', 'none']
     """OpenAI-style reasoning effort level. Cannot be used with max_tokens."""
 
     max_tokens: int
@@ -384,6 +386,23 @@ class _OpenRouterError(BaseModel):
 
     code: int
     message: str
+
+
+def _map_openrouter_error(error: _OpenRouterError, model_name: str, *, in_stream: bool = False) -> ModelHTTPError:
+    """Map an error OpenRouter sent inside a 200 response or stream.
+
+    Its `code` is the HTTP status OpenRouter uses for the same error, so it's reported as the status code although
+    the response's own status was 200.
+    """
+    category = _model_errors.openai_compatible_category(error.code, None, None, error.message)
+    return ModelHTTPError.for_category(
+        category,
+        status_code=error.code,
+        model_name=model_name,
+        body=error.message,
+        provider_error_code=str(error.code),
+        in_stream=in_stream,
+    )
 
 
 class _OpenRouterFileAnnotation(BaseModel, frozen=True):
@@ -716,6 +735,9 @@ def _openrouter_settings_to_openai_settings(
 
 class OpenRouterModel(OpenAIChatModel):
     """Extends OpenAIChatModel to capture extra metadata for Openrouter."""
+
+    # OpenRouter extends Chat Completions with a `video_url` content part, so video is up to the model.
+    _unsupported_file_inputs = frozenset()
 
     def __init__(
         self,
@@ -1055,6 +1077,11 @@ class OpenRouterModel(OpenAIChatModel):
         return super()._request_thinks(model_settings, model_request_parameters)
 
     @override
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `openrouter_reasoning` replaces the unified mapping. `openai_reasoning_effort` is sent beside it instead.
+        return ('openrouter_reasoning',) if 'openrouter_reasoning' in model_settings else ()
+
+    @override
     def _supports_tool_forcing(
         self, model_settings: OpenAIChatModelSettings, model_request_parameters: ModelRequestParameters
     ) -> bool:
@@ -1199,11 +1226,7 @@ class OpenRouterModel(OpenAIChatModel):
             except ValidationError:
                 pass
             else:
-                raise ModelHTTPError(
-                    status_code=error_response.error.code,
-                    model_name=error_response.model or self.model_name,
-                    body=error_response.error.message,
-                )
+                raise _map_openrouter_error(error_response.error, error_response.model or self.model_name)
 
             # `ModelAPIError` is `FallbackModel`'s default `fallback_on`, so raising it here lets the
             # transient reach fallback on this non-streamed path.
@@ -1219,7 +1242,7 @@ class OpenRouterModel(OpenAIChatModel):
                 validated.created = response_dict.get('created') or 0
 
         if error := validated.error:
-            raise ModelHTTPError(status_code=error.code, model_name=validated.model, body=error.message)
+            raise _map_openrouter_error(error, validated.model)
 
         return validated
 
@@ -1413,9 +1436,9 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
             try:
                 error = _OpenRouterError.model_validate(e.body)
             except ValidationError:
-                # An error object without an integer `code`: there's no status to report.
-                raise ModelAPIError(model_name=self._model_name, message=e.message) from e
-            raise ModelHTTPError(status_code=error.code, model_name=self._model_name, body=error.message) from e
+                # An error object without an integer `code`: classify it like any OpenAI-compatible in-stream error.
+                raise _model_errors.stream_error(self._model_name, e.message, e.body) from e
+            raise _map_openrouter_error(error, self._model_name, in_stream=True) from e
 
     @override
     def _map_thinking_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
@@ -1439,7 +1462,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
                     provider_details=thinking_part.provider_details,
                 )
         else:
-            return super()._map_thinking_delta(choice)
+            yield from super()._map_thinking_delta(choice)
 
     @override
     def _map_provider_details(self, chunk: chat.ChatCompletionChunk) -> dict[str, Any] | None:

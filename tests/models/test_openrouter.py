@@ -17,10 +17,13 @@ from pydantic_ai import (
     BinaryContent,
     DocumentUrl,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelServerError,
+    ModelTimeoutError,
     PartEndEvent,
     PartStartEvent,
     RunContext,
@@ -855,6 +858,44 @@ async def test_openrouter_streamed_reasoning_details_are_preserved(
             provider_details={'format': 'openai-responses-v1', 'index': 2, 'type': 'reasoning.summary'},
         ),
         TextPart(content='first answer'),
+    ]
+
+
+async def test_openrouter_streamed_reasoning_without_details_is_preserved(allow_model_requests: None) -> None:
+    """A streamed `reasoning` delta without `reasoning_details` falls back to the base mapping, like `_process_thinking`.
+
+    Mock-based rather than VCR — no recorded OpenRouter stream carries `reasoning` without `reasoning_details`,
+    so the chunks are hand-built.
+    """
+
+    def chunk(delta: dict[str, str], *, finish_reason: str | None = None) -> ChatCompletionChunk:
+        return _OpenRouterChatCompletionChunk.model_validate(
+            {
+                'id': 'gen-123',
+                'choices': [{'index': 0, 'delta': {'role': 'assistant', **delta}, 'finish_reason': finish_reason}],
+                'created': 1704067200,
+                'model': 'deepseek/deepseek-r1',
+                'object': 'chat.completion.chunk',
+                'provider': 'DeepSeek',
+            }
+        )
+
+    mock_client = MockOpenAI.create_mock_stream(
+        [
+            chunk({'content': '', 'reasoning': 'Adding '}),
+            chunk({'content': '', 'reasoning': 'two and two.'}),
+            chunk({'content': '4'}, finish_reason='stop'),
+        ]
+    )
+    model = OpenRouterModel('deepseek/deepseek-r1', provider=OpenRouterProvider(openai_client=mock_client))
+
+    async with model_request_stream(model, [ModelRequest.user_text_prompt('What is 2+2?')]) as stream:
+        async for _ in stream:
+            pass
+
+    assert stream.get().parts == [
+        ThinkingPart(content='Adding two and two.', id='reasoning', provider_name='openrouter'),
+        TextPart(content='4'),
     ]
 
 
@@ -2256,13 +2297,14 @@ async def test_openrouter_stream_transport_error_raises_model_api_error(
     """
     error = await _run_openrouter_stream(_FailingSSEStream([_MID_STREAM_TEXT_CHUNK], exc))
 
-    assert type(error) is ModelAPIError
+    assert type(error) is (ModelTimeoutError if cause is APITimeoutError else ModelConnectionError)
     assert type(error.__cause__) is cause
 
 
 @pytest.mark.vcr(ignore_hosts=['openrouter.example'])
 async def test_openrouter_stream_error_without_integer_code_raises_model_api_error(allow_model_requests: None) -> None:
-    """An in-stream error object whose `code` isn't an HTTP status surfaces as `ModelAPIError` with no status.
+    """An in-stream error object whose `code` isn't an HTTP status is classified like any OpenAI-compatible in-stream
+    error, so `server_error` gets the 500 it has before a stream opens.
 
     OpenRouter documents an integer `code`, so no recording carries this shape; a mock transport serves it to pin that
     an envelope that doesn't validate is mapped rather than escaping as a `ValidationError`.
@@ -2270,8 +2312,11 @@ async def test_openrouter_stream_error_without_integer_code_raises_model_api_err
     error_chunk = b'data: {"error":{"code":"server_error","message":"upstream failed"}}\n\n'
     error = await _run_openrouter_stream(httpx2.ByteStream(_MID_STREAM_TEXT_CHUNK + error_chunk))
 
-    assert type(error) is ModelAPIError
-    assert error.message == 'upstream failed'
+    assert isinstance(error, ModelHTTPError)
+    assert isinstance(error, ModelServerError)
+    assert error.status_code == 500
+    assert error.in_stream is True
+    assert error.provider_error_code == 'server_error'
     assert isinstance(error.__cause__, APIError)
     assert error.__cause__.body == snapshot({'code': 'server_error', 'message': 'upstream failed'})
 
