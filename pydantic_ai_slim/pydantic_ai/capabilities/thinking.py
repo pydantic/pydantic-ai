@@ -23,7 +23,7 @@ class Thinking(AbstractCapability[Any]):
 
     - `True`: Enable thinking with the provider's default effort.
     - `False`: Disable thinking (silently ignored on always-on models).
-    - `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`: Enable thinking at a specific effort level.
+    - `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'`: Enable thinking at a specific effort level.
     """
 
     _: KW_ONLY

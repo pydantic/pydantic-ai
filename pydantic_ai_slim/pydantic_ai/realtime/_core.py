@@ -455,6 +455,7 @@ class SessionCore:
         input_sample_rate: int = 24000,
         output_sample_rate: int = 24000,
         seeded: Sequence[ModelMessage] = (),
+        opening: ModelRequest | None = None,
         usage: RunUsage | None = None,
         annotate_response: Callable[[ModelResponse], None] | None = None,
     ) -> None:
@@ -474,6 +475,11 @@ class SessionCore:
         self._input_rate = input_sample_rate
         self._output_rate = output_sample_rate
         self._seeded = list(seeded)
+        self._opening: list[ModelMessage] = []
+        """The request a fresh conversation opens with, holding the agent's system prompt: the first message recorded."""
+        if opening is not None:
+            fill_run_metadata(opening, run_id=run_id, conversation_id=conversation_id)
+            self._opening.append(opening)
         self._annotate_response = annotate_response
         """Adds what instrumentation knows about each response's parts (its tools' OTel metadata) before it's recorded."""
         self.usage = usage if usage is not None else RunUsage()
@@ -1519,7 +1525,11 @@ class SessionCore:
     def set_conversation_id(self, conversation_id: str) -> None:
         """The conversation id the session resolved late: what the core records from now on, and has recorded, carries it."""
         self._conversation_id = conversation_id
-        recorded: list[ModelMessage] = [*(input_.request for input_ in self._inputs.values()), *self._returns.values()]
+        recorded: list[ModelMessage] = [
+            *self._opening,
+            *(input_.request for input_ in self._inputs.values()),
+            *self._returns.values(),
+        ]
         for entry in self._placed:
             if not isinstance(entry, _Input) and entry.message is not None:
                 recorded.append(entry.message)
@@ -1530,10 +1540,10 @@ class SessionCore:
 
     def all_messages(self) -> list[ModelMessage]:
         """The seeded history plus everything recorded this session, as far as it is final."""
-        return [*self._seeded, *self._visible()]
+        return [*self._seeded, *self._opening, *self._visible()]
 
     def new_messages(self) -> list[ModelMessage]:
-        return list(self._visible())
+        return [*self._opening, *self._visible()]
 
     def _visible(self) -> Iterator[ModelMessage]:
         for entry in self._placed[: self._held_from()]:
@@ -1555,7 +1565,7 @@ class SessionCore:
         along. Inputs sent that the provider hadn't acknowledged yet come last, as sent: the old connection may
         never have delivered them, and the reply the reconnect asks for again answers them.
         """
-        messages: list[ModelMessage] = list(self._seeded)
+        messages: list[ModelMessage] = [*self._seeded, *self._opening]
         for entry in self._placed:
             messages.extend(self._entry_messages(entry))
         messages.extend(input_.request for input_ in self._unplaced.values())
@@ -1666,7 +1676,7 @@ class SessionCore:
 
         A spoken turn still waiting for its transcript is in it with what it has.
         """
-        messages: list[ModelMessage] = list(self._seeded)
+        messages: list[ModelMessage] = [*self._seeded, *self._opening]
         for entry in self._placed[: self._placed.index(response)]:
             messages.extend(self._entry_messages(entry))
         return messages
@@ -1687,7 +1697,7 @@ class SessionCore:
         Like `replayable_messages()`, with what a response under way has said and called so far: a tool runs while
         the response that called it can still be under way.
         """
-        messages: list[ModelMessage] = list(self._seeded)
+        messages: list[ModelMessage] = [*self._seeded, *self._opening]
         for entry in self._placed:
             if isinstance(entry, _Response) and entry.status is None:
                 parts = [*entry.native_parts, *entry.parts]
