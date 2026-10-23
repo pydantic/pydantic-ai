@@ -21,7 +21,7 @@ from mcp.server.fastmcp import FastMCP
 
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ToolSearch, Toolset
-from pydantic_ai.messages import ModelMessage, ToolCallPart
+from pydantic_ai.messages import ModelMessage, TextContent, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
@@ -53,7 +53,7 @@ from pydantic_ai_harness import (
     Shell,
     Skills,
     SlidingWindowCompaction,
-    SmartFileSearch,
+    SmartSearch,
     StackOne,
     SummarizingCompaction,
     SystemReminders,
@@ -70,7 +70,14 @@ from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.notion import Notion
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from pydantic_ai_harness.subagents import DelegationReports, DelegationTaskEvent, DelegationTasks, SubAgent, SubAgents
+from pydantic_ai_harness.subagents import (
+    DelegationReports,
+    DelegationTaskEvent,
+    DelegationTasks,
+    SubAgent,
+    SubAgents,
+    is_task_report,
+)
 
 from ..append_only import (
     CLOCK,
@@ -204,7 +211,7 @@ FIXTURES: dict[str, Fixture] = {
     'Shell': _workspace(Shell),
     'Skills': _skills,
     'SlidingWindowCompaction': lambda _: SlidingWindowCompaction(max_messages=6, keep_messages=2),
-    'SmartFileSearch': _workspace(lambda: SmartFileSearch(model=TestModel())),
+    'SmartSearch': _workspace(lambda: SmartSearch(model=TestModel())),
     'StackOne': lambda _: StackOne('account', client=_hosted_server()),
     'SummarizingCompaction': lambda _: SummarizingCompaction(TestModel(), max_messages=6, keep_messages=2),
     'SystemReminders': lambda _: SystemReminders(dynamic_reminders=[_time_reminder]),
@@ -428,6 +435,12 @@ def _delegation_reports(
     def delivered_once(result: ConversationResult) -> None:
         parts = [part for message in result.history for part in getattr(message, 'parts', ()) if _REPORT in str(part)]
         assert len(parts) == 1, f'expected the report in history once, found {len(parts)}'
+        # Delivered as framed `<task_output>` data on the user channel, recognized by its metadata.
+        (part,) = parts
+        assert is_task_report(part), f'expected a task report, found {part!r}'
+        assert not isinstance(part.content, str)
+        (text,) = part.content
+        assert isinstance(text, TextContent) and text.content.startswith('<task_output task_id=')
 
     scenario = Scenario(
         turns=(
