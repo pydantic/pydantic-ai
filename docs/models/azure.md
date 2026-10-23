@@ -123,7 +123,7 @@ Or initialise the model and provider directly, for example to process a document
 
 Use [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] for Grok deployments whose names start with `grok` (case-insensitive):
 
-```python
+```python {gateway_toggle="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.azure import AzureProvider
@@ -144,7 +144,7 @@ Azure Grok rejects tool schemas containing local `$ref` and `$defs`. `AzureProvi
 
 The generic `openai:` prefix and [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] select OpenAI profiles even when `OPENAI_BASE_URL` or `base_url` points to Azure. To keep that provider, pass an explicit custom profile combining OpenAI's schema conversion with definition inlining. [`InlineDefsJsonSchemaTransformer`][pydantic_ai.profiles.InlineDefsJsonSchemaTransformer] alone does not apply the OpenAI conversion required by this endpoint.
 
-```python
+```python {gateway_toggle="skip"}
 from pydantic.json_schema import JsonSchemaValue
 
 from pydantic_ai import Agent
