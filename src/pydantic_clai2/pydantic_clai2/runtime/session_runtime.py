@@ -452,8 +452,8 @@ def create_shell(
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     updates.report = lambda: loader.fire if loader.handles(UpdateProgress) else None
-    # The web UI the new build serves again. Only its page has no terminal to watch uv in; elsewhere uv keeps
-    # drawing its progress there.
+    # Only a page has no terminal to watch uv in; elsewhere uv keeps drawing its progress there.
+    updates.capture = lambda: web_serving(loader) is not None
     updates.serving = lambda: web_serving(loader)
     models.plugins = loader.model_providers
     models.logins = loader.logins

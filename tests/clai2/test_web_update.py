@@ -47,7 +47,7 @@ def test_the_page_follows_an_update(code: int, make_web: MakeWeb, monkeypatch: p
     _use(monkeypatch, updates)
     web_ = make_web(Agent(TestModel()))
     # The test client serves the page without `/web`, which is what tells CLAI a page watches.
-    updates.serving = lambda: WebHandoff(port=80, token=TOKEN)
+    updates.capture = lambda: True
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket_:
         snapshot = WIRE.validate_json(socket_.receive_text())
         assert isinstance(snapshot, Snapshot)
@@ -98,8 +98,10 @@ async def test_uv_draws_on_the_terminal_until_a_page_watches(tmp_path: Path, mon
         headless=True,
     )
     await shell.loader.load_all()
+    assert not updates.capture()
     assert updates.serving() is None
     await shell.commands.execute_async('/web')
+    assert updates.capture()
     assert updates.serving() is not None
     await shell.loader.close('exit')
 

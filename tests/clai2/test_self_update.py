@@ -412,6 +412,7 @@ async def test_command_reports_its_progress() -> None:
 
     restarted, _ = _updates(['stable'], lines=['Resolved 3 packages', 'Installed 3 packages'])
     restarted.report = lambda: report
+    restarted.capture = lambda: True
     served = WebHandoff(port=4321, token=WEB_TOKEN)
     restarted.serving = lambda: served
     assert await restarted.command([]) == 'Updated CLAI to 0.53.0 (stable). Restarting...'

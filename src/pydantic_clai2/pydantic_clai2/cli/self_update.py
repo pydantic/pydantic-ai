@@ -325,8 +325,10 @@ class Updates:
     """Runs uv, handing its lines to the output when there is one."""
     report: Callable[[], Callable[[UpdateProgress], Awaitable[None]] | None] = lambda: None
     """Who hears how an install goes: the shell's plugins, while one listens."""
+    capture: Callable[[], bool] = lambda: False
+    """Whether to read uv's lines for `report`, which turns uv's progress bars into plain lines: only for a page."""
     serving: Callable[[], WebHandoff | None] = lambda: None
-    """The web UI served now. Its page reads uv's lines through `report`, which turns progress bars into plain lines."""
+    """The web UI served now, for the new `clai2` to serve again once `/update` restarts CLAI."""
     find_uv: Callable[[], str | None] = find_uv
     windows: bool = os.name == 'nt'
     hand_off: Callable[[str], None] = install_after_exit
@@ -406,7 +408,7 @@ class Updates:
             served = self.serving()
             with CancelScope(shield=True):
                 await tell('installing')
-                code = await self.run(command, line if report is not None and served is not None else None)
+                code = await self.run(command, line if report is not None and self.capture() else None)
         finally:
             if overrides is not None:
                 overrides.unlink(missing_ok=True)
