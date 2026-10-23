@@ -253,7 +253,7 @@ class MemoryToolOperations(Generic[AgentDepsT]):
 class MemoryToolset(FunctionToolset[AgentDepsT]):
     """Scoped read/write/delete/search tools with CAS and durable idempotency.
 
-    The stable `memory` ID lets Temporal and Prefect wrap this static toolset.
+    The stable ID, its capability's (`memory` by default), lets Temporal and Prefect wrap this static toolset.
     `Memory` passes `operations` so that each tool call runs as one of its
     durable operations, whose result durable execution records instead of
     repeating the call on recovery, including on DBOS, which runs function
@@ -264,7 +264,9 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
     def __init__(
         self, capability: Memory[AgentDepsT], *, operations: MemoryToolOperations[AgentDepsT] | None = None
     ) -> None:
-        super().__init__(id='memory')
+        # Its capability's id, `'memory'` by default, so several `Memory` capabilities on one agent keep their
+        # toolsets, and the instruction blocks keyed under them, apart.
+        super().__init__(id=capability.id or 'memory')
         self._capability = capability
         self._operations = operations
         self.add_function(self.write_memory, name='write_memory')

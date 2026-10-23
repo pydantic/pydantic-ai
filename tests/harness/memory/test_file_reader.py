@@ -211,3 +211,35 @@ class TestDirectoryBlock:
         assert len(offered) == 2
         assert 'read_memory' not in offered[1]
         assert 'Memory files are in `.agent-memory/acme/main/` in the workspace; read them with `read_file`.' in seen[1]
+
+
+class TestSeveralFileMemories:
+    async def test_each_memory_names_its_own_directory_across_runs(self, tmp_path: Path) -> None:
+        instructions: list[str | None] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions.append(info.instructions)
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(respond),
+            deps_type=type(None),
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                FileSystem(),
+                Memory(store=FileStore('.agent-memory'), heading='Personal notes'),
+                Memory(
+                    store=FileStore('.agent-memory'), agent_name='org', heading='Org notes', id='org_memory'
+                ).prefix_tools('org'),
+            ],
+        )
+        first = await agent.run('first')
+        await agent.run('second', message_history=first.all_messages())
+
+        assert len(instructions) == 2
+        assert instructions[0] == instructions[1]
+        assert instructions[0] is not None
+        assert '<context id="toolset:memory:directory">\nMemory files are in `.agent-memory/main/`' in instructions[0]
+        assert (
+            '<context id="toolset:org_memory:directory">\nMemory files are in `.agent-memory/org/`' in instructions[0]
+        )
