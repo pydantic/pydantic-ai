@@ -17,6 +17,7 @@ import pytest
 pytest.importorskip('absurd_sdk')
 pytest.importorskip('fastmcp')
 
+import psycopg
 from absurd_sdk import (
     AsyncAbsurd,
     CancelledTask,
@@ -917,10 +918,13 @@ class TestClaim:
         )
         async with running_task_context(absurd) as ctx:
             task['id'] = ctx.task_id
-            with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(CancelledTask):
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(CancelledTask) as exc_info:
                 await agent.run('go')
 
         assert list(await checkpoints(absurd, ctx.task_id)) == ['slow__model.request']
+        # The SDK's own cause, the database error saying the task was cancelled, is kept.
+        assert isinstance(exc_info.value.__cause__, psycopg.Error)
+        assert exc_info.value.__cause__.sqlstate == 'AB001'
 
     async def test_lost_claim_keeps_the_step_error_as_its_cause(
         self, absurd: AsyncAbsurd, monkeypatch: pytest.MonkeyPatch
