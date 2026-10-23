@@ -512,7 +512,7 @@ workspace instead of the agent's capability, the ref in history, or a per-run `w
 
 ## Third-party workspaces
 
-Other packages implement the same workspace interface. Vstorm's [`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend) provides workspaces backed by Kubernetes pods, local Docker containers, Daytona, a `sandboxd` service that holds the Docker socket so your application container doesn't have to, and in-memory JSON documents your application can keep in its own database.
+Other packages implement the same workspace interface. [`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend), a community package by [Vstorm](https://vstorm.co/), provides workspaces backed by Kubernetes pods, local Docker containers, Daytona, a `sandboxd` service that holds the Docker socket so your application container doesn't have to, and in-memory JSON documents your application can keep in its own database.
 
 To add a package to this list, open a pull request. To build your own, see [Writing a backend](#writing-a-backend).
 

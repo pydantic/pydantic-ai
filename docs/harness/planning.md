@@ -209,7 +209,7 @@ print(result.output)
 
 ## Relationship to `pydantic-ai-todo`
 
-`Planning` incorporates the task-list features of Vstorm's standalone [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) library -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed:
+`Planning` incorporates the task-list features of [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo), a community package by [Vstorm](https://vstorm.co/) -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed:
 
 | `pydantic-ai-todo` | `Planning` |
 |---|---|

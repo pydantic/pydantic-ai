@@ -528,7 +528,7 @@ Tool spans add a `guardrail.tool` attribute naming the tool. `approve` records `
 
 ## Relationship to `pydantic-ai-shields`
 
-[`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields) ships each detector as its own capability. The equivalents here are functions instead, which is what lets several run as one chain, share a redaction, and sit beside a guard you wrote.
+[`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields), a community package by [Vstorm](https://vstorm.co/), ships each detector as its own capability. The equivalents here are functions instead, which is what lets several run as one chain, share a redaction, and sit beside a guard you wrote.
 
 Two things it has that this deliberately does not. Its `PromptInjection` matches phrases like "ignore previous instructions": injection is ordinary language, so a pattern list catches the examples and misses the attack while flagging a pasted log, and a check that reads as protection without being it is worse than none. Its `NoRefusals` blocks the model from declining, which is a decision about what an agent may say rather than a guardrail on data, and not one to make a default.
 
