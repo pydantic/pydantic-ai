@@ -1,16 +1,27 @@
 ---
+title: Computer Use
 description: "Let a Pydantic AI agent see and control a desktop with the ComputerUse capability: screenshots, mouse and keyboard on the display of its workspace."
 ---
 
 # Computer Use
 
-The [`ComputerUse`][pydantic_ai.capabilities.ComputerUse] [capability](overview.md) lets your agent see and control a
-graphical desktop. It adds one tool, `computer`: the model sends a list of mouse and keyboard actions, they run on
-the display of the run's [workspace](../workspace.md), and the tool returns a screenshot of the screen afterwards.
+`ComputerUse` lets your agent see and control a graphical desktop. It adds one tool, `computer`: the model sends a
+list of mouse and keyboard actions, they run on the display of the run's [workspace](../workspace.md), and the tool
+returns a screenshot of the screen afterwards.
+
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/computer_use/)
+
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
+
+## Usage
+
+```bash
+pip/uv-add pydantic-ai-harness
+```
 
 ```python {title="computer_use.py" test="skip" lint="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import ComputerUse
+from pydantic_ai_harness import ComputerUse
 
 agent = Agent(
     '{{ anthropic:medium }}',
@@ -36,15 +47,15 @@ machine.
   with an error saying so. A [read-only](../workspace.md#read-only-access) workspace allows screenshots and reports
   every mouse and keyboard action to the model as refused.
 - **A model that accepts images.** Every call returns a screenshot, so a request to a text-only model fails before
-  it is sent, including a model that [`SelectModel`](select-model.md) picks later in the run.
+  it is sent, including a model that [`SelectModel`](../capabilities/select-model.md) picks later in the run.
 
 ## Computer use, Playwright, or Browser Use
 
 | You want the agent to | Use |
 |---|---|
 | Work in desktop applications, or any website exactly as a person sees it | `ComputerUse` |
-| Drive a browser with typed actions such as `navigate` and `click(selector)` | [Playwright Browser](../harness/playwright.md) |
-| Hand a whole web task to a browsing sub-agent | [Browser Use](../harness/browser-use.md) |
+| Drive a browser with typed actions such as `navigate` and `click(selector)` | [Playwright Browser](playwright.md) |
+| Hand a whole web task to a browsing sub-agent | [Browser Use](browser-use.md) |
 
 ## Settings
 
@@ -54,14 +65,22 @@ machine.
 | `keep_screenshots` | `None` | The fewest recent screenshots each model request carries; older ones become a short note in the request, 25 at a time so the prompt cache keeps working in between: `keep_screenshots=5` sends between 5 and 29. The run's history keeps them all. Use it to bound a long run; a short run costs the same either way. |
 | `settle_seconds` | `0.5` | Pause after acting before the screenshot, so animations and page loads can finish. |
 
+A call whose provider attached safety checks to it waits for approval even without `require_approval`: the reviewer
+finds the checks on the call's `provider_details`. Without a way to approve calls, such as
+[`HandleDeferredToolCalls`](../deferred-tools.md), the run stops at that call instead of running it.
+
 ## Limits
 
 - A 1280x800 screenshot costs about 1,200 input tokens on GPT-5.5 and 1,340 on Claude Sonnet 5.5, and every later
-  request carries it again. With [prompt caching](caching.md) (Claude needs `Caching()`; OpenAI caches on its own),
-  screenshots already sent cost about a tenth of that.
+  request carries it again. With [prompt caching](../capabilities/caching.md) (Claude needs `Caching()`; OpenAI
+  caches on its own), screenshots already sent cost about a tenth of that.
 - Under [durable execution](../durable_execution/overview.md), each action and screenshot is its own durable
   workspace operation, so a retry repeats only that one, which may already have taken effect, such as a click.
   Every screenshot in the history rides in each model request's payload, so long runs can reach Temporal's payload
   size limit.
 - Inside a [`FallbackModel`](../models/overview.md#fallback-model), every model gets pixel coordinates, since the
   fallback has no profile of its own. Gemini 3 models point less accurately in pixels than on their own grid.
+
+## API reference
+
+::: pydantic_ai_harness.computer_use.ComputerUse

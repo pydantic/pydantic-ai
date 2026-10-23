@@ -28,7 +28,6 @@ from pydantic_ai.capabilities import (
     Caching,
     Capability,
     CapabilityOrdering,
-    ComputerUse,
     FileUnderstanding,
     Hooks,
     ImageGeneration,
@@ -120,12 +119,6 @@ def _check_web_fetch(merged: WebFetch) -> None:
 
 def _check_reinject(merged: ReinjectSystemPrompt) -> None:
     assert merged.replace_existing is True
-
-
-def _check_computer_use(merged: ComputerUse[Any]) -> None:
-    # The later settings win, but approval and the screenshot limit, which restrict, survive; the tool runs with them.
-    assert (merged.require_approval, merged.settle_seconds, merged.keep_screenshots) == (True, 0, 2)
-    assert merged.get_toolset().tools['computer'].function == merged._computer  # pyright: ignore[reportPrivateUsage]
 
 
 def _check_content_filter(merged: RaiseContentFilterError) -> None:
@@ -231,14 +224,6 @@ COMBINE_POLICY: dict[str, Policy] = {
         'carries no configuration at all, so two are interchangeable',
         lambda: (RaiseContentFilterError(), RaiseContentFilterError()),
         _check_content_filter,
-    ),
-    'ComputerUse': Combines(
-        'an agent has one display: the later configuration wins, but approval and the screenshot limit survive',
-        lambda: (
-            ComputerUse(require_approval=True, keep_screenshots=2),
-            ComputerUse(settle_seconds=0, keep_screenshots=5),
-        ),
-        _check_computer_use,
     ),
     'LocalWorkspace': Combines(
         'the later configuration replaces the earlier one whole',

@@ -475,8 +475,8 @@ navigation:
             path: "harness/playwright.md"
             slug: "harness/playwright"
           - page: "Computer Use"
-            path: "capabilities/computer-use.md"
-            slug: "capabilities/computer-use"
+            path: "harness/computer-use.md"
+            slug: "harness/computer-use"
       - section: "Reasoning, Planning & Delegation"
         slug: ""
         contents:

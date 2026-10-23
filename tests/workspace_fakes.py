@@ -357,14 +357,12 @@ class InMemoryProvider:
         self.directories: dict[str, set[str]] = {}
         self.log: list[str] = []
         self.actions: list[ComputerAction] = []
-        self.display_size_calls = 0
 
     def reset(self) -> None:
         self.environments.clear()
         self.directories.clear()
         self.log.clear()
         self.actions.clear()
-        self.display_size_calls = 0
 
     def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
         return ProviderBackend(self, ref)
@@ -468,7 +466,6 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, Su
 
     async def display_size(self) -> tuple[int, int]:
         await self._files()
-        self._provider.display_size_calls += 1
         return FAKE_DISPLAY_SIZE
 
     async def screenshot(self) -> bytes:
