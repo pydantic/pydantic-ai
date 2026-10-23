@@ -500,21 +500,30 @@ def _marker_reasons(source: str) -> dict[int, str]:
     return reasons
 
 
-def _added_ignores(change: _Change) -> list[tuple[str, int, str]]:
-    """Each function this change makes complexipy drop, with the line and reason of its marker."""
-    before = _ignored(change.old_source)
-    added = [f for name, f in _ignored(change.new_source).items() if name not in before]
-    if not added:
+@dataclass
+class _Ignore:
+    path: str
+    line: int
+    reason: str
+    added: bool
+    """Whether complexipy scored the function before this change."""
+
+
+def _ignores(change: _Change) -> list[_Ignore]:
+    """Each function complexipy drops in the changed file, with the line and reason of its marker."""
+    ignored = _ignored(change.new_source)
+    if not ignored:
         return []
+    before = _ignored(change.old_source)
     source = change.new_source or ''
     reasons, definitions = _marker_reasons(source), _definitions(source)
-    found: list[tuple[str, int, str]] = []
-    for function in added:
-        node = definitions[(function.name, function.line_start)]
+    found: list[_Ignore] = []
+    for name, function in ignored.items():
+        node = definitions[(name, function.line_start)]
         # From the line above the first decorator to the end of the signature.
         header = range(function.line_start - 1, max(node.lineno, node.body[0].lineno - 1) + 1)
         line = next((n for n in header if n in reasons), function.line_start)
-        found.append((change.new_path or '', line, reasons.get(line, '')))
+        found.append(_Ignore(change.new_path or '', line, reasons.get(line, ''), name not in before))
     return found
 
 
@@ -563,14 +572,19 @@ def _write_summary(offenders: list[_Offender], limit: int, summary: str) -> None
         out.write('\n'.join(rows) + '\n')
 
 
-def _report_ignores(added: list[tuple[str, int, str]], github: bool) -> bool:
-    """Print each added ignore; return whether one of them gives no reason."""
-    for path, line, reason in added:
-        level, message = ('warning', f'ignored: {reason}') if reason else ('error', 'give the ignore a reason')
-        print(f'{path}:{line}: complexipy {message}, see {GUIDE}#ignoring-a-function')
+def _report_ignores(ignores: list[_Ignore], github: bool) -> bool:
+    """Print each ignore that gives no reason, and each one the change added; return whether one gives no reason."""
+    for ignore in ignores:
+        if ignore.reason and not ignore.added:
+            continue
+        level, message = (
+            ('warning', f'ignored: {ignore.reason}') if ignore.reason else ('error', 'give the ignore a reason')
+        )
+        print(f'{ignore.path}:{ignore.line}: complexipy {message}, see {GUIDE}#ignoring-a-function')
         if github:
-            print(f'::{level} file={_escape(path, prop=True)},line={line},title=complexipy ignore::{_escape(message)}')
-    return any(not reason for _, _, reason in added)
+            location = f'file={_escape(ignore.path, prop=True)},line={ignore.line}'
+            print(f'::{level} {location},title=complexipy ignore::{_escape(message)}')
+    return any(not ignore.reason for ignore in ignores)
 
 
 def _parse_args(argv: Sequence[str] | None) -> _Options:
@@ -622,8 +636,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _load(changes, options.base, options.head)
     offenders = _collect(changes, limit)
     _name_cases(offenders, changes)
-    added = [marker for change in changes for marker in _added_ignores(change)]
-    unexplained = _report_ignores(added, options.github)
+    unexplained = _report_ignores([ignore for change in changes for ignore in _ignores(change)], options.github)
     if offenders:
         print(f'\ncognitive complexity limit is {limit}; {len(offenders)} function(s) got worse ({GUIDE}):\n')
     for o in offenders:

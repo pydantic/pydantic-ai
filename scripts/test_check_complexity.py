@@ -358,6 +358,18 @@ def test_a_marker_above_the_decorators_is_reported_on_its_own_line(repo: Path, c
     assert out == f'pkg/added.py:1: complexipy ignored: one branch per value, see {GUIDE}#ignoring-a-function\n'
 
 
+def test_removing_the_reason_from_an_existing_ignore_fails(repo: Path, capsys: pytest.CaptureFixture[str]):
+    _write(repo, 'pkg/debt.py', _ifs('debt', 5, marker='  # complexipy: ignore (one branch per value)'))
+    _commit(repo)
+    _write(repo, 'pkg/debt.py', _ifs('debt', 5, marker='  # complexipy: ignore'))
+    _stage(repo)
+
+    code, out = _check(capsys, '--staged')
+
+    assert code == 1
+    assert out == f'pkg/debt.py:1: complexipy give the ignore a reason, see {GUIDE}#ignoring-a-function\n'
+
+
 def test_an_ignore_that_was_already_there_is_not_reported(repo: Path, capsys: pytest.CaptureFixture[str]):
     marker = '  # complexipy: ignore (one branch per value)'
     _write(repo, 'pkg/debt.py', _ifs('debt', 6, marker=marker) + '\n\n' + _ifs('small', 2))
