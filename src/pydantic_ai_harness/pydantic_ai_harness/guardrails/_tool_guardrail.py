@@ -29,9 +29,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, TypeGuard, cast
-
-from typing_extensions import assert_never
+from typing import TYPE_CHECKING, Any, TypeGuard, assert_never, cast
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapRunHandler
 from pydantic_ai.exceptions import (
@@ -400,9 +398,9 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
         A tool raising `ModelRetry` or `ToolFailed` never reaches `after_tool_execute`: core
         wraps both into control-flow exceptions and re-raises them past it
         (`tool_manager._run_execute_hooks`). Their text still lands in the conversation -- a
-        failure as an ordinary `ToolReturnPart`, a retry as a `RetryPromptPart` -- so a
-        `result_guard` that did not see them would leave the one text path it exists to
-        screen unscreened whenever a tool errored.
+        failure as a `ToolReturnPart` with `outcome='failed'`, a retry as one with
+        `outcome='retried'` -- so a `result_guard` that did not see them would leave the one
+        text path it exists to screen unscreened whenever a tool errored.
         """
         if self.result_guard is None or not self._guards(call.tool_name):
             return await handler(args)

@@ -1,8 +1,14 @@
-"""Bounded background conversation naming, independent of foreground agent execution."""
+"""Deprecated: bounded background conversation naming, independent of foreground agent execution.
+
+Session naming is application policy (a resume-picker prompt, queue bounds, and a failure
+policy), so CLAI now owns its own copy. This module is kept unchanged for existing imports
+and emits a `HarnessDeprecationWarning`; it will be removed in a future release.
+"""
 
 from __future__ import annotations
 
 import logging
+import warnings
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -13,8 +19,18 @@ from pydantic import BaseModel, Field, ValidationInfo, field_validator
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 from .conversations import ConversationSummary, SqliteConversationStore, conversation_text
+
+warnings.warn(
+    '`pydantic_ai_harness.step_persistence.naming` is deprecated: session naming is application policy, '
+    'not a Harness primitive. Copy the helpers you use into your application; '
+    '`pydantic_ai_harness.step_persistence.conversations` is unaffected. '
+    'This module will be removed in a future release.',
+    category=HarnessDeprecationWarning,
+    stacklevel=2,
+)
 
 
 class SessionName(BaseModel):

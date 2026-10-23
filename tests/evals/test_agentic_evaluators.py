@@ -10,7 +10,7 @@ go through the public evaluator API.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -34,7 +34,7 @@ with try_import() as imports_successful:
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 
-_EPOCH = datetime(2025, 1, 1, tzinfo=timezone.utc)
+_EPOCH = datetime(2025, 1, 1, tzinfo=UTC)
 
 
 def _make_span(

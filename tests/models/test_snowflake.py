@@ -5,10 +5,10 @@ from typing import Any, cast
 import pytest
 from cassetter import Cassette
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import ThinkingPart
+from pydantic_ai import Agent, UnexpectedModelBehavior
+from pydantic_ai.messages import ModelRequest, ModelResponse, ThinkingPart
 from pydantic_ai.models import ModelRequestParameters, infer_model
 from pydantic_ai.output import NativeOutput
 from pydantic_ai.settings import ModelSettings
@@ -20,6 +20,12 @@ with try_import() as imports_successful:
     from openai import omit
     from openai.types import chat
     from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_chunk import (
+        Choice as ChunkChoice,
+        ChoiceDelta,
+        ChoiceDeltaToolCall,
+        ChoiceDeltaToolCallFunction,
+    )
     from openai.types.chat.chat_completion_message_function_tool_call import (
         ChatCompletionMessageFunctionToolCall,
         Function,
@@ -32,6 +38,8 @@ with try_import() as imports_successful:
         _snowflake_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.snowflake import SnowflakeModelProfile, SnowflakeProvider
+
+    from .mock_openai import MockOpenAI
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -202,9 +210,60 @@ async def test_snowflake_tool_calling(allow_model_requests: None, live_provider:
     assert result.output == snapshot(
         'The weather in Mexico City is currently sunny with a pleasant temperature of 25°C.'
     )
-    # The tool-call response's empty `finish_reason` is coerced based on the presence of tool calls.
+    # The tool-call response's empty `finish_reason` is coerced based on the presence of tool calls, but isn't
+    # reported as Cortex's own.
     tool_call_response = result.all_messages()[1]
-    assert tool_call_response.finish_reason == 'tool_call'  # type: ignore[union-attr]
+    assert isinstance(tool_call_response, ModelResponse)
+    assert tool_call_response.finish_reason == 'tool_call'
+    assert tool_call_response.provider_details is not None
+    assert 'finish_reason' not in tool_call_response.provider_details
+
+
+@pytest.mark.parametrize(
+    ('delta', 'finish_reason'),
+    [
+        (ChoiceDelta(role='assistant', content='4'), 'stop'),
+        (
+            ChoiceDelta(
+                role='assistant',
+                tool_calls=[
+                    ChoiceDeltaToolCall(
+                        index=0,
+                        id='call_123',
+                        type='function',
+                        function=ChoiceDeltaToolCallFunction(name='get_weather', arguments='{}'),
+                    )
+                ],
+            ),
+            'tool_call',
+        ),
+    ],
+)
+async def test_snowflake_stream_without_finish_reason(
+    allow_model_requests: None, provider: SnowflakeProvider, delta: ChoiceDelta, finish_reason: str
+):
+    """Cortex streams from Claude models have no finish reason, which is then picked as for a complete response."""
+    stream = [
+        chat.ChatCompletionChunk(
+            id='chatcmpl-123',
+            choices=[ChunkChoice(index=0, delta=delta)],
+            created=1751234567,
+            model='claude-sonnet-4-6',
+            object='chat.completion.chunk',
+        )
+    ]
+    model = SnowflakeModel(
+        'claude-sonnet-4-6', provider=SnowflakeProvider(openai_client=MockOpenAI.create_mock_stream(stream))
+    )
+
+    async with model.request_stream(
+        [ModelRequest.user_text_prompt('What is the weather?')], None, ModelRequestParameters()
+    ) as response:
+        async for _ in response:
+            pass
+
+    assert response.get().finish_reason == finish_reason
+    assert 'finish_reason' not in (response.get().provider_details or {})
 
 
 async def test_snowflake_native_output(allow_model_requests: None, live_provider: SnowflakeProvider):
@@ -301,36 +360,269 @@ async def test_snowflake_openai_model(allow_model_requests: None, live_provider:
     assert result.all_messages()[-1].finish_reason == 'stop'  # type: ignore[union-attr]
 
 
-def test_snowflake_validate_completion_coerces_empty_finish_reason(provider: SnowflakeProvider):
-    """Cortex returns an empty `finish_reason` for Claude models, which must not fail response validation.
+@pytest.mark.parametrize('raw_finish_reason', ['', None])
+@pytest.mark.parametrize(
+    ('message', 'finish_reason'),
+    [
+        (chat.ChatCompletionMessage(role='assistant', content='4'), 'stop'),
+        (
+            chat.ChatCompletionMessage(
+                role='assistant',
+                tool_calls=[
+                    ChatCompletionMessageFunctionToolCall(
+                        id='call_123', type='function', function=Function(name='get_weather', arguments='{}')
+                    )
+                ],
+            ),
+            'tool_call',
+        ),
+    ],
+)
+async def test_snowflake_response_without_finish_reason(
+    allow_model_requests: None,
+    raw_finish_reason: str | None,
+    message: chat.ChatCompletionMessage,
+    finish_reason: str,
+):
+    """Cortex returns an empty `finish_reason` for Claude models, which is then picked as for a stream without one.
 
-    This can't be reached through a recorded request because the OpenAI SDK parses responses
-    leniently; the strict validation only happens in our `_validate_completion` hook.
+    A `null` one is treated the same. Neither is in a recorded response: the OpenAI SDK parses responses leniently,
+    so the strict validation only happens in our `_validate_completion` hook, and Cortex hasn't been seen to send `null`.
     """
-    model = SnowflakeModel('claude-sonnet-4-6', provider=provider)
+    completion = chat.ChatCompletion.model_construct(
+        id='chatcmpl-123',
+        choices=[Choice.model_construct(finish_reason=raw_finish_reason, index=0, message=message)],
+        created=1751234567,
+        model='claude-sonnet-4-6',
+        object='chat.completion',
+    )
+    model = SnowflakeModel(
+        'claude-sonnet-4-6', provider=SnowflakeProvider(openai_client=MockOpenAI.create_mock(completion))
+    )
 
-    def completion(message: chat.ChatCompletionMessage) -> chat.ChatCompletion:
-        return chat.ChatCompletion.model_construct(
+    response = await model.request(
+        [ModelRequest.user_text_prompt('What is the weather?')], None, ModelRequestParameters()
+    )
+
+    assert response.finish_reason == finish_reason
+    assert 'finish_reason' not in (response.provider_details or {})
+
+
+_EMPTY_MODERATION_STUB: dict[str, Any] = {
+    'input': {'type': '', 'results': None, 'model': 'openai-gpt-5.2'},
+    'output': {'type': '', 'results': None, 'model': 'openai-gpt-5.2'},
+}
+
+
+async def test_snowflake_response_with_empty_moderation_stub(allow_model_requests: None):
+    """Cortex's empty moderation placeholder must not fail strict validation.
+
+    Existing recordings omit moderation, so construct the reported stub as a leniently parsed SDK response.
+    """
+    completion = chat.ChatCompletion.model_construct(
+        id='chatcmpl-123',
+        choices=[
+            Choice.model_construct(
+                finish_reason='stop',
+                index=0,
+                message=chat.ChatCompletionMessage(role='assistant', content='hello'),
+            )
+        ],
+        created=1751234567,
+        model='openai-gpt-5.2',
+        object='chat.completion',
+        moderation=_EMPTY_MODERATION_STUB,
+    )
+    model = SnowflakeModel(
+        'openai-gpt-5.2', provider=SnowflakeProvider(openai_client=MockOpenAI.create_mock(completion))
+    )
+
+    response = await model.request([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters())
+
+    assert response.parts[0].content == 'hello'  # type: ignore[union-attr]
+    assert 'moderation' not in (response.provider_details or {})
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('extra_stub', [False, True])
+async def test_snowflake_response_keeps_valid_moderation(allow_model_requests: None, stream: bool, extra_stub: bool):
+    """Real moderation results must still reach `provider_details`, including when extra keys contain placeholders.
+
+    Existing recordings omit moderation, so use constructed SDK responses to cover these valid combinations.
+    """
+    moderation: dict[str, Any] = {
+        'input': {'type': 'moderation_results', 'model': 'omni-moderation-latest', 'results': []},
+        'output': {'type': 'moderation_results', 'model': 'omni-moderation-latest', 'results': []},
+    }
+    if extra_stub:
+        moderation['extra'] = _EMPTY_MODERATION_STUB['input']
+
+    if stream:
+        chunk = chat.ChatCompletionChunk.model_construct(
             id='chatcmpl-123',
-            choices=[Choice.model_construct(finish_reason='', index=0, message=message)],
+            choices=[ChunkChoice(index=0, delta=ChoiceDelta(role='assistant', content='hello'), finish_reason='stop')],
             created=1751234567,
-            model='claude-sonnet-4-6',
-            object='chat.completion',
+            model='openai-gpt-5.2',
+            object='chat.completion.chunk',
+            moderation=moderation,
         )
-
-    text_response = completion(chat.ChatCompletionMessage(role='assistant', content='4'))
-    validated = model._validate_completion(text_response)  # pyright: ignore[reportPrivateUsage]
-    assert validated.choices[0].finish_reason == 'stop'
-
-    tool_call_response = completion(
-        chat.ChatCompletionMessage(
-            role='assistant',
-            tool_calls=[
-                ChatCompletionMessageFunctionToolCall(
-                    id='call_123', type='function', function=Function(name='get_weather', arguments='{}')
+        model = SnowflakeModel(
+            'openai-gpt-5.2', provider=SnowflakeProvider(openai_client=MockOpenAI.create_mock_stream([chunk]))
+        )
+        async with model.request_stream(
+            [ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()
+        ) as response:
+            async for _ in response:
+                pass
+        result = response.get()
+    else:
+        completion = chat.ChatCompletion.model_construct(
+            id='chatcmpl-123',
+            choices=[
+                Choice.model_construct(
+                    finish_reason='stop',
+                    index=0,
+                    message=chat.ChatCompletionMessage(role='assistant', content='hello'),
                 )
             ],
+            created=1751234567,
+            model='openai-gpt-5.2',
+            object='chat.completion',
+            moderation=moderation,
         )
+        model = SnowflakeModel(
+            'openai-gpt-5.2', provider=SnowflakeProvider(openai_client=MockOpenAI.create_mock(completion))
+        )
+        result = await model.request([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters())
+
+    assert (result.provider_details or {}).get('moderation') == moderation
+
+
+async def test_snowflake_response_still_rejects_other_malformed_fields(allow_model_requests: None):
+    """Dropping the moderation stub must not hide malformed response fields.
+
+    The bogus `finish_reason` is synthesized, so use a constructed SDK response rather than a recording.
+    """
+
+    completion = chat.ChatCompletion.model_construct(
+        id='chatcmpl-123',
+        choices=[
+            Choice.model_construct(
+                finish_reason='bogus', index=0, message=chat.ChatCompletionMessage(role='assistant', content='x')
+            )
+        ],
+        created=1751234567,
+        model='openai-gpt-5.2',
+        object='chat.completion',
+        moderation=_EMPTY_MODERATION_STUB,
     )
-    validated_tool = model._validate_completion(tool_call_response)  # pyright: ignore[reportPrivateUsage]
-    assert validated_tool.choices[0].finish_reason == 'tool_calls'
+    model = SnowflakeModel(
+        'openai-gpt-5.2', provider=SnowflakeProvider(openai_client=MockOpenAI.create_mock(completion))
+    )
+
+    with pytest.raises(UnexpectedModelBehavior):
+        await model.request([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters())
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize(
+    'moderation',
+    [
+        pytest.param(
+            {'input': {}, 'output': {'type': 'moderation_results', 'model': 'm', 'results': []}},
+            id='missing-fields',
+        ),
+        pytest.param(
+            {
+                'input': _EMPTY_MODERATION_STUB['input'],
+                'output': {'type': 'moderation_results', 'model': 'm', 'results': []},
+            },
+            id='stub-input-valid-output',
+        ),
+        pytest.param(
+            {
+                'input': {'type': 'moderation_results', 'model': 'm', 'results': []},
+                'output': _EMPTY_MODERATION_STUB['output'],
+            },
+            id='valid-input-stub-output',
+        ),
+        pytest.param({'input': _EMPTY_MODERATION_STUB['input'], 'output': {}}, id='stub-input-malformed-output'),
+        pytest.param({'input': {}, 'output': _EMPTY_MODERATION_STUB['output']}, id='malformed-input-stub-output'),
+        pytest.param({'input': _EMPTY_MODERATION_STUB['input'], 'output': 'invalid'}, id='non-dict-output'),
+        pytest.param(
+            {'input': _EMPTY_MODERATION_STUB['input'], 'output': {'type': '', 'results': []}}, id='non-null-results'
+        ),
+        pytest.param({'input': _EMPTY_MODERATION_STUB['input']}, id='missing-output'),
+    ],
+)
+async def test_snowflake_response_rejects_malformed_moderation_that_is_not_the_stub(
+    allow_model_requests: None, stream: bool, moderation: dict[str, Any]
+):
+    """Only the complete Cortex placeholder is dropped; other malformed moderation is still rejected.
+
+    Existing recordings omit moderation, so construct synthetic malformed variants to pin strict validation.
+    """
+    if stream:
+        chunk = chat.ChatCompletionChunk.model_construct(
+            id='chatcmpl-123',
+            choices=[ChunkChoice(index=0, delta=ChoiceDelta(role='assistant', content='x'), finish_reason='stop')],
+            created=1751234567,
+            model='openai-gpt-5.2',
+            object='chat.completion.chunk',
+            moderation=moderation,
+        )
+        model = SnowflakeModel(
+            'openai-gpt-5.2', provider=SnowflakeProvider(openai_client=MockOpenAI.create_mock_stream([chunk]))
+        )
+        with pytest.raises(ValidationError, match='moderation'):
+            async with model.request_stream(
+                [ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()
+            ) as response:
+                async for _ in response:
+                    pass
+    else:
+        completion = chat.ChatCompletion.model_construct(
+            id='chatcmpl-123',
+            choices=[
+                Choice.model_construct(
+                    finish_reason='stop', index=0, message=chat.ChatCompletionMessage(role='assistant', content='x')
+                )
+            ],
+            created=1751234567,
+            model='openai-gpt-5.2',
+            object='chat.completion',
+            moderation=moderation,
+        )
+        model = SnowflakeModel(
+            'openai-gpt-5.2', provider=SnowflakeProvider(openai_client=MockOpenAI.create_mock(completion))
+        )
+        with pytest.raises(UnexpectedModelBehavior, match='moderation'):
+            await model.request([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters())
+
+
+async def test_snowflake_stream_with_empty_moderation_stub(allow_model_requests: None):
+    """Cortex's empty moderation placeholder must not fail streamed validation.
+
+    Existing recordings omit moderation, so construct a chunk containing the reported stub.
+    """
+
+    stream = [
+        chat.ChatCompletionChunk.model_construct(
+            id='chatcmpl-123',
+            choices=[ChunkChoice(index=0, delta=ChoiceDelta(role='assistant', content='hello'), finish_reason='stop')],
+            created=1751234567,
+            model='openai-gpt-5.2',
+            object='chat.completion.chunk',
+            moderation=_EMPTY_MODERATION_STUB,
+        )
+    ]
+    model = SnowflakeModel(
+        'openai-gpt-5.2', provider=SnowflakeProvider(openai_client=MockOpenAI.create_mock_stream(stream))
+    )
+
+    async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()) as response:
+        async for _ in response:
+            pass
+
+    assert response.get().parts[0].content == 'hello'  # type: ignore[union-attr]
+    assert 'moderation' not in (response.get().provider_details or {})

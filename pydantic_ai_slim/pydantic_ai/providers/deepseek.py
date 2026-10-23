@@ -60,6 +60,9 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
                 # For a conversation carrying tools, DeepSeek documents that `reasoning_content` must be
                 # passed back in every subsequent request. See https://api-docs.deepseek.com/guides/thinking_mode.
                 openai_chat_send_back_thinking_parts='field',
+                # DeepSeek 400s on a thinking request whose current-turn tool call lacks `reasoning_content`
+                # even when no earlier response thought, as after a `FallbackModel` step served without thinking.
+                openai_chat_thinking_requires_field_on_tool_calls=True,
                 # DeepSeek's Responses endpoint documents merging each function call into the
                 # assistant message adjacent to it, unlike the official Responses API, so an
                 # assistant item between two calls strands the first one without its output.
@@ -77,6 +80,9 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
                 # DeepSeek's Responses endpoint honors `text.format` of type `json_schema`, while its
                 # Chat Completions endpoint rejects it with `This response_format type is unavailable now`.
                 openai_responses_supports_json_schema_output=True,
+                # DeepSeek V4's native efforts are `low`, `high` and `max`, and it maps `xhigh` to `high`, so
+                # `max` is the only way to reach its deepest reasoning. See https://api-docs.deepseek.com/guides/thinking_mode.
+                openai_chat_supports_max_reasoning_effort=is_v4,
                 # `openai_supports_phase` is deliberately left at its `False` default even though
                 # DeepSeek labels its Responses API output with `phase`: the field is absent from
                 # DeepSeek's documented input items, and its API silently ignores what it doesn't

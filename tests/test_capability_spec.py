@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,7 +23,9 @@ from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
+    Caching,
     Capability,
+    FileUnderstanding,
     ImageGeneration,
     IncludeToolReturnSchemas,
     Instrumentation,
@@ -57,13 +59,14 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
+    AbstractNativeTool,
     CodeExecutionTool,
     MCPServerTool,
     WebFetchTool,
     WebSearchTool,
 )
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
-from pydantic_ai.settings import ModelSettings as _ModelSettings
+from pydantic_ai.settings import ModelSettings as _ModelSettings, ToolOrOutput
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -91,7 +94,9 @@ def test_capability_types() -> None:
     assert CAPABILITY_TYPES == snapshot(
         {
             'NativeTool': NativeTool,
+            'Caching': Caching,
             'RaiseContentFilterError': RaiseContentFilterError,
+            'FileUnderstanding': FileUnderstanding,
             'ImageGeneration': ImageGeneration,
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'Instrumentation': Instrumentation,
@@ -643,11 +648,32 @@ def test_agent_from_spec_capabilities_merged():
     assert any(isinstance(c, ExtraCap) for c in children)
 
 
+def _subclasses(cls: type) -> Iterator[type]:
+    for subclass in cls.__subclasses__():
+        yield subclass
+        yield from _subclasses(subclass)
+
+
+def _open_nested_dataclass_defs(schema: dict[str, Any]) -> dict[str, Any]:
+    """Drop the `additionalProperties: false` that Pydantic 2.14 adds to nested stdlib-dataclass definitions.
+
+    From 2.14, the schema model's `extra='forbid'` also reaches the stdlib dataclasses it nests (the native
+    tool configs and `ToolOrOutput`), where earlier versions left their definitions open. Dropping it from those
+    definitions keeps the snapshot stable across the supported pydantic range; every other definition keeps it.
+    """
+    dataclass_names = {cls.__name__ for cls in _subclasses(AbstractNativeTool)} | {ToolOrOutput.__name__}
+    defs = {
+        name: {k: v for k, v in definition.items() if not (name in dataclass_names and k == 'additionalProperties')}
+        for name, definition in schema['$defs'].items()
+    }
+    return {**schema, '$defs': defs}
+
+
 def test_model_json_schema_with_capabilities():
     # Unit (not VCR): this pins the generated JSON-schema/capabilities mapping, which is built internally
     # from the known-model enum and never produced by any API response — no cassette could exercise it.
     pytest.importorskip('mcp', reason='schema varies without mcp package')
-    schema = AgentSpec.model_json_schema_with_capabilities()
+    schema = _open_nested_dataclass_defs(AgentSpec.model_json_schema_with_capabilities())
     assert remove_schema_descriptions(schema) == snapshot(
         {
             '$defs': {
@@ -670,6 +696,7 @@ def test_model_json_schema_with_capabilities():
                                         'claude-opus-4-6',
                                         'claude-sonnet-5-5',
                                         'claude-sonnet-4-6',
+                                        'claude-haiku-5-5',
                                     ],
                                     'type': 'string',
                                 },
@@ -704,6 +731,15 @@ def test_model_json_schema_with_capabilities():
                         'output': {'title': 'Output', 'type': 'integer'},
                     },
                     'title': 'AgentRetries',
+                    'type': 'object',
+                },
+                'CacheConfig': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'retention': {'enum': ['5m', '30m', '1h'], 'title': 'Retention', 'type': 'string'},
+                        'messages': {'title': 'Messages', 'type': 'boolean'},
+                    },
+                    'title': 'CacheConfig',
                     'type': 'object',
                 },
                 'CodeExecutionTool': {
@@ -832,6 +868,7 @@ def test_model_json_schema_with_capabilities():
                         'anthropic:claude-fable-5-1',
                         'anthropic:claude-haiku-4-5',
                         'anthropic:claude-haiku-4-5-20251001',
+                        'anthropic:claude-haiku-5-5',
                         'anthropic:claude-mythos-5',
                         'anthropic:claude-mythos-5-1',
                         'anthropic:claude-mythos-preview',
@@ -869,6 +906,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:anthropic.claude-3-opus-20240229-v1:0',
                         'bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
                         'bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
+                        'bedrock:anthropic.claude-haiku-5-5',
                         'bedrock:anthropic.claude-instant-v1',
                         'bedrock:anthropic.claude-opus-4-20250514-v1:0',
                         'bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
@@ -876,6 +914,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:anthropic.claude-sonnet-4-6',
                         'bedrock:anthropic.claude-v2',
                         'bedrock:anthropic.claude-v2:1',
+                        'bedrock:au.anthropic.claude-haiku-5-5',
                         'bedrock:cohere.command-light-text-v14',
                         'bedrock:cohere.command-r-plus-v1:0',
                         'bedrock:cohere.command-r-v1:0',
@@ -883,12 +922,14 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:deepseek.r1-v1:0',
                         'bedrock:deepseek.v3.2',
                         'bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+                        'bedrock:eu.anthropic.claude-haiku-5-5',
                         'bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
                         'bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
                         'bedrock:eu.anthropic.claude-sonnet-4-6',
                         'bedrock:global.amazon.nova-2-lite-v1:0',
                         'bedrock:global.anthropic.claude-fable-5',
                         'bedrock:global.anthropic.claude-fable-5-1',
+                        'bedrock:global.anthropic.claude-haiku-5-5',
                         'bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
                         'bedrock:global.anthropic.claude-opus-4-6-v1',
                         'bedrock:global.anthropic.claude-opus-4-7',
@@ -900,11 +941,14 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:global.openai.gpt-5.6-luna',
                         'bedrock:global.openai.gpt-5.6-sol',
                         'bedrock:global.openai.gpt-5.6-terra',
+                        'bedrock:global.xai.grok-4.6',
+                        'bedrock:global.xai.grok-4.7',
                         'bedrock:google.gemma-3-12b-it',
                         'bedrock:google.gemma-3-27b-it',
                         'bedrock:google.gemma-3-4b-it',
                         'bedrock:in.openai.gpt-5.6-luna',
                         'bedrock:in.openai.gpt-5.6-terra',
+                        'bedrock:jp.anthropic.claude-haiku-5-5',
                         'bedrock:meta.llama3-1-405b-instruct-v1:0',
                         'bedrock:meta.llama3-1-70b-instruct-v1:0',
                         'bedrock:meta.llama3-1-8b-instruct-v1:0',
@@ -951,6 +995,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:us.anthropic.claude-fable-5',
                         'bedrock:us.anthropic.claude-fable-5-1',
                         'bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0',
+                        'bedrock:us.anthropic.claude-haiku-5-5',
                         'bedrock:us.anthropic.claude-opus-4-1-20250805-v1:0',
                         'bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
                         'bedrock:us.anthropic.claude-opus-4-5-20251101-v1:0',
@@ -978,6 +1023,8 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:us.openai.gpt-5.6-terra',
                         'bedrock:us.writer.palmyra-x4-v1:0',
                         'bedrock:us.writer.palmyra-x5-v1:0',
+                        'bedrock:us.xai.grok-4.6',
+                        'bedrock:us.xai.grok-4.7',
                         'bedrock:zai.glm-4.7',
                         'bedrock:zai.glm-4.7-flash',
                         'bedrock:zai.glm-5',
@@ -1013,6 +1060,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/anthropic:claude-fable-5-1',
                         'gateway/anthropic:claude-haiku-4-5',
                         'gateway/anthropic:claude-haiku-4-5-20251001',
+                        'gateway/anthropic:claude-haiku-5-5',
                         'gateway/anthropic:claude-opus-4-5',
                         'gateway/anthropic:claude-opus-4-5-20251101',
                         'gateway/anthropic:claude-opus-4-6',
@@ -1029,12 +1077,14 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:deepseek.r1-v1:0',
                         'gateway/bedrock:deepseek.v3.2',
                         'gateway/bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+                        'gateway/bedrock:eu.anthropic.claude-haiku-5-5',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
                         'gateway/bedrock:global.amazon.nova-2-lite-v1:0',
                         'gateway/bedrock:global.anthropic.claude-fable-5',
                         'gateway/bedrock:global.anthropic.claude-fable-5-1',
+                        'gateway/bedrock:global.anthropic.claude-haiku-5-5',
                         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
                         'gateway/bedrock:global.anthropic.claude-opus-4-6-v1',
                         'gateway/bedrock:global.anthropic.claude-opus-4-7',
@@ -1046,6 +1096,8 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:global.openai.gpt-5.6-luna',
                         'gateway/bedrock:global.openai.gpt-5.6-sol',
                         'gateway/bedrock:global.openai.gpt-5.6-terra',
+                        'gateway/bedrock:global.xai.grok-4.6',
+                        'gateway/bedrock:global.xai.grok-4.7',
                         'gateway/bedrock:google.gemma-3-12b-it',
                         'gateway/bedrock:google.gemma-3-27b-it',
                         'gateway/bedrock:google.gemma-3-4b-it',
@@ -1087,6 +1139,8 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:us.mistral.pixtral-large-2502-v1:0',
                         'gateway/bedrock:us.writer.palmyra-x4-v1:0',
                         'gateway/bedrock:us.writer.palmyra-x5-v1:0',
+                        'gateway/bedrock:us.xai.grok-4.6',
+                        'gateway/bedrock:us.xai.grok-4.7',
                         'gateway/bedrock:zai.glm-4.7',
                         'gateway/bedrock:zai.glm-4.7-flash',
                         'gateway/bedrock:zai.glm-5',
@@ -1098,12 +1152,14 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-3-pro-image',
                         'gateway/google-cloud:gemini-3.1-flash-image',
                         'gateway/google-cloud:gemini-3.1-flash-lite',
+                        'gateway/google-cloud:gemini-3.1-flash-lite-image',
                         'gateway/google-cloud:gemini-3.1-pro-preview',
                         'gateway/google-cloud:gemini-3.5-flash',
                         'gateway/google-cloud:gemini-3.5-flash-lite',
                         'gateway/google-cloud:gemini-3.6-flash',
                         'gateway/google-cloud:gemini-3.7-flash',
                         'gateway/google-cloud:gemini-3.8-flash',
+                        'gateway/google-cloud:gemini-4-argon',
                         'gateway/google:gemini-2.5-flash',
                         'gateway/google:gemini-2.5-flash-image',
                         'gateway/google:gemini-2.5-flash-lite',
@@ -1112,12 +1168,14 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google:gemini-3-pro-image',
                         'gateway/google:gemini-3.1-flash-image',
                         'gateway/google:gemini-3.1-flash-lite',
+                        'gateway/google:gemini-3.1-flash-lite-image',
                         'gateway/google:gemini-3.1-pro-preview',
                         'gateway/google:gemini-3.5-flash',
                         'gateway/google:gemini-3.5-flash-lite',
                         'gateway/google:gemini-3.6-flash',
                         'gateway/google:gemini-3.7-flash',
                         'gateway/google:gemini-3.8-flash',
+                        'gateway/google:gemini-4-argon',
                         'gateway/groq:llama-3.1-8b-instant',
                         'gateway/groq:llama-3.3-70b-versatile',
                         'gateway/groq:openai/gpt-oss-120b',
@@ -1176,6 +1234,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-6-astra',
                         'gateway/openai:gpt-6-luna',
                         'gateway/openai:gpt-6-sol',
+                        'gateway/openai:gpt-6.1-sol',
                         'gateway/openai:gpt-daybreak-blue-latest',
                         'gateway/openai:gpt-daybreak-red-latest',
                         'gateway/openai:gpt-rosalind-research',
@@ -1205,12 +1264,14 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-3.1-flash-image',
                         'google-cloud:gemini-3.1-flash-image-preview',
                         'google-cloud:gemini-3.1-flash-lite',
+                        'google-cloud:gemini-3.1-flash-lite-image',
                         'google-cloud:gemini-3.1-pro-preview',
                         'google-cloud:gemini-3.5-flash',
                         'google-cloud:gemini-3.5-flash-lite',
                         'google-cloud:gemini-3.6-flash',
                         'google-cloud:gemini-3.7-flash',
                         'google-cloud:gemini-3.8-flash',
+                        'google-cloud:gemini-4-argon',
                         'google-cloud:gemini-flash-latest',
                         'google-cloud:gemini-flash-lite-latest',
                         'google:gemini-2.0-flash',
@@ -1227,25 +1288,23 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-3.1-flash-image',
                         'google:gemini-3.1-flash-image-preview',
                         'google:gemini-3.1-flash-lite',
+                        'google:gemini-3.1-flash-lite-image',
                         'google:gemini-3.1-pro-preview',
                         'google:gemini-3.5-flash',
                         'google:gemini-3.5-flash-lite',
                         'google:gemini-3.6-flash',
                         'google:gemini-3.7-flash',
                         'google:gemini-3.8-flash',
+                        'google:gemini-4-argon',
                         'google:gemini-flash-latest',
                         'google:gemini-flash-lite-latest',
                         'groq:llama-3.1-8b-instant',
                         'groq:llama-3.3-70b-versatile',
-                        'groq:meta-llama/llama-4-maverick-17b-128e-instruct',
-                        'groq:meta-llama/llama-guard-4-12b',
                         'groq:meta-llama/llama-prompt-guard-2-22m',
                         'groq:meta-llama/llama-prompt-guard-2-86m',
                         'groq:openai/gpt-oss-120b',
                         'groq:openai/gpt-oss-20b',
                         'groq:openai/gpt-oss-safeguard-20b',
-                        'groq:playai-tts',
-                        'groq:playai-tts-arabic',
                         'groq:whisper-large-v3',
                         'groq:whisper-large-v3-turbo',
                         'heroku:claude-3-5-haiku',
@@ -1279,6 +1338,12 @@ def test_model_json_schema_with_capabilities():
                         'huggingface:meta-llama/Llama-3.3-70B-Instruct',
                         'huggingface:meta-llama/Llama-4-Maverick-17B-128E-Instruct',
                         'huggingface:meta-llama/Llama-4-Scout-17B-16E-Instruct',
+                        'meta:muse-spark-1.1',
+                        'meta:muse-spark-1.2',
+                        'meta:muse-spark-1.2-contributor',
+                        'meta:muse-spark-1.3',
+                        'meta:muse-spark-1.3-contributor',
+                        'meta:muse-wonder-1.0',
                         'mistral:codestral-latest',
                         'mistral:mistral-large-latest',
                         'mistral:mistral-moderation-latest',
@@ -1370,6 +1435,7 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:gpt-6-astra',
                         'openai-chat:gpt-6-luna',
                         'openai-chat:gpt-6-sol',
+                        'openai-chat:gpt-6.1-sol',
                         'openai-chat:gpt-daybreak-blue-latest',
                         'openai-chat:gpt-daybreak-red-latest',
                         'openai-chat:gpt-rosalind-research',
@@ -1389,6 +1455,7 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:o4-mini-2025-04-16',
                         'openai-chat:o4-mini-deep-research',
                         'openai-chat:o4-mini-deep-research-2025-06-26',
+                        'openai-decisions:gpt-6-luna',
                         'openai:computer-use-preview',
                         'openai:computer-use-preview-2025-03-11',
                         'openai:gpt-3.5-turbo',
@@ -1456,6 +1523,7 @@ def test_model_json_schema_with_capabilities():
                         'openai:gpt-6-astra',
                         'openai:gpt-6-luna',
                         'openai:gpt-6-sol',
+                        'openai:gpt-6.1-sol',
                         'openai:gpt-daybreak-blue-latest',
                         'openai:gpt-daybreak-red-latest',
                         'openai:gpt-rosalind-research',
@@ -1545,6 +1613,7 @@ def test_model_json_schema_with_capabilities():
                         'xai:grok-4.5',
                         'xai:grok-4.5-latest',
                         'xai:grok-4.6',
+                        'xai:grok-4.7',
                         'xai:grok-build-0.1',
                         'xai:grok-code-fast-1',
                         'zai:autoglm-phone-multilingual',
@@ -1618,6 +1687,8 @@ def test_model_json_schema_with_capabilities():
                         'top_p': {'title': 'Top P', 'type': 'number'},
                         'top_k': {'title': 'Top K', 'type': 'integer'},
                         'timeout': {'anyOf': [{'type': 'integer'}, {'type': 'number'}], 'title': 'Timeout'},
+                        'request_timeout': {'title': 'Request Timeout', 'type': 'number'},
+                        'max_retries': {'title': 'Max Retries', 'type': 'integer'},
                         'parallel_tool_calls': {'title': 'Parallel Tool Calls', 'type': 'boolean'},
                         'tool_choice': {
                             'anyOf': [
@@ -1645,9 +1716,17 @@ def test_model_json_schema_with_capabilities():
                         'thinking': {
                             'anyOf': [
                                 {'type': 'boolean'},
-                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'type': 'string'},
                             ],
                             'title': 'Thinking',
+                        },
+                        'cache': {
+                            'anyOf': [
+                                {'type': 'boolean'},
+                                {'enum': ['5m', '30m', '1h'], 'type': 'string'},
+                                {'$ref': '#/$defs/CacheConfig'},
+                            ],
+                            'title': 'Cache',
                         },
                         'service_tier': {
                             'enum': ['auto', 'default', 'flex', 'priority'],
@@ -1844,6 +1923,18 @@ def test_model_json_schema_with_capabilities():
                     'title': 'XSearchTool',
                     'type': 'object',
                 },
+                'short_spec_FileUnderstanding': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'FileUnderstanding': {
+                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}],
+                            'title': 'Fileunderstanding',
+                        }
+                    },
+                    'required': ['FileUnderstanding'],
+                    'title': 'short_spec_FileUnderstanding',
+                    'type': 'object',
+                },
                 'short_spec_LocalWorkspace': {
                     'additionalProperties': False,
                     'properties': {
@@ -1897,6 +1988,20 @@ def test_model_json_schema_with_capabilities():
                     },
                     'required': ['IncludeToolReturnSchemas'],
                     'title': 'spec_IncludeToolReturnSchemas',
+                    'type': 'object',
+                },
+                'spec_FileUnderstanding': {
+                    'additionalProperties': False,
+                    'properties': {'FileUnderstanding': {'$ref': '#/$defs/spec_params_FileUnderstanding'}},
+                    'required': ['FileUnderstanding'],
+                    'title': 'spec_FileUnderstanding',
+                    'type': 'object',
+                },
+                'spec_Caching': {
+                    'additionalProperties': False,
+                    'properties': {'Caching': {'$ref': '#/$defs/spec_params_Caching'}},
+                    'required': ['Caching'],
+                    'title': 'spec_Caching',
                     'type': 'object',
                 },
                 'short_spec_SetToolMetadata': {
@@ -2009,6 +2114,37 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_WebSearch',
                     'type': 'object',
                 },
+                'spec_params_FileUnderstanding': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'fallback_subagent_model': {
+                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}],
+                            'title': 'Fallback Subagent Model',
+                        },
+                        'instructions': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Instructions'},
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                    },
+                    'required': ['fallback_subagent_model'],
+                    'title': 'spec_params_FileUnderstanding',
+                    'type': 'object',
+                },
+                'spec_params_Caching': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'retention': {
+                            'anyOf': [{'type': 'boolean'}, {'enum': ['5m', '30m', '1h'], 'type': 'string'}],
+                            'title': 'Retention',
+                        },
+                        'messages': {'title': 'Messages', 'type': 'boolean'},
+                    },
+                    'title': 'spec_params_Caching',
+                    'type': 'object',
+                },
                 'spec_XSearch': {
                     'additionalProperties': False,
                     'properties': {'XSearch': {'$ref': '#/$defs/spec_params_XSearch'}},
@@ -2074,7 +2210,7 @@ def test_model_json_schema_with_capabilities():
                         'effort': {
                             'anyOf': [
                                 {'type': 'boolean'},
-                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'type': 'string'},
                             ],
                             'title': 'Effort',
                         },
@@ -2254,8 +2390,12 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [
                                 {'const': 'NativeTool', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_NativeTool'},
+                                {'const': 'Caching', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_Caching'},
                                 {'const': 'RaiseContentFilterError', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_RaiseContentFilterError'},
+                                {'$ref': '#/$defs/short_spec_FileUnderstanding'},
+                                {'$ref': '#/$defs/spec_FileUnderstanding'},
                                 {'const': 'ImageGeneration', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ImageGeneration'},
                                 {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
@@ -2481,8 +2621,12 @@ def test_model_json_schema_with_capabilities():
                         'anyOf': [
                             {'const': 'NativeTool', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_NativeTool'},
+                            {'const': 'Caching', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_Caching'},
                             {'const': 'RaiseContentFilterError', 'type': 'string'},
                             {'$ref': '#/$defs/spec_RaiseContentFilterError'},
+                            {'$ref': '#/$defs/short_spec_FileUnderstanding'},
+                            {'$ref': '#/$defs/spec_FileUnderstanding'},
                             {'const': 'ImageGeneration', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ImageGeneration'},
                             {'const': 'IncludeToolReturnSchemas', 'type': 'string'},

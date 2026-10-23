@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_clai2.field_menu import FieldMenu
-from pydantic_clai2.model_menu import ModelSettingsSource
-from pydantic_clai2.model_options import model_options, validate_model_options
-from pydantic_clai2.model_settings import ModelSettingsForm
+from pydantic_clai2.models.model_options import model_options, validate_model_options
+from pydantic_clai2.models.model_settings import ModelSettingsForm
+from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
 from tests.clai2.menu_script import make_context
 
 
@@ -96,7 +96,8 @@ def test_classic_thinking_keeps_its_budget_and_room_to_answer() -> None:
         'budget_tokens': 2000,
         'block_binding': {'prefix_mismatch_behavior': 'drop_block'},
     }
-    assert settings['max_tokens'] == 2000 + 4096
+    # Pydantic AI's own default `max_tokens` leaves room to answer beyond the budget.
+    assert 'max_tokens' not in settings
 
 
 def test_interleaved_thinking_asks_for_its_beta() -> None:

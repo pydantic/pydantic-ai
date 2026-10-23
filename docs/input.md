@@ -16,7 +16,7 @@ If you have a direct URL for the image, you can use [`ImageUrl`][pydantic_ai.Ima
 ```py {title="image_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, ImageUrl
 
-agent = Agent(model='openai:gpt-5.2')
+agent = Agent(model='{{ openai:medium }}')
 result = agent.run_sync(
     [
         'What company is this logo from?',
@@ -36,7 +36,7 @@ from pydantic_ai import Agent, BinaryContent
 
 image_response = httpx.get('https://iili.io/3Hs4FMg.png')  # Pydantic logo
 
-agent = Agent(model='openai:gpt-5.2')
+agent = Agent(model='{{ openai:medium }}')
 result = agent.run_sync(
     [
         'What company is this logo from?',
@@ -75,7 +75,7 @@ If you have a direct URL for the document, you can use [`DocumentUrl`][pydantic_
 ```py {title="document_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, DocumentUrl
 
-agent = Agent(model='anthropic:claude-sonnet-4-6')
+agent = Agent(model='{{ anthropic:medium }}')
 result = agent.run_sync(
     [
         'What is the main content of this document?',
@@ -95,7 +95,7 @@ from pathlib import Path
 from pydantic_ai import Agent, BinaryContent
 
 pdf_path = Path('document.pdf')
-agent = Agent(model='anthropic:claude-sonnet-4-6')
+agent = Agent(model='{{ anthropic:medium }}')
 result = agent.run_sync(
     [
         'What is the main content of this document?',
@@ -119,7 +119,7 @@ You can use [`TextContent`][pydantic_ai.TextContent] to provide text input with 
 ```py {title="text_content_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, TextContent
 
-agent = Agent(model='openai:gpt-5.2')
+agent = Agent(model='{{ openai:medium }}')
 result = agent.run_sync([
     'Summarize the key points from this text.',
     TextContent(
@@ -148,7 +148,7 @@ Support for file URLs varies depending on type and provider:
 
 | Model | Send URL directly | Download and send bytes | Unsupported |
 |-------|-------------------|-------------------------|-------------|
-| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl`, `DocumentUrl` | `VideoUrl`. `DocumentUrl` [not supported with `AzureProvider`](models/openai.md#using-azure-with-the-responses-api) or [`AlibabaProvider`](models/openai.md#alibaba-cloud-model-studio-dashscope) |
+| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl`, `DocumentUrl` | `VideoUrl`. `DocumentUrl` [not supported with `AzureProvider`](models/azure.md#using-azure-with-the-responses-api) or [`AlibabaProvider`](models/compatible-apis.md#alibaba-cloud-model-studio-dashscope) |
 | [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | `ImageUrl`, `AudioUrl`, `DocumentUrl` | — | `VideoUrl` |
 | [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl` |
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Google Cloud) | All URL types | — | — |
@@ -157,6 +157,8 @@ Support for file URLs varies depending on type and provider:
 | [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl`, `DocumentUrl` (non-PDF, non-text) |
 | [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | S3 URLs (`s3://`) | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` |
 | [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` | — |
+
+A model that does not accept a kind of file at all can still be given one through the [File Understanding](capabilities/file-understanding.md) capability, which has another model describe it in text first. Without it, a file in a user prompt that the model can't take fails the request, while one a tool returned is [replaced by a note naming it](tools-advanced.md#tool-return-file-provenance), so the run goes on.
 
 A model API may be unable to download a file (e.g., because of crawling or access restrictions) even if it supports file URLs. For example, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Google Cloud limits YouTube video URLs to one URL per request.
 
@@ -235,7 +237,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 
 async def main():
     provider = AnthropicProvider()
-    model = AnthropicModel('claude-sonnet-4-5', provider=provider)
+    model = AnthropicModel('{{ anthropic:medium.name }}', provider=provider)
 
     # Upload a file using the provider's client (Anthropic client)
     with open('document.pdf', 'rb') as f:
@@ -270,7 +272,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 async def main():
     provider = OpenAIProvider()
-    model = OpenAIChatModel('gpt-5', provider=provider)
+    model = OpenAIChatModel('{{ openai:medium.name }}', provider=provider)
 
     # Upload a file using the provider's client (OpenAI client)
     with open('document.pdf', 'rb') as f:
@@ -311,7 +313,7 @@ from pydantic_ai.providers.google import GoogleProvider
 
 async def main():
     provider = GoogleProvider()
-    model = GoogleModel('gemini-2.5-flash', provider=provider)
+    model = GoogleModel('{{ google:medium.name }}', provider=provider)
 
     # Upload a file using the provider's client (Google GenAI client)
     with open('document.pdf', 'rb') as f:
@@ -348,7 +350,7 @@ from pydantic_ai.models.bedrock import BedrockConverseModel
 
 
 async def main():
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0')
+    model = BedrockConverseModel('{{ bedrock:medium.name }}')
 
     agent = Agent(model)
     result = await agent.run([
@@ -383,7 +385,7 @@ from pydantic_ai.providers.xai import XaiProvider
 
 async def main():
     provider = XaiProvider()
-    model = XaiModel('grok-4.3', provider=provider)
+    model = XaiModel('{{ xai:medium.name }}', provider=provider)
 
     # Upload a file using the provider's client (xAI client)
     with open('document.pdf', 'rb') as f:

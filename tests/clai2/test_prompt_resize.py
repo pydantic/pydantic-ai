@@ -6,7 +6,7 @@ from types import FrameType
 
 import pytest
 
-from pydantic_clai2.prompt_resize import resize_notifications
+from pydantic_clai2.ui.prompt.prompt_resize import resize_notifications
 
 pytestmark = pytest.mark.skipif(sys.platform == 'win32', reason='SIGWINCH is POSIX-only')
 

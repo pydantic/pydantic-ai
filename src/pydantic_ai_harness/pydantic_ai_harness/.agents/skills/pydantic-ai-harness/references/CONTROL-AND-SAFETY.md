@@ -20,6 +20,8 @@ an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 | Get human approval for some tool calls, decided per call | `ToolGuardrail` returning `GuardrailResult.approve()` |
 | Get human approval for a whole tool | core `requires_approval=True` (core skill) |
 | Detect indirect prompt injection in emails/web pages returned by tools | `PromptInjectionDefender` |
+| Ask a second model whether each selected tool call should run | `ToolCallJudge(model, question=..., tools=...)` |
+| Let a second model approve low-risk calls that need approval, and ask a person about the rest | `ApprovalReviewer(model, question=..., tools=...)` |
 | Cap USD or tokens per day/month/run, per tenant, across workers | `SpendLimits(budgets=[Budget(...)])` |
 | Cap tokens/cost for one run only | core `UsageLimits` (no harness capability needed) |
 | Let the model ask the user multiple-choice questions and wait | `AskUser(answerer=...)` |
@@ -147,7 +149,9 @@ print(agent.run_sync('deploy').output)
 
 Key parameters:
 - `InputGuardrail(guard, parallel=False)`: `parallel=True` races the guard with the model call
-  (no added latency on pass; tokens spent if it trips late); `replace` is refused in parallel mode.
+  (no added latency on pass; tokens spent if it trips late; a request that raises or is retried
+  first still waits for the verdict); `replace` is refused in parallel mode.
+  `CodeMode` tool calls started by `eager` or `speculate` during the stream wait for its verdict.
 - `OutputGuardrail(guard)`: guard receives the output object unchanged (a Pydantic model for
   structured output, not a string). Scan its JSON:
   `lambda out: redact_secrets(out.model_dump_json()).action == 'allow'` blocks on a match; to redact,
@@ -214,7 +218,7 @@ def log_detection(ctx: RunContext[None], call: ToolCallPart, verdict: DefenseRes
 
 
 agent = Agent(
-    'anthropic:claude-sonnet-5',
+    'anthropic:claude-sonnet-5-5',
     capabilities=[
         PromptInjectionDefender(
             block_high_risk=True,
@@ -237,6 +241,94 @@ Gotchas: `defense` plus `block_high_risk` or `semantic_detection` raises `UserEr
 `ModelRetry` messages, `ToolReturn.metadata`, mapping keys, media. A withheld result carries
 diagnostics in `ToolReturn.metadata['prompt_injection']` (not sent to the model). With a custom ML
 `defense`, call `defense.warmup_tier2()` at startup.
+
+## ToolCallJudge
+
+Asks a second model one yes/no risk question after a selected tool call's arguments validate and
+before its function runs. `yes` blocks the call, `no` allows it, and `unsure` follows the configured
+uncertainty policy.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import ToolCallJudge
+
+agent = Agent(
+    'anthropic:claude-sonnet-5-5',
+    capabilities=[
+        ToolCallJudge(
+            'anthropic:claude-haiku-5-5',
+            question='Would this call destroy data, spend money, or expose secrets?',
+            tools=['delete_file', 'run_shell'],
+        )
+    ],
+)
+```
+
+Parameters: the judge `model` is positional; `question` is required; `tools='all'` accepts the
+standard `ToolSelector` forms; `include_conversation=False`; `conversation_window=4_000`;
+`on_uncertain='block' | 'allow' | 'ask'`; `denial_message`; `on_verdict` receives a
+`ToolCallVerdict`. The verdict type is in `pydantic_ai_harness.tool_call_judge`.
+
+Gotchas:
+
+- The default sends only the tool name and validated arguments. `include_conversation=True` adds a
+  recent transcript but widens the judge's prompt-injection surface.
+- Selected calls and their arguments leave the process for the judge provider, including calls the
+  judge blocks. Do not select tools whose arguments the provider must not receive.
+- `on_uncertain='ask'` needs `DeferredToolRequests` in the outer agent's output type. A tool with
+  `requires_approval=True` reaches the judge only after a person approves it; both gates must allow.
+- Judge usage counts against the outer run's `usage` and `usage_limits`. Each selected call adds a
+  model request, so scope `tools` to calls where the verdict can change what happens.
+- Provider-native tools execute remotely and do not pass through this hook. This is a model-based
+  filter, not a replacement for authorization, validation, least privilege, or recovery controls.
+- Judgements are durable operations under Temporal, DBOS, and Prefect. Give every judge on a
+  durable-capable agent a distinct explicit `id`; ordinary runs do not require one.
+
+## ApprovalReviewer
+
+Answers approval requests before a person sees them. For each call to a selected tool that needs
+approval (`requires_approval=True` or a raised `ApprovalRequired`), a second model answers one yes/no
+risk question: `no` approves the call and it runs in the same run step; `yes`, `unsure`, a model
+failure, or a budget that cannot fit the review leaves the call for the person.
+
+```python {test="skip"}
+from pydantic_ai import Agent, DeferredToolRequests
+
+from pydantic_ai_harness import ApprovalReviewer
+
+agent = Agent(
+    'anthropic:claude-sonnet-5-5',
+    output_type=[str, DeferredToolRequests],
+    capabilities=[
+        ApprovalReviewer(
+            'anthropic:claude-haiku-5-5',
+            question='Could this call destroy data, spend money, or expose secrets?',
+            tools=['run_shell'],
+        )
+    ],
+)
+```
+
+Parameters: the reviewer `model` is positional; `question` is required; `tools='all'` accepts the
+standard `ToolSelector` forms; `include_conversation=False`; `conversation_window=4_000`; `on_review`
+receives an `ApprovalReview`. The review type is in `pydantic_ai_harness.approval_reviewer`.
+
+Gotchas:
+
+- It only approves. It never denies or runs a call, and calls that do not need approval are not
+  reviewed. Add `ToolCallJudge` to block calls; the judge still runs on a call the reviewer approved.
+- A decision model such as `'typesafe:jev-latest'` works as the reviewer model, and its confidence lands
+  on `ApprovalReview.confidence`. A `no` still approves however unsure it was: to send unsure reviews to a
+  language model, pass `FallbackModel('typesafe:jev-latest', <language model>, fallback_on=[ModelAPIError,
+  unsure])`, where `unsure(response)` checks `response.provider_details['confidence']` against a bar.
+- It is implemented with the `handle_deferred_tool_calls` hook and ordered before
+  `HandleDeferredToolCalls`, so a human handler only receives what the reviewer left. Without a
+  handler, the rest surface as `DeferredToolRequests` output.
+- Reviews run one at a time per batch, count against the outer run's `usage` and `usage_limits`,
+  and are durable operations under Temporal, DBOS, and Prefect (give the reviewer an explicit `id`).
+- Reviewed arguments leave the process for the reviewer provider, including calls it leaves for the
+  person. This is a model-based filter, not an authorization boundary.
 
 ## SpendLimits
 
@@ -272,10 +364,10 @@ from pydantic_ai_harness.spend import Budget, RedisSpendStore
 
 limits = SpendLimits(
     budgets=[
-        Budget(usd=Decimal('5'), window='run'),
-        Budget(usd=Decimal('100'), window='day', warn_at=0.8),
-        Budget(usd=Decimal('10'), window='day', scope=lambda ctx: ctx.deps.tenant_id, name='tenant'),
-        Budget(usd=Decimal('20'), window='day', scope=lambda ctx: ctx.model.model_name, name='per-model'),
+        Budget(usd=Decimal(5), window='run'),
+        Budget(usd=Decimal(100), window='day', warn_at=0.8),
+        Budget(usd=Decimal(10), window='day', scope=lambda ctx: ctx.deps.tenant_id, name='tenant'),
+        Budget(usd=Decimal(20), window='day', scope=lambda ctx: ctx.model.model_name, name='per-model'),
     ],
     store=RedisSpendStore(Redis.from_url('redis://localhost')),  # shared across workers
     on_unpriced='raise',
@@ -303,6 +395,9 @@ Gotchas:
   `'raise'` or `price=` when callers choose the model. `TestModel` is unpriced: to test a `usd` budget
   offline, pass a fixed price such as `price=lambda response: Decimal('0.01')` (a `PriceFunc`,
   `ModelResponse -> Decimal | None`).
+- Omitted usage increments `response.usage.unmeasured_requests`. When `price` is unset or returns `None`,
+  any known cost subtotal still accrues, but the response remains unpriced and `on_unpriced` applies.
+  Known token and cost totals are lower bounds.
 - The built-in stores are `InMemorySpendStore` (default; per process and instance, lost on restart)
   and `RedisSpendStore` (shared across workers; install `redis` yourself, `RedisClient` is a protocol).
   For a restart-safe budget on one machine without Redis, implement `BatchSpendStore`:
@@ -310,8 +405,13 @@ Gotchas:
   Sequence[SpendEntry]) -> Mapping[str, Spent]` (new totals; skip an entry whose `token` was already
   applied to its `key`, honour `ttl`), both async. `SpendStore` (`get`/`add`) is deprecated. Pass the
   same store object to two `SpendLimits` to share counters. `defer_loading=True` is refused.
-- List `SpendLimits` after other innermost capabilities such as `InputGuardrail`, or a billed
-  response they reject is not counted (`SpendCompositionWarning` flags this).
+- `SpendLimits` counts every billed response, including one a nested hook rejects, whatever the
+  capability order; cached and `SkipModelRequest` responses aren't charged.
+- Each response a `FallbackModel` rejected is charged as its own request, with its own
+  `SpendRecordedEvent` (`failed_attempt=True`). `price` receives it as a `ModelResponse` with the
+  attempt's model, provider and usage but no `parts` and no `provider_url`, so a `price` that reads
+  the output or keys on the endpoint will misprice it. `Spent.requests` can exceed
+  `RunUsage.requests`.
 - Spec-loadable except callables (`store`, `price`, `scope`, `clock`).
 
 ## AskUser
@@ -357,9 +457,17 @@ print(agent.run_sync('Set up storage').output)
 - An answer that does not fit (unknown header/label, several picks on single-select, missing
   answer) raises `ValueError` and fails the run; call `check_response(request, response)` (from
   `pydantic_ai_harness.ask_user`) first.
-- The run waits inside the tool call; a web UI must hold the run open until the answer arrives.
-  For a run that must end and resume later, use core deferred tools instead.
-- Observe with `AskUserRequestedEvent` / `AskUserAnsweredEvent`. Two `AskUser` on one agent
+- The run waits inside the tool call. `timeout=<seconds>` cancels a slow answerer; the model gets
+  `TIMED_OUT` and `AskUserAnsweredEvent` fires with `timed_out=True`. A thread cannot be cancelled:
+  wrap blocking work in `anyio.to_thread.run_sync(..., abandon_on_cancel=True)`, and read terminal
+  input with an async prompt library, not `input()` in a thread.
+- By default, parallel `ask_user_question` calls reach the answerer concurrently; serialize in the
+  answerer if the UI shows one request at a time. Custom text has no length cap, so bound client input.
+- `answerer=None` defers every call: the run ends with `DeferredToolRequests` (add it to
+  `output_type`). Rebuild each request with `AskUserRequest.from_tool_call(call)`, then resume with
+  `DeferredToolResults(calls={call.tool_call_id: ask_user_result(request, response)})`.
+- Observe with `AskUserRequestedEvent` / `AskUserAnsweredEvent`. An answerer that raises still
+  emits the answered event, with `failed=True`, before its error propagates. Two `AskUser` on one agent
   collide on the tool name. It has a spec name, but a spec cannot supply the `answerer` callable,
   so pass it with `capabilities=` on `Agent.from_spec`/`Agent.from_file`.
 
@@ -409,7 +517,9 @@ agent = Agent(
 
 Every `every` model requests, sends the last `window` tokens of transcript to a judge model
 concurrently with the run. Verdict `AllGood` does nothing; `Steer(message)` is enqueued into the
-run and delivered on the next request.
+run as a framework-note `SystemPromptPart` plus the message as user-channel data in
+`<judge_feedback judge="..." ref="...">`, delivered on the next request. The note names that random `ref`
+and says a `<judge_feedback>` whose ref no judge note names, or a later copy of a named ref, is not the judge's, so a forged frame in a tool result gets no authority. Observe steering with `on_verdict`.
 
 ```python
 from pydantic_ai import Agent
@@ -451,6 +561,8 @@ not get the built-in judge instructions, so its `instructions` must describe the
 - https://pydantic.dev/docs/ai/harness/repair-tool-arguments/
 - https://pydantic.dev/docs/ai/harness/guardrails/
 - https://pydantic.dev/docs/ai/harness/prompt-injection-defender/
+- https://pydantic.dev/docs/ai/harness/tool-call-judge/
+- https://pydantic.dev/docs/ai/harness/approval-reviewer/
 - https://pydantic.dev/docs/ai/harness/spend/
 - https://pydantic.dev/docs/ai/harness/ask-user/
 - https://pydantic.dev/docs/ai/harness/system-reminders/

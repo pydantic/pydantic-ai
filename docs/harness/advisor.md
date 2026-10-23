@@ -20,10 +20,10 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import Advisor
 
 agent = Agent(
-    'openai:gpt-5.4',
+    '{{ openai:medium }}',
     capabilities=[
         Advisor(
-            'anthropic:claude-opus-4-8',
+            '{{ anthropic:large }}',
             max_uses=1,
             max_tokens=4096,
         )
@@ -56,8 +56,8 @@ class Decision(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5.4',
-    capabilities=[Advisor('openai:gpt-5.4', output_type=Decision)],
+    '{{ openai:medium }}',
+    capabilities=[Advisor('{{ openai:medium }}', output_type=Decision)],
 )
 ```
 
@@ -76,7 +76,7 @@ In the default `auto` mode, native selection is conservative. The capability onl
 from pydantic_ai_harness import Advisor
 
 # Native for an Anthropic executor; local for OpenAI, Google, and other executors.
-anthropic_advisor = Advisor('anthropic:claude-opus-4-8')
+anthropic_advisor = Advisor('{{ anthropic:large }}')
 
 # Native for an OpenRouter executor.
 openrouter_advisor = Advisor('openrouter:anthropic/claude-opus-4.8')
@@ -134,7 +134,7 @@ Invalid option combinations fail when `Advisor` is constructed. Executor and pro
 
 The capability needs no ordering constraint. It composes with other capabilities and ordinary toolsets through Pydantic AI's [native-or-local tool selection](../capabilities/overview.md#provider-adaptive-tools).
 
-The advisor tool is always visible and is not deferred through [Tool Search](../tools-advanced.md#tool-search). It reserves the tool name and toolset ID `advisor`. One `Advisor` instance is supported per agent because the native tool has one stable identity.
+The advisor tool is always visible and is not deferred through [Tool Search](../tools-advanced.md#tool-search). It reserves the tool name and toolset ID `advisor`. An agent has one advisor, so two `Advisor` capabilities merge into one. An option left at `None` (`max_uses`, `max_tokens`, `caching`) takes the other instance's value, two list `output_type`s are combined, and every other option takes the later instance's value. If the merge gives an OpenRouter `Advisor` in `mode='native'` a `max_uses`, which no single `Advisor` accepts, `max_uses` is ignored with a `HarnessDeprecationWarning`; this will raise `UserError` in a future release.
 
 During streaming, the executor stream pauses while an advisor consultation runs and resumes when the completed advice is available. The local fallback does not splice the advisor model's token deltas into the executor stream.
 

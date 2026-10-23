@@ -134,9 +134,11 @@ class EagerCoordinator(Generic[AgentDepsT]):
                 call.halted = True
                 self.drop_queued(call)
                 return False
+            previous_char = call.args_text[-1:]
             call.args_text += args
-            # A statement can only close on a newline, so deltas without one need no decoding.
-            return '\\n' in args
+            # A statement can only close on a newline, so deltas without one need no decoding. The
+            # previous character joins the check because a provider can split the `\n` escape.
+            return '\\n' in previous_char + args
         if isinstance(args, dict):
             code = args.get('code')
             if args.get('restart'):
@@ -269,22 +271,24 @@ class EagerCoordinator(Generic[AgentDepsT]):
             await self.cancel_pump(call.pump)
 
     @staticmethod
-    async def cancel_pump(pump: asyncio.Task[None]) -> None:
+    async def cancel_pump(pump: asyncio.Task[None]) -> bool:
+        """Cancel `pump` and report whether it stopped within the budget."""
         pump.cancel()
         # A nested tool that swallows the cancellation can hold the pump past the budget;
         # waiting without a deadline would let one such tool hang run teardown.
-        await asyncio.wait({pump}, timeout=CANCEL_TIMEOUT_SECONDS)
+        stopped, _ = await asyncio.wait({pump}, timeout=CANCEL_TIMEOUT_SECONDS)
+        return bool(stopped)
 
-    async def close(self) -> None:
-        """Cancel all background work owned by this run."""
+    async def close(self) -> bool:
+        """Cancel all background work owned by this run; report whether every pump stopped."""
         self.calls.clear()
         self.call_ids_by_part_index.clear()
         self.run_step = None
         self.first_tool_part_index = None
         pumps = list(self.pumps)
         self.pumps.clear()
-        for pump in pumps:
-            await self.cancel_pump(pump)
+        stopped = [await self.cancel_pump(pump) for pump in pumps]
+        return all(stopped)
 
 
 @dataclass
@@ -303,7 +307,9 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
 
     async def __aexit__(self, *args: Any) -> bool | None:
         try:
-            await self.execution.close()
+            if not await self.execution.close() and self._repl is not None:
+                # A pump that ignored cancellation may still be feeding, so there is no idle REPL to save.
+                self._repl.skip_save()
         finally:
             result = await super().__aexit__(*args)
         return result
@@ -329,6 +335,8 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
 
         if tool_args.get('restart', False):
             await self.execution.discard(call)
+            if call.execution.usage_limit_exceeded is not None:
+                raise call.execution.usage_limit_exceeded
             async with self.execution.feed_lock:
                 return await super().call_tool(name, tool_args, ctx, tool)
 
@@ -338,6 +346,8 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
             run_state = self._run_state
             assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
             await run_state.reset()
+            if call.execution.usage_limit_exceeded is not None:
+                raise call.execution.usage_limit_exceeded
             raise ModelRetry(
                 'The submitted code no longer matches the prefix eager execution already ran, '
                 'so the session was restarted. Send the snippet again.'

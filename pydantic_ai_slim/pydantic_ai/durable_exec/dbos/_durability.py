@@ -3,29 +3,39 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
+from weakref import WeakKeyDictionary
 
 from dbos import DBOS
+from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
 
+from pydantic_ai._utils import now_utc
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapRunHandler
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability, conversation_id_from_run_id
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import ToolsetKind
 from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
-from pydantic_ai.durable_exec._utils import StreamedActivityResult
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse
-from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters
+from pydantic_ai.messages import AgentStreamEvent
+from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._agent import DBOSParallelExecutionMode
 from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig
-from ._utils import StepConfig, guard_enqueue_in_workflow
+from ._utils import StepConfig, guard_enqueue_in_workflow, using_durable_sleep
 
 if TYPE_CHECKING:
-    pass
+    from dbos._context import DBOSContext
+
+_default_run_ids_by_step: WeakKeyDictionary[DBOSContext, dict[int, int]] = WeakKeyDictionary()
+"""Agent runs that drew a default `run_id` at each step position, per workflow execution.
+
+Runs started concurrently (e.g. with `asyncio.gather`) resolve their IDs before either starts a step,
+so they share a position and need the count to tell them apart.
+"""
 
 
 @dataclass(init=False, kw_only=True)
@@ -64,6 +74,11 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         journal_discovery=True,
         sequential_tools_in_durable_context=False,
         tool_config_key=None,
+        # `DBOS.cancel_workflow()` aborts the run with one of these `BaseException`s rather than a
+        # `CancelledError`: `DBOSWorkflowCancelledError` when a step starts (or a preemptible step is
+        # aborted), and, since dbos 3.2, `DBOSWorkflowConflictIDError` when a step that was running as
+        # the workflow was cancelled tries to record its result after the cancel handed ownership off.
+        cancellation_error_types=(DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError),
     )
     # No `tool_config_key`: DBOS takes no per-tool config, and tool metadata is ignored (as it was
     # before this capability existed). It can't be supported without changing durable history: a step
@@ -214,7 +229,26 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
         context = get_local_dbos_context()
         assert context is not None and context.workflow_id is not None
-        return f'{context.workflow_id}:{context.function_id + 1}'
+        step = context.function_id + 1
+        runs = _default_run_ids_by_step.setdefault(context, {})
+        index = runs.get(step, 0)
+        runs[step] = index + 1
+        # The first run at a position keeps the ID it had before concurrent runs were told apart.
+        return f'{context.workflow_id}:{step}' if index == 0 else f'{context.workflow_id}:{step}:{index}'
+
+    def _default_conversation_id(self, run_id: str) -> str | None:
+        return conversation_id_from_run_id(run_id) if self.in_durable_context else None
+
+    async def _run_start_time(self, run_id: str) -> datetime | None:
+        if not self.in_durable_context:
+            return None
+
+        # Recorded as a step, so a recovered workflow counts the run's `timeout=` from when it first started.
+        # A coroutine function, so DBOS records the step without blocking the event loop.
+        async def run_start_time() -> datetime:
+            return now_utc()
+
+        return await DBOS.run_step_async({'name': f'{self.name}.run_start_time'}, run_start_time)
 
     def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
         # A DBOS step degrades to a plain inline call outside a workflow, where enqueueing is
@@ -231,19 +265,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     def _toolset_in_durable_context(self) -> bool:
         # DBOS steps degrade to inline calls outside a workflow, preserving the wrapper-era lifecycle.
         return True
-
-    async def _load_streamed_activity_result(
-        self, result: object, model_request_parameters: ModelRequestParameters
-    ) -> StreamedActivityResult:
-        if isinstance(result, ModelResponse):
-            # Legacy-history-only: `DBOSAgent` recorded a bare response for stream steps.
-            stream = CompletedStreamedResponse(
-                result,
-                model_request_parameters=model_request_parameters,
-                replay_events=True,
-            )
-            return StreamedActivityResult(response=result, events=[event async for event in stream])
-        return cast(StreamedActivityResult, result)
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         if self._in_legacy_workflow.get():
@@ -265,7 +286,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Apply the configured parallel-execution mode for every entry point."""
+        """Apply the configured parallel-execution mode, and make agent-graph waits durable in workflows."""
         agent = self._agent
         if agent is None:  # pragma: no cover
             return await handler()
@@ -274,5 +295,5 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         mode = self._parallel_execution_mode
         if self.in_durable_context and ctx.workspace.attached:
             mode = 'sequential'
-        with agent.parallel_tool_call_execution_mode(mode):
+        with agent.parallel_tool_call_execution_mode(mode), using_durable_sleep():
             return await handler()

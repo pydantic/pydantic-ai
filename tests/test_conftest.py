@@ -6,15 +6,40 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
+import httpx2
 import pytest
-from cassetter import Cassette, RecordMode
+from cassetter import Body, Cassette, RecordMode, WsFrame
 from coverage.python import get_python_source
 
 from . import conftest
-from .conftest import BLOCKBUSTER_EXEMPTIONS, check_vcr_cassette_usage
+from .conftest import BLOCKBUSTER_EXEMPTIONS, RequestCapture, check_vcr_cassette_usage
 
 if TYPE_CHECKING:
     from blockbuster import BlockBuster, BlockingError
+
+
+@pytest.mark.parametrize(
+    'content_encoding, content',
+    [
+        ('identity', b'{"answer":true}'),
+        pytest.param(
+            'zstd',
+            bytes.fromhex('28b52ffd200f7900007b22616e73776572223a747275657d'),
+            marks=pytest.mark.skipif(sys.version_info < (3, 14), reason='stdlib zstd requires Python 3.14+'),
+        ),
+    ],
+)
+async def test_request_capture_decodes_content_encoding(
+    request_capture: RequestCapture, content_encoding: str, content: bytes
+) -> None:
+    await request_capture.client.event_hooks['request'][0](
+        httpx2.Request(
+            'POST', 'https://example.com/questions', content=content, headers={'content-encoding': content_encoding}
+        )
+    )
+
+    assert request_capture.raw_bodies == [content]
+    assert request_capture.body('/questions') == {'answer': True}
 
 
 @pytest.fixture
@@ -54,7 +79,22 @@ def test_check_vcr_cassette_usage_reports_unused_interactions() -> None:
     cassette = _recorded_cassette('https://example.com/one', 'https://example.com/two')
     cassette.play('POST', 'https://example.com/one', {}, b'{}')
 
-    with pytest.raises(pytest.fail.Exception, match=r'played 1/2; unused indexes: \[1\]'):
+    with pytest.raises(pytest.fail.Exception, match=r'unused HTTP indexes: \[1\]$'):
+        check_vcr_cassette_usage(cassette, strict_usage=False)
+
+
+def test_check_vcr_cassette_usage_numbers_each_protocol_separately() -> None:
+    """HTTP, gRPC and WebSocket interactions are numbered separately, and only HTTP has play counts."""
+    cassette = _recorded_cassette('https://example.com/one', 'https://example.com/two')
+    cassette.record_ws('wss://example.com/ws', {}, [WsFrame('recv', 'text', Body('text', 'hi'), 0)])
+    cassette.record_grpc(
+        method='/pkg.Svc/Call', metadata={}, request_body=Body('binary', b'\x01'), response_body=Body('binary', b'\x02')
+    )
+    cassette.play('POST', 'https://example.com/one', {}, b'{}')
+    cassette.play('POST', 'https://example.com/two', {}, b'{}')
+    cassette.play_ws('wss://example.com/ws')
+
+    with pytest.raises(pytest.fail.Exception, match=r'did not play all interactions: unused gRPC indexes: \[0\]$'):
         check_vcr_cassette_usage(cassette, strict_usage=False)
 
 
@@ -110,6 +150,7 @@ def test_blockbuster_disabled_when_explicitly_configured(monkeypatch: pytest.Mon
         next(fixture)
 
 
+@pytest.mark.subprocess(reason='asserts what a fresh interpreter imports')
 def test_disabled_blockbuster_does_not_import_instrumentation() -> None:
     subprocess.run(
         [

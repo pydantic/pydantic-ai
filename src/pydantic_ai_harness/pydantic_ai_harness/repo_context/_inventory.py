@@ -11,11 +11,6 @@ from pydantic import BaseModel, Field
 
 from pydantic_ai.workspaces import FileEntry, Workspace
 
-_ROOT_NOTES = {
-    '.codex': 'Codex uses TOML config; assets are derived from the .claude/.agents setup.',
-    '.grok': 'Grok setup is derived from the .claude/.agents setup.',
-}
-
 # Directories are deduplicated by their resolved path, so symlink cycles and aliases are walked once;
 # this bound backs that up on backends that cannot resolve links. Real skill trees are two levels deep.
 _MAX_SKILL_DEPTH = 8
@@ -29,11 +24,10 @@ class AssetRoot(BaseModel):
     skills: list[str] = Field(default_factory=list, description='Paths to SKILL.md files found under skills/.')
     agents: list[str] = Field(default_factory=list, description='Paths to agent .md files found under agents/.')
     settings: str | None = Field(default=None, description='Path to settings.json (hooks), if present.')
-    notes: str | None = Field(default=None, description='Format or derivation notes for this root, if any.')
 
 
 class AgentContextInventory(BaseModel):
-    """A map of where a repo's CE assets live, for an orchestrator to read or translate."""
+    """A map of where a repo's CE assets live, for an orchestrator to inspect."""
 
     roots: list[AssetRoot] = Field(default_factory=list[AssetRoot], description='One entry per scanned root directory.')
 
@@ -48,14 +42,13 @@ async def scan_assets(workspace: Workspace, workspace_dir: Path, asset_roots: Se
     roots: list[AssetRoot] = []
     for name in asset_roots:
         directory = posixpath.normpath(posixpath.join(root_dir, name))
-        notes = _ROOT_NOTES.get(name)
         try:
             entry = await workspace.stat(directory)
         except FileNotFoundError:
-            roots.append(AssetRoot(root=name, exists=False, notes=notes))
+            roots.append(AssetRoot(root=name, exists=False))
             continue
         if not entry.is_dir:
-            roots.append(AssetRoot(root=name, exists=False, notes=notes))
+            roots.append(AssetRoot(root=name, exists=False))
             continue
 
         skills = await _scan_skills(workspace, posixpath.join(directory, 'skills'), root_dir)
@@ -67,7 +60,7 @@ async def scan_assets(workspace: Workspace, workspace_dir: Path, asset_roots: Se
         )
         skills.sort()
         agents.sort()
-        roots.append(AssetRoot(root=name, exists=True, skills=skills, agents=agents, settings=settings, notes=notes))
+        roots.append(AssetRoot(root=name, exists=True, skills=skills, agents=agents, settings=settings))
     return AgentContextInventory(roots=roots)
 
 

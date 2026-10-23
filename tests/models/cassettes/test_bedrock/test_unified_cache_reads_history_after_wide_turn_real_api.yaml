@@ -1,0 +1,1025 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse-stream
+    headers:
+      amz-sdk-invocation-id:
+      - 4b60114f-5398-4638-8e61-49324797c115
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "32862"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Here are some notes about Python, for a wide turn. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability.
+          - cachePoint:
+              type: default
+        system:
+        - text: You are a concise Python assistant.
+        - cachePoint:
+            type: default
+        inferenceConfig:
+          maxTokens: 64000
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: get_weather
+              inputSchema:
+                json:
+                  type: object
+          - cachePoint:
+              type: default
+          toolChoice:
+            auto: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-type:
+      - application/vnd.amazon.eventstream
+      transfer-encoding:
+      - chunked
+    body:
+      type: binary
+      content: >-
+        0000008f00000052d3f1c8f20b3a6576656e742d7479706507000c6d65737361676553746172740d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b2270223a226162636465666768696a6b6c6d6e6f707172222c22726f6c65223a22617373697374616e74227dc16b710b000000a700000057522a58b80b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2249227d2c2270223a226162636465666768696a6b6c6d227d465d2141000000a2000000579acad7c80b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22277665227d2c2270223a22616263646566227d8cd2881e000000d90000005714c806160b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22207265636569766564227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132227d22940312000000da0000005753687cc60b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220796f7572227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a3031323334353637227d83b316d4000000c700000057cb182ff50b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22206e6f7465227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f227da3943f6e000000c20000005703f8a0850b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2221227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e227d9b646219000000d700000057abf8b8770b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220596f75227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435227d3919b23b000000a400000057158a22680b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22277665227d2c2270223a226162636465666768227d4b2a4ff5000000ae000000575f3a3ac90b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22206d616465227d2c2270223a226162636465666768696a6b6c6d6e6f70227d0788830f000000ad00000057189a40190b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22206974227d2c2270223a226162636465666768696a6b6c6d6e6f7071227d8d288a40000000ca000000573388eb440b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22202a2a227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f5051525354227d3c9c3473000000b400000057756ab5ea0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2276657279227d2c2270223a226162636465666768696a6b6c6d6e6f7071727374757677227d84021e76000000c600000057f67806450b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222a2a20636c656172207468617420507974686f6e227d2c2270223a226162636465666768696a6b6c6d6e6f70717273747576777879227d2ff020aa000000d200000057631837070b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220666176227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a30227d8ee28348000000c600000057f67806450b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a226f727320726561646162696c69747921227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a414243227d457bbc36000000a400000057158a22680b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220227d2c2270223a226162636465666768696a227d66ad0e98000000c4000000578cb855250b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22f09f988a227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d227d58d001c6000000ab0000005797dab5b90b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a225c6e5c6e54686973227d2c2270223a226162636465666768696a227d214d8d27000000d600000057969891c70b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220697320696e64656564227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f50515253545556575859227db5ca7a89000000d700000057abf8b8770b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22206f6e65227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435227d642cc9f6000000d700000057abf8b8770b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22206f6620507974686f6e227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a227d24910238000000ae000000575f3a3ac90b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22277320636f7265227d2c2270223a226162636465666768696a6b6c6d6e227db8bca77c000000b300000057c74a69fa0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222064657369676e227d2c2270223a226162636465666768696a6b6c6d6e6f70717273227d8f587a18000000b300000057c74a69fa0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22207072696e6369706c65732c227d2c2270223a226162636465666768696a6b6c6d6e227decc4e92d000000ca000000573388eb440b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222066616d227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f50515253227d7aab6ca2000000bd00000057787ad79b0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a226f75736c79206361707475726564227d2c2270223a226162636465666768696a6b6c6d6e6f70717273747576227d25158bbe000000da0000005753687cc60b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220696e20746865205a656e206f6620507974686f6e2028227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f50227db99ede10000000cf00000057fb6864340b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2250227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a30227db1fbd199000000d500000057d138eb170b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a224550203230293a227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a30227d03adb068000000c0000000577938f3e50b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a225c6e5c6e3e227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748227daffa13d8000000e300000057ff59a6310b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22205c22526561646162696c69747920636f756e7473227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a30227d37e9effc000000d500000057d138eb170b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222e5c22227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a3031323334227d6b7bc752000000e000000057b8f9dce10b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a225c6e5c6e507974686f6e227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738227d33d5fc9a000000a400000057158a22680b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220616368696576227d2c2270223a2261626364227d1dbdd3d2000000d3000000575e781eb70b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2265732074686973207468726f7567683a227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f50227d186fb53e000000b00000005780ea132a0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a225c6e2d202a2a436c65616e227d2c2270223a226162636465666768696a6b6c227d0dd067e8000000b100000057bd8a3a9a0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222073796e746178227d2c2270223a226162636465666768696a6b6c6d6e6f7071227d0d3ad321000000d400000057ec58c2a70b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222a2a2077697468206d65616e696e6766756c227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f227d800f7892000000ad00000057189a40190b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220696e64656e746174696f6e227d2c2270223a226162636465666768227d6e166d86000000c900000057742891940b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a225c6e2d202a2a4465736372697074227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748227d2aee50aa000000c20000005703f8a0850b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22697665206e616d696e67227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445227dfe907682000000c8000000574948b8240b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220636f6e76656e74696f6e73227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a414243444546474849227d26252da5000000a400000057158a22680b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222a2a2028227d2c2270223a2261626364656667227d48a0d962000000ac0000005725fa69a90b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2265227d2c2270223a226162636465666768696a6b6c6d6e6f707172227d1ea5e722000000bc00000057451afe2b0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222e672e2c2060736e616b65227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778227d7188159a000000a800000057d07acf690b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a225f6361736560227d2c2270223a22616263646566676869227d2f52ad48000000be000000573fdaad4b0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220666f72207661726961626c65732f227d2c2270223a226162636465666768696a6b6c6d6e6f70717273747576227da9b6d11d000000b9000000578dfa715b0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2266756e6374696f6e73295c6e2d202a2a4578706c69636974227d2c2270223a226162636465666768227dee9bf67a000000a2000000579acad7c80b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22206973227d2c2270223a22616263646566227dae55d550000000e800000057888997200b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220626574746572207468616e20696d706c696369742a2a227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a30313233227d7c2686a2000000df000000579b88f3b60b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a225c6e2d202a2a53696d706c65227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435227dfd6ae382000000cf00000057fb6864340b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220697320626574746572207468616e20636f6d706c65782a2a5c6e2d202a2a227d2c2270223a226162636465666768696a6b6c6d6e6f7071727374757677227d89d301fb000000d10000005724b84dd70b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22466c6174227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a227d83e4b79e000000d400000057ec58c2a70b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220697320626574746572207468616e206e65737465642a2a227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a414243444546474849227de549302d000000be000000573fdaad4b0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a225c6e5c6e4973227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445227d996b49e4000000b800000057b09a58eb0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220746865726520736f6d657468696e67227d2c2270223a226162636465666768696a6b6c6d6e6f227d092ac93a000000cb000000570ee8c2f40b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222073706563696669632061626f757420507974686f6e27732072656164227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475227d3cc08a65000000e7000000570ad900f10b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a226162696c69747920796f752764206c696b652068656c70227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132227d1ea1e0a9000000a400000057158a22680b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220776974682c227d2c2270223a226162636465227d7d94b5e0000000db000000576e0855760b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22206f7220776f756c6420796f75206c696b6520746f206469736375737320507974686f6e227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a41424344227dc4015606000000bc00000057451afe2b0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220636f6465227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a41424344227d46b3a571000000d700000057abf8b8770b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22206578616d706c6573227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a30227d7a80622a000000ba00000057ca5a0b8b0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220746861742064656d6f6e737472617465227d2c2270223a226162636465666768696a6b6c6d6e6f70227d1f290eff000000b70000005732cacf3a0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222074686973207072696e6369706c653f227d2c2270223a226162636465666768696a6b6c6d6e227deddbeb88000000a100000056aa6d9d8e0b3a6576656e742d74797065070010636f6e74656e74426c6f636b53746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a414243227d007c9e2f00000083000000518f0874490b3a6576656e742d7479706507000b6d65737361676553746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b2270223a226162222c2273746f70526561736f6e223a22656e645f7475726e227d9056e9a4000001af0000004ecd6d681c0b3a6576656e742d747970650700086d657461646174610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b226d657472696373223a7b226c6174656e63794d73223a343938357d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758222c227573616765223a7b22636163686544657461696c73223a5b7b22696e707574546f6b656e73223a373734362c2274746c223a22356d227d5d2c22636163686552656164496e707574546f6b656e436f756e74223a302c22636163686552656164496e707574546f6b656e73223a302c2263616368655772697465496e707574546f6b656e436f756e74223a373734362c2263616368655772697465496e707574546f6b656e73223a373734362c22696e707574546f6b656e73223a332c226f7574707574546f6b656e73223a3136332c22736572766572546f6f6c5573616765223a7b7d2c22746f74616c546f6b656e73223a373931327d7dbcd8363e
+  recorded_at: 2026-10-20T22:56:05.705284+00:00
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse-stream
+    headers:
+      amz-sdk-invocation-id:
+      - 5e10d6df-f7da-4740-a383-ec234e0b80f6
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "35021"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Here are some notes about Python, for a wide turn. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability. Python favors readability.
+              Python favors readability. Python favors readability.
+          - cachePoint:
+              type: default
+        - role: assistant
+          content:
+          - text: Checking the weather.
+          - toolUse:
+              toolUseId: call_0
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_1
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_2
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_3
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_4
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_5
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_6
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_7
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_8
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_9
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_10
+              name: get_weather
+              input: {}
+          - toolUse:
+              toolUseId: call_11
+              name: get_weather
+              input: {}
+        - role: user
+          content:
+          - toolResult:
+              toolUseId: call_0
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_1
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_2
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_3
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_4
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_5
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_6
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_7
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_8
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_9
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_10
+              content:
+              - text: Sunny
+              status: success
+          - toolResult:
+              toolUseId: call_11
+              content:
+              - text: Sunny
+              status: success
+          - cachePoint:
+              type: default
+        system:
+        - text: You are a concise Python assistant.
+        - cachePoint:
+            type: default
+        inferenceConfig:
+          maxTokens: 64000
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: get_weather
+              inputSchema:
+                json:
+                  type: object
+          - cachePoint:
+              type: default
+          toolChoice:
+            auto: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-type:
+      - application/vnd.amazon.eventstream
+      transfer-encoding:
+      - chunked
+    body:
+      type: binary
+      content: >-
+        000000b6000000527fc012050b3a6576656e742d7479706507000c6d65737361676553746172740d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a3031323334222c22726f6c65223a22617373697374616e74227d446502f0000000bc00000057451afe2b0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a225468616e6b227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a41424344227d4041a8fc000000d3000000575e781eb70b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220796f7520666f7220746865206e6f7465227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f227d5d222c89000000a6000000576f4a71080b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222120596573227d2c2270223a226162636465666768227d7de14349000000ba00000057ca5a0b8b0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222c202a2a227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a414243227d0e42ac15000000b800000057b09a58eb0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22507974686f6e227d2c2270223a226162636465666768696a6b6c6d6e6f70717273747576777879227de072df38000000c4000000578cb855250b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220666176227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d227dafde2dc6000000da0000005753687cc60b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a226f727320726561646162696c6974792a2a202d2074686174227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f227dc7991e44000000c600000057f67806450b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222773206f6e65227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d227de53598d2000000c500000057b1d87c950b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22206f6620697473227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b227d2e22e816000000cd0000005781a837540b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220636f7265227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455227d4bebe05f000000da0000005753687cc60b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222064657369676e227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435227dbc00b352000000d700000057abf8b8770b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22207072696e6369706c65732c227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758227d31493fad000000a50000005728ea0bd80b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22206f6674656e227d2c2270223a22616263646566227d8951fe90000000c900000057742891940b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222073756d6d6172227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f227d64acbfa5000000db000000576e0855760b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22697a656420696e227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a30313233343536227df186f86f000000a700000057522a58b80b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220746865227d2c2270223a226162636465666768696a227d7d15a1c9000000d400000057ec58c2a70b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22205a656e206f6620507974686f6e2028227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f5051227daa2c5b08000000c3000000573e9889350b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2250227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f227ddbb8f00e000000da0000005753687cc60b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22455020323029227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a30313233343536227d3a6307ea000000b00000005780ea132a0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222077697468227d2c2270223a226162636465666768696a6b6c6d6e6f707172227dd06ae842000000c1000000574458da550b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220746865206c696e65227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445227d07d7bea8000000c600000057f67806450b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a223a227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152227d71d79c49000000c3000000573e9889350b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22205c22227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d227d695da085000000df000000579b88f3b60b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22526561646162696c69747920636f756e74732e5c22227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f5051525354555657227db6e18326000000c900000057742891940b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a225c6e5c6e416c736f227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e227d504b6a90000000d10000005724b84dd70b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222c20746865227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f50515253545556575859227d0cec1a4f000000c3000000573e9889350b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222077656174686572227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748227dcfc4451c000000c4000000578cb855250b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22206973227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e227dabfe5f86000000db000000576e0855760b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220636f6e73697374656e746c79227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a30227d497631c6000000d10000005724b84dd70b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22202a2a227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a30227dfb47ea5e000000d200000057631837070b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2273756e6e79227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a227dd4536e05000000d00000005719d864670b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222a2a227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a30227d30bfe8060000009e00000057fe1b824f0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2221227d2c2270223a2261626364227d1b6905e1000000b9000000578dfa715b0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445227d1afa6dc7000000d500000057d138eb170b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22e29880efb88f227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a3031227d12e214e700000092000000564cec5fd80b3a6576656e742d74797065070010636f6e74656e74426c6f636b53746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2270223a226162636465666768696a6b6c6d6e227d3ea9603b000000b0000000516989b61f0b3a6576656e742d7479706507000b6d65737361676553746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455222c2273746f70526561736f6e223a22656e645f7475726e227d12b8201c000001820000004ef43c83a90b3a6576656e742d747970650700086d657461646174610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b226d657472696373223a7b226c6174656e63794d73223a343431307d2c2270223a22616263222c227573616765223a7b22636163686544657461696c73223a5b7b22696e707574546f6b656e73223a3538342c2274746c223a22356d227d5d2c22636163686552656164496e707574546f6b656e436f756e74223a373734362c22636163686552656164496e707574546f6b656e73223a373734362c2263616368655772697465496e707574546f6b656e436f756e74223a3538342c2263616368655772697465496e707574546f6b656e73223a3538342c22696e707574546f6b656e73223a372c226f7574707574546f6b656e73223a36392c22736572766572546f6f6c5573616765223a7b7d2c22746f74616c546f6b656e73223a383430367d7dc5baf8e8
+  recorded_at: 2026-10-20T22:56:10.243319+00:00

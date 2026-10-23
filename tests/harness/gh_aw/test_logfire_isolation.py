@@ -9,7 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from .test_engine_definition import launch, proxy_env, requires_safe_path
+from .test_engine_definition import CLAI2_SOURCE, launch, proxy_env
+
+pytestmark = pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
 
 # Configure is real; only outbound HTTP is replaced. The CLI boundary records the
 # resulting public configuration instead of making a model request.
@@ -68,9 +70,15 @@ exec(compile(sys.argv.pop(1), '<launcher>', 'exec'))
 """
 
 
-@requires_safe_path
-@pytest.mark.parametrize('token', ['', 'test-maintainer-token'])
-@pytest.mark.parametrize('exit_code', [0, 7])
+# Each case is a fresh interpreter importing `pydantic_ai` and Logfire, so the two
+# axes are paired rather than crossed: the token decides whether Logfire starts its
+# exporter and token-validation thread, the exit code only which `SystemExit` the
+# launcher re-raises, and neither changes how the other reaches shutdown.
+@pytest.mark.parametrize(
+    ('exit_code', 'token'),
+    [(0, 'test-maintainer-token'), (7, '')],
+    ids=['token-success', 'no-token-failure'],
+)
 def test_launcher_ignores_checkout_logfire_configuration(tmp_path: Path, token: str, exit_code: int) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
@@ -98,9 +106,19 @@ def test_launcher_ignores_checkout_logfire_configuration(tmp_path: Path, token: 
             'LOGFIRE_CONFIG_DIR': str(workspace),
             'LOGFIRE_CREDENTIALS_DIR': str(credentials),
         },
+        extra_python_path=CLAI2_SOURCE,
     )
     completed = subprocess.run(
-        [sys.executable, '-P', '-c', PROBE, invocation.program, 'agent.json'],
+        [
+            sys.executable,
+            '-P',
+            '-c',
+            PROBE,
+            invocation.program,
+            invocation.target,
+            str(invocation.prompt_file),
+            *invocation.cli_args,
+        ],
         cwd=workspace,
         env={
             **invocation.env,
@@ -110,6 +128,7 @@ def test_launcher_ignores_checkout_logfire_configuration(tmp_path: Path, token: 
         },
         capture_output=True,
         text=True,
+        input=invocation.stdin,
         timeout=30,
         check=False,
     )

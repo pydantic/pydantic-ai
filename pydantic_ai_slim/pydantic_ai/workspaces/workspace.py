@@ -329,8 +329,10 @@ class _ShellFilesystem(SupportsFilesystem):
         # left to right, follow each symlink one level with `readlink` and walk its target in place of
         # the link, and let `..` climb the path resolved so far. A missing component is kept as
         # written and can still be climbed out of, after which symlinks resolve again. Past the link
-        # limit, as in a loop, the rest is kept as written, like Python's loop handling. The result is
-        # base64-encoded because command substitution would drop a trailing newline from a name.
+        # limit, as in a loop, the rest is kept as written, like Python's loop handling. A link
+        # `readlink` cannot read fails the call instead: kept as written, it would pass a root check
+        # for a path that leads outside. The result is base64-encoded because command substitution
+        # would drop a trailing newline from a name.
         result = await self._backend.run(
             f'rest={shlex.quote(path.lstrip("/"))}; resolved=; links=0; '
             'while [ -n "$rest" ]; do '
@@ -338,7 +340,7 @@ class _ShellFilesystem(SupportsFilesystem):
             'case "$part" in ""|.) ;; ..) resolved="${resolved%/*}";; *) '
             f'if [ "$links" -lt {_SHELL_MAX_SYMLINKS} ] && [ -L "$resolved/$part" ]; then '
             'links=$((links + 1)); '
-            'target=$(readlink -n -- "$resolved/$part"; printf x); target="${target%x}"; '
+            'target=$(readlink -n -- "$resolved/$part" && printf x) || exit 1; target="${target%x}"; '
             'case "$target" in /*) resolved=;; esac; rest="$target/$rest"; '
             'else resolved="$resolved/$part"; fi;; esac; done; '
             'value="${resolved:-/}"; printf %s "$value" | wc -c; printf %s "$value" | base64',
@@ -385,6 +387,15 @@ class Workspace(WorkspaceBackend):
     def read_only(self) -> bool:
         """Whether this workspace refuses commands and file changes, so tools can leave those out."""
         return isinstance(self._backend, Workspace) and self._backend.read_only
+
+    def durable_policy(self) -> tuple[object, ...]:
+        """Configuration a durable unit must rebuild with this wrapper.
+
+        Empty unless the wrapper's own arguments change what the unit does. Two workspaces of the
+        same class with different values are different policies: a run-level workspace that a unit
+        would not rebuild is rejected, rather than replaced by the construction-time one.
+        """
+        return ()
 
     @property
     def attached(self) -> bool:
@@ -496,8 +507,9 @@ class Workspace(WorkspaceBackend):
         """Follow every symlink in `path` in the environment, like `os.path.realpath(path, strict=False)`.
 
         Uses the backend's [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath], else `readlink` in
-        its shell. Without either, it only normalizes the path as text: symlinks are not followed, so a
-        path check built on it can be escaped through a link.
+        its shell, raising [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] on a link it cannot
+        read, including when the shell has no `readlink`. Without either, it only normalizes the path as
+        text: symlinks are not followed, so a path check built on it can be escaped through a link.
 
         `..` climbs from a symlink's target, as it does for commands. File methods open
         [`resolve(path)`][pydantic_ai.workspaces.Workspace.resolve], which collapses `..` as text, so
