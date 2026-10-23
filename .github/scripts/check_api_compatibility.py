@@ -18,6 +18,7 @@ PACKAGES = {
     'pydantic_evals': 'pydantic_evals',
     'clai': 'clai',
     'pydantic_ai_harness': 'src/pydantic_ai_harness',
+    'pydantic_clai2': 'src/pydantic_clai2',
 }
 # The `clai2` web UI and the `workspaces` plugin behind it are application code, not an SDK for others to build on,
 # so their changes need no compatibility waiver. Each excludes every module in the package.
