@@ -407,7 +407,7 @@ Models with adjustable reasoning (the Mistral Large 4, Small 4, and Medium 3.5 f
 
 ## Cohere
 
-Thinking is supported by the `command-a-reasoning-08-2025` model, which thinks by default. The unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting maps to Cohere's [`thinking` parameter](https://docs.cohere.com/docs/reasoning): `thinking=False` turns reasoning off with `type='disabled'`, and an effort level caps it with a `token_budget` (`'minimal'` → 512 tokens, `'low'` → 2048, `'medium'` → 8192, `'high'` → 16384, `'xhigh'` → 31000).
+Thinking is supported by the `command-a-reasoning-08-2025` model, which thinks by default. The unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting maps to Cohere's [`thinking` parameter](https://docs.cohere.com/docs/reasoning): `thinking=False` turns reasoning off with `type='disabled'`, and an effort level caps it with a `token_budget` (`'minimal'` → 512 tokens, `'low'` → 2048, `'medium'` → 8192, `'high'` → 16384, `'xhigh'` and `'max'` → 31000).
 
 ## Hugging Face
 

@@ -601,16 +601,8 @@ def _merge_leading_system_messages(
     return [merged, *openai_messages[leading_count:]]
 
 
-_REASONING_EFFORT_ORDER: tuple[OpenAIReasoningEffort, ...] = (
-    'none',
-    'minimal',
-    'low',
-    'medium',
-    'high',
-    'xhigh',
-    'max',
-)
-"""Every `reasoning_effort` value, from least to most reasoning."""
+_REASONING_EFFORT_ORDER: tuple[OpenAIReasoningEffort, ...] = get_args(OpenAIReasoningEffort)
+"""Every `reasoning_effort` value, from least to most reasoning, in the order `OpenAIReasoningEffort` lists them."""
 
 
 def _resolve_openai_thinking_effort(
