@@ -10,8 +10,9 @@ from urllib.parse import urlsplit
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, one_connection, read_only_toolset
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._mcp import credential, per_run_connection, read_only_toolset
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 try:
@@ -89,23 +90,17 @@ class GitHub(AbstractCapability[AgentDepsT]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one connection stated twice; two that disagree raise rather than merge."""
-        return one_connection(capabilities)
+        return one_per_id(capabilities)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the GitHub tools."""
         toolset: AbstractToolset[AgentDepsT]
         if self.client is not None:
             toolset = MCPToolset(self.client, id=self.id or _ID, include_instructions=self.include_instructions)
-        elif callable(auth := self.auth):
-
-            def connect_for_run(ctx: RunContext[AgentDepsT]) -> MCPToolset[AgentDepsT] | None:
-                token = auth(ctx)
-                return self._connect(token) if token else None
-
-            # Registered once under a fixed `id`, as durable execution requires; filled per run.
-            toolset = DynamicToolset(connect_for_run, per_run_step=False, id=self.id or _ID)
+        elif callable(self.auth):
+            toolset = per_run_connection(self.auth, self._connect, id=self.id or _ID, expects='a GitHub token')
         else:
-            toolset = self._connect(auth)
+            toolset = self._connect(self.auth)
         # The hosted connection also sends `X-MCP-Readonly`; filtering here keeps write tools out when the header is
         # dropped or ignored on the way.
         # The hosted connection kept its `id` before this filter was added, so the filtered one keeps it too.
