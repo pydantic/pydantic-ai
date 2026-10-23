@@ -602,6 +602,23 @@ class TestSubAgentsTaskControl:
             result = await parent.run('Go.')
         assert '1 tasks are already running, the most allowed at once.' in tool_returns(result.all_messages())[1]
 
+    async def test_max_running_tasks_counts_the_whole_delegation_tree(self) -> None:
+        # The middle task holds the only slot, so the task it starts is refused, though it started none itself.
+        middle = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='Leaf.'), echo_last_return),
+            name='middle',
+            capabilities=[controlled(max_running_tasks=1)],
+        )
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='middle', task='Middle.'), echo_last_return),
+            capabilities=[controlled(SubAgent(middle), max_running_tasks=1)],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        # The middle task ended normally and reported the refusal it got.
+        assert result.output.startswith('Task ') and '(ok):\n' in result.output
+        assert '1 tasks are already running, the most allowed at once.' in result.output
+
     async def test_listeners_can_rewrite_and_veto_task_messages(self) -> None:
         gate = Gate()
         asker = Agent(
@@ -2127,6 +2144,17 @@ class TestDynamicAgentLimits:
         assert 'You cannot choose a model' in await self.run_one(
             SubAgents(dynamic_agents=DynamicAgents()), name='poet', model='fast', **base
         )
+
+    async def test_create_agent_refuses_the_bound_owners_agents_and_aliases(self) -> None:
+        # The owner's agents and aliases resolve before created ones, so a created namesake would be unreachable.
+        owner = DelegationTasks(agents={'alpha': researcher()}, aliases={'general-purpose': 'self'})
+        base = {'description': 'd', 'instructions': 'i'}
+        async with owner.opened():
+            with owner.bind():
+                for name in ('alpha', 'general-purpose'):
+                    assert f'A sub-agent named {name!r} already exists.' in await self.run_one(
+                        SubAgents(dynamic_agents=DynamicAgents()), name=name, **base
+                    )
 
     async def test_a_listener_can_veto_or_rewrite_a_created_agent(self) -> None:
         built: list[DynamicAgentSpec] = []

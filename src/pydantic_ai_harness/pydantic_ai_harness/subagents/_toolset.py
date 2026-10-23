@@ -954,6 +954,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         taken = {*self._agents, *self._remote, *created, *reserved}
         if self._include_self:
             taken.add(SELF_AGENT_NAME)
+        if (owner := DelegationTasks.current()) is not None:
+            # They resolve first, so a created namesake would be unreachable.
+            taken.update(owner.agents, owner.aliases)
         if name in taken:
             raise ModelRetry(f'A sub-agent named {name!r} already exists.')
         if len(created) + len(reserved) >= dynamic.max_agents:
