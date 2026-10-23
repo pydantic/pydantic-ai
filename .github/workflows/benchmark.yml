@@ -1,3 +1,4 @@
+# description: Runs CodSpeed benchmarks on pushes to main, on manual dispatch, and on pull requests that change benchmarked code.
 name: CodSpeed
 
 on:
