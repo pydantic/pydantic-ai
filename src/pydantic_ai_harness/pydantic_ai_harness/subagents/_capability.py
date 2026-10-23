@@ -27,7 +27,7 @@ from pydantic_ai_harness._workspace import require_workspace, secondary_workspac
 from pydantic_ai_harness.subagents._control import RUN_OWNER, DynamicAgents, RemoteSubAgent, run_owned
 from pydantic_ai_harness.subagents._disk import AgentOverride, DiskDefinition, load_definitions
 from pydantic_ai_harness.subagents._models import ModelOption, as_option, model_label, validate_restriction
-from pydantic_ai_harness.subagents._tasks import DelegationTask, DelegationTasks, isolated
+from pydantic_ai_harness.subagents._tasks import DelegationTask, DelegationTasks, enqueue_while_open, isolated
 from pydantic_ai_harness.subagents._toolset import (
     CONTROL_TOOL_NAMES,
     CREATE_AGENT_TOOL_NAME,
@@ -633,7 +633,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
                     conversation_id=conversation_id,
                     parent_id=None,
                     # A question waits for an answer, so the model sees it at its next request.
-                    enqueue=lambda part: ctx.enqueue(part, priority='asap'),
+                    enqueue=lambda part: enqueue_while_open(ctx, part, priority='asap'),
                 ),
                 owner.publishing(conversation_id=conversation_id, parent_id=None, emit=ctx.emit),
             ):

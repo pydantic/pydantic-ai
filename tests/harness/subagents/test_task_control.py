@@ -23,7 +23,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import TypeAdapter
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, AgentRunResult, RunContext
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.exceptions import ApprovalRequired, UserError
@@ -47,6 +47,7 @@ from pydantic_ai.workspaces import WorkspaceBackend
 from pydantic_ai_harness.subagents import (
     CANCELLED_ANSWER,
     AgentCreatedEvent,
+    DelegationReports,
     DelegationTask,
     DelegationTaskEvent,
     DelegationTasks,
@@ -618,6 +619,60 @@ class TestSubAgentsTaskControl:
         # The middle task ended normally and reported the refusal it got.
         assert result.output.startswith('Task ') and '(ok):\n' in result.output
         assert '1 tasks are already running, the most allowed at once.' in result.output
+
+    async def test_a_question_asked_after_the_runs_last_read_waits_for_the_next_run(self) -> None:
+        # The run's queue is closed once it has read its last queued message, but it still receives until it returns.
+        gate = Gate()
+        asker = Agent(
+            scripted(call('pause'), call('ask_parent', question='Which?'), echo_last_return), tools=[gate.pause]
+        )
+        owner = DelegationTasks()
+
+        def asked() -> bool:
+            (record,) = owner.records.values()
+            return record.status == 'finished' or owner.pending_question(record.id) is not None
+
+        @dataclass
+        class AskAfterTheLastRead(AbstractCapability[Any]):
+            async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+                gate.opened.set()
+                while not asked():
+                    await anyio.sleep(0)
+                return result
+
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='Ask.', background=True), text('Started.')),
+            capabilities=[
+                controlled(researcher(asker)),
+                DelegationReports(owner, conversation_id='session'),
+                AskAfterTheLastRead(),
+            ],
+        )
+
+        def answer(messages: list[ModelMessage]) -> ModelResponse:
+            # Not queued on the run that ended, so the conversation's next run gets it, once its model is done.
+            (question,) = [text_ for text_ in task_texts(messages) if text_.startswith('<task_question ')]
+            (record,) = owner.records.values()
+            assert record.id in question
+            return call('answer_task', task_id=record.id, answer='this')
+
+        following = Agent(
+            scripted(text('Hello.'), answer, text('Answered.')),
+            capabilities=[controlled(researcher(asker)), DelegationReports(owner, conversation_id='session')],
+        )
+        with anyio.fail_after(WAIT):
+            async with owner.opened():
+                with owner.bind():
+                    # Streamed, the run closes its queue before its `after_run`.
+                    async with parent.run_stream_events('Go.', conversation_id='session') as events:
+                        async for _ in events:
+                            pass
+                    (record,) = owner.records.values()
+                    assert record.status == 'running' and owner.pending_question(record.id) is not None
+                    await following.run('Next.', conversation_id='session')
+                    while record.status == 'running':
+                        await anyio.sleep(0)
+        assert (record.outcome, record.output) == ('ok', 'this')
 
     async def test_listeners_can_rewrite_and_veto_task_messages(self) -> None:
         gate = Gate()
