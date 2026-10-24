@@ -25,6 +25,8 @@ if TYPE_CHECKING:
 class LoadCapabilityArgs(TypedDict):
     """Typed arguments for a `load_capability` tool call."""
 
+    __pydantic_config__ = pydantic.ConfigDict(extra='allow')
+
     id: Annotated[
         str,
         pydantic.Field(
