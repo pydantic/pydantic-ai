@@ -14,7 +14,9 @@ answer decides whether the store is correct:
 - that a zero `ttl` clears an expiry an earlier finite `retain` set, which is
   `PERSIST` doing work `HINCRBY` would not do on its own;
 - that a counter written under the untagged key an earlier release used is still read
-  and carried forward.
+  and carried forward;
+- that the hash tag keeps every key of one response in one Redis Cluster slot, which a
+  standalone server cannot show: it runs a multi-key `EVAL` whatever the keys hash to.
 
 This file covers exactly those. It is not a second copy of the unit suite --
 API-shape coverage belongs there, where it runs on every matrix leg.
@@ -23,6 +25,15 @@ Run against a local server with `make integration-redis` after starting one, e.g
 `docker run -d -p 6379:6379 redis:8`. Without a reachable server the tests skip,
 unless `REDIS_REQUIRE_LIVE` is set (CI does), where an unreachable server fails
 instead -- a service container that never came up must not pass as a silent skip.
+
+The cluster tests want a second server, at `REDIS_CLUSTER_TEST_URL`: one node in
+cluster mode that owns every slot, which is all `CROSSSLOT` needs.
+
+```bash
+docker run -d --name redis-cluster -p 6380:6380 redis:8 \
+  redis-server --port 6380 --cluster-enabled yes --cluster-announce-ip 127.0.0.1
+docker exec redis-cluster redis-cli -p 6380 cluster addslotsrange 0 16383
+```
 
 External assumptions, verified 2026-08-05 against Redis 8 (`redis:8`):
 
@@ -41,6 +52,10 @@ External assumptions, verified 2026-08-05 against Redis 8 (`redis:8`):
 - A Lua string returned from a script becomes a bulk string, and a Lua number
   becomes an integer via a double. Source:
   <https://redis.io/docs/latest/develop/programmability/lua-api/>.
+- A cluster node refuses a command whose keys hash to different slots with
+  `CROSSSLOT` before it looks at who owns them, so one node holding all 16384 slots
+  enforces it like a full cluster; only the part of a key inside its first `{...}`
+  is hashed. Source: <https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/>.
 """
 
 from __future__ import annotations
@@ -55,7 +70,8 @@ from urllib.parse import urlsplit
 
 import pytest
 from redis.asyncio import Redis
-from redis.exceptions import RedisError, ResponseError
+from redis.asyncio.cluster import RedisCluster
+from redis.exceptions import RedisClusterException, RedisError, ResponseError
 
 from pydantic_ai_harness.spend import RedisSpendStore, SpendEntry, Spent
 
@@ -80,18 +96,22 @@ def _redis_url() -> str:
     return os.environ.get('REDIS_TEST_URL', 'redis://127.0.0.1:6379')
 
 
-def _redis_target() -> str:
+def _cluster_url() -> str:
+    return os.environ.get('REDIS_CLUSTER_TEST_URL', 'redis://127.0.0.1:6380')
+
+
+def _redis_target(url: str) -> str:
     """Host and port, without the credentials a Redis URL may carry.
 
-    `REDIS_TEST_URL` accepts `redis://user:password@host:6379`, and the only place
+    `REDIS_TEST_URL` and `REDIS_CLUSTER_TEST_URL` accept `redis://user:password@host:6379`, and the only place
     this string is used is a skip or failure message -- which CI keeps. Naming the
     variable rather than echoing an unparsable value keeps that true for a URL
     `urlsplit` cannot make sense of.
     """
-    host = urlsplit(_redis_url()).hostname
+    host = urlsplit(url).hostname
     if host is None:
-        return 'the server named by REDIS_TEST_URL'
-    port = urlsplit(_redis_url()).port
+        return 'the server named by its environment variable'
+    port = urlsplit(url).port
     return host if port is None else f'{host}:{port}'
 
 
@@ -114,7 +134,7 @@ async def store(request: pytest.FixtureRequest) -> AsyncGenerator[RedisSpendStor
         await client.ping()  # pyright: ignore[reportUnknownMemberType]
     except (RedisError, OSError) as error:
         await client.aclose()
-        _unavailable(f'no reachable Redis at {_redis_target()}: {error}')
+        _unavailable(f'no reachable Redis at {_redis_target(_redis_url())}: {error}')
 
     prefix = f'harness-test:{uuid.uuid4().hex}'
     try:
@@ -124,6 +144,33 @@ async def store(request: pytest.FixtureRequest) -> AsyncGenerator[RedisSpendStor
         # key cleanup down without also leaking the connection into the rest of the suite.
         try:
             keys = [key async for key in client.scan_iter(match=f'*{prefix}*')]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            if keys:
+                await client.delete(*keys)  # pyright: ignore[reportUnknownArgumentType]
+        finally:
+            await client.aclose()
+
+
+@pytest.fixture
+async def cluster_store() -> AsyncGenerator[RedisSpendStore, None]:
+    """A store on a Redis Cluster through `RedisCluster`, namespaced per test like `store`.
+
+    Handed to `RedisSpendStore` untouched, so the type checker is what confirms
+    `RedisCluster` satisfies `RedisClient`. `RedisCluster` also refuses a standalone
+    server on connect, so this cannot quietly pass against one.
+    """
+    client = RedisCluster.from_url(_cluster_url(), decode_responses=True)
+    try:
+        await client.initialize()
+    except (RedisError, RedisClusterException, OSError) as error:
+        await client.aclose()
+        _unavailable(f'no reachable Redis Cluster at {_redis_target(_cluster_url())}: {error}')
+
+    store = RedisSpendStore(client, prefix=f'harness-test:{uuid.uuid4().hex}')
+    try:
+        yield store
+    finally:
+        try:
+            keys = [key async for key in client.scan_iter(match=f'{{{store.prefix}}}:*')]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
             if keys:
                 await client.delete(*keys)  # pyright: ignore[reportUnknownArgumentType]
         finally:
@@ -271,3 +318,44 @@ class TestLiveScript:
         await store.client.hincrby(f'{store.prefix}:k', 'requests', 1)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
         assert (await store.get_many(['k']))['k'] == Spent(usd=Decimal('4'), tokens=9, requests=4)
+
+
+class TestLiveCluster:
+    """The reason the keys carry a hash tag, which a standalone server cannot check."""
+
+    async def test_every_window_of_a_response_is_one_script_on_a_cluster(self, cluster_store: RedisSpendStore):
+        """A day and a month window and their dedup markers, all in one `EVAL`.
+
+        `RedisCluster` refuses a script whose keys span slots before sending it, and the
+        server would refuse it with `CROSSSLOT` after, so this fails if any key the
+        script takes -- counter or marker -- ever escapes the tag.
+        """
+        entries = [
+            SpendEntry(key='day', usd=Decimal('0.5'), tokens=5, requests=1, ttl=timedelta(hours=48), token='r'),
+            SpendEntry(key='month', usd=Decimal('0.5'), tokens=5, requests=1, ttl=timedelta(days=62), token='r'),
+        ]
+        spent = Spent(usd=Decimal('0.5'), tokens=5, requests=1)
+
+        assert await cluster_store.add_many(entries) == {'day': spent, 'month': spent}
+        assert await cluster_store.add_many(entries) == {'day': spent, 'month': spent}
+        assert await cluster_store.get_many(['day', 'month']) == {'day': spent, 'month': spent}
+
+    async def test_the_same_windows_without_the_tag_are_refused(self):
+        """The control: this server enforces slots, so the test above is not passing by default.
+
+        The default prefix's `day` and `month` windows as an earlier release named them,
+        untagged. Sent through a plain client so the refusal is the server's `CROSSSLOT`
+        rather than `RedisCluster`'s own check, and through a script that writes nothing.
+        """
+        client = Redis.from_url(_cluster_url())  # pyright: ignore[reportUnknownMemberType]
+        try:
+            await client.ping()  # pyright: ignore[reportUnknownMemberType]
+        except (RedisError, OSError) as error:
+            await client.aclose()
+            _unavailable(f'no reachable Redis Cluster at {_redis_target(_cluster_url())}: {error}')
+
+        try:
+            with pytest.raises(ResponseError, match="don't hash to the same slot"):
+                await client.eval('return 1', 2, 'pydantic-ai-harness:spend:day', 'pydantic-ai-harness:spend:month')
+        finally:
+            await client.aclose()
