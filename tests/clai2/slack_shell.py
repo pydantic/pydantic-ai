@@ -1,7 +1,7 @@
 """A CLAI shell with only the `slack` plugin loaded, scripted terminal widgets, and scripted dialogs."""
 
 import io
-from collections.abc import Sequence
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
 from typing import TypeGuard
 
@@ -54,7 +54,9 @@ class Shell:
         await self.plugins.fire(TurnStart(text='hi'))
         auth = self.slack().auth
         assert callable(auth)
-        return auth(CONTEXT)
+        token = auth(CONTEXT)
+        assert not isinstance(token, Awaitable)
+        return token
 
     def saved(self) -> dict[str, JsonValue]:
         [declaration] = self.store.plugins()

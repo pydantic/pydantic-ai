@@ -25,8 +25,10 @@ from pydantic_ai import (
     Agent,
     AudioUrl,
     BinaryContent,
+    Citation,
     DocumentUrl,
     ImageUrl,
+    MarkerCitationAnchor,
     ModelAPIError,
     ModelHTTPError,
     ModelProfile,
@@ -48,6 +50,7 @@ from pydantic_ai import (
     UseEnumMemberDocstrings,
     UserError,
     UserPromptPart,
+    WebCitationSource,
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
@@ -4277,6 +4280,340 @@ async def test_openai_web_search_tool_model_not_supported(allow_model_requests: 
         await agent.run('What day is today?')
 
 
+async def test_openai_chat_citation_without_content(allow_model_requests: None):
+    """Unit test: no recorded answer has citations without content."""
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com',
+            title='Example',
+            start_index=0,
+            end_index=0,
+        ),
+    )
+    completion = completion_message(
+        chat.ChatCompletionMessage(role='assistant', content=None, annotations=[annotation])
+    )
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)))
+
+    response = await model.request([], {}, ModelRequestParameters())
+
+    # No content makes no part, so its citations are dropped with it, as in a stream.
+    assert response.parts == []
+
+
+async def test_openai_chat_invalid_citation_range_is_unanchored(allow_model_requests: None):
+    """Unit test: no recorded answer has a citation range outside its text."""
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=20, end_index=30
+        ),
+    )
+    completion = completion_message(
+        chat.ChatCompletionMessage(role='assistant', content='Answer', annotations=[annotation])
+    )
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)))
+
+    result = await Agent(model).run('Question')
+
+    [part] = result.all_messages()[1].parts
+    assert isinstance(part, TextPart)
+    assert part.citations == [Citation(sources=[WebCitationSource(url='https://example.com', title='Example')])]
+
+
+async def test_openai_chat_stream_citation_after_text_transformation_is_ignored(allow_model_requests: None):
+    """Unit test: no recorded stream has leading whitespace that is stripped."""
+    # The offsets point at `[1]` before its leading whitespace is stripped, so they don't fit the kept text.
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=2, end_index=5
+        ),
+    )
+    stream = [
+        text_chunk('  '),
+        text_chunk('[1] extra'),
+        chunk(
+            [
+                ChoiceDelta.model_construct(
+                    role='assistant',
+                    annotations=[annotation.model_dump()],
+                )
+            ],
+            finish_reason='stop',
+        ),
+    ]
+    model = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)),
+        profile=OpenAIModelProfile(ignore_streamed_leading_whitespace=True),
+    )
+
+    async with Agent(model).run_stream('Question') as result:
+        await result.get_output()
+
+    assert result.all_messages()[1].parts == [TextPart('[1] extra')]
+
+
+async def test_openai_chat_stream_annotations_before_referenced_text(allow_model_requests: None):
+    """Unit test: no recorded stream sends annotations before the text they cite."""
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=7, end_index=10
+        ),
+    )
+    stream = [
+        text_chunk('Answer '),
+        chunk([ChoiceDelta.model_construct(role='assistant', annotations=[annotation.model_dump()])]),
+        text_chunk('[1]'),
+        chunk([ChoiceDelta.model_construct(role='assistant')], finish_reason='stop'),
+    ]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+
+    async with Agent(model).run_stream('Question') as result:
+        await result.get_output()
+
+    [part] = result.all_messages()[1].parts
+    assert isinstance(part, TextPart)
+    assert part.citations == [
+        Citation(
+            sources=[WebCitationSource(url='https://example.com', title='Example')],
+            anchor=MarkerCitationAnchor(start=7, end=10),
+        )
+    ]
+
+
+async def test_openai_chat_stream_annotations_on_thinking_only_response(allow_model_requests: None):
+    """Annotations that can't be attached to text don't add an empty text part.
+
+    Unit test: no recorded stream annotates a thinking-only response.
+    """
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=0, end_index=3
+        ),
+    )
+    stream = [
+        text_chunk('<think>'),
+        text_chunk('reasoning'),
+        text_chunk('</think>'),
+        chunk(
+            [ChoiceDelta.model_construct(role='assistant', annotations=[annotation.model_dump()])], finish_reason='stop'
+        ),
+    ]
+    model = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)),
+        profile=OpenAIModelProfile(thinking_tags=('<think>', '</think>')),
+    )
+
+    async with model.request_stream(
+        [ModelRequest.user_text_prompt('Question')], None, ModelRequestParameters()
+    ) as response:
+        async for _ in response:
+            pass
+
+    assert response.get().parts == snapshot([ThinkingPart(content='reasoning', id='content', provider_name='openai')])
+
+
+async def test_openai_chat_stream_skips_unsupported_annotation(allow_model_requests: None):
+    """Unit test: no recorded stream has an annotation type other than `url_citation`."""
+    citation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=7, end_index=10
+        ),
+    )
+    stream = [
+        text_chunk('Answer [1]'),
+        chunk(
+            [
+                ChoiceDelta.model_construct(
+                    role='assistant',
+                    annotations=[citation.model_dump(), {'type': 'file'}],
+                )
+            ],
+            finish_reason='stop',
+        ),
+    ]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+
+    async with Agent(model).run_stream(
+        'Question', model_settings=OpenAIChatModelSettings(openai_include_raw_annotations=True)
+    ) as result:
+        await result.get_output()
+
+    assert result.all_messages()[1].parts == [
+        TextPart(
+            'Answer [1]',
+            provider_name='openai',
+            provider_details={
+                'annotations': [citation.model_dump(), {'type': 'file'}],
+                'citations': [citation.model_dump()],
+            },
+            citations=[
+                Citation(
+                    sources=[WebCitationSource(url='https://example.com', title='Example')],
+                    anchor=MarkerCitationAnchor(start=7, end=10),
+                )
+            ],
+        )
+    ]
+
+
+async def test_openai_chat_stream_annotations_on_text_split_by_reasoning(allow_model_requests: None):
+    """Annotation offsets address the whole message text, so they aren't mapped onto text that reasoning split.
+
+    Unit test: no recorded stream interleaves reasoning with annotated text.
+    """
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=7, end_index=10
+        ),
+    )
+    stream = [
+        text_chunk('Answer '),
+        # `reasoning_content` is not on the SDK's `ChoiceDelta`; DeepSeek, vLLM and others send it as an extra field.
+        chunk([ChoiceDelta.model_construct(role='assistant', reasoning_content='Check.')]),
+        text_chunk('[1]'),
+        chunk(
+            [ChoiceDelta.model_construct(role='assistant', annotations=[annotation.model_dump()])], finish_reason='stop'
+        ),
+    ]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+
+    async with Agent(model).run_stream(
+        'Question', model_settings=OpenAIChatModelSettings(openai_include_raw_annotations=True)
+    ) as result:
+        await result.get_output()
+
+    assert result.all_messages()[1].parts == [
+        TextPart('Answer '),
+        ThinkingPart('Check.', id='reasoning_content', provider_name='openai'),
+        TextPart('[1]', provider_name='openai', provider_details={'annotations': [annotation.model_dump()]}),
+    ]
+
+
+async def test_openai_chat_stream_accumulates_raw_annotation_batches(allow_model_requests: None):
+    """Unit test: no recorded stream sends annotations in more than one chunk."""
+    annotations = [
+        chat.chat_completion_message.Annotation(
+            type='url_citation',
+            url_citation=chat.chat_completion_message.AnnotationURLCitation(
+                url=f'https://example.com/{index}',
+                title=f'Example {index}',
+                start_index=start,
+                end_index=end,
+            ),
+        )
+        for index, (start, end) in enumerate(((7, 10), (11, 14)), start=1)
+    ]
+    stream = [
+        text_chunk('Answer [1] [2]'),
+        *[
+            chunk([ChoiceDelta.model_construct(role='assistant', annotations=[annotation.model_dump()])])
+            for annotation in annotations
+        ],
+        chunk([ChoiceDelta.model_construct(role='assistant')], finish_reason='stop'),
+    ]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+
+    async with Agent(model).run_stream(
+        'Question', model_settings=OpenAIChatModelSettings(openai_include_raw_annotations=True)
+    ) as result:
+        await result.get_output()
+
+    [part] = result.all_messages()[1].parts
+    assert isinstance(part, TextPart)
+    raw_annotations = [annotation.model_dump() for annotation in annotations]
+    assert part.provider_details == {'annotations': raw_annotations, 'citations': raw_annotations}
+    assert part.citations == [
+        Citation(
+            sources=[WebCitationSource(url=f'https://example.com/{index}', title=f'Example {index}')],
+            anchor=MarkerCitationAnchor(start=start, end=end),
+        )
+        for index, (start, end) in enumerate(((7, 10), (11, 14)), start=1)
+    ]
+
+
+async def test_openai_chat_stream_citation_without_text(allow_model_requests: None):
+    """Unit test: no recorded stream has citations without text."""
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=0, end_index=0
+        ),
+    )
+    stream = [
+        chunk(
+            [ChoiceDelta.model_construct(role='assistant', annotations=[annotation.model_dump()])],
+            finish_reason='stop',
+        )
+    ]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+
+    async with model.request_stream([], {}, ModelRequestParameters()) as streamed:
+        _ = [event async for event in streamed]
+        response = streamed.get()
+
+    # No text makes no part, so its citations are dropped with it, as without streaming.
+    assert response.parts == []
+
+
+async def test_openai_chat_raw_annotations_non_streaming(allow_model_requests: None):
+    """Unit test: no recorded answer turns on `openai_include_raw_annotations` with citations."""
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=7, end_index=10
+        ),
+    )
+    completion = completion_message(
+        chat.ChatCompletionMessage(role='assistant', content='Answer [1]', annotations=[annotation])
+    )
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)))
+
+    result = await Agent(model).run(
+        'Question', model_settings=OpenAIChatModelSettings(openai_include_raw_annotations=True)
+    )
+
+    [part] = result.all_messages()[1].parts
+    assert isinstance(part, TextPart)
+    assert part.provider_details == {'annotations': [annotation.model_dump()], 'citations': [annotation.model_dump()]}
+
+
+async def test_openai_chat_citation_with_thinking_is_ignored(allow_model_requests: None):
+    """Annotation offsets address the text with its thinking tags, so they aren't mapped onto the split text.
+
+    Unit test: no recorded answer has both thinking tags and annotations.
+    """
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=31, end_index=34
+        ),
+    )
+    completion = completion_message(
+        ChatCompletionMessage(role='assistant', content='<think>reasoning</think>Answer [1]', annotations=[annotation])
+    )
+    model = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)),
+        profile=OpenAIModelProfile(thinking_tags=('<think>', '</think>')),
+    )
+
+    result = await Agent(model).run('Question')
+
+    assert result.all_messages()[1].parts == [
+        ThinkingPart('reasoning', id='content', provider_name='openai'),
+        TextPart('Answer [1]'),
+    ]
+
+
 async def test_openai_web_search_tool(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o-search-preview', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
@@ -5575,6 +5912,25 @@ async def test_openai_text_verbosity_chat_completions(
         {key: value for key, value in body.items() if key == 'verbosity'}
         for body in request_capture.bodies('/chat/completions')
     ] == [{'verbosity': 'low'}, {}]
+
+
+async def test_openai_chat_thinking_false_on_always_reasoning_model(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """o4-mini can't stop reasoning and accepts `low` through `high`, so `thinking=False` sends `low` and keeps
+    dropping sampling parameters, since reasoning stays on."""
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    agent = Agent(OpenAIChatModel('o4-mini', provider=provider))
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        result = await agent.run(
+            'What is the capital of France? Answer in one word.',
+            model_settings=ModelSettings(thinking=False, temperature=0.5),
+        )
+    assert result.output == snapshot('Paris')
+    body = request_capture.body('/chat/completions')
+    assert body['reasoning_effort'] == 'low'
+    assert 'temperature' not in body
 
 
 async def test_openai_gpt_5_2_temperature_allowed_by_default(allow_model_requests: None):

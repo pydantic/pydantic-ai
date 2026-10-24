@@ -3261,6 +3261,130 @@ class ModelRequest:
 
 
 @dataclass(repr=False)
+class WebCitationSource:
+    """A web page a citation points to."""
+
+    url: str
+    """The page's URL."""
+
+    _: KW_ONLY
+
+    title: str | None = None
+    """The page's title, if the provider gave one."""
+
+    excerpts: list[str] = field(default_factory=list[str])
+    """Passages from the source that back the cited text.
+
+    Depending on the provider, this is the exact cited text or a longer retrieved chunk. It can include text from your
+    own documents, so choose whether to log it or show it to users.
+    """
+
+    kind: Literal['web'] = 'web'
+    """Source type identifier, used as a discriminator for deserialization."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class DocumentCitationSource:
+    """Any other source a citation points to, such as a document you sent or a file in the provider's file store."""
+
+    _: KW_ONLY
+
+    document_id: str | None = None
+    """The provider's ID for the file or document, if it has one. It's not a local path."""
+
+    title: str | None = None
+    """The document's title or filename, if the provider gave one."""
+
+    excerpts: list[str] = field(default_factory=list[str])
+    """Passages from the source that back the cited text.
+
+    Depending on the provider, this is the exact cited text or a longer retrieved chunk. It can include text from your
+    own documents, so choose whether to log it or show it to users.
+    """
+
+    kind: Literal['document'] = 'document'
+    """Source type identifier, used as a discriminator for deserialization."""
+
+    def __post_init__(self) -> None:
+        if not any((self.document_id, self.title, self.excerpts)):
+            raise ValueError('A document citation source must have at least one source field')
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+CitationSource: TypeAlias = Annotated[WebCitationSource | DocumentCitationSource, pydantic.Discriminator('kind')]
+"""Where a citation's information came from."""
+
+
+def _validate_citation_anchor(start: int, end: int) -> None:
+    if start < 0 or end <= start:
+        raise ValueError('Citation anchor must satisfy 0 <= start < end')
+
+
+@dataclass(repr=False, kw_only=True)
+class ContentCitationAnchor:
+    """The text the citation's sources support, as positions in the part's `content`."""
+
+    start: int
+    """The position of the first character, counting from 0."""
+
+    end: int
+    """The position after the last character, so `content[start:end]` is the range."""
+
+    kind: Literal['content'] = 'content'
+    """Anchor type identifier, used as a discriminator for deserialization."""
+
+    def __post_init__(self) -> None:
+        _validate_citation_anchor(self.start, self.end)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class MarkerCitationAnchor:
+    """A marker the model wrote, such as `[1]` or a link, as positions in the part's `content`."""
+
+    start: int
+    """The position of the first character, counting from 0."""
+
+    end: int
+    """The position after the last character, so `content[start:end]` is the range."""
+
+    kind: Literal['marker'] = 'marker'
+    """Anchor type identifier, used as a discriminator for deserialization."""
+
+    def __post_init__(self) -> None:
+        _validate_citation_anchor(self.start, self.end)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+CitationAnchor: TypeAlias = Annotated[ContentCitationAnchor | MarkerCitationAnchor, pydantic.Discriminator('kind')]
+"""Which part of [`TextPart.content`][pydantic_ai.messages.TextPart.content] a citation is about."""
+
+
+@dataclass(repr=False)
+class Citation:
+    """Links part of a model's answer to the sources that back it."""
+
+    sources: list[CitationSource]
+    """Where the information came from."""
+
+    _: KW_ONLY
+
+    anchor: CitationAnchor | None = None
+    """Which part of the text the citation is about, or `None` when the provider didn't say."""
+
+    def __post_init__(self) -> None:
+        if not self.sources:
+            raise ValueError('A citation must have at least one source')
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class TextPart:
     """A plain text response from a model."""
 
@@ -3286,6 +3410,13 @@ class TextPart:
 
     This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
     When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    citations: list[Citation] | None = None
+    """The citations for this text, if any.
+
+    Anything else the provider returned about them, such as page numbers or confidence scores, is in
+    `provider_details['citations']`.
     """
 
     part_kind: Literal['text'] = 'text'
@@ -4997,6 +5128,14 @@ def sanitize_messages(
       otherwise offered to a capability's `get_workspace`, so a client that can set it could point a
       reconnecting capability at an environment it attaches to using server-side provider
       credentials. Reconnect explicitly by passing an authorized `workspace=` instead.
+    - The framework-reserved `__pydantic_ai__` key from
+      [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and
+      [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata], keeping your own keys
+      (and resetting `metadata` to `None` if nothing else is left). Pydantic AI and its capabilities
+      keep state there that they act on in later runs, so it is only honored on trusted server-side
+      `message_history`. On client-held history that state is computed again where it's needed: a
+      file [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] described is described
+      again, for example.
     - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s at the end of the history that aren't in
       `resolved_tool_call_ids`. An unresolved tool call at the end of client-supplied history doesn't
       correspond to a paused agent run and shouldn't be executed.
@@ -5049,7 +5188,36 @@ def sanitize_messages(
     """
     if strip_compaction_parts:
         messages = _drop_compaction_parts(messages)
+    sanitized, _ = _sanitize_messages(
+        messages,
+        strip_system_prompts=strip_system_prompts,
+        strip_instructions=strip_instructions,
+        allowed_file_url_schemes=allowed_file_url_schemes,
+        allowed_file_url_force_download=allowed_file_url_force_download,
+        allow_uploaded_files=allow_uploaded_files,
+        strip_workspace_refs=strip_workspace_refs,
+        resolved_tool_call_ids=resolved_tool_call_ids,
+    )
+    return sanitized
 
+
+def _sanitize_messages(
+    messages: Sequence[ModelMessage],
+    *,
+    strip_system_prompts: bool,
+    strip_instructions: bool,
+    allowed_file_url_schemes: Collection[str],
+    allowed_file_url_force_download: Collection[ForceDownloadMode],
+    allow_uploaded_files: bool,
+    strip_workspace_refs: bool,
+    resolved_tool_call_ids: Collection[str],
+) -> tuple[list[ModelMessage], list[int]]:
+    """Sanitize like [`sanitize_messages`][pydantic_ai.messages.sanitize_messages], without dropping compaction parts.
+
+    Also returns, for each sanitized message, the index in `messages` it came from, so a UI adapter can carry
+    state it wrote into the reserved namespace itself past the sanitization. Warnings point at the caller of
+    the public function that called this one.
+    """
     allowed_schemes = {scheme.lower() for scheme in allowed_file_url_schemes}
     allowed_force_download = set(allowed_file_url_force_download)
     resolved_ids = set(resolved_tool_call_ids)
@@ -5059,10 +5227,12 @@ def sanitize_messages(
     reset_force_download_values: set[ForceDownloadMode] = set()
     dropped_uploaded_file_providers: set[str] = set()
     stripped_text_metadata: list[TextContent] = []
+    reserved_metadata_messages: list[ModelMessage] = []
     dangling_tool_call_names: list[str] = []
 
     sanitized: list[ModelMessage] = []
-    for message in messages:
+    sources: list[int] = []
+    for index, message in enumerate(messages):
         if isinstance(message, ModelRequest):
             new_request_parts, request_stripped_system_prompt = _sanitize_request_parts(
                 message.parts,
@@ -5080,7 +5250,11 @@ def sanitize_messages(
                 # Reset silently: every request an agent run records carries the agent's own instructions, so
                 # a warning would fire on every turn of a normal round trip, and agent runs never send them.
                 instructions = None if strip_instructions else message.instructions
-                sanitized.append(replace(message, parts=new_request_parts, instructions=instructions))
+                metadata = _without_reserved_metadata(message, reserved_metadata_messages)
+                sanitized.append(
+                    replace(message, parts=new_request_parts, instructions=instructions, metadata=metadata)
+                )
+                sources.append(index)
             # Otherwise drop the request entirely so we don't leave an empty
             # `ModelRequest(parts=[])` in history.
         elif isinstance(message, ModelResponse):
@@ -5097,7 +5271,11 @@ def sanitize_messages(
                 # Drop `workspace_ref`: a client that can set it could point a reconnecting
                 # capability at an environment it attaches to with server-side credentials.
                 workspace_ref = None if strip_workspace_refs else message.workspace_ref
-                sanitized.append(replace(message, parts=new_response_parts, workspace_ref=workspace_ref))
+                metadata = _without_reserved_metadata(message, reserved_metadata_messages)
+                sanitized.append(
+                    replace(message, parts=new_response_parts, workspace_ref=workspace_ref, metadata=metadata)
+                )
+                sources.append(index)
             # Otherwise drop the response entirely so we don't leave an empty
             # `ModelResponse(parts=[])` in history.
         else:
@@ -5106,6 +5284,8 @@ def sanitize_messages(
     # This must stay the last step that drops or merges messages, here and in every caller: it can only
     # check the end of the history once that end is final. See `_strip_dangling_tail_tool_calls`.
     _strip_dangling_tail_tool_calls(sanitized, resolved_ids, dangling_tool_call_names)
+    # Stripping only drops or rewrites messages at the end, so the remaining sources still line up.
+    del sources[len(sanitized) :]
 
     if stripped_system_prompt:
         warnings.warn(
@@ -5114,7 +5294,7 @@ def sanitize_messages(
             'them back. Pass `strip_system_prompts=False` only when the client is trusted to own the '
             "system prompt, or set `manage_system_prompt='client'` on a UI adapter.",
             UserWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
 
     if disallowed_url_schemes:
@@ -5126,7 +5306,7 @@ def sanitize_messages(
             f'so they should only be accepted from trusted clients. To allow a scheme, add it to '
             f'`allowed_file_url_schemes`.',
             UserWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
 
     if reset_force_download_values:
@@ -5140,7 +5320,7 @@ def sanitize_messages(
             f'clients. To allow a value, add it to `allowed_file_url_force_download`, or set '
             f'it only on trusted server-side `message_history` passed directly to `Agent.run`.',
             UserWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
 
     if dropped_uploaded_file_providers:
@@ -5152,7 +5332,17 @@ def sanitize_messages(
             f'from the client, set `allow_uploaded_files=True`, or pass them on trusted server-side '
             f'`message_history` directly to `Agent.run`.',
             UserWarning,
-            stacklevel=2,
+            stacklevel=3,
+        )
+
+    if reserved_metadata_messages:
+        warnings.warn(
+            f'Framework-reserved `__pydantic_ai__` metadata was dropped from {len(reserved_metadata_messages)} '
+            f'client-submitted message(s). Pydantic AI and its capabilities keep state there that they act on, '
+            f'so it is not accepted from untrusted clients. Your own metadata keys are kept. Pass history that '
+            f'should keep this state as trusted server-side `message_history` instead.',
+            UserWarning,
+            stacklevel=3,
         )
 
     if stripped_text_metadata:
@@ -5162,7 +5352,7 @@ def sanitize_messages(
             f'recognize content they added themselves, so it is not accepted from untrusted clients. Pass '
             f'history that carries your own metadata as trusted server-side `message_history` instead.',
             UserWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
 
     if dangling_tool_call_names:
@@ -5174,10 +5364,22 @@ def sanitize_messages(
             f'human-in-the-loop resumption, pass matching tool call IDs to `resolved_tool_call_ids`, '
             f'or pass matching `deferred_tool_results` to a UI adapter run method.',
             UserWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
 
-    return sanitized
+    return sanitized, sources
+
+
+def _without_reserved_metadata(message: ModelMessage, stripped: list[ModelMessage]) -> dict[str, Any] | None:
+    """Return the metadata of an untrusted message without the reserved `__pydantic_ai__` key.
+
+    `stripped` is updated in place with the messages whose reserved key was dropped.
+    """
+    metadata = message.metadata
+    if metadata is None or _PYDANTIC_AI_METADATA_KEY not in metadata:
+        return metadata
+    stripped.append(message)
+    return {key: value for key, value in metadata.items() if key != _PYDANTIC_AI_METADATA_KEY} or None
 
 
 def _strip_dangling_tail_tool_calls(
@@ -5520,7 +5722,7 @@ def _sanitize_response_parts(
 
 @dataclass(repr=False)
 class TextPartDelta:
-    """A partial update (delta) for a `TextPart` to append new text content."""
+    """A partial update (delta) for a `TextPart` that appends text, citations, or both."""
 
     content_delta: str
     """The incremental text content to add to the existing `TextPart` content."""
@@ -5541,6 +5743,14 @@ class TextPartDelta:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
+    citations_delta: list[Citation] | None = None
+    """All of the part's citations, replacing any it has.
+
+    They come in one delta, without text, once the part's text is complete, and the delta also sets
+    `provider_details['citations']`. Providers that return citations at the end of the response, such as Google, send
+    it then, which can be after the part's [`PartEndEvent`][pydantic_ai.messages.PartEndEvent].
+    """
+
     part_delta_kind: Literal['text'] = 'text'
     """Part delta type identifier, used as a discriminator."""
 
@@ -5558,11 +5768,13 @@ class TextPartDelta:
         """
         if not isinstance(part, TextPart):
             raise ValueError('Cannot apply TextPartDeltas to non-TextParts')  # pragma: no cover
+        citations = part.citations if self.citations_delta is None else self.citations_delta
         return replace(
             part,
             content=part.content + self.content_delta,
             provider_name=self.provider_name or part.provider_name,
             provider_details={**(part.provider_details or {}), **(self.provider_details or {})} or None,
+            citations=citations,
         )
 
     __repr__ = _utils.dataclasses_no_defaults_repr

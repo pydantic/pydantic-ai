@@ -421,6 +421,8 @@ print(result.output)
 #> 1234
 ```
 
+Don't continue, through `openai_previous_response_id`, a response from a model before GPT-5.6 whose request named a revealed tool in [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice]: that request declares the tool in `tools` instead of its `additional_tools` item (see [Tool Choice](../tools-advanced.md#tool-choice)), so the tool isn't in the response's stored input.
+
 !!! note
     Referencing a response requires it to have been stored. OpenAI stores responses by default; if you've disabled storage via [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store] or your organization has Zero Data Retention enabled, chaining is unavailable over HTTP and the full message history must be sent on every request. On a [Responses WebSocket](#responses-websockets), a request can continue from the latest response on its lane without storage.
 
