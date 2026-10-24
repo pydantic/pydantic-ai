@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
-from typing import Any, cast
+
+from ._utils import is_str_dict
 
 
 def gateway_reported_cost(usage_data: object) -> Decimal | None:
@@ -14,14 +15,11 @@ def gateway_reported_cost(usage_data: object) -> Decimal | None:
     too); older and self-hosted gateways only send the deprecated `usage.pydantic_ai_gateway.cost_estimate`. A
     reported `0` (e.g. a gateway response-cache hit) is a real cost, not a missing one.
     """
-    if not isinstance(usage_data, Mapping):
+    if not is_str_dict(usage_data):
         return None
     for block_name, field_name in (('logfire_ai_gateway', 'cost'), ('pydantic_ai_gateway', 'cost_estimate')):
-        block = cast('Mapping[str, Any]', usage_data).get(block_name)
-        if (
-            isinstance(block, Mapping)
-            and (cost := _parse_cost(cast('Mapping[str, Any]', block).get(field_name))) is not None
-        ):
+        block = usage_data.get(block_name)
+        if is_str_dict(block) and (cost := parse_cost(block.get(field_name))) is not None:
             return cost
     return None
 
@@ -36,12 +34,12 @@ def gateway_header_cost(headers: Mapping[str, str] | None) -> Decimal | None:
         return None
     for header in ('logfire-ai-gateway-cost', 'pydantic-ai-gateway-price-estimate'):
         value = headers.get(header)
-        if value is not None and value.endswith('USD') and (cost := _parse_cost(value[:-3])) is not None:
+        if value is not None and value.endswith('USD') and (cost := parse_cost(value[:-3])) is not None:
             return cost
     return None
 
 
-def _parse_cost(value: object) -> Decimal | None:
+def parse_cost(value: object) -> Decimal | None:
     if not isinstance(value, (str, int, float)) or isinstance(value, bool):
         return None
     try:

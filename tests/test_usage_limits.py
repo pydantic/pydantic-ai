@@ -1236,6 +1236,14 @@ async def test_gateway_reported_cost_wins_over_estimate(allow_model_requests: No
     result = await agent.run('What is 2+2?')
     assert result.usage.cost == snapshot(Decimal('0.125'))
 
+    with pytest.raises(UsageLimitExceeded, match='cost_limit'):
+        await agent.run(
+            'What is 3+3?',
+            usage=result.usage,
+            usage_limits=UsageLimits(cost_limit=Decimal('0.2')),
+        )
+    assert result.usage.cost == snapshot(Decimal('0.250'))
+
 
 def test_usage_limits_explicit_zero():
     """Explicit 0 token limits round-trip correctly (regression: zero is not coerced to None)."""

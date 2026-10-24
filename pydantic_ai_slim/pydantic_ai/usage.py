@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 import warnings
-from collections.abc import Mapping
 from copy import copy
 from dataclasses import dataclass
 from decimal import Decimal
@@ -162,8 +161,8 @@ class UsageBase:
     model or provider can't be priced, so "unknown" stays distinguishable from a genuine zero cost. Models released
     after your install can be priced by calling [`update_in_background()`][pydantic_ai.prices.update_in_background].
 
-    Requests made through the Pydantic AI Gateway use the cost the gateway itself reported for the
-    request, which takes precedence over the genai-prices estimate.
+    Most requests made through the [Pydantic AI Gateway](../gateway.md#request-cost) use the cost the gateway
+    itself reported, which takes precedence over the genai-prices estimate.
     """
 
     def __init__(self, *, details: dict[str, int] | None = None, **kwargs: Any):
@@ -366,9 +365,7 @@ class RequestUsage(UsageBase):
             details: Becomes the `details` field on the returned `RequestUsage` for convenience.
         """
         details = details or {}
-        cost = gateway_reported_cost(
-            cast('Mapping[str, Any]', data).get('usage') if isinstance(data, Mapping) else None
-        )
+        cost = gateway_reported_cost(data.get('usage') if _utils.is_str_dict(data) else None)
         extraction_error: Exception | None = None
         for provider_id, provider_api_url in iter_provider_references(
             provider_api_url=provider_url, provider_id=provider, provider_fallback=provider_fallback
