@@ -100,6 +100,7 @@ asyncio.run(main())
 ```
 
 Cohere streaming also supports tool calls and thinking output on models that support reasoning.
+Leaving the context closes the Cohere SDK stream, including when you stop consuming it early.
 See [streaming responses](../output.md#streaming-text) for other ways to consume the stream.
 
 ## SDK retries {#sdk-retries}

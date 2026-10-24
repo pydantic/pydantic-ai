@@ -66,7 +66,6 @@ with try_import() as imports_successful:
         ChatToolCallDeltaEventDelta,
         ChatToolCallDeltaEventDeltaMessage,
         ChatToolCallDeltaEventDeltaMessageToolCalls,
-        ChatToolCallDeltaEventDeltaMessageToolCallsFunction,
         ChatToolCallStartEventDelta,
         ChatToolCallStartEventDeltaMessage,
         ContentDeltaV2ChatStreamResponse,
@@ -144,7 +143,7 @@ class MockClientWrapper:
 @dataclass
 class MockAsyncClientV2:
     completions: MockChatResponse | Sequence[MockChatResponse] | None = None
-    stream: Exception | Sequence[MockStreamEvent] | Sequence[Sequence[MockStreamEvent]] | None = None
+    stream: Exception | Sequence[MockStreamEvent] | None = None
     index: int = 0
     chat_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     _client_wrapper: MockClientWrapper = None  # pyright: ignore[reportAssignmentType]
@@ -157,9 +156,7 @@ class MockAsyncClientV2:
         return cast(AsyncClientV2, cls(completions=completions))
 
     @classmethod
-    def create_stream_mock(
-        cls, stream: Exception | Sequence[MockStreamEvent] | Sequence[Sequence[MockStreamEvent]]
-    ) -> AsyncClientV2:
+    def create_stream_mock(cls, stream: Exception | Sequence[MockStreamEvent]) -> AsyncClientV2:
         client = AsyncClientV2(api_key='test')
         setattr(client, 'chat_stream', cls(stream=stream).chat_stream)
         return client
@@ -181,11 +178,7 @@ class MockAsyncClientV2:
         assert self.stream is not None
         if isinstance(self.stream, Exception):
             raise self.stream
-        response = self.stream[self.index] if self.stream and isinstance(self.stream[0], Sequence) else self.stream
-        assert isinstance(response, Sequence)
-        self.index += 1
-        for event in response:
-            assert not isinstance(event, Sequence)
+        for event in self.stream:
             if isinstance(event, Exception):
                 raise event
             yield event
@@ -1170,94 +1163,6 @@ def _text_stream_events(chunks: list[str], *, finish_reason: str = 'COMPLETE') -
     return events
 
 
-async def test_stream_text(allow_model_requests: None):
-    mock_client = MockAsyncClientV2.create_stream_mock(_text_stream_events(['hello ', 'world']))
-    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
-    agent = Agent(m)
-
-    async with agent.run_stream('hi') as result:
-        chunks = [c async for c in result.stream_text(debounce_by=None)]
-
-    assert chunks == snapshot(['hello ', 'hello world'])
-    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=2, cost=Decimal('6.75E-7')))
-
-
-async def test_stream_text_multiple_calls(allow_model_requests: None):
-    mock_client = MockAsyncClientV2.create_stream_mock(
-        [
-            _text_stream_events(['first ', 'call']),
-            _text_stream_events(['second ', 'call']),
-        ]
-    )
-    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
-    agent = Agent(m)
-
-    async with agent.run_stream('first') as result:
-        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['first ', 'first call'])
-
-    async with agent.run_stream('second') as result:
-        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['second ', 'second call'])
-
-
-async def test_stream_tool_call(allow_model_requests: None):
-    tool_call_events: list[MockStreamEvent] = [
-        ToolCallStartV2ChatStreamResponse(
-            index=0,
-            delta=ChatToolCallStartEventDelta(
-                message=ChatToolCallStartEventDeltaMessage(
-                    tool_calls=ToolCallV2(
-                        id='tc-1',
-                        type='function',
-                        function=ToolCallV2Function(name='get_weather', arguments=None),
-                    )
-                )
-            ),
-        ),
-        ToolCallDeltaV2ChatStreamResponse(
-            index=0,
-            delta=ChatToolCallDeltaEventDelta(
-                message=ChatToolCallDeltaEventDeltaMessage(
-                    tool_calls=ChatToolCallDeltaEventDeltaMessageToolCalls(
-                        function=ChatToolCallDeltaEventDeltaMessageToolCallsFunction(arguments='{"city"')
-                    )
-                )
-            ),
-        ),
-        ToolCallDeltaV2ChatStreamResponse(
-            index=0,
-            delta=ChatToolCallDeltaEventDelta(
-                message=ChatToolCallDeltaEventDeltaMessage(
-                    tool_calls=ChatToolCallDeltaEventDeltaMessageToolCalls(
-                        function=ChatToolCallDeltaEventDeltaMessageToolCallsFunction(arguments=': "London"}')
-                    )
-                )
-            ),
-        ),
-        MessageEndV2ChatStreamResponse(
-            delta=ChatMessageEndEventDelta(
-                finish_reason='TOOL_CALL',
-                usage=Usage(tokens=UsageTokens(input_tokens=5, output_tokens=8)),
-            )
-        ),
-    ]
-    mock_client = MockAsyncClientV2.create_stream_mock([tool_call_events, _text_stream_events(['Sunny in London'])])
-    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
-
-    agent = Agent(m, output_type=str)
-
-    @agent.tool_plain
-    async def get_weather(city: str) -> str:
-        return f'Sunny in {city}'
-
-    async with agent.run_stream('Weather in London?') as result:
-        output = await result.get_output()
-
-    assert output == snapshot('Sunny in London')
-    assert result.usage == snapshot(
-        RunUsage(requests=2, input_tokens=15, output_tokens=9, cost=Decimal('0.0000019125'), tool_calls=1)
-    )
-
-
 async def test_stream_finish_reason(allow_model_requests: None):
     mock_client = MockAsyncClientV2.create_stream_mock(_text_stream_events(['done'], finish_reason='MAX_TOKENS'))
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
@@ -1270,73 +1175,6 @@ async def test_stream_finish_reason(allow_model_requests: None):
     last_response = next(msg for msg in reversed(messages) if isinstance(msg, ModelResponse))
     assert last_response.finish_reason == snapshot('length')
     assert last_response.provider_details == snapshot({'finish_reason': 'MAX_TOKENS'})
-
-
-async def test_stream_thinking(allow_model_requests: None):
-    """Regression: thinking-block streaming (index tracking + handle_thinking_delta)."""
-    thinking_events: list[MockStreamEvent] = [
-        ContentStartV2ChatStreamResponse(
-            index=0,
-            delta=ChatContentStartEventDelta(
-                message=ChatContentStartEventDeltaMessage(
-                    content=ChatContentStartEventDeltaMessageContent(type='thinking')
-                )
-            ),
-        ),
-        ContentDeltaV2ChatStreamResponse(
-            index=0,
-            delta=ChatContentDeltaEventDelta(
-                message=ChatContentDeltaEventDeltaMessage(
-                    content=ChatContentDeltaEventDeltaMessageContent(thinking='I am thinking...')
-                )
-            ),
-        ),
-        ContentDeltaV2ChatStreamResponse(
-            index=0,
-            delta=ChatContentDeltaEventDelta(
-                message=ChatContentDeltaEventDeltaMessage(
-                    content=ChatContentDeltaEventDeltaMessageContent(thinking=' carefully.')
-                )
-            ),
-        ),
-        ContentStartV2ChatStreamResponse(
-            index=1,
-            delta=ChatContentStartEventDelta(
-                message=ChatContentStartEventDeltaMessage(content=ChatContentStartEventDeltaMessageContent(type='text'))
-            ),
-        ),
-        ContentDeltaV2ChatStreamResponse(
-            index=1,
-            delta=ChatContentDeltaEventDelta(
-                message=ChatContentDeltaEventDeltaMessage(
-                    content=ChatContentDeltaEventDeltaMessageContent(text='The answer is 42.')
-                )
-            ),
-        ),
-        MessageEndV2ChatStreamResponse(
-            delta=ChatMessageEndEventDelta(
-                finish_reason='COMPLETE',
-                usage=Usage(tokens=UsageTokens(input_tokens=5, output_tokens=4)),
-            )
-        ),
-    ]
-    mock_client = MockAsyncClientV2.create_stream_mock(thinking_events)
-    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
-    agent = Agent(m)
-
-    async with agent.run_stream('think about it') as result:
-        chunks = [c async for c in result.stream_text(debounce_by=None)]
-
-    assert chunks == snapshot(['The answer is 42.'])
-    messages = result.all_messages()
-    last_response = next(msg for msg in reversed(messages) if isinstance(msg, ModelResponse))
-    thinking_parts = [p for p in last_response.parts if isinstance(p, ThinkingPart)]
-    text_parts = [p for p in last_response.parts if isinstance(p, TextPart)]
-    assert len(thinking_parts) == 1
-    assert thinking_parts[0].content == snapshot('I am thinking... carefully.')
-    assert len(text_parts) == 1
-    assert text_parts[0].content == snapshot('The answer is 42.')
-    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=5, output_tokens=4, cost=Decimal('7.875E-7')))
 
 
 async def test_stream_request_status_error(allow_model_requests: None) -> None:
@@ -1492,7 +1330,7 @@ async def test_stream_event_edge_cases():
         _response=PeekableAsyncStream(MockAsyncStream(iter(events))),
     )
 
-    part_events = [e async for e in response._get_event_iterator()]  # pyright: ignore[reportPrivateUsage]
+    part_events = [e async for e in response]
 
     assert part_events == []
     assert response.finish_reason is None
@@ -1633,22 +1471,24 @@ async def test_stream_text_with_vcr(allow_model_requests: None, co_api_key: str)
     async with Agent(model).run_stream('Say hello in one short sentence.') as result:
         chunks = [text async for text in result.stream_text(delta=True, debounce_by=None)]
         assert ''.join(chunks) == await result.get_output()
-    response = result.response
-    assert response.text == snapshot('Hello!')
-    assert response.text is not None
-    assert response.parts == [TextPart(response.text)]
-    assert response.usage == snapshot(
-        RequestUsage(
-            details={'input_tokens': 7, 'output_tokens': 2},
-            output_tokens=5,
-            cache_read_tokens=480,
-            input_tokens=502,
-            cost=Decimal('0.000019575'),
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='Hello!')],
+            usage=RequestUsage(
+                details={'input_tokens': 7, 'output_tokens': 2},
+                input_tokens=502,
+                output_tokens=5,
+                cache_read_tokens=480,
+                cost=Decimal('0.000019575'),
+            ),
+            model_name='command-r7b-12-2024',
+            timestamp=IsDatetime(),
+            provider_name='cohere',
+            provider_url='https://api.cohere.com',
+            provider_details={'finish_reason': 'COMPLETE'},
+            finish_reason='stop',
         )
     )
-    assert response.finish_reason == 'stop'
-    assert response.provider_details == {'finish_reason': 'COMPLETE'}
-    assert response.state == 'complete'
 
 
 @pytest.mark.vcr(additional_matchers=['body'])
@@ -1666,32 +1506,75 @@ async def test_stream_tool_with_vcr(allow_model_requests: None, co_api_key: str)
     async with agent.run_stream(
         'Use get_temperature to find the temperature in Paris, then report the result.'
     ) as result:
-        output = await result.get_output()
+        await result.get_output()
     assert calls == ['Paris']
-    assert output == snapshot('The temperature in Paris is 24 degrees Celsius.')
-    responses = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
-    tool_calls = responses[0].tool_calls
-    assert len(tool_calls) == 1
-    assert tool_calls[0].tool_name == 'get_temperature'
-    assert tool_calls[0].args_as_dict() == {'city': 'Paris'}
-    assert tool_calls[0].tool_call_id
-    assert [response.finish_reason for response in responses] == ['tool_call', 'stop']
-    assert [response.state for response in responses] == ['complete', 'complete']
-    assert [response.usage for response in responses] == snapshot(
+    assert result.all_messages() == snapshot(
         [
-            RequestUsage(
-                details={'input_tokens': 50, 'output_tokens': 23},
-                output_tokens=53,
-                cache_read_tokens=1024,
-                input_tokens=1450,
-                cost=Decimal('0.000062325'),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Use get_temperature to find the temperature in Paris, then report the result.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            RequestUsage(
-                details={'input_tokens': 57, 'output_tokens': 11},
-                output_tokens=23,
-                cache_read_tokens=1024,
-                input_tokens=1538,
-                cost=Decimal('0.000061125'),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_temperature',
+                        args='{"city": "Paris"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(
+                    details={'input_tokens': 50, 'output_tokens': 23},
+                    input_tokens=1450,
+                    output_tokens=53,
+                    cache_read_tokens=1024,
+                    cost=Decimal('0.000062325'),
+                ),
+                model_name='command-r7b-12-2024',
+                timestamp=IsDatetime(),
+                provider_name='cohere',
+                provider_url='https://api.cohere.com',
+                provider_details={'finish_reason': 'TOOL_CALL'},
+                finish_reason='tool_call',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_temperature',
+                        content='24 degrees Celsius',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The temperature in Paris is 24 degrees Celsius.')],
+                usage=RequestUsage(
+                    details={'input_tokens': 57, 'output_tokens': 11},
+                    input_tokens=1538,
+                    output_tokens=23,
+                    cache_read_tokens=1024,
+                    cost=Decimal('0.000061125'),
+                ),
+                model_name='command-r7b-12-2024',
+                timestamp=IsDatetime(),
+                provider_name='cohere',
+                provider_url='https://api.cohere.com',
+                provider_details={'finish_reason': 'COMPLETE'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1714,15 +1597,14 @@ async def test_stream_thinking_with_vcr(allow_model_requests: None, co_api_key: 
     async with Agent(model, model_settings=ModelSettings(thinking=True)).run_stream(
         'What is 17 times 19? Give just the answer.'
     ) as result:
-        responses = [response async for response in result.stream_response(debounce_by=None)]
-        assert await result.get_output() == snapshot('323')
-    response = result.response
-    assert any(isinstance(part, ThinkingPart) and part.content for part in response.parts)
-    assert any(isinstance(part, TextPart) and part.content for part in response.parts)
-    assert response.parts == snapshot(
-        [
-            ThinkingPart(
-                content="""\
+        async for _ in result.stream_response(debounce_by=None):
+            pass
+        await result.get_output()
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content="""\
 Okay, so I need to figure out what 17 times 19 is. Let me think. Hmm, multiplying two numbers that are both close to 20. Wait, 17 is 3 less than 20, and 19 is 1 less than 20. Maybe there's a trick here.
 
 Alternatively, I can just do the multiplication the standard way. Let's try that first. 17 times 19. Break it down: 17 times 10 is 170, and 17 times 9 is 153. Then add them together. 170 + 153. Let me add those. 170 + 150 is 320, and then +3 more is 323. So is that right? Wait, 17*19=323? Let me check another way to be sure.
@@ -1731,18 +1613,20 @@ Another method: using the difference of squares. Since 17 and 19 are both around
 
 Alternatively, 17*20 is 340, right? Because 17*20 is 340. But since 19 is one less than 20, subtract 17 from 340. So 340 -17 = 323. Yep, same result. Okay, so all three methods give me 323. I think that's the right answer. So the answer is 323.\
 """
+                ),
+                TextPart(content='323'),
+            ],
+            usage=RequestUsage(
+                details={'input_tokens': 15, 'output_tokens': 431},
+                input_tokens=1401,
+                output_tokens=447,
+                cache_read_tokens=1344,
             ),
-            TextPart(content='323'),
-        ]
-    )
-    assert response.usage == snapshot(
-        RequestUsage(
-            details={'input_tokens': 15, 'output_tokens': 431},
-            output_tokens=447,
-            cache_read_tokens=1344,
-            input_tokens=1401,
+            model_name='command-a-reasoning-08-2025',
+            timestamp=IsDatetime(),
+            provider_name='cohere',
+            provider_url='https://api.cohere.com',
+            provider_details={'finish_reason': 'COMPLETE'},
+            finish_reason='stop',
         )
     )
-    assert response.finish_reason == 'stop'
-    assert response.state == 'complete'
-    assert responses
