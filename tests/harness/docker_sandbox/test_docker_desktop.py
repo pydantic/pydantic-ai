@@ -12,7 +12,9 @@ from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
     Click,
+    Point,
     PressKeys,
+    Region,
     UnsupportedComputerActionError,
     Workspace,
     WorkspaceError,
@@ -21,6 +23,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness.docker_sandbox import DESKTOP_DOCKERFILE, DockerSandbox, DockerSandboxBackend
 
+from ...workspace_fakes import FAKE_SCREENSHOT
 from ._fake_docker import FakeDocker, install_fake_docker
 
 pytestmark = pytest.mark.anyio
@@ -86,6 +89,19 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(docker: Fake
 
     assert docker.xvfb_starts == 1
     assert docker.xdotool_calls[-2:] == [':1 getdisplaygeometry', ':1 mousemove 3 4 click --repeat 1 1']
+
+
+async def test_screenshots_zoom_and_the_pointer_come_from_the_display(docker: FakeDocker, container_dir: Path) -> None:
+    workspace = Workspace(_desktop(container_dir, image='my-desktop'))
+
+    assert await workspace.screenshot() == FAKE_SCREENSHOT
+    assert await workspace.zoom(Region(left=0, top=0, right=10, bottom=10)) == FAKE_SCREENSHOT
+    assert await workspace.cursor_position() == Point(x=640, y=400)
+
+
+async def test_commands_see_the_desktop(docker: FakeDocker, container_dir: Path) -> None:
+    result = await _desktop(container_dir, image='my-desktop').run('echo "$DISPLAY"', shell=True)
+    assert result.stdout == ':1\n'
 
 
 async def test_a_desktop_size_sets_the_display_it_starts(docker: FakeDocker, container_dir: Path) -> None:

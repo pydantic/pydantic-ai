@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from ...workspace_fakes import FAKE_SCREENSHOT
+
 # `flaky-image` fails only its first pull, `unstartable-image` creates a container
 # that fails to start, `--fake-hang` makes the first `run` hang before it creates anything so a create can be
 # cancelled, and `--fake-hang-late` makes it hang after creating the container.
@@ -140,10 +142,17 @@ bin=$(dirname "$0")
 printf '%s %s\\n' "$DISPLAY" "$*" >> "$bin/xdotool-calls"
 [ ! -e "$bin/no-display" ] || { echo "Can't open display: $DISPLAY" >&2; exit 1; }
 [ "$1" != getdisplaygeometry ] || echo '1280 800'
+[ "$1" != getmouselocation ] || printf 'X=640\\nY=400\\nSCREEN=0\\nWINDOW=1\\n'
 case " $* " in *' NoSuchKey '*) echo "(symbol) No such key name 'NoSuchKey'. Ignoring it." >&2 ;; esac
 """
-"""Stands in for `xdotool` in a container: reports a 1280x800 display unless `no-display` exists, skips the key
-`NoSuchKey` as xdotool skips a name it doesn't know, and logs each call."""
+"""Stands in for `xdotool` in a container: reports a 1280x800 display and the pointer at its middle unless
+`no-display` exists, skips the key `NoSuchKey` as xdotool skips a name it doesn't know, and logs each call."""
+
+_FAKE_SCROT = """#!/bin/sh
+for last; do :; done
+cp "$(dirname "$0")/screen.png" "$last"
+"""
+"""Stands in for `scrot`: writes the fake screenshot, whatever region it is asked for, to the path it is given."""
 
 _FAKE_XVFB = """#!/bin/sh
 bin=$(dirname "$0")
@@ -239,7 +248,13 @@ def install_fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Fake
     (bin_dir / 'podman').chmod(0o755)
     (bin_dir / 'xdotool').write_text(_FAKE_XDOTOOL)
     (bin_dir / 'xdotool').chmod(0o755)
-    for name, script in [('Xvfb', _FAKE_XVFB), ('fluxbox', _FAKE_FLUXBOX), ('setsid', _FAKE_SETSID)]:
+    (bin_dir / 'screen.png').write_bytes(FAKE_SCREENSHOT)
+    for name, script in [
+        ('Xvfb', _FAKE_XVFB),
+        ('fluxbox', _FAKE_FLUXBOX),
+        ('setsid', _FAKE_SETSID),
+        ('scrot', _FAKE_SCROT),
+    ]:
         (bin_dir / name).write_text(script)
         (bin_dir / name).chmod(0o755)
     monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
