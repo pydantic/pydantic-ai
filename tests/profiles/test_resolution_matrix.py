@@ -1812,6 +1812,7 @@ def test_azure_openai_gpt_5():
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
         }
     )
 
@@ -1824,6 +1825,7 @@ def test_azure_mistral_prefix():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
             'openai_chat_supports_max_completion_tokens': False,
         }
     )
@@ -1838,6 +1840,7 @@ def test_azure_mistral_small_latest():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
             'openai_chat_supports_max_completion_tokens': False,
         }
     )
@@ -1852,6 +1855,7 @@ def test_azure_ministral_3b():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
             'openai_chat_supports_max_completion_tokens': False,
         }
     )
@@ -1868,6 +1872,7 @@ def test_azure_magistral_small_latest():
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_max_completion_tokens': False,
             'supports_thinking': True,
+            'openai_responses_supports_websocket': False,
             'thinking_always_enabled': True,
         }
     )
@@ -1880,6 +1885,7 @@ def test_azure_cohere_prefix():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
         }
     )
 
@@ -1894,6 +1900,7 @@ def test_azure_grok_prefix():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
             'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
         }
     )
 

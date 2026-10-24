@@ -5,7 +5,8 @@ from typing import Literal
 from typing_extensions import override
 
 from ..messages import ModelRequest, ModelResponse
-from ..profiles import ModelProfileSpec
+from ..profiles import ModelProfile, ModelProfileSpec, merge_profile
+from ..profiles.openai import OpenAIModelProfile
 from ..providers import Provider
 from ..settings import ModelSettings
 
@@ -53,8 +54,12 @@ class OpenAICodexModel(OpenAIResponsesModel):
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)
 
     @override
-    def _websocket_unsupported_reason(self) -> str | None:
-        return 'its session headers depend on each conversation, after a WebSocket handshake would have sent them.'
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        # The session headers depend on each conversation, while a socket sends its headers once, at the handshake.
+        return merge_profile(
+            super()._instance_profile_defaults(profile),
+            OpenAIModelProfile(openai_responses_supports_websocket=False),
+        )
 
     @override
     def _prepare_responses_settings(

@@ -2218,60 +2218,84 @@ async def test_sdk_api_errors_during_websocket_connection_are_mapped(
     assert sockets.connect_count == 1
 
 
-@pytest.mark.parametrize(
-    ('setup', 'reason'),
-    [
-        pytest.param('azure', 'not supported for Azure OpenAI models', id='azure'),
-        pytest.param('gateway', "the Pydantic AI Gateway doesn't serve Responses WebSockets", id='gateway'),
-        pytest.param(
-            'openai-chatgpt',
-            "the 'openai-chatgpt' provider adds its OAuth credentials to HTTP requests only",
-            id='openai-chatgpt',
-        ),
-        pytest.param(
-            'openai-codex',
-            "the 'openai-codex' provider adds its OAuth credentials to HTTP requests only",
-            id='openai-codex',
-        ),
-        pytest.param('codex-model', 'its session headers depend on each conversation', id='openai-codex-model'),
-    ],
-)
+NEVER_SOCKET_SETUPS = [
+    'azure-provider',
+    'azure-client',
+    'gateway',
+    'openai-chatgpt',
+    'openai-codex',
+    'openai-codex-model',
+]
+
+
+def never_socket_model(
+    setup: str, client: httpx2.AsyncClient, profile: OpenAIModelProfile | None = None
+) -> OpenAIResponsesModel:
+    """A WebSocket-mode model whose profile turns `openai_responses_supports_websocket` off by default."""
+    if setup == 'azure-provider':
+        # The v1 endpoint gets a plain `AsyncOpenAI` client, so only `AzureProvider.model_profile` sets the flag.
+        provider: Provider[AsyncOpenAI] = AzureProvider(
+            azure_endpoint='https://example.openai.azure.com/openai/v1', api_key='test', http_client=client
+        )
+    elif setup == 'azure-client':
+        azure_client = AsyncAzureOpenAI(
+            api_key='test',
+            api_version='2024-12-01-preview',
+            azure_endpoint='https://example.openai.azure.com/',
+            http_client=client,
+        )
+        provider = OpenAIProvider(openai_client=azure_client)
+    elif setup == 'gateway':
+        provider = gateway_provider(
+            'openai', api_key='test', base_url='https://gateway.example/proxy', http_client=client
+        )
+    elif setup == 'openai-chatgpt':
+        credentials = OpenAIChatGPTCredentials(
+            client_id='client', access_token='access', refresh_token='refresh', scope='chatgpt.tokens.use.direct'
+        )
+        provider = OpenAIChatGPTProvider(credentials, http_client=client)
+    elif setup == 'openai-codex':
+        codex_credentials = OpenAICodexCredentials(access_token='access', refresh_token='refresh', account_id='a')
+        provider = OpenAICodexProvider(codex_credentials, http_client=client)
+    else:
+        assert setup == 'openai-codex-model'
+        return OpenAICodexModel(
+            'gpt-4o', provider=OpenAIProvider(api_key='test', http_client=client), settings=WEBSOCKET, profile=profile
+        )
+    return websocket_model(provider, profile=profile)
+
+
+@pytest.mark.parametrize('setup', NEVER_SOCKET_SETUPS)
 async def test_setup_that_can_never_use_a_socket_warns_and_uses_http(
-    allow_model_requests: None, sockets: SocketHarness, setup: str, reason: str
+    allow_model_requests: None, sockets: SocketHarness, setup: str
 ):
-    """A model that can never open a socket says so, and sends the request over HTTP, here rejected with a 400."""
+    """A model whose profile turns the socket off says so, and sends the request over HTTP, here rejected with a 400."""
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(lambda request: httpx2.Response(400))) as client:
-        if setup == 'azure':
-            azure_client = AsyncAzureOpenAI(
-                api_key='test',
-                api_version='2024-12-01-preview',
-                azure_endpoint='https://example.openai.azure.com/',
-                http_client=client,
-            )
-            model = websocket_model(AzureProvider(openai_client=azure_client))
-        elif setup == 'gateway':
-            model = websocket_model(
-                gateway_provider('openai', api_key='test', base_url='https://gateway.example/proxy', http_client=client)
-            )
-        elif setup == 'openai-chatgpt':
-            credentials = OpenAIChatGPTCredentials(
-                client_id='client', access_token='access', refresh_token='refresh', scope='chatgpt.tokens.use.direct'
-            )
-            model = websocket_model(OpenAIChatGPTProvider(credentials, http_client=client))
-        elif setup == 'openai-codex':
-            codex_credentials = OpenAICodexCredentials(access_token='access', refresh_token='refresh', account_id='a')
-            model = websocket_model(OpenAICodexProvider(codex_credentials, http_client=client))
-        else:
-            model = OpenAICodexModel(
-                'gpt-4o', provider=OpenAIProvider(api_key='test', http_client=client), settings=WEBSOCKET
-            )
+        model = never_socket_model(setup, client)
         async with model:
             with (
-                pytest.warns(UnsupportedSettingWarning, match=rf"`openai_transport='websocket'` setting .* {reason}"),
+                pytest.warns(
+                    UnsupportedSettingWarning,
+                    match=(
+                        r"`openai_transport='websocket'` setting .* `openai_responses_supports_websocket=False`.* "
+                        r'`profile=OpenAIModelProfile\(openai_responses_supports_websocket=True\)`'
+                    ),
+                ),
                 pytest.raises(ModelHTTPError),
             ):
                 await model.request(user_prompt('hello'), None, ModelRequestParameters())
     assert sockets.connect_count == 0
+
+
+@pytest.mark.parametrize('setup', NEVER_SOCKET_SETUPS)
+async def test_profile_flag_overrides_a_setup_that_can_never_use_a_socket(
+    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, setup: str
+):
+    """`openai_responses_supports_websocket=True` in `profile=` wins over the provider's, client's or model's default."""
+    model = never_socket_model(setup, http.client, OpenAIModelProfile(openai_responses_supports_websocket=True))
+    assert (await Agent(model).run('hello')).output == 'ready'
+    assert sockets.connect_count == 1
+    assert http.requests == []
 
 
 async def test_missing_websocket_dependency_warns_and_uses_http(
