@@ -29,11 +29,13 @@ from pydantic_ai_harness.code_mode._speculation import (
     SpeculationStats,
 )
 from pydantic_ai_harness.code_mode._toolset import (
+    CodeModeMontyPoolFactory,
     CodeModeMount,
     CodeModeOS,
     CodeModeResourceLimits,
     CodeModeToolset,
     as_os_handler,
+    check_monty_pool_options,
     in_durable_execution,
 )
 
@@ -172,6 +174,18 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     your agent executes, so anyone who can intercept it can choose what your tools run.
     """
 
+    monty_pool_factory: CodeModeMontyPoolFactory | None = field(default=None, repr=False)
+    """Run sandboxed code on workers from the pool this function returns, such as `logfire.agent_sandboxes`.
+
+    Pass the function, not a pool: it is called with no arguments as each agent run starts, and
+    returns a new, unentered `AsyncMonty` or `AsyncMontyWebsocket`. CodeMode enters it on the first
+    `run_code` call and closes it when the run ends, so concurrent runs never share a pool. Use it
+    when the connection needs settings `monty_sandbox_url` cannot carry, such as `connect_headers`.
+
+    The pool's own `request_timeout` applies, not the `max_duration_secs` plus 10 seconds that
+    `monty_sandbox_url` derives. Cannot be combined with `monty_sandbox_url`.
+    """
+
     repl_store: CodeModeReplStore[AgentDepsT] | None = None
     """Keep the `run_code` REPL across agent runs in this store.
 
@@ -233,6 +247,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         # Converted once here, so the per-run copies and the toolsets built from this do not warn again.
         self.os_access = as_os_handler(self.os_access)
+        check_monty_pool_options(self.monty_sandbox_url, self.monty_pool_factory)
         if isinstance(self.speculate, str) and self.speculate != 'declared':
             raise UserError(
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "
@@ -283,6 +298,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 os_access=self.os_access,
                 mount=self.mount,
                 monty_sandbox_url=self.monty_sandbox_url,
+                monty_pool_factory=self.monty_pool_factory,
                 repl_store=self.repl_store,
                 capability=self,
                 speculation=self._speculation,
@@ -297,6 +313,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             os_access=self.os_access,
             mount=self.mount,
             monty_sandbox_url=self.monty_sandbox_url,
+            monty_pool_factory=self.monty_pool_factory,
             repl_store=self.repl_store,
             capability=self,
             speculation=self._speculation,
