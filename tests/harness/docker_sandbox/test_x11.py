@@ -101,8 +101,6 @@ class BlockingCommands(ScriptedCommands):
         ),
         (Scroll(direction='up', amount=2), ['xdotool', 'click', '--repeat', '2', '--delay', '20', '4']),
         (TypeText(text='-n "hi"'), ['xdotool', 'type', '--', '-n "hi"']),
-        # Characters outside ASCII are pressed by name, slowly enough for xdotool's key remapping to keep up.
-        (TypeText(text='日本'), ['xdotool', 'key', '--delay', '100', 'U65E5', 'U672C']),
         (PressKeys(keys=('ctrl', 's'), repeat=3), ['xdotool', 'key', '--repeat', '3', '--', 'ctrl+s']),
         (PressKeys(keys=('PageDown', 'F5', 'ArrowUp')), ['xdotool', 'key', '--repeat', '1', '--', 'Next+F5+Up']),
         (PressKeys(keys=('shift', 'XF86AudioMute')), ['xdotool', 'key', '--repeat', '1', '--', 'shift+XF86AudioMute']),
@@ -116,32 +114,38 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: Computer
     assert commands.calls == [(argv, False, {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'})]
 
 
-@pytest.mark.parametrize(
-    'text, argvs',
-    [
-        pytest.param(
-            'ls\n\nexit\n',
-            [['type', '--', 'ls'], ['key', 'Return'], ['key', 'Return'], ['type', '--', 'exit'], ['key', 'Return']],
-            id='a-newline-is-enter',
-        ),
-        pytest.param(
-            'Zoë Å 😀',
-            [
-                ['type', '--', 'Zo'],
-                ['key', '--delay', '100', 'U00EB'],
-                ['type', '--', ' '],
-                ['key', '--delay', '100', 'shift+U00C5'],
-                ['type', '--', ' '],
-                ['key', '--delay', '100', 'U1F600'],
-            ],
-            id='outside-ascii-is-pressed-by-name-and-capitals-with-shift',
-        ),
-    ],
-)
-async def test_x11_computer_presses_the_keys_xdotool_type_gets_wrong(text: str, argvs: list[list[str]]) -> None:
+async def test_x11_computer_presses_enter_for_each_newline_in_typed_text() -> None:
     commands = ScriptedCommands()
+    await X11Computer(commands).act(TypeText(text='ls\n\nexit\n'))
+    assert commands.argvs == [
+        ['xdotool', 'type', '--', 'ls'],
+        ['xdotool', 'key', 'Return'],
+        ['xdotool', 'key', 'Return'],
+        ['xdotool', 'type', '--', 'exit'],
+        ['xdotool', 'key', 'Return'],
+    ]
+
+
+async def test_x11_computer_maps_characters_outside_ascii_to_keys_before_pressing_them() -> None:
+    commands = ScriptedCommands()
+    await X11Computer(commands).act(TypeText(text='Zoë 日本日 ok'))
+    # Each distinct character of a run is mapped to a key once, then the run is pressed in order.
+    assert [argv if argv[0] == 'xdotool' else argv[3:] for argv in commands.argvs] == [
+        ['xdotool', 'type', '--', 'Zo'],
+        ['sh', 'U00EB', '--', 'U00EB'],
+        ['xdotool', 'type', '--', ' '],
+        ['sh', 'U65E5', 'U672C', '--', 'U65E5', 'U672C', 'U65E5'],
+        ['xdotool', 'type', '--', ' ok'],
+    ]
+
+
+async def test_x11_computer_maps_at_most_50_characters_a_command() -> None:
+    commands = ScriptedCommands()
+    text = ''.join(chr(0x4E00 + n) for n in range(51))
     await X11Computer(commands).act(TypeText(text=text))
-    assert commands.argvs == [['xdotool', *argv] for argv in argvs]
+    first, second = commands.argvs
+    assert first[first.index('--') + 1 :] == [f'U{0x4E00 + n:04X}' for n in range(50)]
+    assert second[4:] == ['U4E32', '--', 'U4E32']
 
 
 @pytest.mark.parametrize(
@@ -209,7 +213,7 @@ async def test_x11_computer_reads_the_display_size_and_screenshot_on_its_display
     assert geometry == ['xdotool', 'getdisplaygeometry']
     assert env == {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'}
     assert shell is True
-    assert commands.timeouts == [250, 250]
+    assert commands.timeouts == [150, 150]
 
 
 @pytest.mark.parametrize(
