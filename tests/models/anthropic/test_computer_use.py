@@ -169,7 +169,7 @@ async def test_an_invalid_member_is_refused_and_nothing_runs(allow_model_request
         [
             _turn(
                 _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
-                _tool_use('toolu_2', 'wait', {'duration': 30}),
+                _tool_use('toolu_2', 'wait', {'duration': 60}),
             ),
             _turn(BetaTextBlock(text='done', type='text')),
         ]
@@ -181,7 +181,7 @@ async def test_an_invalid_member_is_refused_and_nothing_runs(allow_model_request
     _, second = get_mock_chat_completion_kwargs(client)
     results = second['messages'][-1]['content']
     assert [(r['tool_use_id'], r['is_error']) for r in results] == [('toolu_1', True), ('toolu_2', True)]
-    assert all('less than or equal to 10' in r['content'][0]['text'] for r in results)
+    assert all('less than or equal to 30' in r['content'][0]['text'] for r in results)
 
 
 async def test_a_deferred_computer_tool_stays_a_deferred_function(allow_model_requests: None) -> None:
