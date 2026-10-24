@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import anyio
 import httpx
@@ -1126,7 +1126,7 @@ async def test_tool_call_without_function_skipped(allow_model_requests: None):
     assert not any(isinstance(part, ToolCallPart) for part in parts)
 
 
-def _text_stream_events(chunks: list[str], *, finish_reason: str = 'COMPLETE') -> list[MockStreamEvent]:
+def _text_stream_events(chunks: list[str]) -> list[MockStreamEvent]:
     events: list[MockStreamEvent] = [
         ContentStartV2ChatStreamResponse(
             index=0,
@@ -1149,7 +1149,7 @@ def _text_stream_events(chunks: list[str], *, finish_reason: str = 'COMPLETE') -
     events.append(
         MessageEndV2ChatStreamResponse(
             delta=ChatMessageEndEventDelta(
-                finish_reason=finish_reason,
+                finish_reason='COMPLETE',
                 usage=Usage(tokens=UsageTokens(input_tokens=10, output_tokens=len(chunks))),
             )
         )
@@ -1157,35 +1157,12 @@ def _text_stream_events(chunks: list[str], *, finish_reason: str = 'COMPLETE') -
     return events
 
 
-async def test_stream_finish_reason(allow_model_requests: None):
-    mock_client = MockAsyncClientV2.create_stream_mock(_text_stream_events(['done'], finish_reason='MAX_TOKENS'))
-    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
-    agent = Agent(m)
-
-    async with agent.run_stream('hi') as result:
-        _ = [c async for c in result.stream_text(debounce_by=None)]
-
-    messages = result.all_messages()
-    last_response = next(msg for msg in reversed(messages) if isinstance(msg, ModelResponse))
-    assert last_response.finish_reason == snapshot('length')
-    assert last_response.provider_details == snapshot({'finish_reason': 'MAX_TOKENS'})
-
-
-async def test_stream_request_status_error(allow_model_requests: None) -> None:
-    mock_client = MockAsyncClientV2.create_stream_mock(
-        ApiError(status_code=500, body={'error': 'test error'}),
-    )
-    m = CohereModel('command-r', provider=CohereProvider(cohere_client=mock_client))
-    agent = Agent(m)
-    with pytest.raises(ModelHTTPError) as exc_info:
-        async with agent.run_stream('hello'):
-            pass  # pragma: no cover
-    assert str(exc_info.value) == snapshot("status_code: 500, model_name: command-r, body: {'error': 'test error'}")
-
-
-@pytest.mark.parametrize('status, expected', [(401, ModelHTTPError), (429, ModelRateLimitError)])
+@pytest.mark.parametrize(
+    'status, expected',
+    [(401, ModelHTTPError), (429, ModelRateLimitError), (500, ModelHTTPError), (None, ModelAPIError)],
+)
 async def test_request_stream_error_on_entry(
-    allow_model_requests: None, status: int, expected: type[ModelAPIError]
+    allow_model_requests: None, status: int | None, expected: type[ModelAPIError]
 ) -> None:
     error = ApiError(status_code=status, body={'message': 'request failed'})
     client = MockAsyncClientV2.create_stream_mock(error)
@@ -1204,53 +1181,6 @@ async def test_request_stream_empty(allow_model_requests: None) -> None:
             pass  # pragma: no cover
 
 
-async def test_stream_request_non_http_error(allow_model_requests: None) -> None:
-    mock_client = MockAsyncClientV2.create_stream_mock(
-        ApiError(status_code=None, body={'error': 'connection error'}),
-    )
-    m = CohereModel('command-r', provider=CohereProvider(cohere_client=mock_client))
-    agent = Agent(m)
-    with pytest.raises(ModelAPIError) as exc_info:
-        async with agent.run_stream('hello'):
-            pass  # pragma: no cover
-    assert exc_info.value.model_name == 'command-r'
-
-
-async def test_stream_request_status_error_mid_stream(allow_model_requests: None) -> None:
-    """Regression: `chat_stream()` returns an async iterator without making any request, so an
-    `ApiError` can also surface after the first chunk was peeked on context entry. It must still
-    be mapped to `ModelHTTPError` like the call-opening case above.
-    """
-    events: list[MockStreamEvent] = [
-        *_text_stream_events(['hello '])[:-1],  # content-start + content-delta, no message-end yet
-        ApiError(status_code=500, body={'error': 'test error'}),
-    ]
-    mock_client = MockAsyncClientV2.create_stream_mock(events)
-    m = CohereModel('command-r', provider=CohereProvider(cohere_client=mock_client))
-    agent = Agent(m)
-    with pytest.raises(ModelHTTPError) as exc_info:
-        async with agent.run_stream('hello') as result:
-            async for _ in result.stream_text(debounce_by=None):
-                pass
-    assert str(exc_info.value) == snapshot("status_code: 500, model_name: command-r, body: {'error': 'test error'}")
-
-
-async def test_stream_request_non_http_error_mid_stream(allow_model_requests: None) -> None:
-    """Same as above but for the non-HTTP (`status_code=None`) branch of the error mapping."""
-    events: list[MockStreamEvent] = [
-        *_text_stream_events(['hello '])[:-1],
-        ApiError(status_code=None, body={'error': 'connection error'}),
-    ]
-    mock_client = MockAsyncClientV2.create_stream_mock(events)
-    m = CohereModel('command-r', provider=CohereProvider(cohere_client=mock_client))
-    agent = Agent(m)
-    with pytest.raises(ModelAPIError) as exc_info:
-        async with agent.run_stream('hello') as result:
-            async for _ in result.stream_text(debounce_by=None):
-                pass
-    assert exc_info.value.model_name == 'command-r'
-
-
 @pytest.mark.parametrize(
     'status, message, expected',
     [
@@ -1260,15 +1190,17 @@ async def test_stream_request_non_http_error_mid_stream(allow_model_requests: No
             ModelContextWindowExceededError,
         ),
         (429, 'rate limit exceeded', ModelRateLimitError),
-        (None, 'stream timed out', ModelTimeoutError),
+        (500, 'request failed', ModelHTTPError),
+        (None, 'connection error', ModelAPIError),
+        ('timeout', 'stream timed out', ModelTimeoutError),
     ],
 )
 async def test_stream_error_categories(
-    allow_model_requests: None, status: int | None, message: str, expected: type[ModelAPIError]
+    allow_model_requests: None, status: int | Literal['timeout'] | None, message: str, expected: type[ModelAPIError]
 ):
     """Provider failures during iteration cannot be reliably triggered with a live request."""
     error = (
-        ApiError(status_code=status, body={'message': message}) if status is not None else httpx.ReadTimeout(message)
+        httpx.ReadTimeout(message) if status == 'timeout' else ApiError(status_code=status, body={'message': message})
     )
     events: list[MockStreamEvent] = [*_text_stream_events(['hello'])[:-1], error]
     client = MockAsyncClientV2.create_stream_mock(events)
@@ -1440,7 +1372,7 @@ async def test_stream_usage(allow_model_requests: None, reported: bool, has_toke
         reported_usage = Usage()
     events = _text_stream_events(['hello'])
     events[-1] = MessageEndV2ChatStreamResponse(
-        delta=ChatMessageEndEventDelta(finish_reason='COMPLETE', usage=reported_usage)
+        delta=ChatMessageEndEventDelta(finish_reason='MAX_TOKENS', usage=reported_usage)
     )
     client = MockAsyncClientV2.create_stream_mock(events)
     model = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=client))
@@ -1448,6 +1380,8 @@ async def test_stream_usage(allow_model_requests: None, reported: bool, has_toke
         async for _ in response:
             pass
     assert response.get().usage == expected
+    assert response.finish_reason == 'length'
+    assert response.provider_details == {'finish_reason': 'MAX_TOKENS'}
     assert response.get().state == 'complete'
 
 
