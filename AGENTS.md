@@ -142,6 +142,7 @@ Pre-commit runs `make lint` and `make format` automatically on every commit. CI 
 
 - typecheck a single file: `PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright path/to/file.py`
 - run a single test: `uv run pytest path/to/test.py::test_name`
+- check the cognitive complexity your uncommitted edits add: `uv run scripts/check_complexity.py --base HEAD`; [agent_docs/complexity.md](agent_docs/complexity.md) maps each report to its fix
 
 Avoid `make typecheck` and `make test` — both are slow and CI covers them at the right time.
 

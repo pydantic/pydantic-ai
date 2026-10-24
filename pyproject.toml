@@ -311,6 +311,7 @@ coverage = [
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@6c644106e03138abae01d8d60105d4a7ad4916a1",
 ]
 lint = [
+    "complexipy>=8.0.1",
     "mypy>=1.11.2",
     "pyright>=1.1.414",
     "ruff>=0.14.14",
@@ -340,6 +341,8 @@ include = [
     "docs/**/*.py",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/check_complexity.py",
+    "scripts/test_check_complexity.py",
     ".github/scripts/ci_duration.py",
     ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
@@ -455,6 +458,7 @@ quote-style = "single"
 ".github/scripts/test_ci_matrix.py" = ["D"]
 ".github/scripts/test_gh_aw_engine_pin_bump.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
+"scripts/test_check_complexity.py" = ["D"]
 "!src/pydantic_clai2/**/*.py" = ["BLE001"]
 "!tests/**/*.py" = ["TID253"]
 # Modules dedicated to one of the heavy dependencies `TID253` bans need it at module level, e.g. for Temporal
@@ -464,6 +468,18 @@ quote-style = "single"
 "tests/harness/boxlite_sandbox/*.py" = ["TID253"]
 "tests/harness/e2b_sandbox/*.py" = ["TID253"]
 "tests/harness/smol_sandbox/*.py" = ["TID253"]
+
+# Read by `scripts/check_complexity.py`, which pre-commit and CI run, and by a plain `complexipy` run.
+[tool.complexipy]
+paths = [
+    "pydantic_ai_slim/pydantic_ai",
+    "pydantic_graph/pydantic_graph",
+    "pydantic_evals/pydantic_evals",
+    "src/pydantic_ai_harness/pydantic_ai_harness",
+    "src/pydantic_clai2/pydantic_clai2",
+]
+max-complexity-allowed = 15
+cache-dir = ".cache/complexipy"
 
 [tool.pyright]
 pythonVersion = "3.11"
@@ -483,6 +499,8 @@ include = [
     "src/pydantic_clai2",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/check_complexity.py",
+    "scripts/test_check_complexity.py",
 ]
 # Pyright always skips paths under a dot directory, even ones named here or on its command line, so
 # `.github/scripts` is its own project: `.github/scripts/pyrightconfig.json` extends this one, and
@@ -498,6 +516,7 @@ executionEnvironments = [
     # type check on an older interpreter, so they are analysed above the library's floor.
     { root = "scripts/typecheck_changed.py", pythonVersion = "3.11" },
     { root = "scripts/test_typecheck_changed.py", extraPaths = ["scripts"], pythonVersion = "3.11", reportUnusedFunction = false, reportPrivateImportUsage = false },
+    { root = "scripts/test_check_complexity.py", extraPaths = ["scripts"], reportPrivateUsage = false },
 ]
 exclude = [
     # Need `browser-use`, which the workspace lock excludes; the `harness browser-use` CI job checks them.
