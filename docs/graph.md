@@ -26,7 +26,7 @@ Reach for `pydantic-graph` when control flow is the hard part: explicit states, 
 
 ## Installation
 
-`pydantic-graph` is a required dependency of `pydantic-ai`, and an optional dependency of `pydantic-ai-slim`, see [installation instructions](install.md#slim-install) for more information. You can also install it directly:
+`pydantic-graph` is a core dependency of both `pydantic-ai` and `pydantic-ai-slim`. You can also install it directly if you are using it standalone:
 
 ```bash
 pip/uv-add pydantic-graph
