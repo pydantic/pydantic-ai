@@ -60,7 +60,9 @@ async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, Fa
         ),
         pytest.param(
             Drag(path=(Point(x=1, y=1), Point(x=2, y=2), Point(x=3, y=3)), modifiers=('ctrl',)),
-            ['keydown ctrl', 'mousedown 1 1 left', 'move 2 2', 'mouseup 3 3 left', 'keyup ctrl'],
+            # Each leg is moved along in at least two steps, so a web page's drag-and-drop registers it.
+            ['keydown ctrl', 'mousedown 1 1 left', 'move 1 1', 'move 2 2', 'move 2 2', 'move 3 3', 'mouseup 3 3 left']
+            + ['keyup ctrl'],
             id='drag',
         ),
         pytest.param(MouseDown(button='middle'), ['mousedown None None middle'], id='mouse-down'),
@@ -108,6 +110,7 @@ async def test_each_action_maps_onto_daytona_calls(
     'action',
     [
         pytest.param(Click(button='back'), id='side-button'),
+        pytest.param(TypeText(text='done 😀'), id='emoji'),
         pytest.param(MouseDown(button='forward'), id='side-button-down'),
         pytest.param(PressKeys(keys=('f13',)), id='key-that-crashes-the-desktop'),
         pytest.param(PressKeys(keys=('KP_Enter',)), id='keysym'),
@@ -174,6 +177,15 @@ async def test_a_failed_drag_releases_the_button_and_keys(fake_daytona: FakeDayt
         await backend.act(Drag(path=(Point(x=1, y=1), Point(x=2, y=2), Point(x=3, y=3)), modifiers=('shift',)))
 
     assert sandbox.desktop_calls == ['keydown shift', 'mousedown 1 1 left', 'mouseup None None left', 'keyup shift']
+
+
+async def test_the_live_view_url_is_a_signed_link_to_the_desktops_viewer(fake_daytona: FakeDaytona) -> None:
+    backend, sandbox = await _started(fake_daytona)
+
+    url = await backend.live_view_url(expires_in=60)
+
+    assert url == 'https://6080-signed.proxy.example/vnc.html?autoconnect=true&resize=scale'
+    assert sandbox.desktop_calls == ['signed_preview 6080 60']
 
 
 async def test_screenshots_zoom_and_pointer(fake_daytona: FakeDaytona) -> None:

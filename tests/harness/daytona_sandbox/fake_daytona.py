@@ -553,6 +553,13 @@ class FakeSandbox:
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait()
 
+    async def create_signed_preview_url(
+        self, port: int, expires_in_seconds: int | None = None, request_timeout: float | None = None
+    ) -> SimpleNamespace:
+        self.check_alive()
+        self.desktop_calls.append(f'signed_preview {port} {expires_in_seconds}')
+        return SimpleNamespace(url=f'https://{port}-signed.proxy.example/', token='signed')
+
     def check_alive(self) -> None:
         if self.state in (SandboxState.DESTROYING, SandboxState.DESTROYED):
             raise self.gone_error or DaytonaNotFoundError(

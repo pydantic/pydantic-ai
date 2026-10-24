@@ -2,14 +2,15 @@
 
 from __future__ import annotations as _annotations
 
+import weakref
 from collections.abc import Collection, Iterator, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast, get_args
 
 import anyio
 from pydantic import Field
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     DISPLAY_SIZE,
@@ -32,7 +33,9 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models import Model
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import (
@@ -45,9 +48,20 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness.compaction import (
+    ClampOversizedMessages,
+    ClearToolResults,
+    DeduplicateFileReads,
+    FallbackCompaction,
+    RelevanceCompaction,
+    SlidingWindowCompaction,
+    SummarizingCompaction,
+    TieredCompaction,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
+    from pydantic_ai.agent.abstract import AgentModelSettings
     from pydantic_ai.models import ModelRequestContext
 
 _INSTRUCTIONS = """\
@@ -72,7 +86,14 @@ _GRID = (
 )
 
 _DROP_BATCH = 25
-"""How many old screenshots `keep_screenshots` drops at once, as Anthropic recommends for prompt caching."""
+"""How many old screenshots are dropped at once, as Anthropic recommends for prompt caching."""
+
+_MAX_SCREENSHOTS = 100
+"""The most screenshots one request carries: Anthropic refuses a request with more than 100 images."""
+
+_MAX_SCREENSHOT_BYTES = 15_000_000
+"""The most screenshot bytes one request carries, about 20 MB once base64-encoded: Gemini refuses a request over 20 MB
+and Anthropic one over 32 MB."""
 
 _SCREENSHOT_REMOVED = '[Older screenshot removed to save context; the latest screenshot shows the current screen.]'
 
@@ -80,6 +101,12 @@ _PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
 
 _OBSERVING_ACTIONS = frozenset({'wait', 'screenshot', 'zoom', 'cursor_position'})
 """Action types that change nothing on the screen, so `requires_approval` lets them through."""
+
+_DISPLAY_LOCKS: dict[int, anyio.Lock] = {}
+"""One lock per display backend, by `id`: agents sharing a workspace, such as parallel sub-agents, take turns at its
+display a whole call at a time, so one's clicks and typing never land between another's."""
+
+_ACTION_TYPES = frozenset(action.type for action in get_args(get_args(ComputerToolAction)[0]))
 
 
 def _profile(model: Any) -> ModelProfile:
@@ -90,8 +117,16 @@ def _profile(model: Any) -> ModelProfile:
         return {}
 
 
+def _grid(model: Any) -> int | None:
+    if isinstance(model, FallbackModel):
+        # Any of its models may answer, so they point on a grid only when every one of them uses the same one.
+        grids = {_grid(inner) for inner in model.models}
+        return grids.pop() if len(grids) == 1 else None
+    return _profile(model).get('computer_use_coordinate_grid')
+
+
 def _coordinate_grid(ctx: RunContext[Any]) -> int | None:
-    return _profile(ctx.model).get('computer_use_coordinate_grid')
+    return _grid(ctx.model)
 
 
 def _points(action: ComputerToolAction) -> Sequence[Point]:
@@ -204,6 +239,30 @@ async def _with_display_size(ctx: RunContext[Any], tool_def: ToolDefinition) -> 
     return replace(tool_def, metadata={**(tool_def.metadata or {}), DISPLAY_SIZE: size})
 
 
+def _needs_settling(performed: list[ComputerToolAction]) -> bool:
+    """Whether the screen may still be changing: an action changed it and no `wait` came after the last one that did."""
+    for action in reversed(performed):
+        if action.type == 'wait':
+            return False
+        if action.type not in _OBSERVING_ACTIONS:
+            return True
+    return False
+
+
+def _display_lock(ctx: RunContext[Any]) -> anyio.Lock:
+    try:
+        display: object = ctx.workspace.backend
+    except UserError:
+        # Durable workflow code can't reach the backend; agents sharing the run's workspace share this object.
+        display = ctx.workspace
+    key = id(display)
+    if (lock := _DISPLAY_LOCKS.get(key)) is None:
+        lock = _DISPLAY_LOCKS[key] = anyio.Lock()
+        # The id can be reused once the backend is gone, so its lock goes with it.
+        weakref.finalize(display, _DISPLAY_LOCKS.pop, key, None)
+    return lock
+
+
 def _plural(count: int, noun: str) -> str:
     return f'{count} {noun}' if count == 1 else f'{count} {noun}s'
 
@@ -217,7 +276,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     with a desktop; see [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]. The model must accept
     images.
 
-    Under durable execution, each action and screenshot is retried on its own, not the whole batch.
+    Under Temporal and Prefect, each action and screenshot is retried on its own, not the whole batch; under other
+    durable engines, such as DBOS, a retry runs the whole call again.
     """
 
     _: KW_ONLY
@@ -225,19 +285,21 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     requires_approval: bool | Collection[str] = False
     """Ask for approval before a call that changes the screen, so the run needs a deferred tool handler.
 
-    `True` asks before any call that does more than look, zoom or wait. A collection of action types, such as
-    `{'type', 'keypress', 'hold_key'}` for keyboard input, asks only before calls with one of them.
+    `True` asks before any call that does more than look, zoom or wait. A collection of action types asks only
+    before calls with one of them: `click`, `move`, `drag`, `mouse_down`, `mouse_up`, `scroll`, `type`, `keypress`
+    and `hold_key`. For example, `{'type', 'keypress', 'hold_key'}` asks before keyboard input.
     """
 
     settle_seconds: float = 0.5
     """Pause after the last action before the closing screenshot, so animations and page loads can finish."""
 
     keep_screenshots: int | None = None
-    """The fewest recent screenshots each model request carries, or `None` for all of them.
+    """The fewest recent screenshots each model request carries, or `None` for as many as the provider accepts.
 
     Older ones are replaced with a short note, 25 at a time, so the request stays the same between drops and the
     provider's prompt cache keeps working. Only the request changes: the run's history keeps every image. Use it to
-    bound long runs; a short run costs the same either way.
+    bound long runs; a short run costs the same either way. With `None`, a request still carries no more than 100
+    screenshots or about 15 MB of them, the most every supported provider accepts.
     """
 
     id: str | None = 'computer'
@@ -248,6 +310,15 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         if self.keep_screenshots is not None and self.keep_screenshots < 1:
             raise UserError('`keep_screenshots` must be at least 1, or `None` to keep every screenshot.')
+        if isinstance(self.requires_approval, str):
+            raise UserError('`requires_approval` takes `True` or a collection of action types, such as `{"click"}`.')
+        if not isinstance(self.requires_approval, bool) and (
+            unknown := set(self.requires_approval) - (_ACTION_TYPES - _OBSERVING_ACTIONS)
+        ):
+            raise UserError(
+                f'`requires_approval` has {", ".join(sorted(map(repr, unknown)))}, which are not action types that '
+                f'change the screen. They are: {", ".join(sorted(_ACTION_TYPES - _OBSERVING_ACTIONS))}.'
+            )
         tool = Tool[AgentDepsT](
             self._computer,
             name='computer',
@@ -255,6 +326,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             sequential=True,
             max_retries=3,
             tool_kind=COMPUTER_KIND,
+            # It returns a screenshot, which has no schema to describe.
+            include_return_schema=False,
             # Each workspace call is then its own activity or task, with its own timeout and retries.
             metadata={'temporal': False, 'prefect': False},
             prepare=_with_display_size,
@@ -289,9 +362,14 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             if grid is not None:
                 actions = [_to_pixels(action, width, height, grid) for action in actions]
 
+        async with _display_lock(ctx):
+            return await self._run_on_display(ctx, actions, grid)
+
+    async def _run_on_display(
+        self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], grid: int | None
+    ) -> ToolReturn:
         performed, error, outputs = await _perform(ctx, actions, grid)
-        acted = any(action.type not in _OBSERVING_ACTIONS for action in actions[:performed])
-        if acted and self.settle_seconds and actions[performed - 1].type != 'wait':
+        if self.settle_seconds and _needs_settling(actions[:performed]):
             await anyio.sleep(self.settle_seconds)
 
         result = ComputerResult(performed=performed)
@@ -301,7 +379,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             summary = [f'Ran {_plural(len(actions), "action")}.']
         else:
             result['error'] = error
-            summary = [f'Action {performed + 1} of {len(actions)} ({actions[performed].type}) failed: {error}.']
+            summary = [
+                f'Action {performed + 1} of {len(actions)} ({actions[performed].type}) failed: {error.rstrip(".")}.'
+            ]
             if skipped := len(actions) - performed - 1:
                 summary.append(f'The {_plural(skipped, "action")} after it did not run.')
 
@@ -341,6 +421,18 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             keep_screenshots=min(kept) if kept else None,
         )
 
+    def get_model_settings(self) -> AgentModelSettings[AgentDepsT]:
+        """Turn on prompt caching, unless the run's settings already say whether to cache.
+
+        Every request carries the screenshots so far, so an uncached run costs several times more on providers that
+        cache only when asked, such as Anthropic. Set `cache=False` in the model settings to turn it off.
+        """
+
+        def settings(ctx: RunContext[AgentDepsT]) -> ModelSettings:
+            return ModelSettings() if 'cache' in (ctx.model_settings or {}) else ModelSettings(cache=True)
+
+        return settings
+
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         def instructions(ctx: RunContext[AgentDepsT]) -> str:
             grid = _coordinate_grid(ctx)
@@ -352,12 +444,27 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     def get_toolset(self) -> FunctionToolset[AgentDepsT]:
         return self._toolset
 
+    def get_ordering(self) -> CapabilityOrdering:
+        """Run inside compaction, which rebuilds each request from the history: dropping screenshots comes after it."""
+        return CapabilityOrdering(
+            wrapped_by=(
+                ClampOversizedMessages,
+                ClearToolResults,
+                DeduplicateFileReads,
+                FallbackCompaction,
+                RelevanceCompaction,
+                SlidingWindowCompaction,
+                SummarizingCompaction,
+                TieredCompaction,
+            )
+        )
+
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail the run at its start when its workspace has no display."""
         if not ctx.workspace.has_display:
             raise UserError(
-                '`ComputerUse` needs a workspace with a display, such as a sandbox capability started with a '
-                "desktop. This run's workspace has none."
+                "`ComputerUse` needs a workspace with a display, and this run's has none. Start a sandbox with "
+                'one, such as `DockerSandbox(desktop=True)`.'
             )
 
     async def before_tool_execute(
@@ -372,20 +479,19 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        """Refuse a model that can't see screenshots, and send only the most recent `keep_screenshots` of them."""
+        """Refuse a model that can't see screenshots, and send only as many as the settings and provider allow."""
         model = request_context.model
         if not _profile(model).get('supports_image_input', True):
             raise UserError(
                 f'`ComputerUse` needs a model that accepts images, and {model.model_name!r} does not: '
                 'every `computer` call returns a screenshot.'
             )
-        if self.keep_screenshots is not None:
-            request_context.messages = _drop_old_screenshots(request_context.messages, self.keep_screenshots)
+        request_context.messages = _drop_old_screenshots(request_context.messages, self.keep_screenshots)
         return request_context
 
 
-def _screenshots(messages: list[ModelMessage]) -> Iterator[tuple[int, int, int]]:
-    """Where each `computer` screenshot sits in the messages, oldest first: message, part and item index."""
+def _screenshots(messages: list[ModelMessage]) -> Iterator[tuple[int, int, int, int]]:
+    """Where each `computer` screenshot sits in the messages, oldest first: message, part and item index, and size."""
     for message_index, message in enumerate(messages):
         if not isinstance(message, ModelRequest):
             continue
@@ -394,19 +500,24 @@ def _screenshots(messages: list[ModelMessage]) -> Iterator[tuple[int, int, int]]
             if isinstance(part, ToolReturnPart) and part.tool_kind == COMPUTER_KIND.id and isinstance(content, list):
                 for item_index, item in enumerate(cast(list[Any], content)):
                     if isinstance(item, BinaryContent) and item.is_image:
-                        yield message_index, part_index, item_index
+                        yield message_index, part_index, item_index, len(item.data)
 
 
-def _drop_old_screenshots(messages: list[ModelMessage], keep: int) -> list[ModelMessage]:
-    """Replace the oldest screenshots with a note, `_DROP_BATCH` at a time, keeping at least the newest `keep`.
+def _drop_old_screenshots(messages: list[ModelMessage], keep: int | None) -> list[ModelMessage]:
+    """Replace the oldest screenshots with a note, `_DROP_BATCH` at a time.
 
-    The dropped ones only change once per batch, so the request's prefix, and the provider's prompt cache, stays the
-    same in between. Copies the messages that change.
+    Keeps at least the newest `keep`, and no more than the provider's request limits allow, but always the newest
+    one. The dropped ones only change once per batch, so the request's prefix, and the provider's prompt cache,
+    stays the same in between. Copies the messages that change.
     """
     found = list(_screenshots(messages))
-    drop = max(0, len(found) - keep) // _DROP_BATCH * _DROP_BATCH
+    drop = 0 if keep is None else max(0, len(found) - keep) // _DROP_BATCH * _DROP_BATCH
+    while drop < len(found) - 1 and (
+        len(found) - drop > _MAX_SCREENSHOTS or sum(size for *_, size in found[drop:]) > _MAX_SCREENSHOT_BYTES
+    ):
+        drop = min(drop + _DROP_BATCH, len(found) - 1)
     rebuilt = list(messages)
-    for message_index, part_index, item_index in found[:drop]:
+    for message_index, part_index, item_index, _ in found[:drop]:
         message = cast(ModelRequest, rebuilt[message_index])
         part = cast(ToolReturnPart, message.parts[part_index])
         items = list(cast(list[Any], part.content))

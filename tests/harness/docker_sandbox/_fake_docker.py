@@ -168,7 +168,7 @@ Also keeps a host's real Xvfb from starting.
 
 _FAKE_FLUXBOX = """#!/bin/sh
 """
-"""Stands in for the window manager, so a host's real one never starts."""
+"""Stands in for the window manager and the panel, so a host's real ones never start."""
 
 _FAKE_SETSID = """#!/bin/sh
 exec "$@"
@@ -252,6 +252,7 @@ def install_fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Fake
     for name, script in [
         ('Xvfb', _FAKE_XVFB),
         ('fluxbox', _FAKE_FLUXBOX),
+        ('tint2', _FAKE_FLUXBOX),
         ('setsid', _FAKE_SETSID),
         ('scrot', _FAKE_SCROT),
     ]:

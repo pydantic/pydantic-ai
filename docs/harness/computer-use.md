@@ -36,7 +36,9 @@ async def main():
     print(result.output)
 ```
 
-Each run leaves its container running; see [Clean up](docker-sandbox.md#clean-up).
+Each run leaves its container running; see [Clean up](docker-sandbox.md#clean-up). A run that fails, such as on a
+usage limit, returns no ref to clean up with: remove its desktop in an `on_run_error` hook, as shown for
+[E2B](e2b-sandbox.md#clean-up).
 
 For a desktop in a cloud sandbox instead, use [`DaytonaSandbox(desktop=True)`](daytona-sandbox.md#give-the-agent-a-desktop) or [`E2BSandbox(desktop=True)`](e2b-sandbox.md#give-the-agent-a-desktop).
 
@@ -63,23 +65,60 @@ tool.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `requires_approval` | `False` | `True` asks before any call that clicks or types; a set of action types, such as `{'type', 'keypress', 'hold_key'}`, asks only before those. Needs a [deferred tool handler](../deferred-tools.md#human-in-the-loop-tool-approval). Turn it on for anything you'd regret an agent clicking. |
-| `keep_screenshots` | `None` | Send only the most recent N screenshots (between N and N+24, so prompt caching keeps working); the run's history keeps all of them. Use it to bound long runs, but not on Claude Fable 5.1 or the Claude 5.5 models: dropping a screenshot makes Claude lose its earlier reasoning. |
+| `requires_approval` | `False` | `True` asks before any call that clicks or types. A set of action types asks only before those: `click`, `move`, `drag`, `mouse_down`, `mouse_up`, `scroll`, `type`, `keypress` and `hold_key`. Needs a [deferred tool handler](../deferred-tools.md#human-in-the-loop-tool-approval). Turn it on for anything you'd regret an agent clicking. |
+| `keep_screenshots` | `None` | Send at least the most recent N screenshots, dropping older ones 25 at a time so prompt caching keeps working; the run's history keeps all of them. Use it to bound the cost of long runs, but not on Claude Fable 5.1 or the Claude 5.5 models: dropping a screenshot makes Claude lose its earlier reasoning. With `None`, the oldest are still dropped once a request would carry more than 100 screenshots or about 15 MB of them, which providers refuse. |
 | `settle_seconds` | `0.5` | Pause after acting before the screenshot, so animations and page loads can finish. |
 
 A call its provider flags with safety checks, as OpenAI does, needs approval even with `requires_approval=False`.
 Give such an agent a deferred tool handler, such as [`HandleDeferredToolCalls`](../deferred-tools.md); without one,
-a flagged call ends the run with an error. The checks are on the call's `provider_details`.
+a flagged call ends the run with an error. The checks are in the call's `provider_details['safety_checks']`.
+
+The actions to approve are in the model's coordinates: pixels in the latest screenshot, or the 0-999 grid for Gemini 3.
+
+`ComputerUse` turns on [prompt caching](../capabilities/caching.md), since every request carries the screenshots so
+far: on Claude, a run costs several times more without it. Set `cache=False` in the model settings to turn it off.
+
+## Watching a run
+
+Every screenshot arrives as a tool result event, so an [event stream handler](../agent.md#streaming-all-events) can save
+or show each one as the run goes:
+
+```python {title="save_screenshots.py" test="skip" lint="skip"}
+from collections.abc import AsyncIterable
+from pathlib import Path
+
+from pydantic_ai import AgentStreamEvent, BinaryContent, FunctionToolResultEvent, RunContext
+
+
+async def save_screenshots(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in events:
+        if isinstance(event, FunctionToolResultEvent) and event.part.tool_name == 'computer':
+            for item in event.part.content_items():
+                if isinstance(item, BinaryContent):
+                    Path(f'step-{ctx.run_step}.png').write_bytes(item.data)
+
+
+async def main():
+    result = await agent.run('Open the text editor and write a haiku.', event_stream_handler=save_screenshots)
+```
 
 ## Limitations
 
 - A 1280x800 screenshot costs about 1,200 input tokens on GPT-5.5 and 1,340 on Claude Sonnet 5.5, and every later
-  request carries it again. With [prompt caching](../capabilities/caching.md) (Claude needs `Caching()`; OpenAI
-  caches on its own), screenshots already sent cost about a tenth of that.
+  request carries it again; with prompt caching, screenshots already sent cost about a tenth of that.
+- Each `computer` call is one model request, so a long task can reach the default
+  [`request_limit`](../agent.md#usage-limits) of 50. Pass higher [`UsageLimits`][pydantic_ai.usage.UsageLimits] for
+  long tasks.
 - Under [durable execution](../durable_execution/overview.md), a retried action may repeat a click that already
-  happened, and long runs can exceed Temporal's payload size limit, since every screenshot rides in each request.
-- Inside a [`FallbackModel`](../models/overview.md#fallback-model), Gemini 3 gets pixel coordinates and points less
-  accurately, so don't put it in a fallback with other models.
+  happened. Temporal and Prefect retry each action on its own; DBOS, Absurd and pgtask retry the whole call.
+- Every screenshot rides in each model request, so under Temporal a run passes the 2 MB payload limit after a few
+  steps: store large payloads outside the history with Temporal's
+  [external storage](../durable_execution/temporal.md#large-payloads), or set `keep_screenshots`.
+- With [instrumentation](../logfire.md#excluding-binary-content), every request's screenshots are recorded on its span; pass
+  `InstrumentationSettings(include_binary_content=False)` to leave them out.
+- Inside a [`FallbackModel`](../models/overview.md#fallback-model) with models that don't all point on Gemini 3's
+  grid, Gemini 3 gets pixel coordinates and points less accurately, so put it only in a fallback with other Gemini 3
+  models.
 
 ## API reference
 

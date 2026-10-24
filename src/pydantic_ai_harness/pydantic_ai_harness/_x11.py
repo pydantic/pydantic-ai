@@ -3,7 +3,9 @@
 from __future__ import annotations as _annotations
 
 import base64
+import itertools
 import re
+from collections.abc import Sequence
 from contextlib import suppress
 
 import anyio
@@ -26,6 +28,7 @@ from pydantic_ai.workspaces import (
     UnsupportedComputerActionError,
     WorkspaceError,
 )
+from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
 
 _BUTTONS: dict[str, str] = {'left': '1', 'middle': '2', 'right': '3', 'back': '8', 'forward': '9'}
 
@@ -128,6 +131,9 @@ _UNICODE_TYPE_DELAY_MS = '50'
 """Milliseconds between characters when the text has any outside ASCII: `xdotool` types those by remapping a key, and
 at its default delay of 12 ms the remapping races the keystrokes and drops characters (checked live)."""
 
+_SCROLL_TICK_DELAY_MS = '20'
+"""Milliseconds between scroll wheel clicks, instead of `xdotool`'s 100 ms between clicks."""
+
 _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
 
@@ -165,6 +171,31 @@ def _png(output: str) -> bytes:
     return data
 
 
+def _drag_moves(path: Sequence[Point]) -> list[str]:
+    """`xdotool` arguments that move along `path` from its first point, in short steps with pauses between them."""
+    return [arg for point in drag_steps(path) for arg in ['sleep', str(DRAG_STEP_PAUSE), *_move(point.x, point.y)]]
+
+
+def _typing(text: str) -> list[list[str]]:
+    """The `xdotool` commands that type `text`.
+
+    `xdotool type` gets two things wrong, so those are pressed as keys instead. It sends a newline as Linefeed, which
+    browsers ignore, so each one is pressed as Enter. A capital outside ASCII, such as `Å`, comes out in lowercase,
+    so each one is pressed with Shift (both checked live).
+    """
+    delay = [] if text.isascii() else ['--delay', _UNICODE_TYPE_DELAY_MS]
+    commands: list[list[str]] = []
+    for index, line in enumerate(text.split('\n')):
+        if index:
+            commands.append(['key', 'Return'])
+        for capitals, run in itertools.groupby(line, key=lambda c: not c.isascii() and c.isupper()):
+            if capitals:
+                commands.append(['key', *delay, *(f'shift+U{ord(c):04X}' for c in run)])
+            else:
+                commands.append(['type', *delay, '--', ''.join(run)])
+    return commands
+
+
 def _move(x: int | None, y: int | None) -> list[str]:
     return [] if x is None or y is None else ['mousemove', str(x), str(y)]
 
@@ -172,11 +203,16 @@ def _move(x: int | None, y: int | None) -> list[str]:
 DISPLAY = ':1'
 """The X display the desktop runs on, as `DISPLAY` names it."""
 
+_ENV = {'DISPLAY': DISPLAY, 'LC_ALL': 'C.UTF-8'}
+"""`xdotool type` reads its text in the locale's encoding, and stops at the first character outside ASCII under a
+POSIX locale, which is what an environment without one set, such as E2B's, has."""
 
-def start_x_server(log: str) -> str:
+
+def start_x_server(log: str, *, then: str = '') -> str:
     """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless one answers.
 
-    It gives up as soon as the X server exits, or after 10 seconds, with the end of `log` as the reason.
+    It gives up as soon as the X server exits, or after 10 seconds, with the end of `log` as the reason. `then` runs
+    once a new X server answers, such as to start a panel.
     """
     return (
         'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
@@ -184,7 +220,7 @@ def start_x_server(log: str) -> str:
         'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
         'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
         f"echo 'the X server did not start:' >&2; tail -n 5 {log} >&2; exit 1; fi; "
-        'sleep 0.1; i=$((i+1)); done; fi; '
+        f'sleep 0.1; i=$((i+1)); done; {then} fi; '
     )
 
 
@@ -199,9 +235,7 @@ class X11Computer:
         self._backend = backend
 
     async def _run(self, command: list[str] | str) -> CommandResult:
-        result = await self._backend.run(
-            command, shell=isinstance(command, str), env={'DISPLAY': DISPLAY}, timeout=_COMMAND_TIMEOUT
-        )
+        result = await self._backend.run(command, shell=isinstance(command, str), env=_ENV, timeout=_COMMAND_TIMEOUT)
         if result.exit_code != 0:
             raise WorkspaceError(
                 f'Display command failed with exit code {result.exit_code} on display {DISPLAY}: '
@@ -256,10 +290,10 @@ class X11Computer:
             case MoveMouse(x=x, y=y, modifiers=modifiers):
                 await self._xdotool(_move(x, y), hold=modifiers)
             case Drag(path=path, modifiers=modifiers):
-                start, *rest = path
-                steps = [arg for point in rest for arg in _move(point.x, point.y)]
+                start = path[0]
                 await self._xdotool(
-                    [*_move(start.x, start.y), 'mousedown', '1', *steps, 'mouseup', '1'],
+                    [*_move(start.x, start.y), 'mousedown', '1', 'sleep', str(DRAG_PRESS_PAUSE), *_drag_moves(path)]
+                    + ['sleep', str(DRAG_PRESS_PAUSE), 'mouseup', '1'],
                     hold=modifiers,
                     release=('mouseup', '1'),
                 )
@@ -269,10 +303,13 @@ class X11Computer:
                 await self._xdotool(['mouseup', _code(_BUTTONS, button)])
             case Scroll(x=x, y=y, direction=direction, amount=amount, modifiers=modifiers):
                 wheel = _code(_WHEEL_BUTTONS, direction)
-                await self._xdotool([*_move(x, y), 'click', '--repeat', str(amount), wheel], hold=modifiers)
+                await self._xdotool(
+                    [*_move(x, y), 'click', '--repeat', str(amount), '--delay', _SCROLL_TICK_DELAY_MS, wheel],
+                    hold=modifiers,
+                )
             case TypeText(text=text):
-                delay = [] if text.isascii() else ['--delay', _UNICODE_TYPE_DELAY_MS]
-                await self._xdotool(['type', *delay, '--', text])
+                for command in _typing(text):
+                    await self._xdotool(command)
             case PressKeys(keys=keys, repeat=repeat):
                 keysyms = [_keysym(key) for key in keys]
                 # A cancel can land between pressing and releasing, so let go of the keys then too.
