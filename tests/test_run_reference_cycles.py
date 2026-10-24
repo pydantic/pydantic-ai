@@ -100,7 +100,7 @@ async def test_stream_name_inference_releases_dependencies() -> None:
         yield 'done'
 
     # The agent is passed in a dict so the caller's frame never names it and every call infers again.
-    # Streaming from a nested frame keeps Python 3.11's snapshot of the caller's locals out of this one.
+    # Streaming from a nested frame keeps the pre-3.13 snapshot of the caller's locals out of this one.
     async def stream_output(agents: dict[str, Agent[Deps, str]], deps: Deps) -> str:
         async with agents['agent'].run_stream('hello', deps=deps) as result:
             return await result.get_output()
