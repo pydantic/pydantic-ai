@@ -120,8 +120,13 @@ _XDOTOOL_COMMANDS = frozenset(
 """xdotool's command names, from its newest source: xdotool reads one among key names, in any case, as the start of the
 next command, such as `exec`."""
 
-_COMMAND_TIMEOUT = 60
-"""Maximum time for one display command; the longest bounded action, typing 2,000 characters, takes about 25 s."""
+_COMMAND_TIMEOUT = 150
+"""Maximum time for one display command; the longest bounded action, typing 2,000 characters outside ASCII, takes
+about 100 s."""
+
+_UNICODE_TYPE_DELAY_MS = '50'
+"""Milliseconds between characters when the text has any outside ASCII: `xdotool` types those by remapping a key, and
+at its default delay of 12 ms the remapping races the keystrokes and drops characters (checked live)."""
 
 _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
@@ -172,7 +177,7 @@ class X11Computer:
     """Controls an X display with `xdotool` and captures it with `scrot`, through a backend's commands.
 
     The X server must already be running on `DISPLAY`. Needs `xdotool`, `scrot`, `base64`, and `mktemp` in the
-    environment. Text outside ASCII can lose characters: `xdotool` types it by remapping keys on the fly.
+    environment.
     """
 
     def __init__(self, backend: SupportsCommands):
@@ -251,7 +256,8 @@ class X11Computer:
                 wheel = _code(_WHEEL_BUTTONS, direction)
                 await self._xdotool([*_move(x, y), 'click', '--repeat', str(amount), wheel], hold=modifiers)
             case TypeText(text=text):
-                await self._xdotool(['type', '--', text])
+                delay = [] if text.isascii() else ['--delay', _UNICODE_TYPE_DELAY_MS]
+                await self._xdotool(['type', *delay, '--', text])
             case PressKeys(keys=keys, repeat=repeat):
                 keysyms = [_keysym(key) for key in keys]
                 # A cancel can land between pressing and releasing, so let go of the keys then too.

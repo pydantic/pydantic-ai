@@ -163,8 +163,8 @@ class TestLiveDockerDesktop(WorkspaceBackendSuite):
         await backend.run(['xdotool', 'search', '--sync', '--onlyvisible', '--class', 'xterm'], env={'DISPLAY': ':1'})
 
         await backend.act(Click(x=300, y=180))
-        await backend.act(TypeText(text='hello, desktop'))
+        await backend.act(TypeText(text='héllo, desktop 你好'))
         await backend.act(PressKeys(keys=('enter',)))
 
         typed = await backend.run('until [ -s typed.txt ]; do sleep 0.1; done; cat typed.txt', shell=True, timeout=30)
-        assert typed.stdout == 'hello, desktop\n'
+        assert typed.stdout == 'héllo, desktop 你好\n'
