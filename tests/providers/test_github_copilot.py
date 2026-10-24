@@ -14,7 +14,7 @@ import pytest
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 
 from .._inline_snapshot import snapshot
 from ..conftest import TestEnv, try_import
@@ -270,3 +270,12 @@ def test_github_copilot_provider_strips_copilot_namespace_for_profile_lookup():
     assert GitHubCopilotProvider.model_profile('copilot/claude-haiku-4.5') == GitHubCopilotProvider.model_profile(
         'claude-haiku-4.5'
     )
+
+
+@pytest.mark.parametrize('model_name', ['o3', 'gpt-5-mini'])
+def test_github_copilot_forwards_openai_efforts_unchanged(model_name: str):
+    """Copilot enforces its own per-id effort lists, so the OpenAI family's accepted efforts aren't applied."""
+    profile = GitHubCopilotProvider.model_profile(model_name)
+    assert profile is not None
+    assert 'openai_reasoning_efforts' not in profile
+    assert openai_model_profile(model_name).get('openai_reasoning_efforts') is not None

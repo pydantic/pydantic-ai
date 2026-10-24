@@ -1,6 +1,12 @@
 {
   "allowed_breakages": [
     {
+      "against": "v2.60.0",
+      "fingerprint": "5e8f426984cff27ac6dac898c912c13ff573d3ebcfaf224ba731c237d3aae4ee",
+      "reason": "Adds `kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed` to `MoonshotAIModelName`; every existing model name is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11173"
+    },
+    {
       "against": "v2.59.0",
       "fingerprint": "ca884de6c28ed4e97d48cd6c522936a934a38a929e25cb3440f903884b53d9c8",
       "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `inputs=inputs`.",
@@ -134,9 +140,27 @@
     },
     {
       "against": "v2.60.0",
+      "fingerprint": "3117872a15e16323c8d117fb57d59843d9195ea9f31f6b270f64af0b2d5e03bc",
+      "reason": "Not a compatibility impact: `HTTPX2TenacityTransport.wrapped` keeps its type, and an explicit `wrapped=` is used as before. Only the default inner transport changes, to one with Pydantic AI's connection pool limits (1000 connections, 100 kept alive) instead of HTTPX's 100/20, matching the clients Pydantic AI creates.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11073"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "878d18e715555e8aae2c8745ea2d1598677ce8dae6383cdc6622dfd0beb52245",
+      "reason": "Not a compatibility impact: `AsyncHTTPX2TenacityTransport.wrapped` keeps its type, and an explicit `wrapped=` is used as before. Only the default inner transport changes, to one with Pydantic AI's connection pool limits (1000 connections, 100 kept alive) instead of HTTPX's 100/20, matching the clients Pydantic AI creates.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11073"
+    },
+    {
+      "against": "v2.60.0",
       "fingerprint": "e3cbeaca4cd1a6c06b48a95afcd22e314cd2699e757a3c2b395dd659020b40ae",
       "reason": "The `iban` pattern in the harness `DEFAULT_PII_PATTERNS` gains a `(?=[A-Za-z]{2}\\d{2})` lookahead ahead of its country-code alternation; it matches exactly the same text and only skips the alternation at positions that cannot start an IBAN.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10841"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "714f89e677ce258adda7ed9d8c9e80cf31ae1b2d52102ee76531d3e8e3c6041b",
+      "reason": "False positive: `TemporalDurability.engine_spec` is the same `DurabilityEngineSpec` value, now defined once as the module constant `TEMPORAL_ENGINE_SPEC` so the run context can word its errors; Griffe compares the expression text.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11088"
     }
   ]
 }

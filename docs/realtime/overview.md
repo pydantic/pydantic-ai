@@ -206,11 +206,13 @@ setting: a [`tool_choice`][pydantic_ai.realtime.RealtimeModelSettings.tool_choic
 call raises on most providers, and GPT-Live raises for `max_tokens` while xAI ignores it. The provider
 pages list each provider's cases. One applies everywhere:
 
-!!! note "Asking for text on a speech-only model fails fast"
+!!! note "Asking for a modality the model can't produce fails fast"
     `output_modality='text'` on a model whose profile reports `supports_text_output=False`
-    (GPT-Live, Gemini Live other than Vertex `gemini-live-2.5-flash`, xAI, and Eleven Realtime)
-    raises a `UserError` before connecting: silently answering with speech would be worse than not
-    starting.
+    (GPT-Live, Gemini Live other than Vertex `gemini-live-2.5-flash` and the robotics streaming models,
+    xAI, and Eleven Realtime) raises a `UserError` before connecting: silently answering with speech
+    would be worse than not starting. A text-only model (`supports_audio_output=False`, like Gemini's
+    robotics streaming models) defaults to `output_modality='text'` instead, and raises for an explicit
+    `'audio'`.
 
 ## Relationship to standard agent runs
 

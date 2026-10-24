@@ -19,6 +19,12 @@ PACKAGES = {
     'pydantic_ai_harness': 'src/pydantic_ai_harness',
     'pydantic_clai2': 'src/pydantic_clai2',
 }
+# The `clai2` web UI and the `workspaces` plugin behind it are application code, not an SDK for others to build on,
+# so their changes need no compatibility waiver. Each excludes every module in the package.
+EXCLUDED_PACKAGES = (
+    'pydantic_clai2.builtin_plugins.web',
+    'pydantic_clai2.builtin_plugins.workspaces',
+)
 # Run from its own tool environment: `griffe` 1.x, which `prefect` accepts, installs over `griffelib`'s `griffe`
 # module, and `griffecli` crashes against it. A bump can reword findings, which changes their fingerprints.
 GRIFFECLI_VERSION = '2.3.0'
@@ -70,6 +76,8 @@ def main() -> None:
     for package, search_path in PACKAGES.items():
         findings = run_griffe(package, search_path, args.against)
         for finding in findings:
+            if is_excluded(finding, search_path):
+                continue
             waiver_key = (args.against, finding.fingerprint)
             waiver = waivers.get(waiver_key)
             if waiver is None:
@@ -95,6 +103,12 @@ def main() -> None:
 
     if failed:
         raise SystemExit(1)
+
+
+def is_excluded(finding: Finding, search_path: str) -> bool:
+    """Whether the finding is in a file of one of `EXCLUDED_PACKAGES` under `search_path`."""
+    path = Path(finding.path)
+    return any(path.is_relative_to(Path(search_path, *package.split('.'))) for package in EXCLUDED_PACKAGES)
 
 
 def load_waivers(path: Path) -> dict[tuple[str, str], Waiver]:

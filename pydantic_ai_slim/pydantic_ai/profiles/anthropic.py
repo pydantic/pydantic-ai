@@ -116,8 +116,16 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """Whether the model rejects `xhigh`/`max` effort while thinking is explicitly disabled. Default: `False`.
 
     Claude Opus 5 and Haiku 5.5 cap effort at `high` when `anthropic_thinking={'type': 'disabled'}` and return a
-    400 for `xhigh` or `max`; Claude Opus 4.8 accepts the same combination. Claude Opus 5.5 rejects
-    disabled thinking at every effort level, so the flag doesn't apply to it.
+    400 for `xhigh` or `max`, as does Claude Sonnet 5.5 with `{'type': 'between_tools'}`; Claude Opus 4.8 accepts the
+    same combination. Claude Opus 5.5 can't disable thinking at any effort level, so the flag doesn't apply to it.
+    """
+
+    anthropic_disables_thinking_with_between_tools: bool
+    """Whether `thinking=False` sends `{'type': 'between_tools'}` rather than `{'type': 'disabled'}`. Default: `False`.
+
+    Claude Sonnet 5.5 rejects `{'type': 'disabled'}` and turns thinking off with `{'type': 'between_tools'}` instead:
+    the model doesn't think before responding, and the short updates it writes between tool calls come back as
+    thinking blocks.
     """
 
     anthropic_default_code_execution_tool_version: AnthropicCodeExecutionToolVersion
@@ -308,11 +316,11 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-haiku-5-5',
         )
     )
-    # Opus 5 and Haiku 5.5 cap effort at `high` while thinking is disabled; Opus 4.8 and earlier accept every level.
-    # Opus 5.5 rejects disabled thinking outright, so the effort-specific error would mislead.
+    # Opus 5, Sonnet 5.5, and Haiku 5.5 cap effort at `high` while thinking is disabled; Opus 4.8 and earlier accept
+    # every level. Opus 5.5 rejects disabled thinking outright, so the effort-specific error would mislead.
     disallows_top_effort_when_thinking_disabled = (
         model_name.startswith('claude-opus-5') and not model_name.startswith('claude-opus-5-5')
-    ) or model_name.startswith('claude-haiku-5-5')
+    ) or model_name.startswith(('claude-sonnet-5-5', 'claude-haiku-5-5'))
     default_code_execution_tool_version, supported_code_execution_tool_versions = _code_execution_tool_versions(
         model_name
     )
@@ -384,11 +392,14 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-haiku-5-5',
         )
     )
-    # Of those, all but Opus 5, Sonnet 5, and Haiku 5.5 reject `thinking={'type': 'disabled'}` with a 400, so thinking
-    # can't be turned off.
+    # Of those, Fable, Mythos, and Opus 5.5 reject both `thinking={'type': 'disabled'}` and `{'type': 'between_tools'}`
+    # with a 400, so thinking can't be turned off.
     thinking_always_enabled = model_name.startswith(
-        ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview', 'claude-opus-5-5', 'claude-sonnet-5-5')
+        ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview', 'claude-opus-5-5')
     )
+    # Sonnet 5.5 rejects `{'type': 'disabled'}` with a 400 that names `{'type': 'between_tools'}` as the way to turn
+    # thinking off, and accepts it live on the Anthropic API and Bedrock.
+    disables_thinking_with_between_tools = model_name.startswith('claude-sonnet-5-5')
 
     # The 5.1 generation, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` (`any`/`tool`) outright, unlike
     # other Anthropic models which only reject forcing alongside extended thinking. Anthropic's
@@ -496,6 +507,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_disallows_budget_thinking=disallows_budget_thinking,
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
         anthropic_disallows_top_effort_when_thinking_disabled=disallows_top_effort_when_thinking_disabled,
+        anthropic_disables_thinking_with_between_tools=disables_thinking_with_between_tools,
         anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,
