@@ -153,6 +153,26 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         raise NotImplementedError()
 
     @property
+    def _explicit_id(self) -> str | None:
+        """The [`id`][pydantic_ai.toolsets.AbstractToolset.id] if one was chosen for this toolset, rather than derived.
+
+        A toolset can derive its `id`, as an `MCPToolset` without one does from its server's hostname.
+        Durable execution only names activities and steps after an explicit one, and two toolsets that
+        derive the same `id` don't collide where one they were given would.
+        """
+        return self.id
+
+    @property
+    def _appends_instructions_by_default(self) -> bool:
+        """Whether the `on_change='append'` of this toolset's instructions is the framework's choice, not its author's.
+
+        Where appending isn't supported, such as in a realtime session or a deferred capability, the
+        blocks keyed under such a toolset's own `id` then fall back to rewriting without the warning an
+        author's own opt-in gets.
+        """
+        return False
+
+    @property
     def label(self) -> str:
         """The name of the toolset for use in error messages."""
         label = self.__class__.__name__

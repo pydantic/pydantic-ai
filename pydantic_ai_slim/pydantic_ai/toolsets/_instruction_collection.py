@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Generic
 
@@ -46,6 +47,18 @@ def make_contribution(
     return InstructionContribution(source=source, source_id=source_id, parts=(resolved_part,))
 
 
+def framework_appended_toolset_sources(toolset: AbstractToolset[AgentDepsT]) -> set[ToolsetInstructionSource]:
+    """The instruction sources of the toolsets under `toolset` whose blocks append by the framework's choice."""
+    sources: set[ToolsetInstructionSource] = set()
+
+    def visit(leaf: AbstractToolset[AgentDepsT]) -> None:
+        if leaf._appends_instructions_by_default and leaf.id is not None:  # pyright: ignore[reportPrivateUsage]
+            sources.add(ToolsetInstructionSource(leaf.id))
+
+    toolset.apply(visit)
+    return sources
+
+
 async def collect_toolset_instructions(
     toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
 ) -> list[InstructionPart]:
@@ -57,21 +70,59 @@ async def collect_toolset_instructions(
 def flatten_instruction_contributions(
     contributions: list[InstructionContribution[AgentDepsT]],
 ) -> list[InstructionPart]:
-    """Flatten collected contributions, rejecting two sources that would claim one key.
+    """Flatten collected contributions, rejecting two sources that would claim one key by `id`s they were given.
+
+    A toolset whose `id` is derived, as an `MCPToolset` without one takes its server's hostname,
+    doesn't collide: when another source shares its key, its parts go out unkeyed and rewriting, as
+    they did before the `id` was derived, with one warning suggesting a distinct `id`.
 
     Separate from the collection itself so a toolset that has already gathered its children can
     apply the rule without re-entering the walk that produced them.
     """
-    owners: dict[ToolsetInstructionSource, AbstractToolset[AgentDepsT]] = {}
+    explicit_owners: dict[ToolsetInstructionSource, AbstractToolset[AgentDepsT]] = {}
+    sources_by_key: dict[ToolsetInstructionSource, set[int]] = {}
+    for contribution in contributions:
+        if (source_id := contribution.source_id) is None:
+            continue
+        sources_by_key.setdefault(source_id, set()).add(id(contribution.source))
+        if _has_derived_id(contribution.source):
+            continue
+        if explicit_owners.setdefault(source_id, contribution.source) is not contribution.source:
+            raise UserError(
+                f'Two toolsets have the same `id` {source_id.id!r} and both contribute '
+                f'instructions, so {str(source_id)!r} would address parts from each. '
+                'Toolset `id`s must be unique among all toolsets registered with the same agent.'
+            )
     parts: list[InstructionPart] = []
     for contribution in contributions:
-        if contribution.source_id is not None:
-            source_id = contribution.source_id
-            if owners.setdefault(source_id, contribution.source) is not contribution.source:
-                raise UserError(
-                    f'Two toolsets have the same `id` {source_id.id!r} and both contribute '
-                    f'instructions, so {str(source_id)!r} would address parts from each. '
-                    'Toolset `id`s must be unique among all toolsets registered with the same agent.'
-                )
-        parts.extend(contribution.parts)
+        source_id = contribution.source_id
+        if source_id is None or len(sources_by_key[source_id]) == 1 or not _has_derived_id(contribution.source):
+            parts.extend(contribution.parts)
+            continue
+        _warn_derived_id_collision(source_id)
+        # Rewriting, an empty block says nothing, so it's dropped like any other empty rewrite-mode part.
+        parts.extend(replace(part, id=None, on_change='rewrite') for part in contribution.parts if part.content.strip())
     return parts
+
+
+def _has_derived_id(toolset: AbstractToolset[AgentDepsT]) -> bool:
+    """Whether the toolset's `id` is one it derived, such as an `MCPToolset`'s server host, rather than one it was given."""
+    return toolset.id is not None and toolset._explicit_id is None  # pyright: ignore[reportPrivateUsage]
+
+
+_warned_derived_id_collisions: set[str] = set()
+"""The keys a derived-`id` collision was already reported for, so it's reported once rather than on every request."""
+
+
+def _warn_derived_id_collision(source_id: ToolsetInstructionSource) -> None:
+    key = str(source_id)
+    if key in _warned_derived_id_collisions:
+        return
+    _warned_derived_id_collisions.add(key)
+    warnings.warn(
+        f'Toolsets for more than one MCP server derive the `id` {source_id.id!r} from their server URL, so '
+        "the instructions of those without an explicit `id` aren't keyed, and a change to them rewrites the "
+        'instruction prefix instead of being appended. Pass a distinct `id=` to each `MCPToolset` to append them.',
+        UserWarning,
+        stacklevel=2,
+    )
