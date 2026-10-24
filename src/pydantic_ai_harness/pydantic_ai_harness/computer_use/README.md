@@ -105,6 +105,12 @@ async def main():
   [`request_limit`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) of 50. Pass higher [`UsageLimits`](https://pydantic.dev/docs/ai/api/pydantic-ai/usage/#pydantic_ai.usage.UsageLimits) for
   long tasks.
 - Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), a retried action may repeat a click that already
-  happened, and long runs can exceed Temporal's payload size limit, since every screenshot rides in each request.
-- Inside a [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model), Gemini 3 gets pixel coordinates and points less
-  accurately, so don't put it in a fallback with other models.
+  happened. Temporal and Prefect retry each action on its own; DBOS, Absurd and pgtask retry the whole call.
+- Every screenshot rides in each model request, so under Temporal a run passes the 2 MB payload limit after a few
+  steps: store large payloads outside the history with Temporal's
+  [external storage](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads), or set `keep_screenshots`.
+- With [instrumentation](https://pydantic.dev/docs/ai/integrations/logfire/#excluding-binary-content), every request's screenshots are recorded on its span; pass
+  `InstrumentationSettings(include_binary_content=False)` to leave them out.
+- Inside a [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model) with models that don't all point on Gemini 3's
+  grid, Gemini 3 gets pixel coordinates and points less accurately, so put it only in a fallback with other Gemini 3
+  models.
