@@ -75,6 +75,9 @@ _OUTPUT_LIMIT_MESSAGE = (
     'Daytona command output exceeded the 10 MiB limit; redirect it to a file and read part of it instead'
 )
 _REQUEST_TIMEOUT = 30
+
+_VNC_PORT = 6080
+"""Where the desktop's noVNC viewer listens, once `computer_use.start()` has started it."""
 # Bound sandbox creation and attachment so a wedged control plane cannot hang acquisition.
 _CREATE_TIMEOUT = 120
 # For create, start, and delete.
@@ -884,6 +887,19 @@ class DaytonaSandboxBackend(
     async def cursor_position(self) -> Point:
         async with self._display() as desktop:
             return await desktop.cursor_position()
+
+    async def live_view_url(self, *, expires_in: int = 3600) -> str:
+        """A link to watch the desktop, and use it, in a browser, valid for `expires_in` seconds.
+
+        Anyone with the link can see and use the desktop until it expires.
+        """
+        async with self._display():
+            sandbox = await self.get_sandbox()
+            async with _mapped_errors('Could not create a live view link', sandbox=sandbox):
+                signed = await sandbox.create_signed_preview_url(
+                    _VNC_PORT, expires_in_seconds=expires_in, request_timeout=_REQUEST_TIMEOUT
+                )
+        return f'{signed.url.rstrip("/")}/vnc.html?autoconnect=true&resize=scale'
 
 
 def _check_path(path: str) -> None:

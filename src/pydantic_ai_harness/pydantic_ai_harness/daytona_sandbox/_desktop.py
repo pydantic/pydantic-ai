@@ -10,7 +10,7 @@ on the sandbox's display. Re-check these before changing the mapping, by running
 - `mouse.scroll`'s amount is wheel clicks, and `left`/`right` send X buttons 6 and 7.
 - Modifiers given to `click`, `scroll` and `press` are held around the event; `cmd` is `Super_L`.
 - `keyboard.down` and `keyboard.up` take letters and named keys, not only modifiers.
-- `keyboard.type` types any Unicode text.
+- `keyboard.type` types Unicode text up to U+FFFF, newlines as Enter; it drops emoji and anything else beyond.
 - `keyboard.press` refuses a shifted symbol such as `!`, and an X keysym name such as `KP_Enter`.
 - Pressing `f13` to `f24` crashes the sandbox's computer-use process for good: nothing restarts it.
 """
@@ -41,6 +41,7 @@ from pydantic_ai.workspaces import (
     UnsupportedComputerActionError,
     WorkspaceError,
 )
+from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
 
 if TYPE_CHECKING:
     from daytona import AsyncComputerUse
@@ -183,12 +184,15 @@ class DaytonaDesktop:
                 async with self._holding(_keys(modifiers)):
                     await mouse.move(x, y, request_timeout=_REQUEST_TIMEOUT)
             case Drag(path=path, modifiers=modifiers):
-                (start, *between, end), held = path, _keys(modifiers)
+                start, end, held = path[0], path[-1], _keys(modifiers)
                 async with self._holding(held):
                     try:
                         await mouse.down(start.x, start.y, request_timeout=_REQUEST_TIMEOUT)
-                        for point in between:
+                        await anyio.sleep(DRAG_PRESS_PAUSE)
+                        for point in drag_steps(path):
+                            await anyio.sleep(DRAG_STEP_PAUSE)
                             await mouse.move(point.x, point.y, request_timeout=_REQUEST_TIMEOUT)
+                        await anyio.sleep(DRAG_PRESS_PAUSE)
                         await mouse.up(end.x, end.y, request_timeout=_REQUEST_TIMEOUT)
                     except BaseException:
                         with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
@@ -203,6 +207,10 @@ class DaytonaDesktop:
                 x, y = await self._at(x, y)
                 await mouse.scroll(x, y, direction, amount, modifiers=held, request_timeout=_REQUEST_TIMEOUT)
             case TypeText(text=text):
+                if any(ord(character) > 0xFFFF for character in text):
+                    raise UnsupportedComputerActionError(
+                        "Daytona's desktop cannot type emoji or other characters beyond U+FFFF."
+                    )
                 await keyboard.type(text, request_timeout=_TYPE_TIMEOUT)
             case PressKeys(keys=keys, repeat=repeat):
                 names = _keys(keys)
