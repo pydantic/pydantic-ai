@@ -208,7 +208,7 @@ def _check_sub_agents(merged: Any) -> None:
 
 def _check_computer_use(merged: ComputerUse[Any]) -> None:
     # The later settings win, but approval and the screenshot limit, which restrict, survive; the tool runs with them.
-    assert (merged.require_approval, merged.settle_seconds, merged.keep_screenshots) == (True, 0, 2)
+    assert (merged.requires_approval, merged.settle_seconds, merged.keep_screenshots) == (True, 0, 2)
     assert merged.get_toolset().tools['computer'].function == merged._computer  # pyright: ignore[reportPrivateUsage]
 
 
@@ -261,7 +261,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'ComputerUse': Combines(
         'an agent has one display: the later configuration wins, but approval and the screenshot limit survive',
         lambda: (
-            ComputerUse[Any](require_approval=True, keep_screenshots=2),
+            ComputerUse[Any](requires_approval=True, keep_screenshots=2),
             ComputerUse[Any](settle_seconds=0, keep_screenshots=5),
         ),
         _check_computer_use,
