@@ -101,8 +101,8 @@ class BlockingCommands(ScriptedCommands):
         ),
         (Scroll(direction='up', amount=2), ['xdotool', 'click', '--repeat', '2', '--delay', '20', '4']),
         (TypeText(text='-n "hi"'), ['xdotool', 'type', '--', '-n "hi"']),
-        # Characters outside ASCII are typed slowly enough for xdotool's key remapping to keep up.
-        (TypeText(text='héllo'), ['xdotool', 'type', '--delay', '50', '--', 'héllo']),
+        # Characters outside ASCII are pressed by name, slowly enough for xdotool's key remapping to keep up.
+        (TypeText(text='日本'), ['xdotool', 'key', '--delay', '50', 'U65E5', 'U672C']),
         (PressKeys(keys=('ctrl', 's'), repeat=3), ['xdotool', 'key', '--repeat', '3', '--', 'ctrl+s']),
         (PressKeys(keys=('PageDown', 'F5', 'ArrowUp')), ['xdotool', 'key', '--repeat', '1', '--', 'Next+F5+Up']),
         (PressKeys(keys=('shift', 'XF86AudioMute')), ['xdotool', 'key', '--repeat', '1', '--', 'shift+XF86AudioMute']),
@@ -125,13 +125,16 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: Computer
             id='a-newline-is-enter',
         ),
         pytest.param(
-            'Zoë ÅÉ x',
+            'Zoë Å 😀',
             [
-                ['type', '--delay', '50', '--', 'Zoë '],
-                ['key', '--delay', '50', 'shift+U00C5', 'shift+U00C9'],
-                ['type', '--delay', '50', '--', ' x'],
+                ['type', '--', 'Zo'],
+                ['key', '--delay', '50', 'U00EB'],
+                ['type', '--', ' '],
+                ['key', '--delay', '50', 'shift+U00C5'],
+                ['type', '--', ' '],
+                ['key', '--delay', '50', 'U1F600'],
             ],
-            id='a-capital-outside-ascii-is-pressed-with-shift',
+            id='outside-ascii-is-pressed-by-name-and-capitals-with-shift',
         ),
     ],
 )
