@@ -46,6 +46,8 @@ HISTORY: list[ModelMessage] = [
     ModelResponse(
         parts=[
             ThinkingPart(content='The tool says sunny.'),
+            # Encrypted reasoning from another provider has no content to send.
+            ThinkingPart(content='', signature='encrypted', provider_name='openai'),
             ThinkingPart(content='Keep it short.'),
             TextPart(content='It is sunny in Paris.'),
         ]
@@ -102,6 +104,10 @@ I should look up the weather.
                 'content': """\
 <think>
 The tool says sunny.
+</think>
+
+<think>
+
 </think>
 
 <think>
