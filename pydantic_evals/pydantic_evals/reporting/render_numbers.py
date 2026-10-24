@@ -110,6 +110,10 @@ def default_render_duration(seconds: float) -> str:
     If it's less than one second, show milliseconds.
     Otherwise, show seconds.
     """
+    # Non-finite durations render as their `str()` form, mirroring
+    # `default_render_number` (otherwise `_render_duration` would yield e.g. 'infs').
+    if not math.isfinite(seconds):
+        return str(seconds)
     return _render_duration(seconds, False)
 
 
@@ -118,7 +122,12 @@ def default_render_duration_diff(old: float, new: float) -> str | None:
     if old == new:
         return None
 
-    abs_diff_str = _render_duration(new - old, True)
+    delta = new - old
+    # A non-finite difference has no meaningful absolute or relative form; the
+    # `old → new` values already show it. Mirrors `default_render_number_diff`.
+    if not math.isfinite(delta):
+        return None
+    abs_diff_str = _render_duration(delta, True)
     rel_diff_str = _render_relative(new, old, BASE_THRESHOLD)
     if rel_diff_str is None:
         return abs_diff_str
