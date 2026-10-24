@@ -25,6 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal, NotRequired, assert_never
 
+import pydantic
 from typing_extensions import TypedDict
 
 from . import messages as _messages
@@ -68,6 +69,7 @@ class ToolSearchMatch(TypedDict):
     """
 
 
+@pydantic.with_config(extra='allow')
 class ToolSearchArgs(TypedDict):
     """Typed arguments for a tool-search call.
 
@@ -80,8 +82,6 @@ class ToolSearchArgs(TypedDict):
     wire format from this shape on emit.
     """
 
-    __pydantic_config__ = pydantic.ConfigDict(extra='allow')
-
     queries: list[str]
     """Normalized search inputs.
 
@@ -92,6 +92,7 @@ class ToolSearchArgs(TypedDict):
     """
 
 
+@pydantic.with_config(extra='allow')
 class ToolSearchReturnContent(TypedDict):
     """Typed return value of the framework-managed tool-search builtin.
 
@@ -101,8 +102,6 @@ class ToolSearchReturnContent(TypedDict):
     [`ToolSearchReturnPart.content`][pydantic_ai.messages.ToolSearchReturnPart.content]
     (local-fallback path) as the canonical cross-provider shape.
     """
-
-    __pydantic_config__ = pydantic.ConfigDict(extra='allow')
 
     discovered_tools: list[ToolSearchMatch]
     """Matches ordered by relevance. An empty list means "search ran, nothing matched"."""

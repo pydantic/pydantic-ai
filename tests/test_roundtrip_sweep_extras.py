@@ -1,151 +1,160 @@
-"""Round-trip fidelity for extra keys on typed tool-kind parts.
-
-`ModelMessagesTypeAdapter` is the documented boundary for persisting and reloading
-message history, so unknown keys in the `args`/`content` of typed tool-kind parts
-must survive a dump/validate round trip instead of being silently stripped.
-"""
+"""Preserve typed tool payloads at the public JSON history boundary."""
 
 from __future__ import annotations
 
 import pytest
+from inline_snapshot import snapshot
+from pydantic import TypeAdapter, ValidationError
 
-from pydantic_ai import Agent, FunctionToolset, ModelMessagesTypeAdapter, ToolCallPart
-from pydantic_ai._deferred_capabilities import LoadCapabilityCallPart
-from pydantic_ai._tool_search import (
+from pydantic_ai import Agent, FunctionToolset, ModelMessagesTypeAdapter, RunContext, _utils
+from pydantic_ai._deferred_capabilities import (
+    LoadCapabilityArgs,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturn,
+    LoadCapabilityReturnPart,
+)
+from pydantic_ai._tool_search import ToolSearchArgs, ToolSearchReturnContent
+from pydantic_ai.capabilities import Capability, Hooks, ToolSearch
+from pydantic_ai.capabilities.abstract import ValidatedToolArgs
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
 )
-from pydantic_ai.capabilities import ToolSearch
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.tools import ToolDefinition
 
 
 @pytest.mark.parametrize(
-    ('build_msgs', 'part_index'),
+    ('message', 'part_type'),
     [
-        # 1. NativeToolSearchCallPart.args extras
-        (
-            lambda: [
-                ModelRequest(parts=[]),
-                ModelResponse(
-                    parts=[
-                        NativeToolSearchCallPart(
-                            tool_name='tool_search',
-                            tool_call_id='c1',
-                            args={'queries': ['x'], 'extra': 'KEEP_ME'},
-                        )
-                    ]
-                ),
-            ],
-            (1, 0),
+        pytest.param(
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(
+                        tool_name='tool_search', tool_kind='tool-search', args={'queries': ['x'], 'extra': 'KEEP_ME'}
+                    )
+                ]
+            ),
+            NativeToolSearchCallPart,
+            id='native-search-call',
         ),
-        # 2. NativeToolSearchReturnPart.content extras
-        (
-            lambda: [
-                ModelResponse(
-                    parts=[
-                        NativeToolSearchReturnPart(
-                            tool_name='tool_search',
-                            tool_call_id='c2',
-                            content={'discovered_tools': [{'name': 't1'}], 'extra': 'KEEP_ME'},
-                        )
-                    ]
-                ),
-            ],
-            (0, 0),
+        pytest.param(
+            ModelResponse(
+                parts=[
+                    NativeToolReturnPart(
+                        tool_name='tool_search',
+                        tool_kind='tool-search',
+                        content={'discovered_tools': [{'name': 't1'}], 'extra': 'KEEP_ME'},
+                    )
+                ]
+            ),
+            NativeToolSearchReturnPart,
+            id='native-search-return',
         ),
-        # 3. ToolSearchCallPart.args extras
-        (
-            lambda: [
-                ModelResponse(
-                    parts=[
-                        ToolSearchCallPart(
-                            tool_name='search_tools',
-                            tool_call_id='c3',
-                            args={'queries': ['x'], 'extra': 'KEEP_ME'},
-                        )
-                    ]
-                ),
-            ],
-            (0, 0),
+        pytest.param(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='search_tools', tool_kind='tool-search', args={'queries': ['x'], 'extra': 'KEEP_ME'}
+                    )
+                ]
+            ),
+            ToolSearchCallPart,
+            id='local-search-call',
         ),
-        # 4. ToolSearchReturnPart.content extras
-        (
-            lambda: [
-                ModelRequest(
-                    parts=[
-                        ToolSearchReturnPart(
-                            tool_name='search_tools',
-                            tool_call_id='c4',
-                            content={'discovered_tools': [{'name': 't1'}], 'extra': 'KEEP_ME'},
-                        )
-                    ]
-                ),
-            ],
-            (0, 0),
+        pytest.param(
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='search_tools',
+                        tool_kind='tool-search',
+                        content={'discovered_tools': [{'name': 't1'}], 'message': 'found', 'extra': 'KEEP_ME'},
+                    )
+                ]
+            ),
+            ToolSearchReturnPart,
+            id='local-search-return',
         ),
-        # 5. LoadCapabilityCallPart.args extras (return side is #7805)
-        (
-            lambda: [
-                ModelRequest(parts=[]),
-                ModelResponse(
-                    parts=[
-                        LoadCapabilityCallPart(
-                            tool_name='load_capability',
-                            tool_call_id='L1',
-                            args={'id': 'cap1', 'extra': 'KEEP_ME'},
-                        )
-                    ]
-                ),
-            ],
-            (1, 0),
+        pytest.param(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='load_capability',
+                        tool_kind='capability-load',
+                        args={'id': 'sample', 'extra': 'KEEP_ME'},
+                    )
+                ]
+            ),
+            LoadCapabilityCallPart,
+            id='capability-call',
         ),
-    ],
-    ids=[
-        'native_tool_search_call_args',
-        'native_tool_search_return_content',
-        'tool_search_call_args',
-        'tool_search_return_content',
-        'load_capability_call_args',
+        pytest.param(
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='load_capability',
+                        tool_kind='capability-load',
+                        content={'instructions': 'Do x', 'version': 2, 'extra': 'KEEP_ME'},
+                    )
+                ]
+            ),
+            LoadCapabilityReturnPart,
+            id='capability-return',
+        ),
     ],
 )
-def test_typed_tool_kind_round_trip_preserves_extras(build_msgs, part_index):
-    """Extra `args`/`content` keys survive a `ModelMessagesTypeAdapter` round trip (#7929)."""
-    msgs = build_msgs()
-    back = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(msgs))
-    msg_idx, part_idx = part_index
-    original_part = msgs[msg_idx].parts[part_idx]
-    round_tripped_part = back[msg_idx].parts[part_idx]
-    assert isinstance(round_tripped_part, type(original_part))
-    assert round_tripped_part.tool_kind == original_part.tool_kind
-    if hasattr(original_part, 'args') and isinstance(original_part.args, dict):
-        assert round_tripped_part.args == original_part.args, (
-            f'args extras lost: in={original_part.args!r} out={round_tripped_part.args!r}'
-        )
-    if hasattr(original_part, 'content') and isinstance(original_part.content, dict):
-        assert round_tripped_part.content == original_part.content, (
-            f'content extras lost: in={original_part.content!r} out={round_tripped_part.content!r}'
-        )
+def test_typed_tool_kind_round_trip_preserves_extras(message: ModelMessage, part_type: type[object]) -> None:
+    """Serialization fidelity is independent of which provider produced the history."""
+    assert isinstance(message.parts[0], part_type)
+    restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([message]))
+    assert isinstance(restored[0].parts[0], part_type)
+    assert restored == [message]
 
 
-@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ('payload_type', 'payload'),
+    [
+        (ToolSearchArgs, {'extra': 'KEEP_ME'}),
+        (ToolSearchArgs, {'queries': 1, 'extra': 'KEEP_ME'}),
+        (ToolSearchReturnContent, {'extra': 'KEEP_ME'}),
+        (ToolSearchReturnContent, {'discovered_tools': 'invalid', 'extra': 'KEEP_ME'}),
+        (ToolSearchReturnContent, {'discovered_tools': [], 'message': 1, 'extra': 'KEEP_ME'}),
+        (LoadCapabilityArgs, {'extra': 'KEEP_ME'}),
+        (LoadCapabilityArgs, {'id': 1, 'extra': 'KEEP_ME'}),
+        (LoadCapabilityReturn, {'instructions': [], 'extra': 'KEEP_ME'}),
+    ],
+)
+def test_extra_keys_do_not_relax_known_field_validation(payload_type: type[object], payload: object) -> None:
+    """Pin the payload validators directly: malformed history deliberately falls back to base parts."""
+    adapter = TypeAdapter(payload_type)
+    with pytest.raises(ValidationError):
+        adapter.validate_python(payload)
+
+
 async def test_agent_emitted_extra_args_survive_live_history_and_round_trip() -> None:
-    """A model-emitted extra args key survives emission-time promotion and a round trip.
-
-    The same TypeAdapters that strip at the history boundary also validate
-    model-emitted tool-search args when `ToolCallPart.narrow_type` promotes the call,
-    so the extra key must already be present in `all_messages()` before any dump.
-    """
+    """Live search calls retain original args, including keys rejected by tool execution."""
     toolset = FunctionToolset()
 
     @toolset.tool_plain(defer_loading=True)
     def get_payment(amount: int) -> int:
         return amount * 12
 
-    async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if not [m for m in messages if m.kind == 'response']:
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
             return ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -154,32 +163,76 @@ async def test_agent_emitted_extra_args_survive_live_history_and_round_trip() ->
                     )
                 ]
             )
-        else:
-            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[TextPart('done')])
 
-    agent = Agent(FunctionModel(model_function), toolsets=[toolset], capabilities=[ToolSearch()])
-    result = await agent.run('find a mortgage tool')
+    result = await Agent(FunctionModel(model_function), toolsets=[toolset], capabilities=[ToolSearch()]).run(
+        'find a tool'
+    )
+    live_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolSearchCallPart)]
+    assert len(live_calls) == 1
+    assert live_calls[0].args == {'queries': ['mortgage'], 'extra': 'KEEP_ME'}
+    assert ModelMessagesTypeAdapter.validate_json(result.all_messages_json()) == result.all_messages()
 
-    live_call_parts = [
-        part
-        for message in result.all_messages()
-        if isinstance(message, ModelResponse)
-        for part in message.parts
-        if isinstance(part, ToolCallPart) and part.tool_name == 'search_tools'
-    ]
-    assert live_call_parts, 'expected the emitted search_tools call to be in the live history'
-    live_part = live_call_parts[0]
-    assert isinstance(live_part, ToolSearchCallPart)
-    assert live_part.args == {'queries': ['mortgage'], 'extra': 'KEEP_ME'}
 
-    round_tripped = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(result.all_messages()))
-    back_call_parts = [
-        part
-        for message in round_tripped
-        if isinstance(message, ModelResponse)
-        for part in message.parts
-        if isinstance(part, ToolCallPart) and part.tool_name == 'search_tools'
-    ]
-    assert back_call_parts, 'expected the search_tools call to survive the round trip'
-    assert isinstance(back_call_parts[0], ToolSearchCallPart)
-    assert back_call_parts[0].args == {'queries': ['mortgage'], 'extra': 'KEEP_ME'}
+async def test_after_tool_hook_return_extras_survive_history() -> None:
+    hooks = Hooks()
+
+    @hooks.on.after_tool_execute
+    def add_version(
+        ctx: RunContext[object],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        result: object,
+    ) -> object:
+        assert isinstance(result, ToolReturn)
+        assert _utils.is_str_dict(result.return_value)
+        return ToolReturn(return_value={**result.return_value, 'version': 2}, tools=result.tools)
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'sample'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    capability = Capability[object](id='sample', description='Sample', instructions='Do x', defer_loading=True)
+    result = await Agent(FunctionModel(model_function), capabilities=[capability, hooks]).run('load it')
+    live_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, LoadCapabilityReturnPart)]
+    assert len(live_returns) == 1
+    assert live_returns[0].content == {'instructions': 'Do x', 'version': 2}
+    assert ModelMessagesTypeAdapter.validate_json(result.all_messages_json()) == result.all_messages()
+
+
+async def test_load_capability_schema_keeps_openai_strict_compatibility() -> None:
+    """Pin the model-facing schema separately from permissive history payload validation."""
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert len(info.function_tools) == 1
+        tool = info.function_tools[0]
+        assert tool.parameters_json_schema == snapshot(
+            {
+                'description': 'Typed arguments for a `load_capability` tool call.',
+                'properties': {
+                    'id': {'description': 'The id of the capability to load.', 'title': 'Id', 'type': 'string'}
+                },
+                'required': ['id'],
+                'title': 'LoadCapabilityArgs',
+                'type': 'object',
+            }
+        )
+        model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test'))
+        customized = model.customize_request_parameters(ModelRequestParameters(function_tools=[tool]))
+        assert customized.function_tools[0].strict is True
+        assert customized.function_tools[0].parameters_json_schema == snapshot(
+            {
+                'description': 'Typed arguments for a `load_capability` tool call.',
+                'properties': {'id': {'description': 'The id of the capability to load.', 'type': 'string'}},
+                'required': ['id'],
+                'type': 'object',
+                'additionalProperties': False,
+            }
+        )
+        return ModelResponse(parts=[TextPart('done')])
+
+    capability = Capability[object](id='sample', description='Sample', defer_loading=True)
+    await Agent(FunctionModel(model_function), capabilities=[capability]).run('hello')

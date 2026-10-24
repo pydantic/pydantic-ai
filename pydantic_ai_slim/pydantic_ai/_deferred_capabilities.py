@@ -22,10 +22,9 @@ if TYPE_CHECKING:
     from .messages import ModelMessage
 
 
+@pydantic.with_config(extra='allow')
 class LoadCapabilityArgs(TypedDict):
     """Typed arguments for a `load_capability` tool call."""
-
-    __pydantic_config__ = pydantic.ConfigDict(extra='allow')
 
     id: Annotated[
         str,
@@ -36,6 +35,7 @@ class LoadCapabilityArgs(TypedDict):
     """ID of the capability to load."""
 
 
+@pydantic.with_config(extra='allow')
 class LoadCapabilityReturn(TypedDict):
     """Typed return value for the `load_capability` tool."""
 
