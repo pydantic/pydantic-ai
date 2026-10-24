@@ -1,34 +1,52 @@
 from __future__ import annotations
 
-import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeAlias
 
+from pydantic_ai._utils import await_maybe
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities._native_resolution import resolve_native_tool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import KnownModelName, Model, parse_model_id
 from pydantic_ai.native_tools import ImageGenerationTool
-from pydantic_ai.tools import RunContext, Tool
+from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 
 ImageGenerationFallbackModelFunc = Callable[
     [RunContext[Any]],
     Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str,
 ]
-"""Callable that resolves a fallback model dynamically per-run.
+"""Callable that resolves the subagent's model dynamically per-run.
 
 May return a `Model` instance or a model name string (e.g. `'openai-responses:gpt-5.4'`);
 strings are resolved to a model at call time.
 """
 
 ImageGenerationFallbackModel = Model | KnownModelName | str | ImageGenerationFallbackModelFunc | None
-"""Type for the fallback model: a model, model name, factory callable, or None."""
+"""Type of [`ImageGeneration.fallback_subagent_model`][pydantic_ai.capabilities.ImageGeneration.fallback_subagent_model]: a model, model name, factory callable, or None."""
+
+ImageGenerationNativeTool: TypeAlias = (
+    ImageGenerationTool | Callable[[RunContext[AgentDepsT]], Awaitable[ImageGenerationTool] | ImageGenerationTool]
+)
+"""Type for the native tool: an `ImageGenerationTool` instance, or a callable resolving one from the run context.
+
+The callable resolves once per fallback subagent invocation, from that tool call's
+[`RunContext`][pydantic_ai.tools.RunContext]. It belongs to the same run and carries the same
+`deps` as the resolution on the native path, but it is not the same context: `tool_call_id` and
+`tool_name` name the fallback tool call rather than being `None`, and `messages` holds the run so
+far. Read `ctx.deps` for configuration that has to match across both.
+
+Unlike the capability-level `native=` parameter, this callable may not return `None`: omitting the
+tool is meaningless once the subagent has been invoked, so returning `None` anyway raises
+[`UserError`][pydantic_ai.exceptions.UserError] rather than enabling a default `ImageGenerationTool`.
+"""
 
 __all__ = (
     'ImageGenerationFallbackModel',
     'ImageGenerationFallbackModelFunc',
+    'ImageGenerationNativeTool',
     'ImageGenerationSubagentTool',
     'image_generation_tool',
 )
@@ -44,6 +62,16 @@ _IMAGE_ONLY_MODELS: dict[str, str] = {
     'dall-e-2': 'openai-responses:gpt-5.4',
     'imagen-3.0-generate-002': 'google:gemini-3-pro-image',
     'imagen-3.0-fast-generate-001': 'google:gemini-3-pro-image',
+    # xAI has no conversational model that supports the `ImageGenerationTool`, so the Grok Imagine
+    # family's suggested alternative crosses providers; `fallback_image_model='xai:grok-imagine-image'`
+    # is the way to stay on xAI, which the error's first sentence points at.
+    'grok-imagine-image': 'openai-responses:gpt-5.5',
+    'grok-imagine-image-2.0': 'openai-responses:gpt-5.5',
+    'grok-imagine-image-2026-03-02': 'openai-responses:gpt-5.5',
+    'grok-imagine-image-quality': 'openai-responses:gpt-5.5',
+    'grok-imagine-image-quality-20260403': 'openai-responses:gpt-5.5',
+    'grok-imagine-image-quality-latest': 'openai-responses:gpt-5.5',
+    'grok-imagine-image-pro': 'openai-responses:gpt-5.5',
 }
 
 
@@ -53,8 +81,8 @@ def _check_image_only_model(model: str) -> None:
     if suggestion := _IMAGE_ONLY_MODELS.get(model_name):
         raise UserError(
             f'{model_name!r} is a dedicated image generation model that cannot be used as '
-            f'`fallback_model` directly. Use a conversational model with image generation '
-            f'support instead, e.g. {suggestion!r}.'
+            f'`fallback_subagent_model` directly. Pass it to `fallback_image_model` instead, or use '
+            f'a conversational model with image generation support, e.g. {suggestion!r}.'
         )
 
 
@@ -70,8 +98,8 @@ class ImageGenerationSubagentTool:
     model: Model | KnownModelName | str | ImageGenerationFallbackModelFunc
     """The model to use for image generation, or a callable that returns one."""
 
-    native_tool: ImageGenerationTool
-    """The image generation tool configuration to pass to the subagent."""
+    native_tool: ImageGenerationNativeTool[Any]
+    """The image generation configuration or outer-run factory to pass to the subagent."""
 
     instructions: str = 'Generate an image based on the user prompt. Do not ask clarifying questions.'
     """Instructions for the subagent that generates the image."""
@@ -85,32 +113,35 @@ class ImageGenerationSubagentTool:
         """
         model = self.model
         if callable(model):
-            result = model(ctx)
-            if inspect.isawaitable(result):
-                result = await result
-            model = result
+            model = await await_maybe(model(ctx))
 
         if isinstance(model, str) and callable(self.model):
             # Only check at call time for dynamically resolved models;
             # static strings are already validated at factory time
             _check_image_only_model(model)
 
+        native_tool = await resolve_native_tool(ImageGenerationTool, self.native_tool, ctx)
+
         agent = Agent(
             model,
             output_type=BinaryImage,
-            capabilities=[NativeTool(self.native_tool)],
+            capabilities=[NativeTool(native_tool)],
             instructions=self.instructions,
         )
         try:
             result = await agent.run(prompt)
         except UnexpectedModelBehavior as e:
+            # `ContentFilterError` is an `UnexpectedModelBehavior`, so a moderation block becomes a
+            # retry prompt too. Nothing the subagent raises escapes the tool call, which is what
+            # keeps a durable engine from retrying the tool activity against an error class its
+            # non-retryable list doesn't name.
             raise ModelRetry(str(e)) from e
         return result.output
 
 
 def image_generation_tool(
     model: Model | KnownModelName | str | ImageGenerationFallbackModelFunc,
-    native_tool: ImageGenerationTool,
+    native_tool: ImageGenerationNativeTool[Any],
     *,
     instructions: str = 'Generate an image based on the user prompt. Do not ask clarifying questions.',
 ) -> Tool[Any]:
@@ -119,7 +150,7 @@ def image_generation_tool(
     Args:
         model: The model to use for image generation (e.g. `'openai-responses:gpt-5.4'`),
             or a callable taking `RunContext` that returns a model.
-        native_tool: The image generation tool configuration to pass to the subagent.
+        native_tool: The image generation configuration, or a callable that resolves it from the outer run context.
         instructions: Instructions for the subagent that generates the image.
     """
     if isinstance(model, str):

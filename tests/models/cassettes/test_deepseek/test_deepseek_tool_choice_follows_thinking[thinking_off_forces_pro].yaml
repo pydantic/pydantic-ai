@@ -1,0 +1,87 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '438'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Say hi.
+        role: user
+      model: deepseek-v4-pro
+      reasoning_effort: none
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              text:
+                type: string
+            required:
+            - text
+            type: object
+          strict: true
+        type: function
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '706'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: "{\"text\": \"Hi! \U0001F44B How can I help you today?\"}"
+              name: final_result
+            id: call_00_mAobU0p9scWOAtmBYHdr6164
+            index: 0
+            type: function
+      created: 1786656321
+      id: c8f465ae-0c51-48df-b5bc-9a6b197f44f2
+      model: deepseek-v4-pro
+      object: chat.completion
+      system_fingerprint: a307abda487cd1b463329ccb945ce396
+      usage:
+        completion_tokens: 45
+        prompt_cache_hit_tokens: 256
+        prompt_cache_miss_tokens: 33
+        prompt_tokens: 289
+        prompt_tokens_details:
+          cached_tokens: 256
+        total_tokens: 334
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -10,9 +10,15 @@ from __future__ import annotations as _annotations
 
 from typing import Literal
 
+import pytest
 from pydantic import BaseModel
 
-from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
+from pydantic_ai._json_schema import JsonSchema
+from pydantic_ai.profiles.google import (
+    GoogleJsonSchemaTransformer,
+    GoogleOpenAPISchemaTransformer,
+    google_model_profile,
+)
 
 from .._inline_snapshot import snapshot
 
@@ -180,6 +186,29 @@ def test_format_appended_to_existing_description():
     assert transformed == snapshot({'type': 'string', 'description': 'User email address (format: email)'})
 
 
+def test_openapi_schema_transformer_prunes_map_schemas_before_traversal():
+    """Direct assertions pin the public walk result and transform hooks hidden by the final Live declaration."""
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'kept': {'type': 'string'}},
+        'additionalProperties': {'type': 'integer'},
+        'patternProperties': {'^x': {'type': 'boolean'}},
+    }
+    visited_types: list[str] = []
+
+    class RecordingTransformer(GoogleOpenAPISchemaTransformer):
+        def transform(self, schema: JsonSchema) -> JsonSchema:
+            schema_type = schema['type']
+            assert isinstance(schema_type, str)
+            visited_types.append(schema_type)
+            return super().transform(schema)
+
+    transformed = RecordingTransformer(schema).walk()
+
+    assert transformed == snapshot({'type': 'object', 'properties': {'kept': {'type': 'string'}}})
+    assert visited_types == ['string', 'object']
+
+
 # =============================================================================
 # Model Profile Tests
 # =============================================================================
@@ -205,6 +234,47 @@ def test_model_profile_gemini_3():
     assert profile.get('google_supports_server_side_tool_invocations', False) is True
 
 
+def test_model_profile_thinking_defaults():
+    """Gemini 3+ behaviour is the default for thinking; older models are if-guarded."""
+    # Default Gemini 3+ behaviour
+    for name in (
+        'gemini-3.0-pro',
+        'gemini-3-flash-preview',
+        'gemini-3.7-flash',
+        'gemini-9-flash',
+        'some-codename',
+        'gemini-flash-latest',
+        'gemini-pro-latest',
+    ):
+        profile = google_model_profile(name)
+        assert profile is not None, f'{name} should have a profile'
+        assert profile.get('supports_thinking') is True, f'{name} should support thinking'
+        assert profile.get('google_supports_thinking_level') is True, f'{name} should support thinking_level'
+
+    # Gemini 2.5: supports thinking, but uses budget (thinking_level=False)
+    for name in ('gemini-2.5-flash', 'gemini-2.5-pro'):
+        profile = google_model_profile(name)
+        assert profile is not None, f'{name} should have a profile'
+        assert profile.get('supports_thinking') is True, f'{name} should support thinking'
+        assert profile.get('google_supports_thinking_level') is False, f'{name} should not support thinking_level'
+
+    # Older models without thinking support
+    for name in (
+        'gemini-2.0-flash',
+        'gemini-2.0-flash-lite',
+        'gemini-1.5-flash',
+        'gemini-1.5-pro',
+        'gemini-pro',
+        'gemma-3-27b-it',
+        # The Gemini API and Vertex both reject a thinking config for this 2.5 image model.
+        'gemini-2.5-flash-image',
+    ):
+        profile = google_model_profile(name)
+        assert profile is not None, f'{name} should have a profile'
+        assert profile.get('supports_thinking') is False, f'{name} should not support thinking'
+        assert profile.get('google_supports_thinking_level') is False, f'{name} should not support thinking_level'
+
+
 def test_model_profile_gemini_2_disables_tool_combination_capabilities():
     profile = google_model_profile('gemini-2.5-flash')
     assert profile is not None
@@ -219,3 +289,49 @@ def test_model_profile_image_model():
     assert profile.get('supports_image_output', False) is True
     assert profile.get('supports_json_schema_output', False) is False
     assert profile.get('supports_tools', True) is False
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        ('gemini-3.7-flash', False),
+        ('gemini-3.8-flash', False),
+        ('gemini-3-pro-preview', False),
+        ('gemini-3.1-pro-preview', False),
+        ('gemini-4-argon', False),
+        # `gemini-3.1-flash-lite-image` does accept `MINIMAL` — its levels are `minimal, high`.
+        ('gemini-3.1-flash-lite-image', True),
+        ('gemini-3-flash-preview', True),
+    ],
+)
+def test_model_profile_supports_minimal_thinking_level(model_name: str, expected: bool):
+    profile = google_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('google_supports_minimal_thinking_level', True) is expected
+
+
+def test_model_profile_minimal_thinking_level_matches_model_prefix():
+    profile = google_model_profile('gemini-3-pro-preview-variant')
+    assert profile is not None
+    assert profile.get('google_supports_minimal_thinking_level', True) is False
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        ('gemini-3.1-flash-lite-image', frozenset(('MINIMAL', 'HIGH'))),
+        ('gemini-3.7-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+        ('gemini-3.8-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+        ('gemini-3.1-pro-preview', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+        ('gemini-3-pro-preview', frozenset(('LOW', 'HIGH'))),
+        ('gemini-4-argon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+        # Models supporting the full scale carry no level set.
+        ('gemini-3-flash-preview', None),
+        # Budget-based models carry no level set.
+        ('gemini-2.5-flash', None),
+    ],
+)
+def test_model_profile_thinking_levels(model_name: str, expected: frozenset[str] | None):
+    profile = google_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('google_thinking_levels') == expected

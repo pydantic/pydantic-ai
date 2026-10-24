@@ -1,11 +1,9 @@
-import warnings
 from dataclasses import replace
 from typing import Literal
 
 import pytest
 from pydantic import TypeAdapter
 
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import (
     CodeExecutionTool,
@@ -39,6 +37,8 @@ def test_model_request_parameters_are_serializable():
             'native_tools': [],
             'tool_visibility': None,
             'revealed_tool_names': set(),
+            'introduced_tool_names': set(),
+            'deferred_capability_ids': set(),
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [],
@@ -47,6 +47,7 @@ def test_model_request_parameters_are_serializable():
             'allow_image_output': False,
             'instruction_parts': None,
             'thinking': None,
+            'cache': None,
         }
     )
     assert ta.validate_python(dumped) == params
@@ -85,6 +86,7 @@ def test_model_request_parameters_are_serializable():
                     'toolset_id': None,
                     'unless_native': None,
                     'with_native': None,
+                    'unless_tool_kind': None,
                     'tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
@@ -151,6 +153,8 @@ def test_model_request_parameters_are_serializable():
             ],
             'tool_visibility': None,
             'revealed_tool_names': set(),
+            'introduced_tool_names': set(),
+            'deferred_capability_ids': set(),
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [
@@ -168,6 +172,7 @@ def test_model_request_parameters_are_serializable():
                     'toolset_id': None,
                     'unless_native': None,
                     'with_native': None,
+                    'unless_tool_kind': None,
                     'tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
@@ -179,9 +184,17 @@ def test_model_request_parameters_are_serializable():
             'allow_image_output': False,
             'instruction_parts': None,
             'thinking': None,
+            'cache': None,
         }
     )
     assert ta.validate_python(dumped) == params
+
+
+def test_model_request_parameters_cache_round_trip():
+    """A non-`None` resolved `cache` survives serialization; durable-execution engines
+    (e.g. Temporal) serialize the parameters across the activity boundary."""
+    params = ModelRequestParameters(cache='1h')
+    assert ta.validate_python(ta.dump_python(params)).cache == '1h'
 
 
 def test_request_visibility_state_survives_serialization_but_stays_out_of_repr():
@@ -264,22 +277,26 @@ def test_with_default_output_mode_overrides_allow_text():
     assert resolved.allow_text_output is True
 
 
-def test_deferred_capability_ids_deprecated_property_derives_ownership():
-    """The removed field (shipped in v2.23) survives as a deprecated derivation.
+def test_deferred_capability_ids_records_which_capabilities_defer_loading():
+    """The field says which *capabilities* defer loading, which the tool definitions cannot.
 
-    Adapters used it for one thing — recognizing a tool as capability-owned — and that membership
-    test is fully derivable from the authored definitions, so the shim returns the real value for
-    every tool-bearing capability rather than lying with an empty set.
+    `capability_id` records which capability contributed a tool, and `defer_loading` is set both by
+    a deferred capability and by a search-gated tool inside an always-on one — so ownership alone
+    cannot tell the two apart. The agent reads it off the capability instances instead, and
+    adapters and reveal-gating rely on it meaning what it says.
     """
     params = ModelRequestParameters(
         function_tools=[
             ToolDefinition(name='gated', defer_loading=True, capability_id='refunds'),
-            ToolDefinition(name='searchable', defer_loading=True),
+            ToolDefinition(name='searchable', defer_loading=True, capability_id='eager_capability'),
             ToolDefinition(name='plain', capability_id='eager_capability'),
-        ]
+        ],
+        deferred_capability_ids={'refunds'},
     )
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`ModelRequestParameters\.deferred_capability_ids`'):
-        assert params.deferred_capability_ids == {'refunds'}
+    assert params.deferred_capability_ids == {'refunds'}
+    # `eager_capability` owns a deferred tool but does not itself defer, so it is absent — the
+    # distinction that a derivation from the definitions would collapse.
+    assert 'eager_capability' not in params.deferred_capability_ids
 
 
 def test_old_serialized_payload_with_deferred_capability_ids_still_validates():
@@ -287,25 +304,6 @@ def test_old_serialized_payload_with_deferred_capability_ids_still_validates():
     dumped = ta.dump_python(ModelRequestParameters(), mode='json')
     dumped['deferred_capability_ids'] = ['refunds']
     ta.validate_python(dumped)
-
-
-def test_deferred_capability_ids_still_accepted_as_a_constructor_argument():
-    """v2.23 shipped the field, so passing it must warn, not raise `TypeError`.
-
-    The value itself is discarded: the framework only ever populated the field from the function
-    tools' own `capability_id`/`defer_loading`, which is what reads now derive from.
-    """
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`ModelRequestParameters\.deferred_capability_ids`'):
-        params = ModelRequestParameters(deferred_capability_ids={'refunds'})  # pyright: ignore[reportCallIssue]
-    with pytest.warns(PydanticAIDeprecationWarning):
-        assert params.deferred_capability_ids == set()
-
-    # The rejected `InitVar` spelling for the shim would leak both deprecation warnings out of
-    # every internal `replace()` call on Python 3.13+, which round-trips init-only variables
-    # through `getattr` — so silence here is part of the contract.
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')
-        replace(ModelRequestParameters(), output_mode='tool')
 
 
 def test_declared_tool_defs_never_drops_an_output_tool():

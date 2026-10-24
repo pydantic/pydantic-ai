@@ -6,15 +6,16 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast, get_type_hints
+from typing import TYPE_CHECKING, Any, Literal, Self, cast, get_type_hints
 
+import anyio
 from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
 from pydantic.errors import PydanticUserError
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
 from temporalio.workflow import ActivityConfig
-from typing_extensions import Self, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.durable_exec._toolset import (
@@ -27,6 +28,12 @@ from pydantic_ai.durable_exec._toolset import (
 from pydantic_ai.exceptions import FallbackExceptionGroup, UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.workspaces import (
+    WorkspaceOutputLimitError,
+    WorkspaceReadOnlyError,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
 
 from ._run_context import TemporalRunContext
 
@@ -34,13 +41,13 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
 
 
-@dataclass
+@dataclass(kw_only=True)
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class GetToolsParams:
     serialized_run_context: Any
 
 
-@dataclass
+@dataclass(kw_only=True)
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class CallToolParams:
     name: str
@@ -76,7 +83,7 @@ async def heartbeating() -> AsyncGenerator[None]:
         interval = timeout.total_seconds() / 2 if timeout else 5.0
         while True:
             activity.heartbeat()
-            await asyncio.sleep(interval)
+            await anyio.sleep(interval)
 
     task = asyncio.create_task(beat())
     try:
@@ -139,17 +146,20 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         return unwrap_tool_call_result(result)
 
 
-PAYLOAD_SIZE_ERROR_TYPE = 'PayloadSizeError'
-"""The failure type Temporal stamps on an activity whose payload exceeds the server blob-size limit.
+PAYLOAD_SIZE_ERROR_TYPES = ('PayloadsTooLarge', 'PayloadSizeError')
+"""The failure types Temporal stamps on an activity whose payload exceeds the server blob-size limit.
 
-Matched by name rather than by class: the SDK raises a private `_PayloadSizeError` from inside its own
-result-encoding step, after the activity function has returned, so only the converted failure type ever
-reaches code we own.
+Both spellings live inside the `>=1.24` range the `temporal` extra declares, so both are matched:
+`temporalio` 1.31 moved the size check out of the Python SDK and into Temporal's Rust core, which stamps
+`PayloadsTooLarge`; up to and including 1.30 the SDK raised a private `_PayloadSizeError` that its own
+`DefaultFailureConverter` stamped `PayloadSizeError`.
 
-The name is stamped by Temporal's `DefaultFailureConverter`, which special-cases that private class; any
-other converter falls back to the class name. As `PydanticAIPlugin` deliberately preserves a custom
-`failure_converter_class`, a user who supplies one that doesn't special-case it loses both this guard and
-the non-retryable entry below.
+Matched by name rather than by class either way: the check runs inside Temporal's own result-encoding
+step, after the activity function has returned, so only the converted failure type ever reaches code we
+own. On the pre-1.31 path the name comes from `DefaultFailureConverter` special-casing that private
+class, and any other converter falls back to the class name -- so as `PydanticAIPlugin` deliberately
+preserves a custom `failure_converter_class`, a user who supplies one that doesn't special-case it loses
+both this guard and the non-retryable entry below. The core-stamped name has no such dependency.
 """
 
 
@@ -162,9 +172,15 @@ def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
         PydanticUserError.__name__,
         UnexpectedModelBehavior.__name__,
         FallbackExceptionGroup.__name__,
+        # A retry cannot fix a workspace timeout, output flood, read-only refusal, or lost environment;
+        # restarting a command could repeat its already-completed side effects.
+        WorkspaceTimeoutError.__name__,
+        WorkspaceOutputLimitError.__name__,
+        WorkspaceReadOnlyError.__name__,
+        WorkspaceUnavailableError.__name__,
         # An over-limit payload is deterministic, so Temporal's default unlimited retries would resend the
         # same oversized result forever and hang the workflow instead of ever surfacing an error (#7110).
-        PAYLOAD_SIZE_ERROR_TYPE,
+        *PAYLOAD_SIZE_ERROR_TYPES,
     ]
     retry_policy.non_retryable_error_types = [*existing, *(name for name in additional if name not in existing)]
     return retry_policy
@@ -174,15 +190,17 @@ def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
 def payload_size_errors(subject: str, remedy: str) -> Generator[None]:
     """Re-raise an over-limit activity payload as a `UserError` that points at the cause.
 
-    Temporal rejects the payload during result encoding, so the failure that reaches the workflow names
-    only a byte count. Without this, an activity returning a large `BinaryImage` fails with a bare
-    `[TMPRL1103] ... Size: N bytes, Limit: M bytes` that mentions neither what produced it, nor the
-    image, nor Pydantic AI, leaving no way to get from the error to the fix (#7110).
+    Temporal rejects the payload during result encoding, so the failure that reaches the workflow says
+    only that a limit was exceeded. Without this, an activity returning a large `BinaryImage` fails with
+    a bare `[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit` that
+    mentions neither what produced it, nor the image, nor Pydantic AI, leaving no way to get from the
+    error to the fix (#7110).
 
     The guard sits at the workflow side of the boundary rather than pre-checking the result size inside
     the activity, because the limit is a server setting an activity cannot read: Temporal reports it to
-    the worker at startup and keeps it on a private data converter. Catching what Temporal actually
-    rejected reports the real limit instead of a hardcoded guess at it.
+    the worker at startup and keeps it to itself. Passing Temporal's own sentence through is what carries
+    the real numbers where it has them -- up to `temporalio` 1.30 it appended `Size: N bytes, Limit: M
+    bytes`, which beats a hardcoded guess at the limit; from 1.31 the core-stamped failure drops them.
 
     Nothing here establishes what made the payload large, so the message offers the base64 budget as a
     likely explanation rather than asserting it: an over-limit payload can just as well be a large JSON
@@ -196,17 +214,20 @@ def payload_size_errors(subject: str, remedy: str) -> Generator[None]:
         yield
     except ActivityError as exc:
         cause = exc.__cause__
-        if not isinstance(cause, ApplicationError) or cause.type != PAYLOAD_SIZE_ERROR_TYPE:
+        if not isinstance(cause, ApplicationError) or cause.type not in PAYLOAD_SIZE_ERROR_TYPES:
             raise
+        # 1.31's core-stamped message is a complete sentence ending in a period, while the pre-1.31 one
+        # trails off in `Limit: M bytes`, so without this the two join as `...error limit.. Binary`.
+        detail = cause.message.removesuffix('.')
         raise UserError(
-            f'{subject}. {cause.message}. '
+            f'{subject}. {detail}. '
             'Binary content like an image is base64-encoded into the activity payload, so if that is the '
             f'cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB '
             f'default. {remedy} To keep large payloads out of the workflow history without changing what '
             'your tools or models return, configure Temporal external storage (or a claim-check '
             '`payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers '
             'every payload in both directions. '
-            'See https://ai.pydantic.dev/durable_execution/temporal/#large-payloads'
+            'See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads'
         ) from exc
 
 
@@ -225,13 +246,12 @@ def model_response_payload_errors(model_name: str) -> Generator[None]:
     """Guard a model-request activity's response against Temporal's payload size limit."""
     with payload_size_errors(
         f'The response from model {model_name!r} is too large for Temporal',
-        'A generated image is the usual cause, so ask the model for a smaller one through the model '
-        'settings; a streamed segment can also overflow on its buffered events alone.',
+        'A generated image is the usual cause, so ask the model for a smaller one through the model settings.',
     ):
         yield
 
 
-_ValidatedActivityConfig = with_config(ConfigDict(extra='forbid'))(
+_ValidatedActivityConfig = with_config(ConfigDict(extra='forbid', arbitrary_types_allowed=True))(
     TypedDict(
         '_ValidatedActivityConfig',
         # The functional syntax is intentionally dynamic so new Temporal keys are included.

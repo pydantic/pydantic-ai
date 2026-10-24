@@ -1,0 +1,191 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "974"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Look up the 10-year Treasury duration, then add 2 and 2.
+            type: text
+        - role: assistant
+          content:
+          - id: srvtoolu_01EoSNE7k4dUJyGatASCV5qs
+            type: server_tool_use
+            name: web_search
+            input:
+              query: 10-year Treasury modified duration
+          - id: toolu_01WjXqPrN8vKsRt2YbLmZdQe
+            type: tool_use
+            name: add
+            input:
+              a: 2
+              b: 2
+        - role: user
+          content:
+          - tool_use_id: toolu_01WjXqPrN8vKsRt2YbLmZdQe
+            type: tool_result
+            content:
+            - text: "4"
+              type: text
+            is_error: false
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: add
+          description: Add two numbers.
+          input_schema:
+            additionalProperties: false
+            properties:
+              a:
+                type: integer
+              b:
+                type: integer
+            required:
+            - a
+            - b
+            type: object
+        - name: web_search
+          type: web_search_20250305
+          max_uses: null
+          allowed_domains: null
+          blocked_domains: null
+          user_location: null
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-ce72d4aebb86946683d8e1743d427526-499a6a9b3b567d65-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3yMPNmTGy8ogMvhmMD","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":7910,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_01EoSNE7k4dUJyGatASCV5qs","content":[{"type":"web_search_result","title":"A Simple Treasury Futures Duration Adjustment INTEREST RATES:","url":"https://www.cmegroup.com/trading/interest-rates/files/Treasury_Duration_Strategy_Paper.pdf","encrypted_content":"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","page_age":null},{"type":"web_search_result","title":"Interest Rate Research Center Tools and Analytics CALCULATING THE ...","url":"https://www.cmegroup.com/trading/interest-rates/files/Calculating_the_Dollar_Value_of_a_Basis_Point_Final_Dec_4.pdf","encrypted_content":"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","page_age":null},{"type":"web_search_result","title":"A Simple Treasury Futures Duration Adjustment INTEREST RATES MAY 2020","url":"https://www.cmegroup.com/trading/interest-rates/files/treasury-duration-strategy-paper.pdf","encrypted_content":"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","page_age":null},{"type":"web_search_result","title":"How Can You Measure Risk in Treasuries?","url":"https://www.cmegroup.com/education/courses/introduction-to-treasuries/how-can-you-measure-risk-in-treasuries","encrypted_content":"Ep0ICioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDD8xKjwBCraeoyZ9iBoMZXk0hrs3o8gY5WebIjB5JLFS33h7RFBdxQTgz+RR4JsiyRbbZnXjdFUaJaMJNtgfKzZHap7JiPX3I4AaTI0qoAc8nwtC7ZOOmbQEdDZhf5UpMzmBO+Wrv1R67zpwmC0RD5Z8K+WjOnPOYEDfbRgOngrWgjm5vCchIwK/kMeRsD5ixbHkAQw+2Bl4tbkgVVzqMzo0VOf27AmKNnuyP8J1LEL8LkxSWXDUoUyFuYUK6yDttfeTOZQYtZegDQQtymDflmAZW7i6qNzJQRZu6ekwniaIGNnwULje2cGL6vsi/GF/rGTMiSItxf+ewRO9FZ7ZsTcXal0gLR6aS6HBi4XGj1LlwteU6QDx9z15bafEzmauAunG6K4u8F4X5R3mkzUU5NFpERfcYzccAlsZDd/kCFYHdBelHzW1hEj3UIBKaqQfyPHyP/cUb9/SRVcRAkOLFPRhWlbhZKqvdCvl442LkuAS281pG209AeryXWGSpQ4kMDSwRAfv1sbvRSHOCjudbvNCJol06NBmzwduYIr1gGxS8SDtF+OZfvxcAEda7I7nq/6SHw/kv5m2I62JZomKz2Wj/OvAG/2tWdYtg2tiAgiO71BMnma3A/1VRT0NcU2LbZ14Bxo8kmpf//9+pp4bv9NbeoLdzySXUUpxhs3+1cvadUiXhw4YuhsInAW9P5qSweZFXJb5OC13BHrFRbhqvkad8ZSFxYhI/TzyvPJp5Dz0CmTy9pPTboi6fepbDYNOrtkhuasNDHjGLKap6WHZK1kAVAlfv4AcCBxpu8FEG18Vfgqjw/fwxVpGDaFueVLcSGG7xo9J5t8XEAPvMS7awfpQ3h0+DDcQb38hR9XQED1Me5S0nj2MmxvB+MJ+2n3L6KeK7i0EjSFpi/mPJWqpfJrd6Ua0IqIhz2tjGG/9t1ROol0YskoQIlNwYNSNtFTRbLHMDKUnDcd4Ged679Wf285TnfXiskYFMHKNum/OWdnJsOY5NZwNpNyXQqFDl45Sw8phq9ZoT4Hs4UFQ/t3fmaxF+Of3HmlZIHY012zwPeeHPK5DqKHoW8tdU2AY3cZ2Jg7dPJuhlZa4gcLqPQtRgbKAgFtX9fsyC3ECGDcITAixZZvrw7KT6/sPfa74g/jj+lax5DkMuPDJiejxtdSd9r5OSyrhDjL9Mx6l9Ft3rVhoLabalNehkWI0rgdSmGukrwwB52y4Np0Z/tWvI6QVEgC8m3cChFFH87q7/E6rJvugGMeiHAuBaXFEFI8yMe3FBe/E/EoDY7bGv7MMuHu3OMwmA2QJb/XPQHiqWgvxWXqVeFu4Z6sYYOjzXQWFhsvZGAM=","page_age":null},{"type":"web_search_result","title":"US Treasury Yields & Curve","url":"https://www.sofrrate.com/treasury-rates","encrypted_content":"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","page_age":"13 days ago"},{"type":"web_search_result","title":"Bond Duration: What It Is and Why It Matters — Oblivious Investor","url":"https://obliviousinvestor.com/bond-duration/","encrypted_content":"EoYHCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDKvHIweXaVujGpKxNBoMzFVxlS9KFMZrFfnxIjBQtcPAwMIUHu9w3/EaA3CLAOvS/wx4Egp6JYZWdbxVt7fXhPQX4k8lW6hASgaj+oQqiQZzKQV5Y/MZh4DtDBJkyaGkr7clur3lg51WlvVyyKLQfbjL8yFymK8IJSb3fJqZ92lL2PAAtg2ONlQ1BsTFd0Z03TJQsnQYZ7PVl/ZPyXXJPfSommokt7EBdf8THeWOHlLax7fB4haWPrOb+Aq3tu274zMRtPUucYO746fni4isg3zWBC0DqNyTfGUQCWnRCabENcB8jeQsgGZwXA28STpUpxKvyo1q7XfFMzbLxwIFoVKQfKS73nuzRAqbd1Cx1+ALmbKO0iU7bM7Ix/mMSvRvlhzPaZ4PsgTUFueIEwigqQjPVun64cxbRefgMzsJtz4iTRMuZJRxpLvCWEmfeUFA3NSO3Sd5JZA3pD/6b6D0kmbpzKDzEQD5OH82tiLydLHl7s0blBaXoLuITu3IEuVYrA9fgE+bSJQ9hHDlElnUyOFFc0ww1to4BfeuK5KdS7sLIGD9XuXG1zaPanrhI6Jy3rPwi8PrhpjiEL2tcAwiEExDKPeOemBijjJeNowewuigJGW6+7hKZ7Tejv4FQrcHEw+zQQhvqrrpEYfrSnAXQQ1mwWQVHeRyFZQYw7aWTPl+/M9wMOy3+gv58IYiLlOApJSsBiHcGoByRmBzhmCRy8FEQ9KiB8MEHhqR54mgPJ+xnPWhIetrTdrT0FJKw3OlKUlFzCDju8ieD8G7qD/LH2pj73pM4ZGPyq2ZXGS1zK2vDmnW0RmaC+HHYMlsen/g4U54TeT+OI+aQ0KtgoyELR3ZxTO3ikVbS8ocL2M/k4yHSJY7cpZAIPbZymH9SH97sYhkk1yBVK+SfbwYLGn0LJxIEGYmMsHnOheKjH98QiE851wvwAXzHVUMmOpbMcMkb5lCMDP4hHvXS1OMGsabKyFbRTOr6g81UkNmjvL2lBSDDAz66WYLV07hJ3du/Ls36epfNwhPnorVW63voIOCk4OkgcrIr2tSvLGIqNfSjPs8zrWuf1PSNgb2QrTOuSu2cKUXry5ne089Ja822XutIekfcyUrpYSiJD2s034OxcjAU3xGeVFmQ6wYAw==","page_age":"5445 days ago"},{"type":"web_search_result","title":"10-Year T-Note Overview - CME Group","url":"https://www.cmegroup.com/markets/interest-rates/us-treasury/10-year-us-treasury-note.html","encrypted_content":"ErQGCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDFMxfP9PN/bjFQsyTxoMty2EuKiAnXEKUkKtIjBlR4fL+I1LSEriOiddqRhUeOWpuhJuvPIlf2UPlGxrNyQbZLIWcIWiu79ML5FA52QqtwVCzCK7j0UCbFeslEHE7gU8XpRgLsnudM+ZVZ26snXJ82UH+oUp0QmsQVpjP0NCPn9KcJJp7wRQpf6HE6R0bqRFGDXo+sUlf/OTXF7odW5wLvgsfHzs8EeSR3UpBTlWpJp2IBPK8/I6T1PNgzHmXtOa8zPZ6UyVjRKEGCew8zu3Bwig37UkAz9rqAdXQanNeQW4udfS/NMiljga/kn4EHD9mCOpsXe+b0lVXkfv7NjSoqBK01Y3iUhlpykuXGBZ9yRtz9wLl0NipuCZka54luybrLoS2/+upTtTy7C/cFJWM3neJTXXVFS2m5vtFeKzQ+1YzECkQHoPusE7lKhTjBv9OabYQJphsmuF0AYr39OAFtp1zKHucKIN4kPXq54M8atNvC3rHrAj2IaudJAIpfngzGIPdys7VxdWp2an8IcU5VskyIBZBzByJfffppRe8HsKmC7+fyBM6D1ssZXDNWi3CYecVZ/fjhvx3svwZBr/Z4jQieV90XfVsLzyvVRcxp7BgojeAUkU5Mo/9iPcoXp7miT3DRUS1YzaWJq7xLb2l9OAMEBTP11ahBo+BhWpVNYoFVhZn2wfxBlsZy6/4YgIH3buZMs2sGXcuiBDyOVNx9DZcx6IEErMHfXbwwqTmNlyQovDAFTZ38VuvBCO0SyNUYiNpUUcDqGI2AWfjvA+rTPbg9O4GGugZTAcOSKHXFPyAeh0/7VRzO/rg6dYnImnby/HPijbxUsDLYc6UoWXUcXoi28DHC3+9Wd0o4cd7dXWMvGz5hZ/Jj4vLtwHVRyp0sF01LbFxOhh9L1zGrb9ZUYSl5Bd/WDaV3ZfH3b+Iy10wRQtCBL8S0lJsqrvPxA9Zc3THMM7xis8XEmuzF+8ywD5vgmhk0psppm75RvFwKNVHP4bcz4fwh1j29Epyyq0CE6KJ/A5ixgD","page_age":"4 days ago"},{"type":"web_search_result","title":"Ultra 10-Year U.S. Treasury Note Overview - CME Group","url":"https://www.cmegroup.com/markets/interest-rates/us-treasury/ultra-10-year-us-treasury-note.html","encrypted_content":"EtgFCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDN0uPPzzAmkIefVG1RoMhXsu21ed/roeSlXYIjBEBTPBcgBM8Q5MCODk2C7iNQMP5RMfgP798APGRiqQTLFDLHxIfm8jyHLSy9cwq5Qq2wS2s7Vlv68ACjfH0F8It+Ykg5jUBm5L4krypAYa41dIksDymFnDQ3yY1+s+UUcf7/dz1zj0QxH++ZgTWZRbuktuS9S4o/UPMXqP/kX0nQ4mcbD3e6h3gO2qz6JnXk+c3zZRotUrFHrGt5WCvuUhgEvMa7gc/zI2zEecXtedtbdQUN1St6F3TqkO36tHAn2uA419loLSQCXNrHd/y3Q4pHHpAQ9DGhywA4kb9s6ozSyqeoDgG8ULzxPJI7pV3q55tWcRIasbbXF4hLBFL99vFDwND7s+NePSlMEu7ncTcA7q6GV/aKmlAqVHKjJA5WPCsYAnZD8Ga0YsqfaV6+rClP7fUBTBZruik+M5Dqeq05qSUO0Wvs8ohNjcoWWB3hGINQDdqJZYaqbz405efGR1S6ydPSA8CzioWA+PzjTyIDtARBuntTDU27JgOZtVugdN22/RDEMutCwVEe4EhrQ3QpsOzwy6NyFsXjdCQ7W5N2b+9+RyZ49AE0vn4I6f1sJvPfzqBPVQq7yDZiJaxhHQaT3mHj21XgnnPo2lNhEG7/rMUWb/P4U3NJ5lD0/Qla38fzmk386DvL9Qi4fupEwdO9MXGNTDGq96K+YyTMh7bIb00j26+DjdQyBHdtPxFrCsGKLP/R8b3kY509g1TALD6Teatcwq90MS5S1auIJkUTS90xX6+nF4FGMyP+//yVoKyACqnMm5ZvV+rnJfCVaQCQMgC0uhpiMlec6eyaFTbEie54pdJLGWJ8Qkw5XqKCMP8sBrD6BOEOrTwh8llKEal3YIk/nlglC7VuHQ67QYAw==","page_age":"3 days ago"},{"type":"web_search_result","title":"US 10 Year Treasury Yield - Investing.com","url":"https://www.investing.com/rates-bonds/u.s.-10-year-bond-yield","encrypted_content":"EugFCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDMnz0hjyDRAq8A018xoMp5iSlTwQrVvAn76HIjAVmfcYokm05QLgMVdbaqFWzIsOSX9utut4i3iOea3QrejeREgqJ8aHuZ/LBi3mM58q6wS8Ue+bC/HtCLm2OEU2gQ83TUWy4yYBi9v2vT915YMtrWIK7PIZoNuhJ8jwqlNUwGzjuDV7b6xexuLSRUzyEENLr+i7yizCFH6cmwyN0g7Fc2fm7o6sI4CL2hIGZKNzyV0czY/3wauhOE4cWOUXR6mVcDXSaBohmu1FUBjj4kXuK0TCW1g22T6LOvHB6yoVRvvvONlYwZmLVUZSTvB/YqrgfGRYxX4m81/rMxuvKTHkKtmZqRrZLqmS/tV6mHDKmOJd5O0v1veJmRSz9VPaQjIDt2j+fgUllDcPC+o3K0HmYJtLL3E/hDKVv+mqjlRezKXzSc0YEHbvXJ0ShzKuKrFDvAmfSBLZLUHbOkm48YQTN++Ssl/4vZ5WfpQlayEGiOMuiBCMYgM+1HXGT4N9bcbEf7k9fZI94sqBz+dFFVPamwSSQdHRM3hAEm7Kg3vIdndyIXfwIjdzdYwQzTTVAFmUBjKQ/gcATJ+FkXO9QTfhruWuNmGkZJ4vLydn94eYKmhzL1mNY3KIUYBtvpoIbxDKZvpEMWLgatjsaX1/0rCr0dHviSHzX1qekHqoDTuAmTeJ6z0qytJ19ULiyoa67aKo60dqgKw4A9BtIUDY2NIyfcIuECs6aqNRMoio+M9/wJ8Yk4z7IaF3I+Dpd2j/LoxcAqKTQZlneeX1xqiHYO0d76sqX38edbASNMZX1xFpiwpN8uSD8CjbL2S4qXeQO0VzlaB8+YTPPrGLU9rdLBSLOvV0pzC5dwgDB/HbqB2r25KMoTNSnAqbf+mwBsEBMuhSIn+9Gul/9n/NEL8MYsdmxV2d3SAVkoK+dibIGAM=","page_age":"0 days ago"}],"caller":{"type":"direct"}} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Based"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" on the search results, "}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"citations":[],"type":"text","text":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","cited_text":"# US Treasury Yield Curve & Valuation Tools\nMaturity · Type · Yield (%) · Modified Duration · DV01 per $1MM\n1 Month · Bill · 4.04% · 0.1 years · $8\n1 ...","url":"https://www.sofrrate.com/treasury-rates","title":"US Treasury Yields & Curve","encrypted_index":"Eo8BCioIFBgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDNzvfeCbdCzzcP58dxoMEevrfbxjSnFL0ONbIjB10S7G91r4EkYSsFGscrSMVgmL5HX4MZTXuyZwxcGas+374qD2tgTUxLHbdY43aFoqE1hg3244n3DtL9I++Dzzm4+5h1wYBA=="}}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"the "}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"10-year"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" Treasury note has a modified duration of approximately"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" 7"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":".7 years"}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" ("}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"as"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" of September"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" 2026"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" data). "}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"\n\nAlso"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":", "}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"2"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" "}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"+"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" 2"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" = **"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"4**."}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3               }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":7910,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":70,"server_tool_use":{"web_search_requests":1,"web_fetch_requests":0}}       }
+
+        event: message_stop
+        data: {"type":"message_stop"              }
+
+  recorded_at: 2026-09-29T16:32:51.895367+00:00

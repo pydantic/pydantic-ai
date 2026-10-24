@@ -1,3 +1,7 @@
+---
+description: "Approve or resolve deferred tool calls from a handler inside a Pydantic AI run with HandleDeferredToolCalls, so human-in-the-loop approval does not end the run."
+---
+
 # Handle Deferred Tool Calls
 
 [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] is a [capability](overview.md) that resolves [deferred tool calls](../deferred-tools.md) inline during an agent run. When tools require approval or external execution, the agent normally pauses and returns [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] as output; this capability intercepts those calls, invokes your handler to resolve them, and continues the run automatically:
@@ -12,7 +16,7 @@ async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> De
     return requests.build_results(approve_all=True)  # (1)!
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[HandleDeferredToolCalls(handle_deferred)])
+agent = Agent('{{ openai:medium }}', capabilities=[HandleDeferredToolCalls(handle_deferred)])
 ```
 
 1. Auto-approve every call that's waiting on approval. Real handlers typically inspect `requests.approvals` and `requests.calls` and decide per call — prompt an operator, check a policy, or execute an external call.

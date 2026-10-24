@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import os
 from typing import Literal, cast
 
-import httpx
+from pydantic_ai._http import AsyncHTTPClient
 
 try:
     from google.auth import credentials as google_auth_credentials
@@ -34,7 +34,7 @@ class GoogleCloudProvider(BaseGoogleProvider):
         project: str | None = None,
         location: GoogleCloudLocation | Literal['global', 'us', 'eu'] | str | None = None,
         client: Client | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: AsyncHTTPClient | None = None,
         base_url: str | None = None,
         retry_options: HttpRetryOptions | None = None,
     ) -> None:
@@ -60,8 +60,11 @@ class GoogleCloudProvider(BaseGoogleProvider):
                 `global` — see the
                 [Vertex AI locations docs](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#available-regions).
                 Can be obtained from the `GOOGLE_CLOUD_LOCATION` environment variable.
-            client: A pre-initialized client to use.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            client: A pre-initialized client to use. Stored as-is without forcing `vertexai=True`, so a
+                client built for the Gemini Developer API is used on that transport even though `name`
+                stays `'google-cloud'`. `GoogleModel` reads the transport off the client rather than the
+                provider name, so it routes correctly either way.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
             base_url: The base URL for the Google Cloud API.
             retry_options: HTTP retry options for transient errors (429, 5xx, etc.).
                 See `google.genai.types.HttpRetryOptions` for available fields.

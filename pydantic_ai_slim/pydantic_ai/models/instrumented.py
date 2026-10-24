@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import functools
 import itertools
 import time
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from genai_prices.types import PriceCalculation
@@ -21,8 +22,11 @@ from pydantic_ai._instrumentation import (
     CachedMessageJson,
     MessageJsonCache,
     get_instructions,
+    mcp_telemetry_history_ids,
     message_json_fragment,
+    model_request_telemetry_url_ids,
     open_model_request_span,
+    response_cost,
     safe_to_json,
 )
 
@@ -30,13 +34,24 @@ from .. import _otel_messages
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
+    BaseToolReturnPart,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
 )
 from ..settings import ModelSettings
+from ..usage import UsageBase
 from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
 
@@ -64,14 +79,14 @@ class InstrumentationSettings:
     - [`Agent.instrument`][pydantic_ai.agent.Agent.instrument] / [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all]
     - [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel]
 
-    See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
+    See the [Debugging and Monitoring guide](https://pydantic.dev/docs/ai/integrations/logfire/) for more info.
     """
 
     tracer: Tracer = field(repr=False)
     include_binary_content: bool = True
     include_content: bool = True
     include_model_request_parameters: bool = True
-    version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION
+    version: Literal[2, 3, 4, 5, 6] = DEFAULT_INSTRUMENTATION_VERSION
     use_aggregated_usage_attribute_names: bool = True
 
     def __init__(
@@ -82,7 +97,7 @@ class InstrumentationSettings:
         include_binary_content: bool = True,
         include_content: bool = True,
         include_model_request_parameters: bool = True,
-        version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION,
+        version: Literal[2, 3, 4, 5, 6] = DEFAULT_INSTRUMENTATION_VERSION,
         use_aggregated_usage_attribute_names: bool = True,
     ):
         """Create instrumentation options.
@@ -124,6 +139,12 @@ class InstrumentationSettings:
                 Version 5 is the same as version 4, but CallDeferred and ApprovalRequired exceptions
                     no longer record an exception event or set the span status to ERROR — the span is left
                     as UNSET, since deferrals are control flow, not errors.
+                Version 6 is the same as version 5, but tool results are emitted in a message with
+                    `role='tool'` rather than `role='user'`, which is the role the GenAI semantic
+                    conventions pair with the `tool_call_response` parts they carry, and retry feedback
+                    that answers no tool call moves from `role='user'` to `role='system'`, the voice it
+                    reaches the model in. Opt in to it when your telemetry consumer keys on the message
+                    role; it is not the default.
             use_aggregated_usage_attribute_names: Whether to use `gen_ai.aggregated_usage.*` attribute names
                 for token usage on agent run spans instead of the standard `gen_ai.usage.*` names.
                 Defaults to True to prevent double-counting in observability backends that aggregate span
@@ -142,9 +163,10 @@ class InstrumentationSettings:
         self.include_content = include_content
         self.include_model_request_parameters = include_model_request_parameters
 
-        if version not in (2, 3, 4, 5):
-            raise ValueError('Instrumentation version must be one of 2, 3, 4, or 5.')
+        if version not in (2, 3, 4, 5, 6):
+            raise ValueError('Instrumentation version must be one of 2, 3, 4, 5, or 6.')
         # TODO(v3): remove instrumentation format versions 2, 3, and 4
+        # TODO(v3): default to instrumentation format version 6
         if version in (2, 3, 4):
             warnings.warn(
                 'Instrumentation format versions 2, 3, and 4 are deprecated; use `version=5` instead.',
@@ -192,21 +214,33 @@ class InstrumentationSettings:
                 **time_to_first_chunk_histogram_kwargs,  # pyright: ignore[reportArgumentType]
             )
 
-    def messages_to_otel_messages(self, messages: list[ModelMessage]) -> list[_otel_messages.ChatMessage]:
+    def messages_to_otel_messages(
+        self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str] = frozenset()
+    ) -> list[_otel_messages.ChatMessage]:
         result: list[_otel_messages.ChatMessage] = []
+        sensitive_names = {f'mcp_server:{identity}' for identity in mcp_url_ids}
         for message in messages:
+            if sensitive_names and isinstance(message, ModelResponse):
+                projected_parts: list[ModelResponsePart] = [
+                    replace(part, tool_name='mcp_server:[REDACTED]')
+                    if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name in sensitive_names
+                    else part
+                    for part in message.parts
+                ]
+                message = replace(message, parts=projected_parts)
             if isinstance(message, ModelRequest):
-                for is_system, group in itertools.groupby(
-                    message.parts, key=lambda p: isinstance(p, SystemPromptPart | ToolAvailabilityDeltaPart)
+                # A baseline records what the request's instructions were and contributes nothing to a trace,
+                # so it's left out before grouping rather than becoming an empty system message.
+                request_parts = [part for part in message.parts if not isinstance(part, InstructionBaselinePart)]
+                for role, group in itertools.groupby(
+                    request_parts, key=functools.partial(_otel_message_role, version=self.version)
                 ):
                     message_parts: list[_otel_messages.MessagePart] = []
                     for part in group:
                         if hasattr(part, 'otel_message_parts'):
                             message_parts.extend(part.otel_message_parts(self))
 
-                    result.append(
-                        _otel_messages.ChatMessage(role='system' if is_system else 'user', parts=message_parts)
-                    )
+                    result.append(_otel_messages.ChatMessage(role=role, parts=message_parts))
             elif isinstance(message, ModelResponse):  # pragma: no branch
                 otel_message = _otel_messages.OutputMessage(role='assistant', parts=message.otel_message_parts(self))
                 if message.finish_reason is not None:
@@ -215,7 +249,9 @@ class InstrumentationSettings:
         return result
 
     def _input_messages_json(
-        self, input_messages: list[ModelMessage], message_json_cache: MessageJsonCache | None
+        self,
+        input_messages: list[ModelMessage],
+        message_json_cache: MessageJsonCache | None,
     ) -> bytes:
         """Serialize the input message history to a JSON array.
 
@@ -225,16 +261,22 @@ class InstrumentationSettings:
         in the input history are evicted, so the cache (and the `parts` lists it keeps alive) stays
         bounded by the current history even when a history processor prunes or rebuilds messages.
         Without a cache (one-off requests), the whole history is serialized in a single call.
+        Historical MCP names lack their original request provenance, so each cached fragment
+        withholds those names without rescanning every part on subsequent requests.
         """
         if message_json_cache is None:
-            return safe_to_json(self.messages_to_otel_messages(input_messages))
+            history_ids = mcp_telemetry_history_ids(input_messages, frozenset())
+            return safe_to_json(self.messages_to_otel_messages(input_messages, mcp_url_ids=history_ids))
 
         fragments: list[bytes] = []
         fresh_entries: MessageJsonCache = {}
         for message in input_messages:
             entry = message_json_cache.get(id(message))
             if entry is None or entry.parts is not message.parts:
-                entry = CachedMessageJson(message, message.parts, message_json_fragment(self, message))
+                history_ids = mcp_telemetry_history_ids([message], frozenset())
+                entry = CachedMessageJson(
+                    message, message.parts, message_json_fragment(self, message, history_ids), history_ids
+                )
             fresh_entries[id(message)] = entry
             if entry.fragment:
                 fragments.append(entry.fragment)
@@ -251,7 +293,10 @@ class InstrumentationSettings:
         *,
         message_json_cache: MessageJsonCache | None = None,
     ):
-        output_messages = self.messages_to_otel_messages([response])
+        mcp_url_ids: frozenset[str] = (
+            frozenset(model_request_telemetry_url_ids(parameters)) if parameters is not None else frozenset[str]()
+        )
+        output_messages = self.messages_to_otel_messages([response], mcp_url_ids=mcp_url_ids)
         assert len(output_messages) == 1
         output_message = output_messages[0]
 
@@ -289,6 +334,19 @@ class InstrumentationSettings:
             }
         return {}
 
+    def aggregated_usage_attributes(self, usage: UsageBase) -> dict[str, int]:
+        """Cumulative-usage OpenTelemetry attributes for a run/session span.
+
+        Remaps `gen_ai.usage.*` to `gen_ai.aggregated_usage.*` when `use_aggregated_usage_attribute_names`
+        is set, so a backend that sums span attributes doesn't double-count the run's cumulative usage
+        against the per-request `chat` spans' `gen_ai.usage.*`. Shared by the classic agent-run span (the
+        `Instrumentation` capability) and the realtime session span so the two can't drift.
+        """
+        attributes = usage.opentelemetry_attributes()
+        if not self.use_aggregated_usage_attribute_names:
+            return attributes
+        return {key.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): value for key, value in attributes.items()}
+
     def record_metrics(
         self,
         response: ModelResponse,
@@ -297,14 +355,11 @@ class InstrumentationSettings:
         time_to_first_chunk: float | None = None,
     ):
         for typ in ['input', 'output']:
-            if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):  # pragma: no cover
+            if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):
                 continue
             token_attributes = {**attributes, 'gen_ai.token.type': typ}
             self.tokens_histogram.record(tokens, token_attributes)
-        cost = response.usage.cost
-        if cost is None and price_calculation:
-            cost = price_calculation.total_price
-        if cost is not None:
+        if (cost := response_cost(response, price_calculation)) is not None:
             self.cost_histogram.record(float(cost), attributes)
         if time_to_first_chunk is not None:
             self.time_to_first_chunk_histogram.record(time_to_first_chunk, attributes)
@@ -314,7 +369,7 @@ class InstrumentationSettings:
 class InstrumentedModel(WrapperModel):
     """Model which wraps another model so that requests are instrumented with OpenTelemetry.
 
-    See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
+    See the [Debugging and Monitoring guide](https://pydantic.dev/docs/ai/integrations/logfire/) for more info.
     """
 
     instrumentation_settings: InstrumentationSettings
@@ -386,3 +441,46 @@ class InstrumentedModel(WrapperModel):
                         response_stream.get(),
                         time_to_first_chunk=response_stream.time_to_first_chunk(request_start),
                     )
+
+
+def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.Role:
+    """The GenAI role of the message a request part belongs in.
+
+    Consecutive parts sharing a role make up one message, so a request carrying a tool return and a
+    user prompt splits into a `tool` message followed by a `user` one.
+
+    From version 6 on, a part that renders as a `tool_call_response` takes the `tool` role the
+    semantic conventions pair it with, which is also the channel the adapters send it on: a tool
+    return and a retry naming a tool both reach OpenAI as `role='tool'`, a retry naming none as
+    `role='user'`. Earlier versions keep those parts on `user`, so a consumer written against them
+    keeps reading the role it was built for.
+
+    `RetryFeedbackPart` sits on that same boundary, for the same reason. From version 6 on it takes
+    the voice it reaches the model in, which its `retry.cause` decides: `user` for a
+    `'validation_error'` or `'model_retry'`, either of which can quote back what the model wrote, and
+    `system` for `'no_output'`, whose text is the framework's own. Earlier versions keep every cause
+    on `user`, so a consumer written against them keeps reading the role it was built for — and for
+    every cause but `'no_output'` that is already the role the wire uses. Only `pydantic_ai.all_messages` moves at all: a request span records the
+    history after `prepare_messages` has already translated the part, except on a decision model,
+    which is handed the part itself.
+
+    `ToolAvailabilityDeltaPart` gets `system` as the least-bad fit in a closed vocabulary, not as a
+    mirror of the wire. `Role` is `system | user | assistant | tool` and none of those means "the set
+    of tools changed", while the wire form varies by model: a real `SystemPromptPart` where there is
+    no native channel, a `role='system'` entry carrying `tool_addition` blocks on Anthropic, a
+    roleless `additional_tools` item on OpenAI Responses, a tool-search exchange where schemas are
+    withheld. `tool` is the one role that would actively mislead, being paired with
+    `tool_call_response`.
+    """
+    if isinstance(part, SystemPromptPart | ToolAvailabilityDeltaPart | InstructionDeltaPart) or (
+        version >= 6 and isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part)
+    ):
+        return 'system'
+    # TODO(v3): remove `RetryPromptPart`, still reachable here because `pydantic_ai.all_messages`
+    # records the stored history rather than the prepared one.
+    elif version >= 6 and (
+        isinstance(part, BaseToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)  # pyright: ignore[reportDeprecated]
+    ):
+        return 'tool'
+    else:
+        return 'user'

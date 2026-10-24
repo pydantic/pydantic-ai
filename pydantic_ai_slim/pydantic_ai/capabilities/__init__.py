@@ -11,6 +11,7 @@ from pydantic_ai.native_tools._tool_search import (
 from pydantic_ai.output import OutputContext
 
 from ._dynamic import CapabilityFunc, DynamicCapability
+from ._on_event import on_event
 from ._tool_search import ToolSearch
 from .abstract import (
     AbstractCapability,
@@ -34,15 +35,20 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
+from .caching import Caching
 from .capability import Capability
+from .citations import Citations
 from .combined import CombinedCapability
 from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
+from .durable_operation import durable_operation
+from .file_understanding import FileUnderstanding
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
 from .instrumentation import Instrumentation
-from .mcp import MCP
+from .local_workspace import LocalWorkspace
+from .mcp import MCP, MCPAuthorizationTokenFunc
 from .native_or_local import NativeOrLocalTool
 from .native_tool import NativeTool
 from .prefix_tools import PrefixTools
@@ -73,10 +79,14 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         NativeTool,
+        Caching,
+        Citations,
         RaiseContentFilterError,
+        FileUnderstanding,
         ImageGeneration,
         IncludeToolReturnSchemas,
         Instrumentation,
+        LocalWorkspace,
         MCP,
         PrefixTools,
         PrepareTools,
@@ -122,14 +132,20 @@ __all__ = [
     'WrapOutputValidateHandler',
     'WrapOutputProcessHandler',
     'NativeTool',
+    'on_event',
     'NativeOrLocalTool',
     'RaiseContentFilterError',
+    'Caching',
     'Capability',
+    'Citations',
     'CAPABILITY_TYPES',
+    'FileUnderstanding',
     'ImageGeneration',
     'Instrumentation',
     'IncludeToolReturnSchemas',
+    'LocalWorkspace',
     'MCP',
+    'MCPAuthorizationTokenFunc',
     'PrefixTools',
     'PrepareOutputTools',
     'PrepareTools',
@@ -153,6 +169,7 @@ __all__ = [
     'XSearch',
     'CombinedCapability',
     'DynamicCapability',
+    'durable_operation',
     'HandleDeferredToolCalls',
     'HistoryProcessor',
     'HookTimeoutError',

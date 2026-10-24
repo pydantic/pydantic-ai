@@ -18,7 +18,7 @@ authors:
   - family-names: Colvin
     given-names: Samuel
 repository-code: 'https://github.com/pydantic/pydantic-ai'
-url: 'https://ai.pydantic.dev'
+url: 'https://pydantic.dev/docs/ai/'
 abstract: >-
   Pydantic AI is a Python agent framework designed to make it less
   painful to build production grade applications and workflows with

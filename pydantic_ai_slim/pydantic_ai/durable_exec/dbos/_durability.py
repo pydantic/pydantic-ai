@@ -3,34 +3,42 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, ClassVar, cast
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, cast
+from weakref import WeakKeyDictionary
 
 from dbos import DBOS
+from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
 
-from pydantic_ai import messages as _messages
+from pydantic_ai._utils import now_utc
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.capabilities.abstract import WrapModelRequestHandler, WrapRunHandler
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability
-from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
-from pydantic_ai.durable_exec._utils import (
-    DurableModel,
-    StreamedActivityResult,
-    capture_event_stream,
-)
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse
-from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.capabilities.abstract import WrapRunHandler
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability, conversation_id_from_run_id
+from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
+from pydantic_ai.durable_exec._operation import ToolsetKind
+from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
+from pydantic_ai.messages import AgentStreamEvent
+from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
-from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._agent import DBOSParallelExecutionMode
-from ._utils import StepConfig, guard_enqueue_in_workflow
+from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig
+from ._utils import StepConfig, guard_enqueue_in_workflow, using_durable_sleep
+
+if TYPE_CHECKING:
+    from dbos._context import DBOSContext
+
+_default_run_ids_by_step: WeakKeyDictionary[DBOSContext, dict[int, int]] = WeakKeyDictionary()
+"""Agent runs that drew a default `run_id` at each step position, per workflow execution.
+
+Runs started concurrently (e.g. with `asyncio.gather`) resolve their IDs before either starts a step,
+so they share a position and need the count to tell them apart.
+"""
 
 
-@dataclass(init=False)
+@dataclass(init=False, kw_only=True)
 class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through DBOS steps.
 
@@ -53,11 +61,29 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         ```
     """
 
-    engine_name = 'DBOS'
-    _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]] = frozenset({'mcp', 'dynamic'})
-
-    _durable_unit_noun = 'step'
-    _durable_container_noun = 'workflow'
+    engine_spec = DurabilityEngineSpec(
+        engine_name='DBOS',
+        durable_unit_noun='step',
+        durable_unit_plural='steps',
+        durable_container_noun='workflow',
+        codec=IDENTITY_CODEC,
+        unsupported_runtime_toolset_kinds=frozenset({'mcp', 'dynamic'}),
+        wrapped_toolset_kinds=frozenset({'mcp', 'dynamic'}),
+        toolset_lifecycles={'mcp': 'enter-in-durable-unit', 'dynamic': 'enter-never'},
+        tool_call_result_upgrade_lenient=True,
+        journal_discovery=True,
+        sequential_tools_in_durable_context=False,
+        tool_config_key=None,
+        # `DBOS.cancel_workflow()` aborts the run with one of these `BaseException`s rather than a
+        # `CancelledError`: `DBOSWorkflowCancelledError` when a step starts (or a preemptible step is
+        # aborted), and, since dbos 3.2, `DBOSWorkflowConflictIDError` when a step that was running as
+        # the workflow was cancelled tries to record its result after the cancel handed ownership off.
+        cancellation_error_types=(DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError),
+    )
+    # No `tool_config_key`: DBOS takes no per-tool config, and tool metadata is ignored (as it was
+    # before this capability existed). It can't be supported without changing durable history: a step
+    # is registered once per name, and DBOS tool-call step names deliberately carry no tool name
+    # (every tool in a toolset shares one step), so per-tool config would be first-tool-wins.
 
     def __init__(
         self,
@@ -101,6 +127,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             parallel_execution_mode: Tool-call execution mode applied for the duration
                 of every run. Defaults to `'parallel_ordered_events'` so events
                 replay deterministically. Set to `'sequential'` for strict ordering.
+                A run with a workspace always runs its tool calls sequentially.
             register_legacy_workflows: Register the workflow names used by the deprecated
                 `DBOSAgent` so in-flight wrapper-era workflows can recover during migration.
         """
@@ -111,12 +138,9 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._parallel_execution_mode: ParallelExecutionMode = cast(ParallelExecutionMode, parallel_execution_mode)
         self._register_legacy_workflows = register_legacy_workflows
         # Populated by for_agent when the capability is attached to an agent.
-        self._request_step: Any = None
-        self._request_stream_step: Any = None
-        self._cancel_suspended_response_step: Any = None
-        self._event_stream_handler_step: Any = None
         self._legacy_run_workflow: Any = None
         self._legacy_run_sync_workflow: Any = None
+        self._operation_backend: DBOSOperationBackend | None = None
         self._init_legacy_context_vars()
 
     def _init_legacy_context_vars(self) -> None:
@@ -138,64 +162,21 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # one capability instance attached to several agents would leak one agent's per-run
         # legacy state into another's runs.
         self._init_legacy_context_vars()
-
-        # --- Model request steps ---
-
-        @DBOS.step(name=f'{self.name}__model.request', **self._model_step_config)
-        async def request_step(
-            model_id: str | None,
-            messages: list[_messages.ModelMessage],
-            model_settings: ModelSettings | None,
-            model_request_parameters: ModelRequestParameters,
-            run_context: RunContext[Any],
-        ) -> ModelResponse:
-            async with self._durable_model_scope(model_id, run_context) as (model, _):
-                return await model.request(messages, model_settings, model_request_parameters)
-
-        self._request_step = request_step
-
-        @DBOS.step(name=f'{self.name}__model.request_stream', **self._model_step_config)
-        async def request_stream_step(
-            model_id: str | None,
-            messages: list[_messages.ModelMessage],
-            model_settings: ModelSettings | None,
-            model_request_parameters: ModelRequestParameters,
-            run_context: RunContext[Any],
-        ) -> StreamedActivityResult:
-            async with self._durable_model_scope(model_id, run_context) as (model, ctx):
-                async with model.request_stream(
-                    messages, model_settings, model_request_parameters, ctx
-                ) as streamed_response:
-                    events = await capture_event_stream(
-                        run_context=ctx,
-                        stream=streamed_response,
-                        handler=self._effective_event_stream_handler(),
-                    )
-            return StreamedActivityResult(response=streamed_response.get(), events=events)
-
-        self._request_stream_step = request_stream_step
-
-        @DBOS.step(name=f'{self.name}__model.cancel_suspended_response', **self._model_step_config)
-        async def cancel_suspended_response_step(
-            model_id: str | None, response: ModelResponse, run_context: RunContext[Any]
-        ) -> None:
-            async with self._durable_model_scope(model_id, run_context) as (model, _):
-                await model.cancel_suspended_response(response)
-
-        self._cancel_suspended_response_step = cancel_suspended_response_step
-
+        self._operation_backend = DBOSOperationBackend(
+            agent_name=self.name,
+            config=DBOSOperationConfig(
+                model=self._model_step_config,
+                event=self._event_stream_handler_step_config,
+                tool=self._mcp_step_config,
+            ),
+        )
+        self._bound_model_operations = self._bind_model_operations(
+            self._operation_backend, model_id=None, model_name='default'
+        )
         if self._event_stream_handler is not None:
-
-            @DBOS.step(name=f'{self.name}__event_stream_handler', **self._event_stream_handler_step_config)
-            async def event_stream_handler_step(
-                event: _messages.AgentStreamEvent, run_context: RunContext[Any]
-            ) -> None:
-                handler = self._effective_event_stream_handler()
-                assert handler is not None
-                with self._durable_run_context_scope(run_context) as ctx:
-                    await handler(ctx, self._single_event_stream(event))
-
-            self._event_stream_handler_step = event_stream_handler_step
+            event = self._bind_event_operation(self._operation_backend)
+            assert isinstance(event, DBOSBoundOperation)
+            self._bound_event_operation = event
 
         # --- MCP toolset wrapping ---
         self._register_toolsets(agent)
@@ -241,10 +222,49 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return DBOS.workflow_id is not None and DBOS.step_id is None
 
+    def get_default_run_id(self) -> str | None:
+        if not self.in_durable_context:
+            return None
+        from dbos._context import get_local_dbos_context
+
+        context = get_local_dbos_context()
+        assert context is not None and context.workflow_id is not None
+        step = context.function_id + 1
+        runs = _default_run_ids_by_step.setdefault(context, {})
+        index = runs.get(step, 0)
+        runs[step] = index + 1
+        # The first run at a position keeps the ID it had before concurrent runs were told apart.
+        return f'{context.workflow_id}:{step}' if index == 0 else f'{context.workflow_id}:{step}:{index}'
+
+    def get_default_conversation_id(self, run_id: str) -> str | None:
+        return conversation_id_from_run_id(run_id) if self.in_durable_context else None
+
+    async def get_run_start_time(self, run_id: str) -> datetime | None:
+        if not self.in_durable_context:
+            return None
+
+        # Recorded as a step, so a recovered workflow counts the run's `timeout=` from when it first started.
+        # A coroutine function, so DBOS records the step without blocking the event loop.
+        async def run_start_time() -> datetime:
+            return now_utc()
+
+        return await DBOS.run_step_async({'name': f'{self.name}.run_start_time'}, run_start_time)
+
     def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
         # A DBOS step degrades to a plain inline call outside a workflow, where enqueueing is
         # safe, so only guard once actually inside a workflow.
         return guard_enqueue_in_workflow(ctx)
+
+    def get_durable_operation_backend(self) -> DBOSOperationBackend:
+        assert self._operation_backend is not None
+        return self._operation_backend
+
+    def _toolset_base_config(self, kind: ToolsetKind) -> StepConfig:
+        return self._mcp_step_config
+
+    def _toolset_in_durable_context(self) -> bool:
+        # DBOS steps degrade to inline calls outside a workflow, preserving the wrapper-era lifecycle.
+        return True
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         if self._in_legacy_workflow.get():
@@ -256,25 +276,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             assert handler is not None
             await handler(ctx, self._single_event_stream(event))
             return
-        # Route the handler through a DBOS step so its side effects are checkpointed and
-        # don't re-run when the workflow recovers.
-        assert self._event_stream_handler_step is not None
-        await self._event_stream_handler_step(event, ctx)
-
-    def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
-        if isinstance(ts, DynamicToolset):
-            from ._dynamic_toolset import dbosify_dynamic_toolset
-
-            return dbosify_dynamic_toolset(wrapped=ts, step_name_prefix=self.name, step_config=self._mcp_step_config)
-        try:
-            from pydantic_ai.mcp import MCPToolset
-
-            from ._mcp_toolset import dbosify_mcp_toolset
-        except ImportError:  # pragma: no cover
-            return None
-        if isinstance(ts, MCPToolset):
-            return dbosify_mcp_toolset(wrapped=ts, step_name_prefix=self.name, step_config=self._mcp_step_config)
-        return None
+        await super()._dispatch_event_stream_event(ctx, event)
 
     # --- Capability hooks ---
 
@@ -284,58 +286,14 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Apply the configured parallel-execution mode for every entry point."""
+        """Apply the configured parallel-execution mode, and make agent-graph waits durable in workflows."""
         agent = self._agent
         if agent is None:  # pragma: no cover
             return await handler()
-        with agent.parallel_tool_call_execution_mode(self._parallel_execution_mode):
+        # DBOS numbers steps as they start; parallel tools making several workspace steps each could
+        # replay recorded results into the wrong calls on recovery.
+        mode = self._parallel_execution_mode
+        if self.in_durable_context and ctx.workspace.attached:
+            mode = 'sequential'
+        with agent.parallel_tool_call_execution_mode(mode), using_durable_sleep():
             return await handler()
-
-    async def wrap_model_request(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        request_context: ModelRequestContext,
-        handler: WrapModelRequestHandler,
-    ) -> ModelResponse:
-        """Route model requests through DBOS steps when inside a workflow."""
-        if not self.in_durable_context:
-            return await handler(request_context)
-
-        # A `Model` instance can't be serialized across the step boundary, so the
-        # request carries a `model_id` (None for the default, the run's original
-        # model-id string, a `models=` registry key, or a model-name string) and the
-        # step rebuilds the model deps-aware via `_resolve_model_for_request`.
-        # A model swapped in by an outer capability's `before_model_request`
-        # round-trips via `_find_model_id` on `request_context.model`.
-        model_id = self._model_id_for_request(ctx, request_context)
-
-        async def request_segment(request: ModelRequestContext) -> ModelResponse:
-            return await self._request_step(
-                model_id, request.messages, request.model_settings, request.model_request_parameters, ctx
-            )
-
-        async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
-            result = await self._request_stream_step(
-                model_id, request.messages, request.model_settings, request.model_request_parameters, ctx
-            )
-            if isinstance(result, ModelResponse):
-                # Legacy-history-only: `DBOSAgent` recorded a bare response for stream steps.
-                stream = CompletedStreamedResponse(
-                    result,
-                    model_request_parameters=request.model_request_parameters,
-                    replay_events=True,
-                )
-                return StreamedActivityResult(response=result, events=[event async for event in stream])
-            return result
-
-        async def cancel_suspended_response_segment(response: ModelResponse) -> None:
-            await self._cancel_suspended_response_step(model_id, response, ctx)
-
-        request_context.model = DurableModel(
-            request_context.model,
-            request_segment=request_segment,
-            request_stream_segment=request_stream_segment,
-            cancel_suspended_response_segment=cancel_suspended_response_segment,
-        )
-        return await handler(request_context)

@@ -5,7 +5,7 @@ import re
 import warnings
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -20,15 +20,16 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryInfo,
     RunContext,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UsageExtractionFailedWarning,
     UsageLimitExceeded,
     UserPromptPart,
 )
-from pydantic_ai._cost import best_effort_price, calculate_price_for_usage
+from pydantic_ai._genai_prices import best_effort_price, calculate_price_for_usage
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -37,8 +38,6 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
-
-pytestmark = pytest.mark.anyio
 
 
 def test_genai_prices():
@@ -107,8 +106,8 @@ async def test_streamed_text_limits() -> None:
             assert result.all_messages() == snapshot(
                 [
                     ModelRequest(
-                        parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
-                        timestamp=IsNow(tz=timezone.utc),
+                        parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC))],
+                        timestamp=IsNow(tz=UTC),
                         run_id=IsStr(),
                         conversation_id=IsStr(),
                     ),
@@ -122,7 +121,7 @@ async def test_streamed_text_limits() -> None:
                         ],
                         usage=RequestUsage(input_tokens=51),
                         model_name='test',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                         provider_name='test',
                         run_id=IsStr(),
                         conversation_id=IsStr(),
@@ -132,11 +131,11 @@ async def test_streamed_text_limits() -> None:
                             ToolReturnPart(
                                 tool_name='ret_a',
                                 content='a-apple',
-                                timestamp=IsNow(tz=timezone.utc),
+                                timestamp=IsNow(tz=UTC),
                                 tool_call_id=IsStr(),
                             )
                         ],
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                         run_id=IsStr(),
                         conversation_id=IsStr(),
                     ),
@@ -576,11 +575,14 @@ def test_usage_pydantic_core_serialization_subclass():
         {
             'input_tokens': 0,
             'cache_write_tokens': 0,
+            'cache_write_1h_tokens': 0,
             'cache_read_tokens': 0,
             'output_tokens': 0,
+            'output_reasoning_tokens': 0,
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
+            'audio_seconds': 0.0,
             'details': {},
             'cost': None,
             'custom_tokens': 7,
@@ -1026,7 +1028,7 @@ async def test_failed_tool_calls_not_counted() -> None:
 
     result = await test_agent.run('test', usage_limits=UsageLimits(tool_calls_limit=1))
     assert call_count == 2
-    assert result.usage == snapshot(RunUsage(requests=3, input_tokens=176, output_tokens=29, tool_calls=1))
+    assert result.usage == snapshot(RunUsage(requests=3, input_tokens=168, output_tokens=29, tool_calls=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1050,11 +1052,13 @@ async def test_failed_tool_calls_not_counted() -> None:
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Temporary failure, please retry',
                         tool_name='flaky_tool',
                         tool_call_id='pyd_ai_tool_call_id__flaky_tool',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -1063,7 +1067,7 @@ async def test_failed_tool_calls_not_counted() -> None:
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='flaky_tool', args={'x': 'a'}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=62, output_tokens=10),
+                usage=RequestUsage(input_tokens=58, output_tokens=10),
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',
@@ -1085,7 +1089,7 @@ async def test_failed_tool_calls_not_counted() -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='{"flaky_tool":"a-success"}')],
-                usage=RequestUsage(input_tokens=63, output_tokens=14),
+                usage=RequestUsage(input_tokens=59, output_tokens=14),
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',
@@ -1197,7 +1201,9 @@ def test_gateway_reported_cost_edge_cases():
     # Token extraction is unaffected by the injected key.
     assert extract({'cost_estimate': '0.00012625'}).input_tokens == 2
     # Non-mapping response data degrades to empty usage instead of raising.
-    assert RequestUsage.extract('garbage', provider='openai', provider_url='', provider_fallback='') == RequestUsage()
+    with pytest.warns(UsageExtractionFailedWarning):
+        usage = RequestUsage.extract('garbage', provider='openai', provider_url='', provider_fallback='')
+    assert usage == RequestUsage()
     # An unusable current block falls back to the deprecated one.
     assert extract({'cost_estimate': '0.25'}, {'cost': 'not-a-number'}).cost == snapshot(Decimal('0.25'))
     assert extract({'cost_estimate': '0.25'}, 'not-a-mapping').cost == snapshot(Decimal('0.25'))
@@ -1383,7 +1389,7 @@ def test_best_effort_price_unexpected_error_warns(monkeypatch: pytest.MonkeyPatc
     def boom(*args: object, **kwargs: object) -> object:
         raise RuntimeError('kaboom')
 
-    monkeypatch.setattr('pydantic_ai._cost.calc_price', boom)
+    monkeypatch.setattr('pydantic_ai._genai_prices.calc_price', boom)
     with pytest.warns(CostCalculationFailedWarning, match='Failed to get cost: RuntimeError: kaboom'):
         price = best_effort_price(RequestUsage(input_tokens=10), model_name='gpt-4o', provider_name='openai')
     assert price is None

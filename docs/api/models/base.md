@@ -6,6 +6,7 @@
         - KnownModelName
         - known_model_names
         - ModelRequestParameters
+        - AbstractModel
         - ToolVisibility
         - ModelRequestContext
         - ModelResolutionContext
@@ -17,4 +18,5 @@
         - check_allow_model_requests
         - infer_model
         - download_item
+        - create_async_httpx2_client
         - override_allow_model_requests

@@ -3,7 +3,7 @@
 from collections.abc import Mapping, Sequence
 from typing import Literal, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from pydantic.alias_generators import to_camel
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -16,6 +16,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.ui._adapter import validation_error_response
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 AgentDepsT = TypeVar('AgentDepsT')
@@ -30,6 +31,21 @@ ModelsParam = Sequence[Model | KnownModelName | str] | Mapping[str, Model | Know
 # the UI's real SDK major and reserves it for future v7-only chunks. `to_web()` controls both ends
 # (server + bundled UI). See `VercelAIAdapter.sdk_version`.
 BUNDLED_UI_SDK_VERSION: Literal[7] = 7
+
+# `/chat` requires exactly this content type. This is a CSRF control, not content negotiation: a
+# browser can send the three CORS-safelisted content types (`text/plain`, `multipart/form-data`,
+# `application/x-www-form-urlencoded`) — or no content type at all — cross-origin with no preflight,
+# and every one of them can carry a JSON body. Without this check, a page the developer happens to
+# visit while running the web UI could start an agent run on their machine, and execute whatever
+# tools the served agent exposes. `application/json` is not safelisted, so requiring it forces a
+# preflight, which `options_chat` refuses.
+#
+# Keep this an allowlist. A denylist of the safelisted types would miss the no-content-type case,
+# and would silently stop covering anything added to the safelist later.
+#
+# The bundled UI — and the Vercel AI SDK's `DefaultChatTransport` generally — always sends
+# `application/json`; other clients need to set the header explicitly.
+JSON_MEDIA_TYPE = 'application/json'
 
 
 class ModelInfo(BaseModel, alias_generator=to_camel, populate_by_name=True):
@@ -96,6 +112,11 @@ def create_api_app(
 ) -> Starlette:
     """Create API app for the web chat UI.
 
+    This sub-app carries no `Host` validation of its own: `create_web_app()` applies
+    `HostValidationMiddleware` to the outer app it mounts this into. Serving it directly, or
+    re-mounting `create_web_app(...).router` (which drops application middleware), exposes the chat
+    endpoint to any `Host` — mount the app `create_web_app()` returns instead.
+
     Args:
         agent: Agent instance.
         models: Models to make available in the UI. Can be:
@@ -160,7 +181,17 @@ def create_api_app(
     allowed_tool_ids = {tool.unique_id for tool in ui_native_tools}
 
     async def options_chat(request: Request) -> Response:
-        """Handle CORS preflight requests."""
+        """Answer CORS preflight requests without granting cross-origin access.
+
+        Deliberately carries no `Access-Control-Allow-*` header, so a browser refuses any
+        cross-origin request that needs a preflight. Together with the `application/json`
+        requirement in `post_chat()`, that is what keeps a page the developer visits from reaching
+        the local web UI: requiring a non-safelisted content type forces the preflight, and this
+        response denies it.
+
+        Do not add `Access-Control-Allow-Origin` here without an accompanying CSRF control — on its
+        own it re-opens the endpoint to any website the developer has open.
+        """
         return Response()
 
     async def configure_frontend(request: Request) -> Response:
@@ -177,10 +208,22 @@ def create_api_app(
 
     async def post_chat(request: Request) -> Response:
         """Handle chat requests via Vercel AI Adapter."""
-        adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(
-            request, agent=agent, sdk_version=sdk_version
-        )
-        extra_data = ChatRequestExtra.model_validate(adapter.run_input.__pydantic_extra__)
+        if (media_type := request.headers.get('content-type', '').split(';')[0].strip().lower()) != JSON_MEDIA_TYPE:
+            # Checked up front so a cross-origin-forgeable request is turned away before the body is
+            # parsed and before the agent is dispatched — the attacker never needs to read the
+            # response, so the run itself is the damage.
+            return JSONResponse(
+                {'error': f'Expected `Content-Type: {JSON_MEDIA_TYPE}`, got {media_type or "no content type"}'},
+                status_code=415,
+            )
+
+        try:
+            adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(
+                request, agent=agent, sdk_version=sdk_version
+            )
+            extra_data = ChatRequestExtra.model_validate(adapter.run_input.__pydantic_extra__)
+        except ValidationError as e:
+            return validation_error_response(e)
 
         if error := validate_request_options(extra_data, model_ids, allowed_tool_ids):
             return JSONResponse({'error': error}, status_code=400)

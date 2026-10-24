@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 
 from pydantic_ai import Agent
@@ -47,8 +47,6 @@ with try_import() as bedrock_available:
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.providers.bedrock import BedrockProvider
 
-pytestmark = pytest.mark.anyio
-
 NEW_BLOCK = {'logfire_ai_gateway': {'cost': '0.5'}}
 OLD_BLOCK = {'pydantic_ai_gateway': {'cost_estimate': '0.25'}}
 # A gateway response-cache hit reports a zero cost, which must not fall back to the estimate.
@@ -59,8 +57,10 @@ OLD_HEADER = {'pydantic-ai-gateway-price-estimate': '0.25USD'}
 CACHE_HIT_HEADERS = {'logfire-ai-gateway-cost': '0USD', 'pydantic-ai-gateway-price-estimate': '0USD'}
 
 
-def _httpx_client(body: dict[str, Any], headers: dict[str, str]) -> httpx.AsyncClient:
-    return httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=body, headers=headers)))
+def _httpx_client(body: dict[str, Any], headers: dict[str, str]) -> httpx2.AsyncClient:
+    return httpx2.AsyncClient(
+        transport=httpx2.MockTransport(lambda _: httpx2.Response(200, json=body, headers=headers))
+    )
 
 
 def openai_model(usage_extra: dict[str, Any], headers: dict[str, str]) -> Model:
@@ -256,5 +256,7 @@ CASES = [
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in CASES])
 async def test_gateway_reported_cost(allow_model_requests: None, case: Case):
     agent = Agent(case.model(case.usage_extra, case.headers))
-    result = await agent.run('hello')
+    # Without `max_tokens`, Anthropic and Claude-on-Bedrock requests are streamed behind the scenes, and the gateway
+    # only reports its cost on non-streamed responses.
+    result = await agent.run('hello', model_settings={'max_tokens': 100})
     assert result.usage.cost == case.expected_cost

@@ -33,11 +33,13 @@ import threading
 from collections.abc import Awaitable, Callable, Generator, Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, LiteralString, Protocol
 
 import anyio
 from opentelemetry import trace
-from typing_extensions import LiteralString, ParamSpec, TypeVar
+from typing_extensions import ParamSpec, TypeVar
+
+from pydantic_ai._utils import is_async_callable
 
 from . import _online as _online_internal, _task_run
 from ._online import CallbackSink, EvaluationSink, SinkPayload
@@ -583,7 +585,7 @@ class OnlineEvalConfig:
                 extract_args=resolved_extract_args,
                 record_return=record_return,
             )
-            if inspect.iscoroutinefunction(func):
+            if is_async_callable(func):
                 # ParamSpec can't distinguish async from sync return types — _wrap_async returns
                 # Callable[_P, Awaitable[_R]] but the decorator signature expects Callable[_P, _R]
                 return _wrap_async(func, sig, online_evals, self, resolved_target, call_span)  # pyright: ignore[reportReturnType]
