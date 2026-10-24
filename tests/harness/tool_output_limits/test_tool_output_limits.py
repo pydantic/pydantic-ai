@@ -1267,3 +1267,17 @@ class TestAgentIntegration:
         returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
         small = [p for p in returns if p.tool_name == 'small_tool']
         assert small and small[0].content == 'tiny'
+
+
+class TestMediaReturnValues:
+    async def test_an_image_in_the_return_value_reaches_the_model_unchanged(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=100, action=Truncate())])
+        image = BinaryContent(data=b'\x89PNG' + b'\x00' * 100_000, media_type='image/png')
+        for original in (image, ['Screenshot attached.', image], ToolReturn(return_value=['done', image])):
+            assert await _run(cap, original) is original
+
+    async def test_large_text_beside_an_image_warns_and_passes_through(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate())])
+        original = ['x' * 5000, BinaryContent(data=b'\x00', media_type='image/png')]
+        with pytest.warns(UserWarning, match='non-text content'):
+            assert await _run(cap, original) is original
