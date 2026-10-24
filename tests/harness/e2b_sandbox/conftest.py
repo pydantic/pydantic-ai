@@ -12,7 +12,9 @@ import pytest
 
 _HAS_E2B = importlib.util.find_spec('e2b') is not None
 collect_ignore = (
-    [] if _HAS_E2B else ['test_backend.py', 'test_conformance.py', 'test_e2b_live.py', 'test_e2b_sandbox.py']
+    []
+    if _HAS_E2B
+    else ['test_backend.py', 'test_conformance.py', 'test_e2b_desktop.py', 'test_e2b_live.py', 'test_e2b_sandbox.py']
 )
 
 if TYPE_CHECKING or _HAS_E2B:  # pragma: no branch - the SDK-installed and slim jobs take opposite branches

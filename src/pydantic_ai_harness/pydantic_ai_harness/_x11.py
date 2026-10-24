@@ -231,6 +231,22 @@ _ENV = {'DISPLAY': DISPLAY, 'LC_ALL': 'C.UTF-8'}
 POSIX locale, which is what an environment without one set, such as E2B's, has."""
 
 
+def start_x_server(log: str, *, then: str = '') -> str:
+    """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless one answers.
+
+    It gives up as soon as the X server exits, or after 10 seconds, with the end of `log` as the reason. `then` runs
+    once a new X server answers, such as to start a panel.
+    """
+    return (
+        'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
+        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{log} & xvfb=$!; i=0; '
+        'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
+        'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
+        f"echo 'the X server did not start:' >&2; tail -n 5 {log} >&2; exit 1; fi; "
+        f'sleep 0.1; i=$((i+1)); done; {then} fi; '
+    )
+
+
 class X11Computer:
     """Controls an X display with `xdotool` and captures it with `scrot`, through a backend's commands.
 
