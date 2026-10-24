@@ -52,6 +52,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector as TextDetector
 from pydantic_ai_harness.guardrails._tool_guardrail import ToolResultInfo
 from pydantic_ai_harness.guardrails._tool_return_text import (
+    detect_content_list_result as _detect_content_list_result,
     detect_tool_return_content as _detect_tool_return_content,
     is_text_tool_return as _is_text_tool_return,
 )
@@ -407,8 +408,10 @@ def for_tool_result_text(
 ) -> Callable[[ToolResultInfo], GuardrailResult]:
     """Adapt a text detector to the result object `ToolGuardrail` supplies.
 
-    Plain string results are passed to `detector`. For a `ToolReturn` with a
-    string `return_value`, the detector also checks the text in its
+    Plain string results are passed to `detector`. A list of content parts, such
+    as text beside an image, has its text checked and its images kept, whether
+    it is the result or a `ToolReturn`'s `return_value`. For a `ToolReturn` with a
+    string or list `return_value`, the detector also checks the text in its
     model-directed `content`, both part by part and over each stretch of
     adjacent text parts joined, so a secret split across two of them is caught.
     The `ToolReturn` is rebuilt when either channel is redacted, retaining its
@@ -456,6 +459,8 @@ def for_tool_result_text(
                     )
                 )
             return GuardrailResult.allow()
+        if (verdict := _detect_content_list_result(detector, result)) is not None:
+            return verdict
         if on_other == 'allow':
             return GuardrailResult.allow()
         raise UserError(

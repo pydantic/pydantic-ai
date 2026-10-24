@@ -2,7 +2,8 @@
 
 Web research and browser capabilities: `Researcher` (a ready-made research stack), `ExaSearch` /
 `ExaAgent` (Exa API), `YouSearch` / `YouResearch` (You.com API), `BrowserUse` (hand a goal to an
-autonomous browser agent), and `PlaywrightBrowser` (the model drives Chromium itself). All are
+autonomous browser agent), `PlaywrightBrowser` (the model drives Chromium itself), and `ComputerUse` (the
+model clicks and types on the workspace's desktop from screenshots). All are
 capabilities passed in `Agent(capabilities=[...])`.
 
 ## Which one to use
@@ -15,6 +16,7 @@ capabilities passed in `Agent(capabilities=[...])`.
 | Synthesized, cited answer or multi-step research in one tool call | `ExaSearch(include_deep_search=True)`, `ExaAgent`, or `YouResearch` |
 | Fuzzy goal on unknown pages ("find the Pro plan price") | `BrowserUse` |
 | Known, repeatable flows, logged-in pages, JS-rendered SPAs, deterministic actions | `PlaywrightBrowser` |
+| Desktop applications, or a site exactly as a person sees it | `ComputerUse` |
 
 Core is enough when the model's provider has native search/fetch or DuckDuckGo plus markdownify
 fetching is acceptable. `WebSearch()` and `WebFetch()` with no arguments are native-only and raise on
@@ -334,6 +336,34 @@ Gotchas:
 - No uploads or downloads. Tool errors come back as strings the model can act on.
 - Use one browser capability per agent; `BrowserUse` and `PlaywrightBrowser` do not share sessions.
 
+## ComputerUse
+
+One `computer` tool: the model sends a list of mouse and keyboard actions, they run on
+`ctx.workspace`'s display, and the tool returns a screenshot. Needs a workspace whose backend
+implements `SupportsDisplay` and a model that accepts images; a run without either fails at its start
+or before the request.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import ComputerUse, DockerSandbox
+
+agent = Agent('test', capabilities=[DockerSandbox(desktop=True), ComputerUse(requires_approval=True)])
+```
+
+Fields: `requires_approval=False` (`True` defers every call that does more than look or wait; a set of action types defers only those),
+`settle_seconds=0.5` (pause before the closing screenshot), `keep_screenshots=None` (send at least the
+newest N screenshots, dropping older ones 25 at a time; history keeps all).
+
+Gotchas:
+
+- A call whose `provider_details` carries safety checks (OpenAI) needs approval even without
+  `requires_approval`; give the agent a deferred tool handler such as `HandleDeferredToolCalls`, or a
+  flagged call ends the run with an error.
+- Gemini 3 models get a 0-999 coordinate grid (profile `computer_use_coordinate_grid`), scaled to
+  pixels; inside a `FallbackModel` every model gets pixels.
+- Under durable execution a retried action may repeat a click that already happened.
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/researcher/
@@ -343,3 +373,4 @@ Gotchas:
 - https://pydantic.dev/docs/ai/harness/playwright/
 - https://pydantic.dev/docs/ai/capabilities/web-search/
 - https://pydantic.dev/docs/ai/capabilities/web-fetch/
+- https://pydantic.dev/docs/ai/harness/computer-use/
