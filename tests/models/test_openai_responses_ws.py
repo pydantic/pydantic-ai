@@ -2218,14 +2218,11 @@ async def test_sdk_api_errors_during_websocket_connection_are_mapped(
     assert sockets.connect_count == 1
 
 
-NEVER_SOCKET_SETUPS = [
-    'azure-provider',
-    'azure-client',
-    'gateway',
-    'openai-chatgpt',
-    'openai-codex',
-    'openai-codex-model',
-]
+OVERRIDABLE_NEVER_SOCKET_SETUPS = ['azure-provider', 'azure-client', 'gateway']
+# OAuth credentials reach HTTP requests only, and Codex session headers vary per conversation, so `profile=` can't
+# turn the socket on for these.
+FIXED_NEVER_SOCKET_SETUPS = ['openai-chatgpt', 'openai-codex', 'openai-codex-model']
+WEBSOCKET_PROFILE = OpenAIModelProfile(openai_responses_supports_websocket=True)
 
 
 def never_socket_model(
@@ -2265,13 +2262,22 @@ def never_socket_model(
     return websocket_model(provider, profile=profile)
 
 
-@pytest.mark.parametrize('setup', NEVER_SOCKET_SETUPS)
+@pytest.mark.parametrize(
+    ('setup', 'profile'),
+    [
+        *(pytest.param(setup, None, id=setup) for setup in OVERRIDABLE_NEVER_SOCKET_SETUPS + FIXED_NEVER_SOCKET_SETUPS),
+        *(pytest.param(setup, WEBSOCKET_PROFILE, id=f'{setup}-profile-on') for setup in FIXED_NEVER_SOCKET_SETUPS),
+    ],
+)
 async def test_setup_that_can_never_use_a_socket_warns_and_uses_http(
-    allow_model_requests: None, sockets: SocketHarness, setup: str
+    allow_model_requests: None, sockets: SocketHarness, setup: str, profile: OpenAIModelProfile | None
 ):
-    """A model whose profile turns the socket off says so, and sends the request over HTTP, here rejected with a 400."""
+    """A model whose profile turns the socket off says so, and sends the request over HTTP, here rejected with a 400.
+
+    For the OAuth providers and `OpenAICodexModel`, a `profile=` that turns the socket on doesn't change that.
+    """
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(lambda request: httpx2.Response(400))) as client:
-        model = never_socket_model(setup, client)
+        model = never_socket_model(setup, client, profile)
         async with model:
             with (
                 pytest.warns(
@@ -2287,12 +2293,12 @@ async def test_setup_that_can_never_use_a_socket_warns_and_uses_http(
     assert sockets.connect_count == 0
 
 
-@pytest.mark.parametrize('setup', NEVER_SOCKET_SETUPS)
+@pytest.mark.parametrize('setup', OVERRIDABLE_NEVER_SOCKET_SETUPS)
 async def test_profile_flag_overrides_a_setup_that_can_never_use_a_socket(
     allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, setup: str
 ):
-    """`openai_responses_supports_websocket=True` in `profile=` wins over the provider's, client's or model's default."""
-    model = never_socket_model(setup, http.client, OpenAIModelProfile(openai_responses_supports_websocket=True))
+    """`openai_responses_supports_websocket=True` in `profile=` wins over the Azure and gateway defaults."""
+    model = never_socket_model(setup, http.client, WEBSOCKET_PROFILE)
     assert (await Agent(model).run('hello')).output == 'ready'
     assert sockets.connect_count == 1
     assert http.requests == []

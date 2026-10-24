@@ -3127,7 +3127,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if not self.profile.get('openai_responses_supports_websocket', True):
             return (
                 'its profile sets `openai_responses_supports_websocket=False`, as its provider, SDK client or model '
-                "class can't open a Responses WebSocket. If it can, pass "
+                "class can't open a Responses WebSocket. To try one on Azure OpenAI or the Pydantic AI Gateway, pass "
                 '`profile=OpenAIModelProfile(openai_responses_supports_websocket=True)` to the model.'
             )
         try:
@@ -3282,19 +3282,23 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     @cached_property
     def profile(self) -> OpenAIModelProfile:
-        profile = cast(OpenAIModelProfile, super().profile)
+        profile = super().profile
         # A model can be more capable on the Responses API than on Chat Completions, and the two
         # share one profile: DeepSeek honors `text.format` of type `json_schema` here while its
         # Chat Completions endpoint rejects it, so the generic flag can only be raised per model class.
         if profile.get('openai_responses_supports_json_schema_output', False):
-            return cast(OpenAIModelProfile, merge_profile(profile, ModelProfile(supports_json_schema_output=True)))
-        return profile
+            profile = merge_profile(profile, ModelProfile(supports_json_schema_output=True))
+        if isinstance(self._provider, OAuthCredentialsProvider):
+            # Its credentials are added by an HTTP auth hook, so a handshake would carry a placeholder key whatever
+            # `profile=` says.
+            profile = merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
+        return cast(OpenAIModelProfile, profile)
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Turn off `openai_responses_supports_websocket` for a provider or client that can't open a socket.
+        """Turn off `openai_responses_supports_websocket` for a client or gateway not known to serve sockets.
 
-        Every model resolves this, so it reads only the provider's and client's type and the provider's identity, never
-        client state such as URLs, which a mocked or partly built client may not have yet.
+        Every model resolves this, so it reads only the client's type and the provider's identity, never client state
+        such as URLs, which a mocked or partly built client may not have yet.
         """
         provider = self._provider
         if (
@@ -3302,8 +3306,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             isinstance(provider.client, AsyncAzureOpenAI)
             # The gateway's handshake on its Responses route fails with a 503 while HTTP succeeds (live, 2026-10-22).
             or is_gateway_provider(provider)
-            # Its credentials are added by an HTTP auth hook, so the handshake would carry a placeholder key.
-            or isinstance(provider, OAuthCredentialsProvider)
         ):
             return merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
         return profile

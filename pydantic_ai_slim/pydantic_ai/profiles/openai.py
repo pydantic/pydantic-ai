@@ -535,10 +535,10 @@ class OpenAIModelProfile(ModelProfile, total=False):
 
     When `False`, [`openai_transport='websocket'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_transport]
     warns with an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] and sends each request
-    over HTTP. Set by `AzureProvider`, and by `OpenAIResponsesModel` for an `AsyncAzureOpenAI` client, the Pydantic AI
-    Gateway, and providers that add OAuth credentials to HTTP requests only (`openai-chatgpt`, `openai-codex`).
-    `OpenAICodexModel` sets it too, since its session headers depend on each conversation and a socket sends its headers
-    once. A `True` in the model's `profile=` wins over all of these.
+    over HTTP. Set by `AzureProvider`, and by `OpenAIResponsesModel` for an `AsyncAzureOpenAI` client and the
+    Pydantic AI Gateway; a `True` in the model's `profile=` wins over these. It stays `False` whatever `profile=` says
+    for providers that add OAuth credentials to HTTP requests only (`openai-chatgpt`, `openai-codex`), and for
+    `OpenAICodexModel`, since its session headers depend on each conversation and a socket sends its headers once.
     """
 
     openai_responses_supports_websocket_stream_id: bool
