@@ -1184,11 +1184,12 @@ def _check_continuation_usage(
 ) -> None:
     """Enforce token limits mid-turn against a provisional total during continuations.
 
-    Continuation segments accumulate usage but aren't committed to the run usage until the
-    final merged response is appended exactly once by `ModelRequestNode._append_response`
-    (so a continuation isn't double-counted, nor counted as a separate request step). To
-    still fail fast when a segment blows the token budget, check the limit against a
-    throwaway copy of the run usage plus the accumulated continuation usage. Works both in
+    Continuation segments accumulate usage that's committed to the run usage once, when the
+    request ends: with the final merged response, or with the partial merged response when the
+    request raises (this check included), is cancelled or times out. So a continuation isn't
+    double-counted, nor counted as a separate request step. To still fail fast when a segment
+    blows the token budget, check the limit against a throwaway copy of the run usage plus the
+    accumulated continuation usage. Works both in
     the agent graph (where `run_context.usage` is the live run usage) and inside a durable
     boundary (where it's the serialized snapshot the activity/step/task received — the final
     workflow-side check still applies when the merged response is committed).
@@ -1222,8 +1223,9 @@ async def model_request(
     OpenAI background mode), echoing each suspended response back and merging the segments
     into one response. Only the final merged response is returned, so `wrap_model_request`
     spans the whole chain and `after_model_request` sees just the final response.
-    Continuations are not separate request steps, so usage is committed exactly once when
-    the merged response is appended to history. When `request_context.messages` ends in a
+    Continuations are not separate request steps, so usage is committed exactly once, by the
+    caller: when the merged response is appended to history, or, with the partial merged response
+    `on_progress` last reported, when the request stops early. When `request_context.messages` ends in a
     suspended `ModelResponse` (a resumed run), that response seeds the loop.
 
     Under the bundled durable-execution capabilities (Temporal/DBOS/Prefect) this loop runs
@@ -1236,9 +1238,9 @@ async def model_request(
         model: The model to call.
         request_context: The merged request context (messages, settings, parameters).
         run_context: The current run context, made available via `get_current_run_context`.
-        on_progress: Callback invoked with the merged response after each segment, so the
-            caller can preserve partial progress when a later segment's error is converted
-            to a retry.
+        on_progress: Callback invoked with the merged response after each segment, before its usage is
+            checked against the limits, so the caller can count the usage billed so far and preserve
+            partial progress when the request stops early, or a later segment's error is converted to a retry.
 
     Returns:
         The (merged) model response.
@@ -1314,6 +1316,8 @@ async def model_request(
             report_continuation_segment(request_context, new_response)
             if response is None:
                 response = new_response
+                # Reported before the limit check, so the caller counts the billed segment if it raises.
+                on_progress(response)
                 if response.state == 'suspended':
                     fill_response_cost(response)
                     try:
@@ -1330,6 +1334,7 @@ async def model_request(
                 # counted against the right ceiling.
                 last_mode = merge_mode(response, new_response)
                 response = merge_responses(response, new_response)
+                on_progress(response)
                 # Enforce token limits early against a provisional total so a runaway
                 # continuation can't blow the budget; the total is committed once later. A resumed
                 # `seed` was counted by the run that suspended it, so only what this run billed counts.
@@ -1343,7 +1348,6 @@ async def model_request(
                     if response.state == 'suspended':
                         await cancel_suspended_job(model, response)
                     raise
-            on_progress(response)
 
 
 @asynccontextmanager
@@ -1840,11 +1844,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 accounted_responses.append(response)
             except exceptions.ModelRetry:
                 raise
-            except Exception as e:
+            except BaseException as e:
+                # The segments of a continued response were billed, however the request stopped: by an
+                # error, a usage limit, or the run being cancelled or timing out.
                 if _handler_response is not None:
                     _handler_usage_recorded = True
                     self._record_response_usage(ctx, _handler_response, request_context=req_ctx)
                     accounted_responses.append(_handler_response)
+                if not isinstance(e, Exception):
+                    raise
                 response = await self._recover_model_request_error(ctx, run_context, req_ctx, e)
             _handler_response = response
             capture_model_response_span_context(req_ctx, response)
