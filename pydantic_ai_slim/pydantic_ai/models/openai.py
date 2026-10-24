@@ -4630,7 +4630,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             )
                             if profile.get('openai_responses_requires_function_call_status_none', False):
                                 param['status'] = None  # type: ignore[reportGeneralTypeIssues]
-                            if id and should_send_item_id:  # pragma: no branch
+                            # A native computer call's `cu_` id is refused on a function call.
+                            if id and should_send_item_id and 'computer_call' not in (item.provider_details or {}):
                                 param['id'] = id
                             # The Responses API attaches a `namespace` to function calls
                             # for discovered deferred tools (tool-search flow). Round-trip
