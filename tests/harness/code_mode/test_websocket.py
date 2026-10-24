@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Never
@@ -106,7 +107,9 @@ def test_deprecated_sandbox_url_becomes_executor() -> None:
     with pytest.warns(HarnessDeprecationWarning, match='monty_sandbox_url'):
         capability = CodeMode[None](monty_sandbox_url='wss://sandbox.example.com/monty')
     assert capability.executor == MontyServer('wss://sandbox.example.com/monty')
-    assert capability.monty_sandbox_url is None
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        assert replace(capability).executor == capability.executor
 
     with pytest.warns(HarnessDeprecationWarning, match='CodeModeToolset'):
         toolset = CodeModeToolset[None](FunctionToolset(), monty_sandbox_url='wss://sandbox.example.com/monty')

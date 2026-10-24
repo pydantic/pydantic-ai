@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Sequence
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, InitVar, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import TypeAdapter, ValidationError
@@ -171,7 +171,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     over the connection.
     """
 
-    monty_sandbox_url: str | None = field(default=None, repr=False)
+    monty_sandbox_url: InitVar[str | None] = None
     """Deprecated: pass `executor=MontyServer(url)` instead."""
 
     repl_store: CodeModeReplStore[AgentDepsT] | None = None
@@ -232,11 +232,10 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 
     _in_flight_announcements: set[str] = field(default_factory=set[str], init=False, repr=False)
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, monty_sandbox_url: str | None) -> None:
         # Converted once here, so the per-run copies and the toolsets built from this do not warn again.
         self.os_access = as_os_handler(self.os_access)
-        self.executor = executor_from_sandbox_url('CodeMode', self.executor, self.monty_sandbox_url)
-        self.monty_sandbox_url = None
+        self.executor = executor_from_sandbox_url('CodeMode', self.executor, monty_sandbox_url)
         if isinstance(self.speculate, str) and self.speculate != 'declared':
             raise UserError(
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "

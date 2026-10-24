@@ -9,7 +9,7 @@ import re
 import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, InitVar, dataclass, field, replace
 from functools import partial
 from itertools import islice
 from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeAlias, TypeGuard
@@ -956,7 +956,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     executor: MontyServer[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)
     """Run sandboxed code on this Monty server; unset, it runs on local Monty workers."""
 
-    monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
+    monty_sandbox_url: InitVar[str | None] = field(default=None, kw_only=True)
     """Deprecated: pass `executor=MontyServer(url)` instead."""
 
     dynamic_catalog: bool = False
@@ -1012,11 +1012,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     _executor_auth: str | None = field(default=None, init=False, repr=False, compare=False)
     _executor_auth_resolved: bool = field(default=False, init=False, repr=False, compare=False)
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, monty_sandbox_url: str | None) -> None:
         # Converted once here, so the copies `for_run` and `for_run_step` make do not warn again.
         self.os_access = as_os_handler(self.os_access)
-        self.executor = executor_from_sandbox_url(type(self).__name__, self.executor, self.monty_sandbox_url)
-        self.monty_sandbox_url = None
+        self.executor = executor_from_sandbox_url(type(self).__name__, self.executor, monty_sandbox_url)
 
     @property
     def id(self) -> str | None:
