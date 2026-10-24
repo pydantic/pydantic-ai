@@ -13,6 +13,22 @@
             - SupportsCommands
             - SupportsFilesystem
             - SupportsRealpath
+            - SupportsDisplay
+            - SupportsZoom
+            - SupportsCursorPosition
+            - ComputerAction
+            - Click
+            - MoveMouse
+            - Drag
+            - Point
+            - Region
+            - MouseDown
+            - MouseUp
+            - MouseButton
+            - Scroll
+            - TypeText
+            - PressKeys
+            - HoldKeys
             - WorkspaceCommand
             - CommandResult
             - FileEntry
@@ -21,6 +37,7 @@
             - WorkspaceTimeoutError
             - WorkspaceOutputLimitError
             - WorkspaceReadOnlyError
+            - UnsupportedComputerActionError
 
 # `pydantic_ai.workspaces.conformance`
 

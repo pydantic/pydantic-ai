@@ -248,7 +248,8 @@ agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('.', read_o
 ```
 
 A refused change raises [`WorkspaceReadOnlyError`][pydantic_ai.workspaces.WorkspaceReadOnlyError].
-Commands are refused too, because a command could change files. A capability can check
+Commands are refused too, because a command could change files. On a workspace with a display,
+screenshots are allowed and mouse and keyboard actions are refused. A capability can check
 [`ctx.workspace.read_only`][pydantic_ai.workspaces.Workspace.read_only] to leave its write tools out.
 
 For a single run, wrap its workspace in `ReadOnlyWorkspace` and pass it as `workspace=`, as the
@@ -526,6 +527,23 @@ A backend is the object that talks to one environment; `Workspace` wraps it to g
 and `ctx.workspace.run` raises `UserError`. Shell-derived reads require regular files (not FIFOs or devices). They transfer large files and directory listings in bounded chunks, but shell-derived file operations are slower than native provider file APIs. Local and shell-derived file operations refuse to remove the workspace root or an ancestor, and local writes do not recreate a removed workspace directory. `LocalWorkspace` continues only in a ref naming its configured directory exactly as written, so a ref spelled through a symlink is declined.
 With both, they must reach the same environment. A filesystem-only backend whose storage can hold
 symlinks should also implement `SupportsRealpath`; see [Resolving symlinks](#resolving-symlinks).
+
+### Controlling a display
+
+A backend whose environments can have a graphical display implements
+[`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]: `has_display`, which says without I/O
+whether this environment has one, `display_size`, `screenshot` (PNG bytes), and `act`, which performs one [`ComputerAction`][pydantic_ai.workspaces.ComputerAction]
+such as a click or a key press. Tools reach them as `ctx.workspace.screenshot()` and
+`ctx.workspace.act(...)`.
+
+New action kinds may be added to `ComputerAction`, so `act` must raise
+[`UnsupportedComputerActionError`][pydantic_ai.workspaces.UnsupportedComputerActionError] for a kind it
+doesn't know; [`WorkspaceBackendSuite`][pydantic_ai.workspaces.conformance.WorkspaceBackendSuite] checks this. Coordinates are pixels of the screenshot, so a backend
+whose screen is scaled, such as a high-density display, reports the screenshot's size and scales actions to
+match. Keep the screenshot at most 2,000 pixels on each side: Claude rejects larger images once a request
+carries more than 20 of them. A backend can also implement
+[`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom], to capture part of the display at full resolution, and
+[`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition]. `LocalWorkspace` has no display.
 
 ### Resolving symlinks
 

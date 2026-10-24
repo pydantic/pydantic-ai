@@ -5,12 +5,21 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Never
 
-from .protocol import SupportsCommands, WorkspaceBackend, WorkspaceCommand, WorkspaceUnavailableError
+from .computer import ComputerAction, Region
+from .protocol import (
+    SupportsCommands,
+    SupportsCursorPosition,
+    SupportsDisplay,
+    SupportsZoom,
+    WorkspaceBackend,
+    WorkspaceCommand,
+    WorkspaceUnavailableError,
+)
 
 __all__ = ('UnavailableWorkspace',)
 
 
-class UnavailableWorkspace(WorkspaceBackend, SupportsCommands):
+class UnavailableWorkspace(WorkspaceBackend, SupportsCommands, SupportsDisplay, SupportsZoom, SupportsCursorPosition):
     """A `WorkspaceBackend` whose operations raise `WorkspaceUnavailableError` with a configured reason."""
 
     def __init__(self, reason: str):
@@ -32,6 +41,26 @@ class UnavailableWorkspace(WorkspaceBackend, SupportsCommands):
         raise WorkspaceUnavailableError(self.reason)
 
     async def working_dir(self) -> Never:
+        raise WorkspaceUnavailableError(self.reason)
+
+    @property
+    def has_display(self) -> bool:
+        """Always `False`: there is no environment, so no display."""
+        return False
+
+    async def display_size(self) -> Never:
+        raise WorkspaceUnavailableError(self.reason)
+
+    async def screenshot(self) -> Never:
+        raise WorkspaceUnavailableError(self.reason)
+
+    async def act(self, action: ComputerAction) -> Never:
+        raise WorkspaceUnavailableError(self.reason)
+
+    async def zoom(self, region: Region) -> Never:
+        raise WorkspaceUnavailableError(self.reason)
+
+    async def cursor_position(self) -> Never:
         raise WorkspaceUnavailableError(self.reason)
 
 

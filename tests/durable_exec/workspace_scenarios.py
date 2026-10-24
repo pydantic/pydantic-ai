@@ -24,9 +24,18 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.durable_exec._workspace import DurableWorkspace
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import ReadOnlyWorkspace, Workspace, WorkspaceBackend, WorkspaceReadOnlyError, WorkspaceRef
+from pydantic_ai.workspaces import (
+    HoldKeys,
+    PressKeys,
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceBackend,
+    WorkspaceError,
+    WorkspaceReadOnlyError,
+    WorkspaceRef,
+)
 
-from ..workspace_fakes import InMemoryProvider
+from ..workspace_fakes import FAKE_SCREENSHOT, InMemoryProvider
 
 
 class ScenarioFailed(Exception):
@@ -239,7 +248,7 @@ _BINARY = b'\xff\xfe\x00\x01binary\x80'
 async def _error_of(call: Awaitable[Any]) -> str:
     try:
         await call
-    except (OSError, UnicodeDecodeError, TypeError) as error:
+    except (OSError, UnicodeDecodeError, TypeError, WorkspaceError) as error:
         return type(error).__name__
     return 'none'  # pragma: no cover
 
@@ -256,7 +265,9 @@ async def binary(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dic
         decoded = error.object == _BINARY
     else:  # pragma: no cover
         decoded = False
+    await workspace.act(PressKeys(keys=('ctrl', 's')))
     return {
+        'display': [*await workspace.display_size(), (await workspace.screenshot()) == FAKE_SCREENSHOT],
         'round_trip': (await workspace.read_bytes('blob.bin')) == _BINARY,
         'size': (await workspace.stat('blob.bin')).size,
         'exists': [await workspace.exists('blob.bin'), await workspace.exists('nope')],
@@ -265,6 +276,7 @@ async def binary(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dic
             await _error_of(workspace.stat('sub/gone.txt')),
             await _error_of(workspace.remove('missing.txt')),
             await _error_of(workspace.run('echo hi')),
+            await _error_of(workspace.act(HoldKeys(keys=('shift',), seconds=1))),
         ],
     }
 
@@ -358,15 +370,17 @@ async def check_explicit_rejected(kind: str, type: str, fragment: str, run: Runn
 
 
 async def check_binary(run: Runner, agents: ScenarioAgents) -> None:
-    """Bytes and the expected errors cross the durable boundary unchanged."""
+    """Bytes, display calls (a screenshot is bytes too) and the expected errors cross the durable boundary unchanged."""
     assert await run('binary', None) == {
+        'display': [1280, 800, True],
         'round_trip': True,
         'size': 11,
         'exists': [True, False],
         'decode_error_keeps_bytes': True,
-        'errors': ['FileNotFoundError', 'FileNotFoundError', 'TypeError'],
+        'errors': ['FileNotFoundError', 'FileNotFoundError', 'TypeError', 'UnsupportedComputerActionError'],
     }
     assert agents.provider.environments['env-1']['/remote/blob.bin'] == _BINARY
+    assert agents.provider.actions == [PressKeys(keys=('ctrl', 's'))]
 
 
 async def check_local(run: Runner, agents: ScenarioAgents) -> None:

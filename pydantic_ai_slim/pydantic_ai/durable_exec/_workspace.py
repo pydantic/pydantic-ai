@@ -29,7 +29,11 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import (
     CommandResult,
+    ComputerAction,
     FileEntry,
+    Point,
+    Region,
+    UnsupportedComputerActionError,
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -57,7 +61,21 @@ WORKSPACE_OPERATION_ID = CapabilityOperationId('workspace', operation='call')
 _BYTES_CONFIG = ConfigDict(ser_json_bytes='base64', val_json_bytes='base64')
 
 WorkspaceMethod: TypeAlias = Literal[
-    'ensure', 'run', 'read_bytes', 'write_bytes', 'stat', 'list_dir', 'make_dir', 'remove', 'exists', 'realpath'
+    'ensure',
+    'run',
+    'read_bytes',
+    'write_bytes',
+    'stat',
+    'list_dir',
+    'make_dir',
+    'remove',
+    'exists',
+    'realpath',
+    'display_size',
+    'screenshot',
+    'act',
+    'zoom',
+    'cursor_position',
 ]
 
 
@@ -90,6 +108,8 @@ class WorkspaceCallResult:
     flag: bool = False
     entries: list[FileEntry] = field(default_factory=list[FileEntry])
     command: CommandResult | None = None
+    size: tuple[int, int] | None = None
+    point: Point | None = None
     ref: WorkspaceRef | None = None
     error: WorkspaceCallError | None = None
 
@@ -105,8 +125,10 @@ class WorkspaceCall:
     shell: bool = False
     env: dict[str, str] | None = None
     timeout: float | None = None
+    action: ComputerAction | None = None
+    region: Region | None = None
 
-    async def execute(self, workspace: Workspace) -> WorkspaceCallResult:
+    async def execute(self, workspace: Workspace) -> WorkspaceCallResult:  # noqa: C901
         match self.method:
             case 'ensure':
                 # `working_dir()` is the one operation every backend has, and it creates or attaches;
@@ -142,6 +164,19 @@ class WorkspaceCall:
                 return WorkspaceCallResult(flag=await workspace.exists(self.path))
             case 'realpath':
                 return WorkspaceCallResult(text=await workspace.realpath(self.path))
+            case 'display_size':
+                return WorkspaceCallResult(size=await workspace.display_size())
+            case 'screenshot':
+                return WorkspaceCallResult(data=await workspace.screenshot())
+            case 'act':
+                assert self.action is not None
+                await workspace.act(self.action)
+                return WorkspaceCallResult()
+            case 'zoom':
+                assert self.region is not None
+                return WorkspaceCallResult(data=await workspace.zoom(self.region))
+            case 'cursor_position':
+                return WorkspaceCallResult(point=await workspace.cursor_position())
         assert_never(self.method)
 
 
@@ -166,6 +201,7 @@ _EXPECTED_ERRORS: tuple[type[Exception], ...] = (
     WorkspaceUnavailableError,
     WorkspaceReadOnlyError,
     WorkspaceOutputLimitError,
+    UnsupportedComputerActionError,
     WorkspaceError,
     FileNotFoundError,
     NotADirectoryError,
@@ -347,6 +383,35 @@ class DurableWorkspace(WrapperWorkspace):
         if not self._in_container():
             return await self.wrapped.realpath(path)
         return (await self._call(WorkspaceCall(method='realpath', path=path))).text
+
+    async def display_size(self) -> tuple[int, int]:
+        if not self._in_container():
+            return await self.wrapped.display_size()
+        size = (await self._call(WorkspaceCall(method='display_size'))).size
+        assert size is not None
+        return size
+
+    async def screenshot(self) -> bytes:
+        if not self._in_container():
+            return await self.wrapped.screenshot()
+        return (await self._call(WorkspaceCall(method='screenshot'))).data
+
+    async def act(self, action: ComputerAction) -> None:
+        if not self._in_container():
+            return await self.wrapped.act(action)
+        await self._call(WorkspaceCall(method='act', action=action))
+
+    async def zoom(self, region: Region) -> bytes:
+        if not self._in_container():
+            return await self.wrapped.zoom(region)
+        return (await self._call(WorkspaceCall(method='zoom', region=region))).data
+
+    async def cursor_position(self) -> Point:
+        if not self._in_container():
+            return await self.wrapped.cursor_position()
+        point = (await self._call(WorkspaceCall(method='cursor_position'))).point
+        assert point is not None
+        return point
 
     async def _call(self, call: WorkspaceCall) -> WorkspaceCallResult:
         await self._ensure()

@@ -3,7 +3,8 @@
 A backend implements [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] plus
 [`SupportsCommands`][pydantic_ai.workspaces.SupportsCommands],
 [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], or both, and optionally
-[`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath]. Every backend must:
+[`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath] and
+[`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]. Every backend must:
 
 - run commands and file operations against one filesystem, when it supports both;
 - report the real exit code: a non-zero exit is a result, never an exception;
@@ -32,10 +33,16 @@ from typing import Protocol, TypeAlias, runtime_checkable
 
 from pydantic_ai.messages import WorkspaceRef
 
+from .computer import ComputerAction, Point, Region
+
 # These protocols are frozen once released: conformance is structural, so adding a member
 # would silently break every existing backend. New operations go on concrete types or on new
 # optional `Supports*` protocols. New fields on `CommandResult` and `FileEntry` must carry
 # defaults so backends keep constructing them.
+#
+# The display methods don't gain parameters either, since wrappers override them. An operation that changes the
+# display is a new `ComputerAction` type, so `act` carries it through read-only and durable wrappers; one that reads
+# the display, like `SupportsZoom`, is a new protocol with its own `Workspace` and `DurableWorkspace` methods.
 __all__ = (
     'CommandResult',
     'FileEntry',
@@ -47,9 +54,13 @@ __all__ = (
     'WorkspaceReadOnlyError',
     'WorkspaceTimeoutError',
     'WorkspaceUnavailableError',
+    'UnsupportedComputerActionError',
     'SupportsCommands',
+    'SupportsCursorPosition',
+    'SupportsDisplay',
     'SupportsFilesystem',
     'SupportsRealpath',
+    'SupportsZoom',
 )
 
 
@@ -94,6 +105,10 @@ class WorkspaceReadOnlyError(WorkspaceError, PermissionError):
 
     Raised by [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace] and wrappers like it.
     """
+
+
+class UnsupportedComputerActionError(WorkspaceError):
+    """A [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay] backend can't perform this kind of action."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -215,6 +230,65 @@ class SupportsRealpath(Protocol):
         target. Keep missing components as written. A loop must not hang; a returned path through a loop
         must stay inside the directory holding it (or raise `OSError`). Return an absolute, normalized path.
         """
+        ...
+
+
+@runtime_checkable
+class SupportsDisplay(Protocol):
+    """Optional control of a graphical display: screenshots, mouse, and keyboard.
+
+    Without it, the `Workspace` display methods raise `UserError`.
+    """
+
+    @property
+    def has_display(self) -> bool:
+        """Whether this environment has a display, decided without I/O.
+
+        An implementation whose environments may lack one, such as a sandbox started without a desktop, returns
+        `False` for those, and its other display methods raise `UserError`.
+        """
+        ...
+
+    async def display_size(self) -> tuple[int, int]:
+        """The next screenshot's `(width, height)` in pixels: the coordinate space of every action.
+
+        It can change between calls, for example when a phone rotates.
+        """
+        ...
+
+    async def screenshot(self) -> bytes:
+        """Capture the whole display as PNG bytes, at the size `display_size` reports."""
+        ...
+
+    async def act(self, action: ComputerAction) -> None:
+        """Perform one action on the display.
+
+        Raise [`UnsupportedComputerActionError`][pydantic_ai.workspaces.UnsupportedComputerActionError] for an
+        action kind, or a value, the backend can't perform exactly: new kinds can be added to
+        [`ComputerAction`][pydantic_ai.workspaces.ComputerAction] without changing this protocol.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsZoom(Protocol):
+    """Optional, alongside [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]: a closer look at part of the display."""
+
+    async def zoom(self, region: Region) -> bytes:
+        """Capture the region as PNG bytes, at the display's full resolution.
+
+        The region is in screenshot pixels. On a display whose screenshots are scaled down, the capture shows detail
+        the screenshot lost.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsCursorPosition(Protocol):
+    """Optional, alongside [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]: where the pointer is."""
+
+    async def cursor_position(self) -> Point:
+        """The pointer's position in screenshot pixels."""
         ...
 
 

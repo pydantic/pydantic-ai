@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import errno
 import pickle
+import struct
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -48,8 +49,13 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     FileEntry,
+    HoldKeys,
     LocalWorkspaceBackend,
+    Point,
+    PressKeys,
     ReadOnlyWorkspace,
+    Region,
+    UnsupportedComputerActionError,
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
@@ -61,7 +67,7 @@ from pydantic_ai.workspaces import (
     WrapperWorkspace,
 )
 
-from ..workspace_fakes import FakeWorkspace, InMemoryProvider, WorkspaceCapability
+from ..workspace_fakes import FAKE_SCREENSHOT, FakeWorkspace, InMemoryProvider, WorkspaceCapability
 
 
 class _Backend(CallableOperationBackend[dict[str, Any]]):
@@ -441,6 +447,16 @@ async def test_result_workspace_calls_directly_once_the_container_has_ended() ->
     await workspace.remove('after.bin')
     assert await workspace.exists('after.bin') is False
     assert await workspace.realpath('sub/../after.txt') == '/workspace/after.txt'
+    region = Region(left=0, top=0, right=10, bottom=10)
+    for display_call in (
+        workspace.display_size(),
+        workspace.screenshot(),
+        workspace.act(PressKeys(keys=('a',))),
+        workspace.zoom(region),
+        workspace.cursor_position(),
+    ):
+        with pytest.raises(UserError, match='has no display to control'):
+            await display_call
     assert _workspace_units(durability) == ['ensure']
 
     # A wrapper that never ran `ensure` asks the wrapped workspace for its working directory too.
@@ -575,6 +591,14 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
         await workspace.read_bytes('b.bin')
     with pytest.raises(TypeError, match='shell'):
         await workspace.run('ls', shell=False)
+    assert await workspace.display_size() == (1280, 800)
+    assert await workspace.screenshot() == FAKE_SCREENSHOT
+    await workspace.act(PressKeys(keys=('ctrl', 's')))
+    with pytest.raises(UnsupportedComputerActionError, match="cannot perform 'hold_key'"):
+        await workspace.act(HoldKeys(keys=('shift',), seconds=1))
+    assert provider.actions == [PressKeys(keys=('ctrl', 's'))]
+    assert (await workspace.zoom(Region(left=0, top=0, right=8, bottom=4)))[16:24] == struct.pack('>II', 8, 4)
+    assert await workspace.cursor_position() == Point(x=640, y=400)
     assert _workspace_units(durability) == snapshot(
         [
             'ensure',
@@ -592,6 +616,12 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
             'stat',
             'read_bytes',
             'run',
+            'display_size',
+            'screenshot',
+            'act',
+            'act',
+            'zoom',
+            'cursor_position',
         ]
     )
     assert provider.log == ['create:env-1']
@@ -612,12 +642,23 @@ def test_non_utf8_bytes_round_trip_through_json_and_pickle() -> None:
     assert JSON_CODEC.load(WorkspaceCallResult, JSON_CODEC.dump(WorkspaceCallResult, result)) == result
 
 
+def test_display_calls_round_trip_through_json_and_pickle() -> None:
+    act = WorkspaceCall(method='act', action=PressKeys(keys=('ctrl', 's')))
+    assert JSON_CODEC.load(WorkspaceCall, JSON_CODEC.dump(WorkspaceCall, act)) == act
+    assert pickle.loads(pickle.dumps(act)) == act
+    zoom = WorkspaceCall(method='zoom', region=Region(left=1, top=2, right=3, bottom=4))
+    assert JSON_CODEC.load(WorkspaceCall, JSON_CODEC.dump(WorkspaceCall, zoom)) == zoom
+    for result in (WorkspaceCallResult(size=(1280, 800)), WorkspaceCallResult(point=Point(x=1, y=2))):
+        assert JSON_CODEC.load(WorkspaceCallResult, JSON_CODEC.dump(WorkspaceCallResult, result)) == result
+
+
 @pytest.mark.parametrize(
     'error',
     [
         WorkspaceTimeoutError('slow', stdout='partial', stderr='err'),
         WorkspaceUnavailableError('gone'),
         WorkspaceReadOnlyError('read-only'),
+        UnsupportedComputerActionError('no such action'),
         WorkspaceError('broken'),
         FileNotFoundError('/missing'),
         NotADirectoryError('/file'),

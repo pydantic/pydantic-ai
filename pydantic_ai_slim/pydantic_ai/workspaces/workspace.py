@@ -14,12 +14,17 @@ from typing_extensions import get_protocol_members
 
 from pydantic_ai.exceptions import UserError
 
+from .computer import ComputerAction, Point, Region
 from .protocol import (
     CommandResult,
     FileEntry,
     SupportsCommands,
+    SupportsCursorPosition,
+    SupportsDisplay,
     SupportsFilesystem,
     SupportsRealpath,
+    SupportsZoom,
+    UnsupportedComputerActionError,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -410,6 +415,12 @@ class Workspace(WorkspaceBackend):
         return not isinstance(backend, UnavailableWorkspace)
 
     @property
+    def has_display(self) -> bool:
+        """Whether the backend has a display to control, so `screenshot` and `act` can work. Does no I/O."""
+        backend = self._backend
+        return isinstance(backend, SupportsDisplay) and backend.has_display
+
+    @property
     def ref(self) -> WorkspaceRef | None:
         """The environment's [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef], `None` until it exists."""
         return self._backend.ref
@@ -524,6 +535,48 @@ class Workspace(WorkspaceBackend):
         if isinstance(backend, SupportsCommands):
             return await _ShellFilesystem(backend).realpath(path)
         return posixpath.normpath(path)
+
+    @property
+    def _display(self) -> SupportsDisplay:
+        backend = self._backend
+        if isinstance(backend, SupportsDisplay):
+            return backend
+        raise UserError(
+            'This workspace has no display to control. Attach a backend that implements `SupportsDisplay`, '
+            'such as a sandbox started with a desktop.'
+        )
+
+    async def display_size(self) -> tuple[int, int]:
+        """The screenshot's `(width, height)` in pixels. Raises `UserError` if the workspace has no display."""
+        return await self._display.display_size()
+
+    async def screenshot(self) -> bytes:
+        """Capture the whole display as PNG bytes. Raises `UserError` if the workspace has no display."""
+        return await self._display.screenshot()
+
+    async def act(self, action: ComputerAction) -> None:
+        """Perform a mouse or keyboard action on the display. Raises `UserError` if the workspace has no display."""
+        await self._display.act(action)
+
+    async def zoom(self, region: Region) -> bytes:
+        """Capture part of the display as PNG bytes, at full resolution.
+
+        Raises `UnsupportedComputerActionError` if the backend can't zoom.
+        """
+        backend = self._display  # a workspace without a display says so first
+        if not isinstance(backend, SupportsZoom):
+            raise UnsupportedComputerActionError('This display cannot zoom.')
+        return await backend.zoom(region)
+
+    async def cursor_position(self) -> Point:
+        """The pointer's position in screenshot pixels.
+
+        Raises `UnsupportedComputerActionError` if the backend can't report it.
+        """
+        backend = self._display
+        if not isinstance(backend, SupportsCursorPosition):
+            raise UnsupportedComputerActionError('This display cannot report the pointer position.')
+        return await backend.cursor_position()
 
     async def read_text(self, path: str, *, encoding: str = 'utf-8') -> str:
         """Read a file as text; undecodable bytes raise `UnicodeDecodeError`."""

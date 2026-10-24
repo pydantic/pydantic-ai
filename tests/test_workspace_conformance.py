@@ -13,6 +13,10 @@ import pytest
 
 from pydantic_ai.workspaces import (
     LocalWorkspaceBackend,
+    Point,
+    Region,
+    SupportsCursorPosition,
+    SupportsZoom,
     WorkspaceBackend,
     WorkspaceRef,
     local as local_module,
@@ -20,6 +24,7 @@ from pydantic_ai.workspaces import (
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 
 from .workspace_fakes import (
+    DisplayOnlyBackend,
     FakeWorkspace,
     FilesystemOnlyWorkspaceBackend,
     InMemoryProvider,
@@ -125,6 +130,16 @@ class TestRunOnlyWorkspaceBackend(WorkspaceBackendSuite):
         return _local_destroy_environment()
 
 
+class _ProviderFilesAndDisplay(DisplayOnlyBackend, SupportsZoom, SupportsCursorPosition):
+    """The provider's files and display, without its stub `run`."""
+
+    async def zoom(self, region: Region) -> bytes:
+        return await self._display.zoom(region)
+
+    async def cursor_position(self) -> Point:
+        return await self._display.cursor_position()
+
+
 class TestProviderBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def enforces_parent_file_errors(self) -> bool:
@@ -140,7 +155,7 @@ class TestProviderBackend(WorkspaceBackendSuite):
 
     @pytest.fixture
     def backend(self, provider: InMemoryProvider) -> WorkspaceBackend:
-        return FilesystemOnlyWorkspaceBackend(provider.backend(None))
+        return _ProviderFilesAndDisplay(provider.backend(None))
 
     @pytest.fixture
     def fresh_backend(self, provider: InMemoryProvider) -> Callable[[], WorkspaceBackend]:
@@ -177,3 +192,12 @@ async def test_native_realpath_rule_runs_without_commands() -> None:
     await rule(_NormalizingRealpathBackend(FakeWorkspace('normalizing-realpath')))
     with pytest.raises(AssertionError):
         await rule(_RelativeRealpathBackend(FakeWorkspace('relative-realpath')))
+
+
+@pytest.mark.anyio
+async def test_the_zoom_and_pointer_checks_skip_a_display_without_them() -> None:
+    suite = WorkspaceBackendSuite()
+    backend = DisplayOnlyBackend(InMemoryProvider().backend(None))
+    for check in (suite.test_zoom_is_a_png_of_the_region, suite.test_the_cursor_position_is_on_the_screen):
+        with pytest.raises(pytest.skip.Exception):
+            await check(backend)

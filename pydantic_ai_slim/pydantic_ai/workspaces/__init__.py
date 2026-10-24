@@ -1,12 +1,31 @@
 """Workspace API, backend protocols, and implementations."""
 
+from .computer import (
+    Click,
+    ComputerAction,
+    Drag,
+    HoldKeys,
+    MouseButton,
+    MouseDown,
+    MouseUp,
+    MoveMouse,
+    Point,
+    PressKeys,
+    Region,
+    Scroll,
+    TypeText,
+)
 from .local import LocalWorkspaceBackend
 from .protocol import (
     CommandResult,
     FileEntry,
     SupportsCommands,
+    SupportsCursorPosition,
+    SupportsDisplay,
     SupportsFilesystem,
     SupportsRealpath,
+    SupportsZoom,
+    UnsupportedComputerActionError,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -21,10 +40,23 @@ from .unavailable import UnavailableWorkspace
 from .workspace import Workspace, WrapperWorkspace
 
 __all__ = (
+    'Click',
     'CommandResult',
+    'ComputerAction',
+    'Drag',
     'FileEntry',
+    'HoldKeys',
     'LocalWorkspaceBackend',
+    'MouseButton',
+    'MouseDown',
+    'MouseUp',
+    'MoveMouse',
+    'Point',
+    'PressKeys',
     'ReadOnlyWorkspace',
+    'Region',
+    'Scroll',
+    'TypeText',
     'Workspace',
     'WrapperWorkspace',
     'WorkspaceBackend',
@@ -36,7 +68,11 @@ __all__ = (
     'WorkspaceTimeoutError',
     'WorkspaceUnavailableError',
     'SupportsCommands',
+    'SupportsCursorPosition',
+    'SupportsDisplay',
     'SupportsFilesystem',
     'SupportsRealpath',
+    'SupportsZoom',
     'UnavailableWorkspace',
+    'UnsupportedComputerActionError',
 )
