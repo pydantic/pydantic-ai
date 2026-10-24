@@ -197,8 +197,11 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             ),
         ],
     ) -> ToolReturn:
-        acts = any(action.type not in _OBSERVING_ACTIONS for action in actions)
-        if self.require_approval and acts and not ctx.tool_call_approved:
+        if (
+            self.require_approval
+            and not ctx.tool_call_approved
+            and any(action.type not in _OBSERVING_ACTIONS for action in actions)
+        ):
             raise ApprovalRequired
         grid = _coordinate_grid(ctx)
         if any(_points(action) for action in actions):
@@ -305,15 +308,10 @@ def _screenshots(messages: list[ModelMessage]) -> Iterator[tuple[int, int, int]]
             continue
         for part_index, part in enumerate(message.parts):
             content: Any = part.content if isinstance(part, ToolReturnPart) else None
-            if (
-                not isinstance(part, ToolReturnPart)
-                or part.tool_kind != COMPUTER_KIND.id
-                or not isinstance(content, list)
-            ):
-                continue
-            for item_index, item in enumerate(cast(list[Any], content)):
-                if isinstance(item, BinaryContent) and item.is_image:
-                    yield message_index, part_index, item_index
+            if isinstance(part, ToolReturnPart) and part.tool_kind == COMPUTER_KIND.id and isinstance(content, list):
+                for item_index, item in enumerate(cast(list[Any], content)):
+                    if isinstance(item, BinaryContent) and item.is_image:
+                        yield message_index, part_index, item_index
 
 
 def _drop_old_screenshots(messages: list[ModelMessage], keep: int) -> list[ModelMessage]:

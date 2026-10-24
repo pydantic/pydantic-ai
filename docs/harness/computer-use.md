@@ -38,22 +38,15 @@ async def main():
 
 Each run leaves its container running; see [Clean up](docker-sandbox.md#clean-up).
 
-Any capability whose workspace has a display works, such as
-[`DockerSandbox(desktop=True)`](docker-sandbox.md#give-the-agent-a-desktop). To give your own sandbox one, implement
-[`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]; see
-[Controlling a display](../workspace.md#controlling-a-display).
+To give your own sandbox a display, implement [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]; see
+[Controlling a display](../workspace.md#controlling-a-display). On a [read-only](../workspace.md#read-only-access)
+workspace the agent can take screenshots but not act.
 
-Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them.
+The model must accept images. Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them.
 
 Two model families get `computer` as their provider's native computer tool, the format they were trained on:
 Claude Opus 4.8 and Claude 5 models on the Claude API (not Bedrock, Vertex or Foundry), and GPT-5.4 and later, except
 GPT-5.4 nano, on OpenAI's own API. Every other model that accepts images gets it as a function tool.
-
-## Requirements
-
-- **A workspace with a display.** On a [read-only](../workspace.md#read-only-access) workspace the agent can take
-  screenshots but not act.
-- **A model that accepts images.**
 
 ## Computer use, Playwright, or Browser Use
 

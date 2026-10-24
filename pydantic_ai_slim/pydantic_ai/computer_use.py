@@ -20,7 +20,6 @@ from .workspaces.computer import _CONFIG  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
     from .models import ModelRequestParameters
-    from .tools import ToolDefinition
 
 __all__ = (
     'COMPUTER_KIND',
@@ -29,7 +28,7 @@ __all__ = (
     'ComputerToolAction',
     'Screenshot',
     'Wait',
-    'computer_tool',
+    'computer_tool_name',
 )
 
 
@@ -38,7 +37,7 @@ class Wait:
     """Pause, for example while a page or application loads."""
 
     type: Literal['wait'] = 'wait'
-    seconds: Annotated[float, Field(gt=0, le=10, allow_inf_nan=False)] = 1
+    seconds: Annotated[float, Field(gt=0, le=10)] = 1
     """How long to wait, up to 10 seconds."""
 
 
@@ -82,12 +81,12 @@ COMPUTER_KIND = ToolKind._core('computer', args=_ComputerArgs, content=_Computer
 """The kind of the `computer` tool, which model adapters send as their provider's native computer tool."""
 
 
-def computer_tool(model_request_parameters: ModelRequestParameters) -> ToolDefinition | None:
-    """The `computer` tool among a request's tools, which a model adapter may send as its provider's native tool.
+def computer_tool_name(model_request_parameters: ModelRequestParameters) -> str | None:
+    """The name of the request's `computer` tool, which a model adapter may send as its provider's native tool.
 
     `None` unless the tool is fully visible in this request: a deferred or withheld one stays a function tool.
     """
     tool = next((t for t in model_request_parameters.function_tools if t.tool_kind == COMPUTER_KIND.id), None)
     if tool is None or model_request_parameters.visibility_of(tool.name) != 'visible':
         return None
-    return tool
+    return tool.name
