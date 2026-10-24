@@ -4279,9 +4279,13 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if event.index in ignored_server_tool_use_indices:
                         ignored_server_tool_use_indices.remove(event.index)
                     elif isinstance(current_block, BetaMCPToolUseBlock):
+                        existing = self._parts_manager.get_part_by_vendor_id(event.index)
+                        assert isinstance(existing, NativeToolCallPart) and isinstance(existing.args, str)
+                        # With no input deltas (or only empty ones), restore the empty object
+                        # removed at block start before closing the outer call arguments.
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=event.index,
-                            args='}',
+                            args='{}}' if existing.args.endswith('"tool_args":') else '}',
                         )
                         if maybe_event is not None:  # pragma: no branch
                             yield maybe_event

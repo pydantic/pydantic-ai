@@ -73,6 +73,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
     InstructionPart,
+    ModelMessagesTypeAdapter,
     ToolAvailabilityDeltaPart,
     ToolReturn,
     ToolSearchCallPart,
@@ -162,6 +163,8 @@ with try_import() as imports_successful:
         BetaDirectCaller,
         BetaDocumentBlock,
         BetaInputJSONDelta,
+        BetaMCPToolResultBlock,
+        BetaMCPToolUseBlock,
         BetaMemoryTool20250818CreateCommand,
         BetaMemoryTool20250818DeleteCommand,
         BetaMemoryTool20250818InsertCommand,
@@ -9958,6 +9961,87 @@ async def test_anthropic_mcp_call_replays_empty_tool_args(allow_model_requests: 
     assert completion_kwargs['messages'][1]['content'][0] == snapshot(
         {'id': 'mcptoolu_123', 'type': 'mcp_tool_use', 'server_name': 'clock', 'name': 'current_time', 'input': {}}
     )
+
+
+@pytest.mark.parametrize(
+    'deltas, expected_input',
+    [
+        ([], {}),
+        ([''], {}),
+        (['{}'], {}),
+        (['{"timezone":', '"UTC"}'], {'timezone': 'UTC'}),
+    ],
+    ids=['no-delta', 'empty-delta', 'empty-object', 'arguments'],
+)
+async def test_anthropic_streamed_mcp_args_survive_history_replay(
+    allow_model_requests: None, deltas: list[str], expected_input: dict[str, str]
+):
+    stream: list[MockRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start', message=completion_message([], BetaUsage(input_tokens=1, output_tokens=1))
+        ),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start',
+            index=0,
+            content_block=BetaMCPToolUseBlock(
+                type='mcp_tool_use', id='mcptoolu_123', name='current_time', server_name='clock', input={}
+            ),
+        ),
+    ]
+    stream.extend(
+        BetaRawContentBlockDeltaEvent(
+            type='content_block_delta', index=0, delta=BetaInputJSONDelta(type='input_json_delta', partial_json=delta)
+        )
+        for delta in deltas
+    )
+    stream.extend(
+        [
+            BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+            BetaRawContentBlockStartEvent(
+                type='content_block_start',
+                index=1,
+                content_block=BetaMCPToolResultBlock(
+                    type='mcp_tool_result', tool_use_id='mcptoolu_123', content='noon', is_error=False
+                ),
+            ),
+            BetaRawContentBlockStopEvent(type='content_block_stop', index=1),
+            BetaRawContentBlockStartEvent(
+                type='content_block_start', index=2, content_block=BetaTextBlock(type='text', text='done')
+            ),
+            BetaRawContentBlockStopEvent(type='content_block_stop', index=2),
+            BetaRawMessageStopEvent(type='message_stop'),
+        ]
+    )
+    client = cast(
+        AsyncAnthropic,
+        MockAnthropic(
+            stream=stream,
+            messages_=completion_message(
+                [BetaTextBlock(type='text', text='replayed')], BetaUsage(input_tokens=1, output_tokens=1)
+            ),
+        ),
+    )
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+    agent = Agent(model, capabilities=[NativeTool(MCPServerTool(id='clock', url='https://example.com/mcp'))])
+
+    async with agent.run_stream('Call current_time') as result:
+        assert await result.get_output() == 'done'
+    history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(result.all_messages()))
+    [call] = list(iter_message_parts(history, ModelResponse, NativeToolCallPart))
+    assert call.args_as_dict() == {'action': 'call_tool', 'tool_name': 'current_time', 'tool_args': expected_input}
+
+    await agent.run('What did you call?', message_history=history)
+
+    replayed = get_mock_chat_completion_kwargs(client)[1]['messages'][1]['content']
+    assert replayed[0] == {
+        'id': 'mcptoolu_123',
+        'type': 'mcp_tool_use',
+        'server_name': 'clock',
+        'name': 'current_time',
+        'input': expected_input,
+    }
+    assert replayed[1]['type'] == 'mcp_tool_result'
+    assert replayed[1]['tool_use_id'] == replayed[0]['id']
 
 
 @pytest.mark.vcr()
