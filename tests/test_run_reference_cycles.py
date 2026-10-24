@@ -82,7 +82,7 @@ async def test_stream_releases_tool_context_cycles(complete: bool) -> None:
 
     deps = Deps()
     ref = weakref.ref(deps)
-    # Name inference retains its inspection frame independently of the run-data cycles.
+    # Before Python 3.13, name inference snapshots the caller's locals and retains `deps` there.
     async with agent.run_stream('hello', deps=deps, infer_name=False) as result:
         if complete:
             assert await result.get_output() == 'done'
@@ -92,6 +92,26 @@ async def test_stream_releases_tool_context_cycles(complete: bool) -> None:
     del deps, result
     if complete:
         assert ref() is None
+
+
+@pytest.mark.usefixtures('no_gc')
+async def test_stream_name_inference_releases_dependencies() -> None:
+    async def stream_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'done'
+
+    # The agent is passed in a dict so the caller's frame never names it and every call infers again.
+    # Streaming from a nested frame keeps the pre-3.13 snapshot of the caller's locals out of this one.
+    async def stream_output(agents: dict[str, Agent[Deps, str]], deps: Deps) -> str:
+        async with agents['agent'].run_stream('hello', deps=deps) as result:
+            return await result.get_output()
+
+    agent = Agent(FunctionModel(stream_function=stream_text), deps_type=Deps)
+    deps = Deps()
+    ref = weakref.ref(deps)
+    assert await stream_output({'agent': agent}, deps) == 'done'
+    assert agent.name is None
+    del deps
+    assert ref() is None
 
 
 @pytest.mark.usefixtures('no_gc')
