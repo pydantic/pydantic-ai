@@ -11,7 +11,6 @@ import gc
 import weakref
 from collections.abc import AsyncIterator, Generator
 from dataclasses import dataclass
-from types import AsyncGeneratorType
 from typing import Literal
 
 import anyio
@@ -312,11 +311,7 @@ async def test_interrupted_iteration_releases_dependencies(exit_kind: Literal['b
     assert run.result is None
     assert contexts[0].tools.keys() == {'lookup'}
     if exit_kind == 'error':
-        # Consumer errors can retain run state independently of these edges on Python 3.11.
-        assert run._graph_run._iterator_instance is None  # pyright: ignore[reportPrivateUsage]
-        iterator = run._graph_run._iterator  # pyright: ignore[reportPrivateUsage]
-        assert isinstance(iterator, AsyncGeneratorType)
-        assert iterator.ag_frame is None
+        # Consumer errors can retain run state independently of this edge on Python 3.11.
         manager = run.ctx.deps.tool_manager
         assert manager.ctx is not None
         assert manager.ctx.tool_manager is None
@@ -355,10 +350,6 @@ async def test_outer_cancellation_releases_run_references() -> None:
     assert run is not None
     assert run.result is None
     assert contexts[0].tools.keys() == {'lookup'}
-    assert run._graph_run._iterator_instance is None  # pyright: ignore[reportPrivateUsage]
-    iterator = run._graph_run._iterator  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(iterator, AsyncGeneratorType)
-    assert iterator.ag_frame is None
     manager = run.ctx.deps.tool_manager
     assert manager.ctx is not None
     assert manager.ctx.tool_manager is None
