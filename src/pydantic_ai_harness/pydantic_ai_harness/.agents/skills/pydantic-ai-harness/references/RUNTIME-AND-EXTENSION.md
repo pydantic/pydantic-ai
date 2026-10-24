@@ -16,12 +16,32 @@ Agentic Workflow.
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
 | Checkpoint every model/tool step in Postgres with Absurd | `AbsurdDurability` |
 | Checkpoint every model/tool step in Postgres with pgtask | `PGTaskDurability` |
+| Run agent operations as activities in native Azure Durable Task orchestrators | `AzureDurableTaskDurability` and `run_durable` (`pydantic_ai_harness.azure_durable_task`, `[azure-durable-task]`) |
 | Use or evaluate Render Workflows for background agents with separate model/tool retries, timeouts, and compute | [`RenderWorkflows`](#renderworkflows); retrying the entry task run restarts the agent |
 | Edit, version, and roll out the system prompt from Logfire without redeploying | `ManagedPrompt` |
 | Let the agent write new capabilities that load on the next run | `CapabilityCreation` |
 | Define the agent in YAML/JSON with harness capabilities | `Agent.from_file(..., custom_capability_types=[...])` |
 | Use the agent inside Zed or another ACP editor | `pydantic_ai_harness.experimental.acp` |
 | Run the agent headless on GitHub issues/PRs/schedules | the gh-aw `pydantic-ai` engine |
+
+## AzureDurableTaskDurability
+
+Attach `AzureDurableTaskDurability()` to a named agent. Retrieve the bound copy with
+`AzureDurableTaskDurability.from_agent(agent)` and enter its `register(worker)` context
+before starting the native SDK worker; exit after the worker stops and drains.
+Register your own orchestrator and call
+`yield from run_durable(ctx, lambda: agent.run(prompt))`. Start, inspect and signal runs
+through the SDK client. Dependencies must be JSON-serializable and are reconstructed
+using `deps_type`; worker-local resource factories are planned separately.
+
+Handle `DeferredToolRequests` in your orchestrator: wait for an external event and resume
+with full message history, cumulative usage and `DeferredToolResults`. Preserve the
+reviewed pause, not the latest pause. Durable Task folds event names, so keep case-sensitive
+call IDs as payload keys on a per-pause event, or hex-encode them in individual event names.
+Orchestrator-side code must be deterministic and I/O-free. Tool effects must be idempotent.
+`RoleBasedOperationConfig.resolve_tool` returns a native policy, `None` to disable retries
+(including overriding a base policy), or `False` for an inline deterministic function tool.
+See [Azure Durable Task](https://pydantic.dev/docs/ai/harness/azure-durable-task/).
 
 ## StepPersistence
 
