@@ -92,6 +92,11 @@ async def test_screenshots_zooms_and_the_pointer_come_from_the_display(fake_e2b:
     assert display.captures[-1].endswith(' sh 2,3,10,5')
 
 
+async def test_commands_see_the_desktop(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
+    await E2BSandboxBackend(desktop=True).run('true', shell=True)
+    assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'DISPLAY': ':1'}
+
+
 async def test_a_desktop_size_sets_the_display_it_starts(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
     await Workspace(E2BSandboxBackend(desktop=(1440, 900))).display_size()
 

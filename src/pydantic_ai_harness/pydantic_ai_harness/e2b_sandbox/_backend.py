@@ -330,6 +330,9 @@ class E2BSandboxBackend(
         if desktop and template is None:
             self._template = _DESKTOP_TEMPLATE
         self._desktop_size = _DEFAULT_DESKTOP_SIZE if desktop is True else desktop or None
+        if self._desktop_size:
+            # Commands see the desktop too, so a program the agent starts from the shell opens on it.
+            self._env = {'DISPLAY': DISPLAY, **(self._env or {})}
         self._display_started = False
         self._display_lock = anyio.Lock()
         self._setsid: bool | None = None
