@@ -13,7 +13,15 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, Tool, ToolCallPart, ToolDenied
 from pydantic_ai.computer_use import COMPUTER_KIND, ComputerToolAction
 from pydantic_ai.exceptions import ToolFailed
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturn, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    BinaryImage,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ToolReturn,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import Click, TypeText
@@ -233,6 +241,38 @@ def test_a_result_without_its_screenshot_gets_a_blank_image_and_a_note() -> None
     output, message = cast(list[dict[str, Any]], _map_computer_call_output(part, 'call_1', None))
     assert output['output']['image_url'] == _BLANK_SCREENSHOT
     assert message == {'role': 'user', 'content': f'Ran 1 action. {note}'}
+
+
+def test_the_last_image_goes_out_as_the_screen_at_full_detail() -> None:
+    zoomed = BinaryImage(data=b'zoomed', media_type='image/png')
+    screen = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
+    part = ToolReturnPart(
+        'computer', ['Ran 1 action.', zoomed, screen], tool_call_id='call_1', metadata={'performed': 1}
+    )
+    (output,) = cast(list[dict[str, Any]], _map_computer_call_output(part, 'call_1', None))
+    assert output['output'] == {'type': 'computer_screenshot', 'image_url': screen.data_uri, 'detail': 'original'}
+
+
+def test_a_result_without_metadata_also_sends_its_text() -> None:
+    # As from a UI that rebuilt the result: its text may say an action failed.
+    screen = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
+    part = ToolReturnPart('computer', ['Action 1 of 1 (click) failed: busy.', screen], tool_call_id='call_1')
+    _, message = cast(list[dict[str, Any]], _map_computer_call_output(part, 'call_1', None))
+    assert message == {'role': 'user', 'content': 'Action 1 of 1 (click) failed: busy.'}
+
+
+async def test_an_incomplete_call_runs_nothing(allow_model_requests: None) -> None:
+    response = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'})
+    cast(resp.ResponseComputerToolCall, response.output[0]).status = 'incomplete'
+    provider = InMemoryProvider()
+    client = MockOpenAIResponses.create_mock([response, _done()])
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    await Agent(model, toolsets=[computer_toolset()], capabilities=[provider.capability()]).run('Go.')
+
+    assert provider.actions == []
+    _, second = get_mock_responses_kwargs(client)
+    (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
+    assert output['output']['image_url'] == _BLANK_SCREENSHOT
 
 
 def test_the_blank_screenshot_is_a_valid_png() -> None:

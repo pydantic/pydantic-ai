@@ -5,10 +5,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Never
 
-from .computer import ComputerAction
+from .computer import ComputerAction, Region
 from .protocol import (
     SupportsCommands,
+    SupportsCursorPosition,
     SupportsDisplay,
+    SupportsZoom,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceUnavailableError,
@@ -17,7 +19,7 @@ from .protocol import (
 __all__ = ('UnavailableWorkspace',)
 
 
-class UnavailableWorkspace(WorkspaceBackend, SupportsCommands, SupportsDisplay):
+class UnavailableWorkspace(WorkspaceBackend, SupportsCommands, SupportsDisplay, SupportsZoom, SupportsCursorPosition):
     """A `WorkspaceBackend` whose operations raise `WorkspaceUnavailableError` with a configured reason."""
 
     def __init__(self, reason: str):
@@ -53,6 +55,12 @@ class UnavailableWorkspace(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         raise WorkspaceUnavailableError(self.reason)
 
     async def act(self, action: ComputerAction) -> Never:
+        raise WorkspaceUnavailableError(self.reason)
+
+    async def zoom(self, region: Region) -> Never:
+        raise WorkspaceUnavailableError(self.reason)
+
+    async def cursor_position(self) -> Never:
         raise WorkspaceUnavailableError(self.reason)
 
 

@@ -346,7 +346,9 @@ Web search, Code interpreter, Image generation, and File search are natively sup
 
 Computer use is provided by the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability: on models
 that accept OpenAI's `computer` tool (GPT-5.4 and later, except GPT-5.4 nano), its `computer` tool is sent as that
-native tool, and other models, or the same models through other providers, get it as a function tool.
+native tool on OpenAI, Azure OpenAI (not live-tested) and Bedrock Mantle. Other models, or the same models through
+other providers, get it as a function tool. On Azure, a deployment named other than its model sets
+`openai_supports_computer_tool` in its [profile](compatible-apis.md#model-profile).
 
 #### Referencing earlier responses
 
@@ -402,6 +404,8 @@ result = agent.run_sync('What is the secret code?', model_settings=model_setting
 print(result.output)
 #> 1234
 ```
+
+Don't continue, through `openai_previous_response_id`, a response from a model before GPT-5.6 whose request named a revealed tool in [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice]: that request declares the tool in `tools` instead of its `additional_tools` item (see [Tool Choice](../tools-advanced.md#tool-choice)), so the tool isn't in the response's stored input.
 
 !!! note
     Referencing a stored response requires the response to have actually been stored. OpenAI stores responses by default; if you've disabled storage via [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store] or your organization has Zero Data Retention enabled, chaining is unavailable and the full message history must be sent on every request.

@@ -59,6 +59,8 @@ _NEVER_DURABLE_HOOKS = {
 
 @dataclass(frozen=True)
 class CapabilityOperationParams:
+    """Parameters of a decorated capability operation: its bound arguments and the run context."""
+
     run_context: RunContext[Any]
     _: KW_ONLY
     arguments: dict[str, Any]
@@ -138,6 +140,8 @@ class _ResolvedModelRequestContext:
 
 @dataclass(frozen=True)
 class CapabilityMethodDeclaration:
+    """A capability method marked with `@durable_operation`, as collected for binding."""
+
     name: str
     _: KW_ONLY
     function: Callable[..., Awaitable[Any]]

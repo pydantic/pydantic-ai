@@ -27,13 +27,16 @@ from .computer import (
     MoveMouse,
     Point,
     PressKeys,
+    Region,
     Scroll,
     TypeText,
 )
 from .protocol import (
     SupportsCommands,
+    SupportsCursorPosition,
     SupportsDisplay,
     SupportsRealpath,
+    SupportsZoom,
     UnsupportedComputerActionError,
     WorkspaceBackend,
     WorkspaceRef,
@@ -614,3 +617,20 @@ class WorkspaceBackendSuite:
         display = _display(backend)
         with pytest.raises(UnsupportedComputerActionError):
             await display.act(_UnknownAction())  # pyright: ignore[reportArgumentType]
+
+    async def test_zoom_is_a_png_of_the_region(self, backend: WorkspaceBackend) -> None:
+        display = _display(backend)
+        if not isinstance(display, SupportsZoom):
+            pytest.skip('backend cannot zoom')
+        width, height = await display.display_size()
+        png = await display.zoom(Region(left=0, top=0, right=width // 2, bottom=height // 4))
+        assert png[:8] == b'\x89PNG\r\n\x1a\n'
+        assert struct.unpack('>II', png[16:24]) == (width // 2, height // 4)
+
+    async def test_the_cursor_position_is_on_the_screen(self, backend: WorkspaceBackend) -> None:
+        display = _display(backend)
+        if not isinstance(display, SupportsCursorPosition):
+            pytest.skip('backend cannot report the pointer position')
+        width, height = await display.display_size()
+        point = await display.cursor_position()
+        assert 0 <= point.x < width and 0 <= point.y < height
