@@ -38,7 +38,7 @@ class Wait:
     """Pause, for example while a page or application loads."""
 
     type: Literal['wait'] = 'wait'
-    seconds: Annotated[float, Field(gt=0, le=10, allow_inf_nan=False)] = 1
+    seconds: Annotated[float, Field(gt=0, le=10)] = 1
     """How long to wait, up to 10 seconds."""
 
 

@@ -40,18 +40,13 @@ async def main():
 
 1. Any capability whose workspace has a display: its backend implements
    [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]. See
-   [Controlling a display](../workspace.md#controlling-a-display) to give a sandbox one.
+   [Controlling a display](../workspace.md#controlling-a-display) to give a sandbox one. On a
+   [read-only](../workspace.md#read-only-access) workspace the agent can take screenshots but not act.
 
-Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them.
+The model must accept images. Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them.
 
 GPT-5.4 and later, except GPT-5.4 nano, on OpenAI's own API get `computer` as OpenAI's native computer tool, the
 format they were trained on. Every other model that accepts images gets it as a function tool.
-
-## Requirements
-
-- **A workspace with a display.** On a [read-only](../workspace.md#read-only-access) workspace the agent can take
-  screenshots but not act.
-- **A model that accepts images.**
 
 ## Computer use, Playwright, or Browser Use
 

@@ -13,7 +13,7 @@ from __future__ import annotations as _annotations
 import re
 from typing import Annotated, Any, Literal, TypeAlias
 
-from pydantic import ConfigDict, Field
+from pydantic import AfterValidator, ConfigDict, Field
 from pydantic.dataclasses import dataclass
 
 __all__ = (
@@ -35,7 +35,6 @@ MouseButton: TypeAlias = Literal['left', 'middle', 'right', 'back', 'forward']
 """A mouse button; `back` and `forward` are the side buttons."""
 
 _Coordinate: TypeAlias = Annotated[int, Field(ge=0)]
-_Keys: TypeAlias = Annotated[tuple[str, ...], Field(max_length=8)]
 
 
 def _require_type(schema: dict[str, Any]) -> None:
@@ -132,6 +131,10 @@ def _normalize_modifiers(modifiers: tuple[str, ...]) -> tuple[str, ...]:
     return normalized
 
 
+_Keys: TypeAlias = Annotated[tuple[str, ...], Field(min_length=1, max_length=8), AfterValidator(_normalize_keys)]
+_Modifiers: TypeAlias = Annotated[tuple[str, ...], Field(max_length=8), AfterValidator(_normalize_modifiers)]
+
+
 def _check_position(x: int | None, y: int | None) -> None:
     if (x is None) != (y is None):
         raise ValueError('give both `x` and `y`, or neither to act at the pointer')
@@ -157,12 +160,11 @@ class Click:
     button: MouseButton = 'left'
     count: Annotated[int, Field(ge=1, le=3)] = 1
     """1 for a click, 2 for a double click, 3 for a triple click."""
-    modifiers: _Keys = ()
+    modifiers: _Modifiers = ()
     """Modifier keys held during the click: `ctrl`, `shift`, `alt` or `super`."""
 
     def __post_init__(self) -> None:
         _check_position(self.x, self.y)
-        object.__setattr__(self, 'modifiers', _normalize_modifiers(self.modifiers))
 
 
 @dataclass(frozen=True, kw_only=True, config=_CONFIG)
@@ -174,11 +176,8 @@ class MoveMouse:
     """From the left edge of the screenshot."""
     y: _Coordinate
     """From the top edge of the screenshot."""
-    modifiers: _Keys = ()
+    modifiers: _Modifiers = ()
     """Modifier keys held while moving: `ctrl`, `shift`, `alt` or `super`."""
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, 'modifiers', _normalize_modifiers(self.modifiers))
 
 
 @dataclass(frozen=True, kw_only=True, config=_CONFIG)
@@ -188,11 +187,8 @@ class Drag:
     type: Literal['drag'] = 'drag'
     path: Annotated[tuple[Point, ...], Field(min_length=2, max_length=50)]
     """The points to drag through: at least a start and an end."""
-    modifiers: _Keys = ()
+    modifiers: _Modifiers = ()
     """Modifier keys held during the drag: `ctrl`, `shift`, `alt` or `super`."""
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, 'modifiers', _normalize_modifiers(self.modifiers))
 
 
 @dataclass(frozen=True, kw_only=True, config=_CONFIG)
@@ -224,12 +220,11 @@ class Scroll:
     """From the left edge of the screenshot. Omit both `x` and `y` to scroll where the pointer is."""
     y: _Coordinate | None = None
     """From the top edge of the screenshot."""
-    modifiers: _Keys = ()
+    modifiers: _Modifiers = ()
     """Modifier keys held while scrolling: `ctrl`, `shift`, `alt` or `super`; `shift` scrolls sideways in some applications."""
 
     def __post_init__(self) -> None:
         _check_position(self.x, self.y)
-        object.__setattr__(self, 'modifiers', _normalize_modifiers(self.modifiers))
 
 
 @dataclass(frozen=True, kw_only=True, config=_CONFIG)
@@ -246,13 +241,10 @@ class PressKeys:
     """Press keys together as one combination, then release them."""
 
     type: Literal['keypress'] = 'keypress'
-    keys: Annotated[tuple[str, ...], Field(min_length=1, max_length=8)]
+    keys: _Keys
     """One key per entry, pressed together: `["enter"]`, `["ctrl", "a"]`, `["super", "shift", "t"]`."""
     repeat: Annotated[int, Field(ge=1, le=50)] = 1
     """How many times to press the combination."""
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, 'keys', _normalize_keys(self.keys))
 
 
 @dataclass(frozen=True, kw_only=True, config=_CONFIG)
@@ -260,13 +252,10 @@ class HoldKeys:
     """Hold keys down for a while, then release them."""
 
     type: Literal['hold_key'] = 'hold_key'
-    keys: Annotated[tuple[str, ...], Field(min_length=1, max_length=8)]
+    keys: _Keys
     """One key per entry, held together."""
-    seconds: Annotated[float, Field(gt=0, le=10, allow_inf_nan=False)]
+    seconds: Annotated[float, Field(gt=0, le=10)]
     """How long to hold them."""
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, 'keys', _normalize_keys(self.keys))
 
 
 ComputerAction: TypeAlias = Annotated[
