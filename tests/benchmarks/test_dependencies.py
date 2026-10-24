@@ -6,6 +6,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+import yaml
 
 from tests.benchmarks import conftest
 
@@ -78,4 +79,27 @@ def test_dependency_guard_ignores_mixed_and_unrelated_suites(
     module.__file__ = str(root / 'pydantic_ai_slim/pydantic_ai/providers/openai.py')
     monkeypatch.setattr(conftest, 'sys', SimpleNamespace(modules={'excluded': module}))
     monkeypatch.setattr(request.config, 'args', arguments)
+    conftest.pytest_sessionfinish(request.session)
+
+
+def test_dependency_guard_accepts_equivalent_workflow_indentation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    workflow = (root / '.github/workflows/benchmark.yml').read_text()
+    reindented = '\n'.join(f'  {line}' for line in workflow.splitlines()) + '\n'
+    original: object = yaml.safe_load(workflow)
+    reformatted: object = yaml.safe_load(reindented)
+    assert original == reformatted
+
+    workflow_path = tmp_path / '.github/workflows/benchmark.yml'
+    workflow_path.parent.mkdir(parents=True)
+    workflow_path.write_text(reindented)
+    benchmark_dir = tmp_path / 'tests/benchmarks'
+    benchmark_dir.mkdir(parents=True)
+    monkeypatch.setattr(conftest, '__file__', str(benchmark_dir / 'conftest.py'))
+    monkeypatch.setattr(request.config, 'args', [str(benchmark_dir)])
+    module = ModuleType('loaded_dependency')
+    module.__file__ = str(tmp_path / 'pydantic_ai_slim/pydantic_ai/capabilities/foo.py')
+    monkeypatch.setattr(conftest, 'sys', SimpleNamespace(modules={'loaded': module}))
     conftest.pytest_sessionfinish(request.session)

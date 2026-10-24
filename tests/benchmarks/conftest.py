@@ -6,6 +6,21 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
+from pydantic import TypeAdapter
+from typing_extensions import TypedDict
+
+
+class Workflow(TypedDict):
+    jobs: dict[str, object]
+
+
+class ClassifierStep(TypedDict):
+    run: str
+
+
+class ClassifierJob(TypedDict):
+    steps: list[ClassifierStep]
 
 
 def pytest_sessionfinish(session: pytest.Session) -> None:
@@ -33,10 +48,13 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
                 'docs',
             ):
                 loaded.add(path.relative_to(root).as_posix())
-    workflow = (root / '.github/workflows/benchmark.yml').read_text()
-    start = workflow.index('          affects_benchmarks() {')
-    end = workflow.index('\n          }', start) + len('\n          }')
-    classifier = workflow[start:end]
+    loaded_workflow: object = yaml.safe_load((root / '.github/workflows/benchmark.yml').read_text())
+    workflow = TypeAdapter(Workflow).validate_python(loaded_workflow)
+    classify_job = TypeAdapter(ClassifierJob).validate_python(workflow['jobs']['classify'])
+    run = classify_job['steps'][0]['run']
+    start = run.index('affects_benchmarks() {')
+    end = run.index('\n}', start) + len('\n}')
+    classifier = run[start:end]
     # This executes only in the benchmark/test context, never in the token-bearing classifier job.
     result = subprocess.run(
         [

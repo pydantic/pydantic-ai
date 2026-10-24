@@ -45,26 +45,9 @@ The parallel-search cases send five or twenty `search_tools` calls in one model 
 
 Pull requests run CodSpeed when they change a benchmark dependency. Pushes to `main` and manual dispatch always run the full suite. The classifier stays inline in the workflow: its token-bearing job reads file names and statuses from the GitHub API without checking out or executing pull-request code. Both rename paths are checked. API failures, incomplete file lists, unknown statuses, and unknown paths run benchmarks.
 
-The workflow's `affects_benchmarks` function is the dependency map. It includes collection, fixtures, warmup, measured execution, and teardown: an import matters even when the imported module is outside the measured operation.
+The workflow's [`affects_benchmarks` function](../../.github/workflows/benchmark.yml) is the dependency map; its case branches contain the group rationale and exact paths. Imports during collection, fixtures, warmup, measured execution, and teardown all count, even outside the measured operation.
 
-| Dependency path | Why it is retained |
-| --- | --- |
-| `Agent.run`, `_agent_graph`, `run`, `messages`, `usage`, context/cancellation/history helpers | Measured agent execution, synthetic-history merging, and tool dispatch. |
-| `models/__init__.py`, `models/function.py`, `models/test.py`, continuation and request-timeout helpers | Measured `TestModel` requests, `FunctionModel` search responses, and `CompletedStreamedResponse` replay. |
-| `ToolSearch`, `_tool_search`, tool manager, tools, function/combined/prepared toolsets | Measured preparation, keyword ranking, sequential discovery, and parallel result handling. |
-| `pydantic_graph` | Measured graph builder execution; every current graph module is also imported. |
-| Evals `evaluators/report_common.py` | Measured score extraction, threshold counting, AUC, downsampling, and chart construction. |
-| Agent, capability, toolset, native-tool exports; other core root modules | Transitive public re-exports import all current agent, capability, toolset, and native-tool modules. Retained even where only class definitions execute at collection. |
-| Selected models, profiles, durable-execution primitives, embedding/image bases, workspaces | Transitive imports, listed as explicit file exceptions in the classifier. `profiles/decision.py` and `providers/__init__.py` are included. |
-| Evals dataset, lifecycle, task-run, evaluator, reporting, and OTel modules | Transitive imports and report-context construction. |
-| `tests/__init__.py`, root `conftest.py`, `_inline_snapshot.py`, `cost_guards.py`, `cassette_hooks.py`, `cassette_utils.py` | Collection and autouse fixtures: event loop, instrumentation/cache resets, HTTP client tracking, VCR checks, SDK cache/GC workarounds, and test-cost hooks. |
-| `tests/benchmarks/*` except `README.md` and `AGENTS.md` | Workloads, local fixtures/collection hook, and future benchmark data, including Markdown fixtures. The two audited documentation files are not runtime inputs. |
-
-Provider implementations, provider profiles, live-provider model adapters, realtime/UI adapters, durable-engine integrations, external tools, workspace conformance tests, and the unimported online/generation/judge eval modules skip when modified. `infer_model` receives model instances and returns them directly; its string dispatch and `infer_provider_class` branches do not load provider implementations. The imported wrappers and model utilities remain triggers.
-
-Other test suites and their data skip: the workflow only collects `tests/benchmarks`, no benchmark uses a VCR cassette, and binary-asset fixtures are not requested. Examples, harness, CLAI, and CLAI 2 source skip because they are not imported. Their Python installation/test configuration still triggers conservatively: `uv sync --frozen` resolves the workspace, default extras, and dev/lint groups. Manifests, lockfiles, Python-version files, requirements, and Python build/test configuration retain full runs. Pytest's third-party plugins are supplied by these locked dependencies; the repository's `cost_guards` plugin is included explicitly. JavaScript manifests in the unimported CLI UI do not affect this Python-only install or command. `Makefile` is not called by the benchmark workflow.
-
-New/copied/renamed Python source files in core, graph, or evals run even inside an excluded directory until their dependencies can be audited. Unrecognized paths remain conservative triggers. Shell `case` globs match slashes; explicit imported-file exceptions precede directory exclusions.
+Other test suites and their data, provider implementations, and harness/CLI source skip because the isolated benchmark run never loads them. Installation and test configuration still trigger benchmarks even in skipped packages. New/copied/renamed Python source in core, graph, or evals runs until its dependencies can be audited. Unknown paths and statuses remain conservative triggers.
 
 ### Checking dependency drift
 
@@ -79,4 +62,4 @@ uv sync --frozen
 uv run pytest tests/benchmarks
 ```
 
-If the guard reports a path, trace its import through collection, fixtures, or runtime and add its trigger before the matching exclusion in `affects_benchmarks`. Run `uv run pytest .github/scripts/test_ci_content_classifier.py` to check scheduling. The ordinary correctness command uses the smallest workloads; the full CodSpeed commands above also audit lazy imports in larger workloads. Changes to benchmark code, existing dependencies, installation/configuration, or new core/graph/evals source already trigger that full run, so this audit does not need a second benchmark subprocess in the scripts job.
+If the guard reports a path, trace its import through collection, fixtures, or runtime and add its trigger before the matching exclusion in `affects_benchmarks`. Run `uv run pytest .github/scripts/test_ci_content_classifier.py` to check scheduling. The ordinary correctness command uses the smallest workloads; the full CodSpeed commands above also audit lazy imports in larger workloads. Changes to benchmark code, loaded dependencies, installation/configuration, or new core/graph/evals source trigger the full CodSpeed job, where the guard checks its actual benchmark run.
