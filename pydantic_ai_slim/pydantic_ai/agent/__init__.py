@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import contextlib
 import contextvars
 import dataclasses
 import functools
@@ -403,18 +404,29 @@ async def _run_lifecycle_hooks(  # noqa: C901
                 if _run_error is None and (result_ready is None or result_ready()):
                     await _finalize_result(await _wrap_task)
                 elif _run_error is not None:
-                    # Error path: await wrap_run to see if it recovers. `_do_run()` re-raises
-                    # `_run_error`; if wrap_run catches it and returns a result, recovery succeeds.
-                    try:
-                        await _finalize_result(await _wrap_task)
-                    except BaseException as wrap_exc:
-                        if _handler_errors and wrap_exc is _handler_errors[-1]:
-                            _run_error = wrap_exc
-                        # Attach wrap_run's own errors as context so they're visible in tracebacks
-                        # (but don't mask the original). Skip CancelledError: it's expected cancellation propagation.
-                        elif not isinstance(wrap_exc, asyncio.CancelledError) and wrap_exc is not _run_error:
-                            # Only fires for bugs in `wrap_run` implementations.
-                            _run_error.__context__ = wrap_exc  # pragma: lax no cover
+                    if isinstance(_run_error, (GeneratorExit, KeyboardInterrupt)):
+                        # Mirror the guard above: no recovery, and no await — `await _wrap_task`
+                        # during delivery suspends (CPython reports it as a masking RuntimeError)
+                        # and finalizing would record the interrupted run as a success. Settle
+                        # the wrap task without awaiting it.
+                        if _wrap_task.done():
+                            with contextlib.suppress(asyncio.CancelledError):
+                                _wrap_task.exception()
+                        else:
+                            _wrap_task.cancel()
+                    else:
+                        # Error path: await wrap_run to see if it recovers. `_do_run()` re-raises
+                        # `_run_error`; if wrap_run catches it and returns a result, recovery succeeds.
+                        try:
+                            await _finalize_result(await _wrap_task)
+                        except BaseException as wrap_exc:
+                            if _handler_errors and wrap_exc is _handler_errors[-1]:
+                                _run_error = wrap_exc
+                            # Attach wrap_run's own errors as context so they're visible in tracebacks
+                            # (but don't mask the original). Skip CancelledError: it's expected cancellation propagation.
+                            elif not isinstance(wrap_exc, asyncio.CancelledError) and wrap_exc is not _run_error:
+                                # Only fires for bugs in `wrap_run` implementations.
+                                _run_error.__context__ = wrap_exc  # pragma: lax no cover
                 # `_run_done.set()` can't complete `_wrap_task` synchronously, so the task is
                 # always still pending here.
                 elif not _wrap_task.done():  # pragma: no branch
