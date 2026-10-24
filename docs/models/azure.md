@@ -121,12 +121,12 @@ Or initialise the model and provider directly, for example to process a document
 
 ## Grok tool schemas
 
-Use [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] for Grok deployments whose names start with `grok` (case-insensitive).
+For deployments whose names start with `grok` (case-insensitive), [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] inlines non-recursive tool-schema definitions while retaining OpenAI's schema conversion, including nested `additionalProperties: false` where applicable. This applies with both [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
 
-Azure Grok rejects tool schemas containing local `$ref` and `$defs`. `AzureProvider` inlines non-recursive tool-schema definitions for the Grok family while retaining OpenAI's schema conversion, including nested `additionalProperties: false`. Native structured-output schemas keep the existing OpenAI conversion. This applies with both [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
+Native structured output using [`NativeOutput`][pydantic_ai.output.NativeOutput] with nested models still sends `$defs` and `$ref`. Tool-schema inlining does not apply to these output schemas.
 
 !!! warning "Recursive tool schemas"
-    Recursive tool schemas retain their existing OpenAI conversion and references and cannot be fully inlined. This preserves their validation semantics, but does not establish that Azure Grok accepts them.
+    Recursive tool argument types cannot be fully inlined, so their schemas retain `$defs` and `$ref`. If Azure Grok rejects a recursive tool schema with a 400 response, use a non-recursive tool argument type.
 
 ### Custom profile with `OpenAIProvider`
 
