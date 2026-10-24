@@ -136,8 +136,8 @@ orchestrator control flow compatible with in-flight histories.
 
 Orchestrator-side hooks, instruction functions, output validators and inline tools run again on
 replay. Keep them deterministic and free of network, filesystem and thread I/O. Put I/O in tools
-or a capability's `@durable_operation` method. This release does not provide deployment migrations
-or `continue_as_new` rollover.
+or a capability's `@durable_operation` method. Generation rollover and version migrations
+remain explicit decisions in your orchestrator.
 
 ### Persisted activity names
 
@@ -154,6 +154,247 @@ invalid or duplicate generated names with `UserError`, including a hash collisio
 This mapping is persisted compatibility data. Do not change it for in-flight histories;
 drain old instances or explicitly migrate them first. User-written orchestrator names are
 separate SDK registrations and must also meet the scheduler's requirements.
+
+## Long-running agents
+
+Like [Temporal's continuation callback](../durable_execution/temporal.md#continuing-as-new-for-long-running-agents),
+`AzureDurableTaskDurability(continue_as_new=...)` accepts a sync or async function receiving
+the run's [`RunContext`][pydantic_ai.tools.RunContext] just before each model request.
+The preceding tool batch has settled. Returning normally defers continuation; the default,
+`None`, disables the callback. Outside an orchestration, it is not called.
+
+Unlike Temporal, this SDK exposes no server history-size/count suggestion. The callback
+chooses a deterministic threshold using the run context, not wall time or external I/O.
+It can first call a `@durable_operation`, for example to offload history.
+Raise [`ContinueAsNew`][pydantic_ai_harness.azure_durable_task.ContinueAsNew] with
+application-owned JSON input to unwind the async run. The **user orchestrator** catches it,
+calls native `ctx.continue_as_new`, then returns. The SDK method itself records an action
+and returns normally, so do not call it directly inside the async callback.
+
+```python {test="skip"}
+# generations.py
+from collections.abc import Generator
+
+from durabletask import task
+from durabletask.client import TaskHubGrpcClient
+from durabletask.worker import TaskHubGrpcWorker
+from pydantic import BaseModel, Field, JsonValue
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai_harness.azure_durable_task import (
+    AzureDurableTaskDurability,
+    ContinueAsNew,
+    run_durable,
+)
+
+
+class GenerationInput(BaseModel):
+    prompt: str | None = None
+    messages: list[ModelMessage] | None = None
+    usage: RunUsage = Field(default_factory=RunUsage)
+    usage_limits: UsageLimits | None = Field(default_factory=UsageLimits)
+    conversation_id: str | None = None
+    run_id: str | None = None
+    generation: int = Field(default=0, ge=0)
+
+
+def continue_as_new(ctx: RunContext[None]) -> None:
+    if ctx.run_step <= 2:
+        return
+    assert ctx.metadata is not None
+    generation = ctx.metadata['generation']
+    assert isinstance(generation, int)
+    raise ContinueAsNew(
+        GenerationInput(
+            messages=ctx.messages,
+            usage=ctx.usage,
+            usage_limits=ctx.usage_limits,
+            conversation_id=ctx.conversation_id,
+            run_id=f'{ctx.run_id}:next',
+            generation=generation + 1,
+        ).model_dump(mode='json')
+    )
+
+
+agent = Agent(
+    '{{ openai:medium }}',
+    name='investigator',
+    capabilities=[AzureDurableTaskDurability(continue_as_new=continue_as_new)],
+)
+
+
+def investigation(
+    ctx: task.OrchestrationContext, payload: object
+) -> Generator[task.Task[object], object, JsonValue]:
+    wire = GenerationInput.model_validate(payload)
+    try:
+        result = yield from run_durable(
+            ctx,
+            lambda: agent.run(
+                wire.prompt,
+                message_history=wire.messages,
+                usage=wire.usage,
+                usage_limits=wire.usage_limits,
+                conversation_id=wire.conversation_id,
+                run_id=wire.run_id or f'{ctx.instance_id}:generation:0',
+                metadata={'generation': wire.generation},
+            ),
+        )
+    except ContinueAsNew as continuation:
+        ctx.continue_as_new(continuation.input, save_events=False)
+        return None
+    return {
+        'output': result.output,
+        'requests': result.usage.requests,
+        'generation': wire.generation,
+    }
+
+
+def main() -> None:
+    worker = TaskHubGrpcWorker(host_address='localhost:8080', secure_channel=False)
+    worker.add_orchestrator(investigation)
+    durability = AzureDurableTaskDurability.from_agent(agent)
+    assert durability is not None
+    with durability.register(worker):
+        worker.start()
+        try:
+            with TaskHubGrpcClient(host_address='localhost:8080', secure_channel=False) as client:
+                instance_id = client.schedule_new_orchestration(
+                    investigation, input=GenerationInput(prompt='Investigate the incident.').model_dump(mode='json')
+                )
+                completed = client.wait_for_orchestration_completion(instance_id)
+                assert completed is not None
+                completed.raise_if_failed()
+                print(completed.get_output())
+        finally:
+            worker.stop()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+Messages, usage and usage limits are ordinary application input, as in Temporal, not a
+library state schema. On resume, pass no new prompt: the history already ends with the
+request the model was about to receive. Carry `UsageLimits` so its default `request_limit=50`,
+or your chosen budget, bounds the logical run rather than resetting each generation.
+The example continues after two responses per generation; that threshold is an application
+choice, not an engine limit. Activity retries do not advance `run_step`.
+
+Each generation is a separate agent run. Supply a fresh deterministic `run_id`, as the
+example does, and retain `conversation_id` to correlate them. The SDK context exposes an
+instance ID but no separate execution ID. Keep dependencies, model selection and any
+generation/schema metadata in your own input, and evolve that schema deliberately.
+Timeouts, hook/toolset-local state and pending review decisions are not checkpointed.
+`run_durable` keeps its original arguments and return type; there is no `limits` or `resume`
+protocol and no restriction to one agent run per body.
+
+Continuation is **not message compaction or history storage**: the conversation still has
+to fit the SDK's payload limits. Use deliberate compaction or payload externalization
+when needed. This adds no telemetry beyond core run/activity instrumentation.
+
+Your orchestrator chooses `save_events`. The example discards unprocessed events because it
+does not accept any; `save_events=True` retains buffered, undelivered events, not events already
+delivered to a wait. Scope approval events to a reviewed pause so a retained old event cannot
+authorize a later generation.
+
+## SDK-native versioning
+
+Use SDK `worker.use_versioning(VersioningOptions(...))`, client `version=...` and `ctx.version`.
+Scheduler versions are numeric `Major[.Minor[.Patch]]`, such as `'1.0'` or `'2.0.1'`, not `'v1'`.
+The capability does not stamp an instance version or configure worker admission.
+
+For drain-in-place, register current activities together with retained agents:
+
+```python {test="skip"}
+from collections.abc import Generator
+
+from durabletask import task
+from durabletask.worker import (
+    TaskHubGrpcWorker,
+    VersionFailureStrategy,
+    VersioningOptions,
+    VersionMatchStrategy,
+)
+
+from pydantic_ai import Agent
+from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
+
+old_agent = Agent('{{ openai:medium }}', name='support-1.0', capabilities=[AzureDurableTaskDurability()])
+new_agent = Agent('{{ openai:medium }}', name='support-2.0', capabilities=[AzureDurableTaskDurability()])
+agents = {'1.0': old_agent, '2.0': new_agent}
+
+
+def support(ctx: task.OrchestrationContext, prompt: str) -> Generator[task.Task[object], object, str]:
+    version = ctx.version
+    if version is None or version not in agents:
+        raise ValueError(f'No implementation for orchestration version {version!r}')
+    selected = agents[version]
+    result = yield from run_durable(ctx, lambda: selected.run(prompt))
+    return result.output
+
+
+worker = TaskHubGrpcWorker(host_address='localhost:8080', secure_channel=False)
+worker.use_versioning(
+    VersioningOptions(
+        version='2.0',
+        match_strategy=VersionMatchStrategy.CURRENT_OR_OLDER,
+        failure_strategy=VersionFailureStrategy.REJECT,
+    )
+)
+worker.add_orchestrator(support)
+durability = AzureDurableTaskDurability.from_agent(new_agent)
+assert durability is not None
+with durability.register(worker, previous_versions={'1.0': old_agent}):
+    worker.start()
+    try:
+        input('Press Enter after stopping traffic and draining the worker.\n')
+    finally:
+        worker.stop()
+```
+
+Schedule new instances with `client.schedule_new_orchestration(support, input=..., version='2.0')`.
+The `previous_versions` keys label retained implementations for registration errors; your
+orchestrator's dispatch map selects the agent. Each retained implementation must keep its
+original agent/model/toolset identities and activity names. New retained implementations need
+distinct generated names; registration rejects overlap before adding any activity to the worker.
+Remove old code only after its instances have drained.
+
+For blue/green, keep separate old/new worker fleets with SDK `STRICT` matching and `REJECT`.
+`REJECT` abandons mismatched work for another eligible worker; `FAIL` fails the instance, so it is
+not a routing substitute. SDK filtering and task-hub deployment are application configuration.
+
+Replay follows recorded activity names and order. Renaming an agent/toolset or changing
+orchestrator-side branching, hooks or inline tools can break an existing history.
+An activity-internal model/prompt implementation change does not reexecute an already recorded
+activity, but it can affect future responses and control flow. A model identity or prompt change
+that alters orchestrator-side selection, naming or ordering is not automatically replay-safe.
+Retaining old implementations avoids depending on such assumptions.
+
+### Explicit migration of a paused run
+
+Native version migration also depends on the service build. Emulator `v0.0.9` accepts
+`new_version` but restarts with the old `ctx.version`; the newer build at digest
+`sha256:361323065a608d605f9d3ae56b854eb11f1c47fcc16845a37f948f03ca9c5fac`
+was verified to apply it. The release-pinned live tier proves drain-in-place, not migration.
+Verify your deployed service and check the target `ctx.version` after restart; fail explicitly
+if it was not applied. Do not emulate native version selection with an input field.
+
+Migration is an orchestrator pattern, not an `upgrade()` API. Wait for an authenticated,
+application-owned migration event bound to the reviewed pause. Validate the target against a
+fixed deployment allowlist, migrate serialized history deterministically (or in a registered
+activity if I/O is needed), and call `ctx.continue_as_new(new_input, new_version='2.0',
+save_events=False)`, then return immediately.
+
+Carry the full messages, usage, conversation identity and pending `DeferredToolRequests`.
+On the new version, wait for fresh decisions **before** resuming `agent.run` with
+`deferred_tool_results`; migration itself is not approval. Preserve original case-sensitive
+call IDs as payload keys. Advance the pause identity and discard buffered old events, or prove
+that any retained events cannot match the new pause. Carry neither resolved decisions from a
+different pause nor a second user prompt. The approvals pattern below provides the decision
+validation; the application owns the migration and serialization schema.
 
 ## Dependencies
 

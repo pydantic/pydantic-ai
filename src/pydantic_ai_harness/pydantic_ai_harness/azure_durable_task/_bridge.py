@@ -13,12 +13,19 @@ from typing import Protocol, TypeVar, cast
 from weakref import WeakSet
 
 from durabletask import task
+from typing_extensions import TypeIs
 
 from pydantic_ai._utils import disable_threads
 from pydantic_ai.exceptions import UserError
 
+from ._continue_as_new import ContinueAsNew
+
 T = TypeVar('T')
 __all__ = ('run_durable', 'current_loop')
+
+
+def _is_exception_group(error: BaseException) -> TypeIs[BaseExceptionGroup[BaseException]]:
+    return isinstance(error, BaseExceptionGroup)
 
 
 class _RunnableHandle(Protocol):
@@ -211,8 +218,24 @@ def run_durable(
     Orchestrator-side hooks, instruction functions, output validators and inline tools
     must be deterministic and perform no I/O. Dependencies must be JSON serializable;
     the capability rebuilds them from the agent's `deps_type` inside activities.
+
+    A `ContinueAsNew` raised by the capability's `continue_as_new` callback
+    propagates after async cleanup, unwrapping singleton task-group shells.
+    Catch it in the user orchestrator, call SDK `continue_as_new` with its
+    application-owned input, and return. Other errors, including grouped
+    cleanup failures, retain their original semantics.
     """
     if asyncio._get_running_loop() is not None:
         raise UserError('Drive a Durable Task orchestrator from a synchronous worker, not a running event loop.')
     loop = _TrampolineLoop(context)
-    return (yield from loop.drive(body()))
+    try:
+        return (yield from loop.drive(body()))
+    except BaseExceptionGroup as group:
+        error: BaseException = group
+        while _is_exception_group(error):
+            if len(error.exceptions) != 1:
+                raise
+            error = error.exceptions[0]
+        if isinstance(error, ContinueAsNew):
+            raise error from None
+        raise

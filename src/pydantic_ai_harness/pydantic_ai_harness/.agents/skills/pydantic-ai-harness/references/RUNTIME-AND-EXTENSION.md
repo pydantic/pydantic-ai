@@ -43,6 +43,26 @@ Orchestrator-side code must be deterministic and I/O-free. Tool effects must be 
 (including overriding a base policy), or `False` for an inline deterministic function tool.
 See [Azure Durable Task](https://pydantic.dev/docs/ai/harness/azure-durable-task/).
 
+For long runs, configure `AzureDurableTaskDurability(continue_as_new=handler)`,
+mirroring Temporal's sync/async callback before a model request. Return to defer or
+raise `ContinueAsNew(json_input)`; catch it around `yield from run_durable(...)`,
+call SDK `continue_as_new` and return. The callback owns a deterministic threshold:
+this SDK has no server-suggestion API. Carry messages, cumulative usage, usage limits,
+conversation ID and a fresh deterministic run ID in application input. Resume
+`Agent.run` with that history and no prompt. Default continuation is disabled;
+ordinary `UsageLimits(request_limit=50)` still bounds a logical run when carried.
+There is no library limits/state/resume protocol, history compaction or arbitrary
+async-state checkpointing.
+
+Configure SDK `VersioningOptions`, client `version=` and `ctx.version` dispatch
+yourself, using numeric versions such as `1.0`, not `v1`. Use
+`register(worker, previous_versions={'1.0': old_agent})` to retain old activity
+implementations under their original names; every retained version needs distinct
+generated names. Native `CURRENT_OR_OLDER` supports drain-in-place; `STRICT` and
+`REJECT` support separate fleets. Explicit paused migration uses a bound application
+event and `continue_as_new(new_version=...)`, retaining pending calls but advancing
+review identity and requiring fresh decisions. There is no agent/run/client wrapper.
+
 ## StepPersistence
 
 Records an append-only event log, full-history snapshots at settled tool-cycle boundaries, and a ledger

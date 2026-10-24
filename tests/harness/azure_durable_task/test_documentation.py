@@ -91,10 +91,11 @@ def test_documented_setup_examples(
         monkeypatch.setattr(example_worker, 'start', lambda: starts.append(True))
         monkeypatch.setattr(example_worker, 'stop', lambda: None)
     examples = python_examples()
-    assert len(examples) == 4
+    assert len(examples) == 6
+    setup_examples = [examples[0], examples[1], next(source for source in examples if 'class Dependencies:' in source)]
     namespaces: list[dict[str, object]] = []
     with patch('pydantic_ai.Agent', make_agent):
-        for index, source in enumerate(examples[:3]):
+        for index, source in enumerate(setup_examples):
             namespace: dict[str, object] = {'__name__': __name__}
             exec(compile(source, f'{README}:setup-{index}', 'exec', dont_inherit=True), namespace)
             namespaces.append(namespace)
@@ -121,6 +122,39 @@ def test_documented_setup_examples(
             orchestrator, input={'prompt': 'Hi', 'tenant': 'acme'}
         )
         assert completed(deps_worker, instance_id) == 'documented result'
+
+
+def test_documented_retained_version_registration(
+    durable_worker: InMemoryWorker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Execute SDK worker setup and both version dispatches from the published example."""
+    starts: list[bool] = []
+    results: list[JsonValue] = []
+
+    def make_worker(**kwargs: object) -> InMemoryWorker:
+        inspect.signature(TaskHubGrpcWorker).bind(**kwargs)
+        return durable_worker
+
+    def make_agent(model: str, *, name: str, capabilities: Sequence[AbstractCapability[None]]) -> Agent[None, str]:
+        assert model == 'openai:gpt-6.1-sol'
+        return Agent(TestModel(custom_output_text=name), name=name, deps_type=type(None), capabilities=capabilities)
+
+    def drain(prompt: str) -> str:
+        assert prompt == 'Press Enter after stopping traffic and draining the worker.\n'
+        for version in ['1.0', '2.0']:
+            instance_id = durable_worker.schedule('support', input='Hi', version=version)
+            results.append(completed(durable_worker, instance_id))
+        return ''
+
+    source = next(source for source in python_examples() if 'previous_versions=' in source)
+    monkeypatch.setattr('durabletask.worker.TaskHubGrpcWorker', make_worker)
+    monkeypatch.setattr(durable_worker, 'start', lambda: starts.append(True))
+    monkeypatch.setattr(durable_worker, 'stop', lambda: starts.append(False))
+    monkeypatch.setattr('builtins.input', drain)
+    with patch('pydantic_ai.Agent', make_agent):
+        exec(compile(source, f'{README}:versioning', 'exec', dont_inherit=True), {'__name__': __name__})
+    assert starts == [True, False]
+    assert results == ['support-1.0', 'support-2.0']
 
 
 @pytest.mark.parametrize('decision', ['approve', 'deny', 'retry', 'case-sensitive'])

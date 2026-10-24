@@ -14,7 +14,9 @@ from unittest.mock import MagicMock
 import pytest
 from durabletask import client, task, worker
 from durabletask.internal import helpers as ph, orchestrator_service_pb2 as pb
+from durabletask.internal.exceptions import AbandonOrchestrationError
 from durabletask.serialization import DEFAULT_DATA_CONVERTER
+from google.protobuf.json_format import ParseDict
 from pydantic import JsonValue, TypeAdapter
 from pydantic_core import to_jsonable_python
 
@@ -40,6 +42,8 @@ class _Instance:
     output: str | None = None
     custom_status: str | None = None
     failure: task.FailureDetails | None = None
+    version: str | None = None
+    generations: list[list[pb.HistoryEvent]] = field(default_factory=list[list[pb.HistoryEvent]])
 
 
 class _Executor(worker._OrchestrationExecutor):
@@ -76,13 +80,18 @@ class InMemoryWorker(worker.TaskHubGrpcWorker):
         self.client: client.TaskHubGrpcClient = mock_client
 
     def schedule(
-        self, orchestrator: Callable[..., object] | str, *, input: object = None, instance_id: str | None = None
+        self,
+        orchestrator: Callable[..., object] | str,
+        *,
+        input: object = None,
+        instance_id: str | None = None,
+        version: str | None = None,
     ) -> str:
         name = orchestrator if isinstance(orchestrator, str) else orchestrator.__name__
         instance_id = instance_id or f'run-{len(self.instances)}'
         encoded = self._data_converter.serialize(input)
-        record = _Instance(name=name, input=encoded)
-        record.new_events.append(ph.new_execution_started_event(name, instance_id, encoded))
+        record = _Instance(name=name, input=encoded, version=version)
+        record.new_events.append(ph.new_execution_started_event(name, instance_id, encoded, version=version))
         self.instances[instance_id] = record
         return instance_id
 
@@ -114,6 +123,9 @@ class InMemoryWorker(worker.TaskHubGrpcWorker):
         executor = _Executor(self._registry, self._logger, data_converter=self._data_converter)
         try:
             result = executor.execute(instance_id, record.history, events)
+        except AbandonOrchestrationError:
+            record.new_events[:0] = events[1:]
+            raise
         finally:
             executor.close()
         record.history.extend(events)
@@ -137,7 +149,19 @@ class InMemoryWorker(worker.TaskHubGrpcWorker):
         elif action.HasField('completeOrchestration'):
             completed = action.completeOrchestration
             record.output = completed.result.value
-            if completed.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED:
+            if completed.orchestrationStatus == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW:
+                record.generations.append(record.history)
+                record.history = []
+                record.input = completed.result.value
+                if completed.HasField('newVersion'):
+                    record.version = completed.newVersion.value
+                record.new_events.extend(
+                    [
+                        ph.new_execution_started_event(record.name, instance_id, record.input, version=record.version),
+                        *completed.carryoverEvents,
+                    ]
+                )
+            elif completed.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED:
                 record.status = client.OrchestrationStatus.COMPLETED
             else:
                 record.status = client.OrchestrationStatus.FAILED
@@ -145,6 +169,18 @@ class InMemoryWorker(worker.TaskHubGrpcWorker):
                 record.failure = task.FailureDetails(details.errorMessage, details.errorType, None)
         else:
             pytest.fail(f'Unsupported SDK action in fixture: {action}')
+
+    def replay_history(self, recording: dict[str, Any]) -> list[pb.OrchestratorAction]:
+        """Replay an immutable history captured by an earlier integration version."""
+        history = [ParseDict(event, pb.HistoryEvent()) for event in recording['history']]
+        executor = _Executor(self._registry, self._logger, data_converter=self._data_converter)
+        try:
+            result = executor.execute(
+                recording['instance_id'], history, [self.event(orchestratorStarted=pb.OrchestratorStartedEvent())]
+            )
+        finally:
+            executor.close()
+        return list(result.actions)
 
     def activity_turn(self, instance_id: str, name: str, task_id: int, encoded: str | None) -> None:
         self.activity_calls.append(name)
