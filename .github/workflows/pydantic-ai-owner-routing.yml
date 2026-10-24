@@ -49,7 +49,9 @@ jobs:
         # path. Exact pins keep a compromised new release away from jobs
         # holding write-scoped tokens.
         run: |
-          python3 -m pip install --quiet 'pydantic==2.13.4'
+          python3 -m pip install --quiet 'pydantic==2.13.4' \
+            'pydantic-core==2.46.4' 'typing-extensions==4.16.0' 'annotated-types==0.7.0' 'typing-inspection==0.4.4' \
+            --no-deps
           python3 -m pip install --quiet 'logfire==4.40.0' || echo "logfire unavailable; telemetry disabled"
       - name: Select routing decisions
         id: select
@@ -99,7 +101,9 @@ jobs:
         # path. Exact pins keep a compromised new release away from jobs
         # holding write-scoped tokens.
         run: |
-          python3 -m pip install --quiet 'pydantic==2.13.4'
+          python3 -m pip install --quiet 'pydantic==2.13.4' \
+            'pydantic-core==2.46.4' 'typing-extensions==4.16.0' 'annotated-types==0.7.0' 'typing-inspection==0.4.4' \
+            --no-deps
           python3 -m pip install --quiet 'logfire==4.40.0' || echo "logfire unavailable; telemetry disabled"
       - name: Revalidate and prepare canonical routing intent
         id: prepare

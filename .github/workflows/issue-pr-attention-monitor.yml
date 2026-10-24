@@ -41,7 +41,10 @@ jobs:
       - name: Install the typed-boundary dependency
         # Pinned exactly: these jobs hold write-scoped tokens, so a
         # compromised new release must never reach them.
-        run: python3 -m pip install --quiet 'pydantic==2.13.4'
+        run: >-
+          python3 -m pip install --quiet 'pydantic==2.13.4'
+          'pydantic-core==2.46.4' 'typing-extensions==4.16.0' 'annotated-types==0.7.0' 'typing-inspection==0.4.4'
+          --no-deps
       - name: Reconcile active attention items
         id: reconcile
         env:
@@ -71,7 +74,10 @@ jobs:
       - name: Install the typed-boundary dependency
         # Pinned exactly: these jobs hold write-scoped tokens, so a
         # compromised new release must never reach them.
-        run: python3 -m pip install --quiet 'pydantic==2.13.4'
+        run: >-
+          python3 -m pip install --quiet 'pydantic==2.13.4'
+          'pydantic-core==2.46.4' 'typing-extensions==4.16.0' 'annotated-types==0.7.0' 'typing-inspection==0.4.4'
+          --no-deps
       - name: Revalidate attention notices immediately before delivery
         id: prepare
         env:
@@ -106,7 +112,10 @@ jobs:
       - name: Install the typed-boundary dependency
         # Pinned exactly: these jobs hold write-scoped tokens, so a
         # compromised new release must never reach them.
-        run: python3 -m pip install --quiet 'pydantic==2.13.4'
+        run: >-
+          python3 -m pip install --quiet 'pydantic==2.13.4'
+          'pydantic-core==2.46.4' 'typing-extensions==4.16.0' 'annotated-types==0.7.0' 'typing-inspection==0.4.4'
+          --no-deps
       - name: Finalize delivered attention notices
         env:
           ATTENTION_NOTICES: '{"items":${{ needs.notify.outputs.notice_items }}}'
@@ -143,7 +152,9 @@ jobs:
         # path. Exact pins keep a compromised new release away from jobs
         # holding write-scoped tokens.
         run: |
-          python3 -m pip install --quiet 'pydantic==2.13.4'
+          python3 -m pip install --quiet 'pydantic==2.13.4' \
+            'pydantic-core==2.46.4' 'typing-extensions==4.16.0' 'annotated-types==0.7.0' 'typing-inspection==0.4.4' \
+            --no-deps
           python3 -m pip install --quiet 'logfire==4.40.0' || echo "logfire unavailable; telemetry disabled"
       - name: Count repository-wide attention coverage
         id: census
