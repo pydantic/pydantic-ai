@@ -58,6 +58,7 @@ jobs:
       docs_changed: ${{ steps.classify.outputs.docs_changed }}
       clai2_only: ${{ steps.classify.outputs.clai2_only }}
       clai2_changed: ${{ steps.classify.outputs.clai2_changed }}
+      clai2_web_changed: ${{ steps.classify.outputs.clai2_web_changed }}
       harness_only: ${{ steps.classify.outputs.harness_only }}
       pyright_changed: ${{ steps.classify.outputs.pyright_changed }}
     steps:
@@ -73,6 +74,7 @@ jobs:
             echo 'docs_changed=false' >> "$GITHUB_OUTPUT"
             echo 'clai2_only=false' >> "$GITHUB_OUTPUT"
             echo 'clai2_changed=true' >> "$GITHUB_OUTPUT"
+            echo 'clai2_web_changed=true' >> "$GITHUB_OUTPUT"
             echo 'harness_only=false' >> "$GITHUB_OUTPUT"
             echo 'pyright_changed=true' >> "$GITHUB_OUTPUT"
           }
@@ -165,11 +167,15 @@ jobs:
             is_harness "$1" || is_clai2 "$1" || is_non_test_content "$1"
           }
 
-          # CLAI 2-specific checks run only for a change that reaches `pydantic-clai2` or one of their
-          # own workflow and classifier inputs.
+          # `test-clai2-clipboard` runs on macOS and Windows runners, so only for a change that reaches
+          # `pydantic-clai2` or the job itself.
           is_clai2_input() {
-            is_clai2 "$1" || case "$1" in
-              .github/workflows/ci.yml|.github/workflows/clai2-web.yml|.github/scripts/test_ci_content_classifier.py) return 0 ;;
+            is_clai2 "$1" || [ "$1" = .github/workflows/ci.yml ]
+          }
+
+          is_clai2_web_input() {
+            is_clai2_input "$1" || case "$1" in
+              .github/workflows/clai2-web.yml|pyproject.toml|uv.lock) return 0 ;;
               *) return 1 ;;
             esac
           }
@@ -187,6 +193,7 @@ jobs:
           docs_changed=false
           clai2_only=true
           clai2_changed=false
+          clai2_web_changed=false
           harness_tier=true
           pyright_changed=false
           for changed_file in "${changed_files[@]}"; do
@@ -207,6 +214,10 @@ jobs:
               { [ -n "$previous_filename" ] && is_clai2_input "$previous_filename"; }; then
               clai2_changed=true
             fi
+            if is_clai2_web_input "$filename" || \
+              { [ -n "$previous_filename" ] && is_clai2_web_input "$previous_filename"; }; then
+              clai2_web_changed=true
+            fi
             if ! is_harness_tier "$filename" || \
               { [ -n "$previous_filename" ] && ! is_harness_tier "$previous_filename"; }; then
               harness_tier=false
@@ -220,6 +231,7 @@ jobs:
           echo "docs_changed=$docs_changed" >> "$GITHUB_OUTPUT"
           echo "clai2_only=$clai2_only" >> "$GITHUB_OUTPUT"
           echo "clai2_changed=$clai2_changed" >> "$GITHUB_OUTPUT"
+          echo "clai2_web_changed=$clai2_web_changed" >> "$GITHUB_OUTPUT"
           # The narrower tiers take precedence, so at most one of the three `*_only` outputs is true.
           harness_only=false
           if [ "$harness_tier" = true ] && [ "$content_only" = false ] && [ "$clai2_only" = false ]; then
@@ -1563,7 +1575,7 @@ jobs:
     needs: classify
     if: >-
       needs.classify.outputs.content_only != 'true'
-      && needs.classify.outputs.clai2_changed == 'true'
+      && needs.classify.outputs.clai2_web_changed == 'true'
     uses: ./.github/workflows/clai2-web.yml
 
   test-fastmcp-4:

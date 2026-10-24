@@ -10,6 +10,7 @@ updates:
   - dependencies
   - web-ui
   - pkg:clai2
+  open-pull-requests-limit: 0
   package-ecosystem: npm
   schedule:
     interval: monthly

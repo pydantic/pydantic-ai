@@ -61,10 +61,11 @@ Existing examples of that model (the precedents you hold new code to):
 - `instructions` was removed from the Vercel `UIMessage.metadata` dump
   entirely — never sent to the client, never read back (PR #5279).
 
-The CLAI2 local web control UI follows a different boundary. The workflow
-prompt appends its CLAI2 contract after this dynamic prompt, so apply that
-contract when a PR touches CLAI2. Do not apply the UIAdapter flag or
-`sanitize_messages` requirements to CLAI2 fields.
+## CLAI2 local web control UI boundary
+
+Apply this contract whenever the diff touches CLAI2's web UI, backend, tests, or web documentation. For a CLAI2-only diff, inspect its changed code, tests, and docs directly; UI-adapter field lists and review steps do not apply. The per-launch token grants the local user control of that launch, including prompts, tools, sessions, workspaces, and settings. Treat those fields as intended controls and data; do not demand UIAdapter disclosure flags or `sanitize_messages` for this separate local UI.
+
+Audit the real paths that carry attacker-controlled content and authority. Untrusted Markdown, model output, tool output, and plugin content must be sanitized before rendering. External links must use safe opener and referrer behavior. Do not leak the per-launch token to other origins, logs, or unrelated sessions. Require exact Host and API-token checks, plus exact Origin and token checks for WebSockets; reject failures. Check that session watch/input, queued events, and reconnect state stay scoped to the intended session.
 
 ## Your mandate — two directions
 
@@ -165,7 +166,7 @@ knowledge — but `ai-sdk.dev` and `docs.ag-ui.com` are reachable via
 - Before posting, re-read each finding as a skeptical maintainer who knows
   this trust model.
 
-For CLAI2 findings, follow the CLAI2 contract appended by the workflow. Trace
+For CLAI2 findings, follow the CLAI2 local web control UI boundary section above. Trace
 the affected CLAI2 request, render, or session path and describe the concrete
 attacker-controlled input and consequence. Do not require UI-adapter flags or
 the `load_messages` / `sanitize_messages` / `dump_messages` path.
@@ -180,7 +181,7 @@ the `load_messages` / `sanitize_messages` / `dump_messages` path.
    in `agents-md.txt` and `docs/ui/overview.md` — its "adapter trust model"
    section is the canonical statement of what is trusted vs. sanitized.
    For CLAI2 changes, read the CLAI2 sources and relevant docs named by the
-   diff, then apply the appended CLAI2 contract.
+   diff, then apply the CLAI2 local web control UI boundary section above.
 3. Skim `review-comments.txt` for prior threads. Note this workflow's previous
    review in `bot-reviews.txt` — you compare verdicts at the end.
 4. For UI-adapter changes, identify files touching the boundary in

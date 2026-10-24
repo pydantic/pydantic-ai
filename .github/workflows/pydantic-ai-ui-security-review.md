@@ -230,9 +230,3 @@ jobs:
      UI security surface touched: ${{ needs.detect.outputs.touched }} -->
 
 ${{ needs.fetch_dynamic_prompt.outputs.dynamic_prompt }}
-
-## CLAI2 local web control UI boundary
-
-Apply this contract whenever the diff touches CLAI2's web UI, backend, tests, or web documentation. For a CLAI2-only diff, inspect its changed code, tests, and docs directly; UI-adapter field lists and review steps do not apply. The per-launch token grants the local user control of that launch, including prompts, tools, sessions, workspaces, and settings. Treat those fields as intended controls and data; do not demand UIAdapter disclosure flags or `sanitize_messages` for this separate local UI.
-
-Audit the real paths that carry attacker-controlled content and authority. Untrusted Markdown, model output, tool output, and plugin content must be sanitized before rendering. External links must use safe opener and referrer behavior. Do not leak the per-launch token to other origins, logs, or unrelated sessions. Require exact Host and API-token checks, plus exact Origin and token checks for WebSockets; reject failures. Check that session watch/input, queued events, and reconnect state stay scoped to the intended session.

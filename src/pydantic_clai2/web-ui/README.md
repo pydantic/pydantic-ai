@@ -13,8 +13,9 @@ npm run build
 
 `build` typechecks before bundling. Commit generated assets with source and
 lockfile changes, including dependency updates. CI rejects a rebuilt bundle
-that differs from the committed assets. Dependabot monitors frontend advisories
-and opens security updates; live advisory data does not gate builds or releases.
+that differs from the committed assets. When updating dependencies, including on
+a Dependabot security PR, check out that branch, run the commands above, and
+commit the rebuilt assets before merging.
 
 From the repository root, install Chromium and run the real-browser regressions:
 
@@ -26,10 +27,3 @@ CLAI2_BROWSER_TESTS=1 uv run --no-sync pytest tests/clai2/browser
 
 The browser suite serves the actual committed bundle through the Python app.
 It uses local test models and shares its server and Chromium across the cases.
-Other test jobs leave this suite disabled. The dedicated job also requires full
-line and branch coverage of the request `Guard`; repository-wide coverage scope
-is unchanged.
-
-CI checks installed wheel and sdist assets against the validated bundle.
-`clai2-bleeding` runs the same web validation before publishing its checked-out
-commit and checks the installed sdists again before replacing release assets.
