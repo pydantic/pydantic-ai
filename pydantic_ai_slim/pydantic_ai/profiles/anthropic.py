@@ -24,7 +24,7 @@ ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 
 Models whose profile sets that flag reject these settings outright with a 400, so every provider
 serving them has to drop and warn rather than forward. It lives here rather than beside either
-model because `models/bedrock.py` cannot import from `models/anthropic.py` without pulling the
+model because `models/bedrock.py` cannot import from `models/anthropic/` without pulling the
 `anthropic` SDK into the `bedrock` extra.
 """
 
