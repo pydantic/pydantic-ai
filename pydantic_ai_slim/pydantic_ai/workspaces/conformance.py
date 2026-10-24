@@ -51,10 +51,9 @@ def _commands(backend: WorkspaceBackend) -> SupportsCommands:
     return backend
 
 
-def _computer(backend: WorkspaceBackend) -> SupportsDisplay:
-    if not Workspace(backend).has_display:
+def _display(backend: WorkspaceBackend) -> SupportsDisplay:
+    if not (isinstance(backend, SupportsDisplay) and backend.has_display):
         pytest.skip('backend has no display')
-    assert isinstance(backend, SupportsDisplay)
     return backend
 
 
@@ -578,10 +577,10 @@ class WorkspaceBackendSuite:
             await attach_backend(backend.ref).working_dir()
 
     async def test_screenshot_is_a_png_of_the_display_size(self, backend: WorkspaceBackend) -> None:
-        computer = _computer(backend)
-        width, height = await computer.display_size()
+        display = _display(backend)
+        width, height = await display.display_size()
         assert width > 0 and height > 0
-        png = await computer.screenshot()
+        png = await display.screenshot()
         # The PNG signature, then the IHDR chunk, whose first fields are the image's width and height.
         assert png[:8] == b'\x89PNG\r\n\x1a\n'
         assert png[12:16] == b'IHDR'
@@ -589,8 +588,8 @@ class WorkspaceBackendSuite:
 
     async def test_every_action_is_performed_or_refused_as_unsupported(self, backend: WorkspaceBackend) -> None:
         """A backend may lack an action kind, but must refuse it with `UnsupportedComputerActionError`."""
-        computer = _computer(backend)
-        width, height = await computer.display_size()
+        display = _display(backend)
+        width, height = await display.display_size()
         x, y = width // 2, height // 2
         actions: list[ComputerAction] = [
             MoveMouse(x=x, y=y),
@@ -609,9 +608,9 @@ class WorkspaceBackendSuite:
         ]
         for action in actions:
             with suppress(UnsupportedComputerActionError):
-                await computer.act(action)
+                await display.act(action)
 
     async def test_an_unknown_action_type_is_refused(self, backend: WorkspaceBackend) -> None:
-        computer = _computer(backend)
+        display = _display(backend)
         with pytest.raises(UnsupportedComputerActionError):
-            await computer.act(_UnknownAction())  # pyright: ignore[reportArgumentType]
+            await display.act(_UnknownAction())  # pyright: ignore[reportArgumentType]

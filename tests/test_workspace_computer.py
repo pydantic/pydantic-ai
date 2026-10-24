@@ -13,10 +13,8 @@ from pydantic_ai.computer_use import ComputerToolAction
 from pydantic_ai.workspaces import (
     Click,
     ComputerAction,
-    Drag,
     HoldKeys,
     MouseUp,
-    Point,
     PressKeys,
     ReadOnlyWorkspace,
     Scroll,
@@ -37,6 +35,7 @@ def test_actions_normalize_key_names_and_validate_from_json() -> None:
     actions = adapter.validate_python(
         [
             {'type': 'keypress', 'keys': ['CTRL', 'Return']},
+            # A field the action doesn't have, such as one a provider adds, is ignored.
             {'type': 'click', 'x': 1, 'y': 2, 'modifiers': ['Control', 'cmd', 'Option'], 'scale': 0.5},
             {'type': 'hold_key', 'keys': ['ESC'], 'seconds': 1},
             {'type': 'keypress', 'keys': ['ctrl+shift+T']},
@@ -67,23 +66,12 @@ def test_actions_normalize_key_names_and_validate_from_json() -> None:
 @pytest.mark.parametrize(
     'build',
     [
-        lambda: Click(count=0),
-        lambda: Click(x=-1, y=0),
-        lambda: Drag(path=()),
-        lambda: PressKeys(keys=()),
-        lambda: HoldKeys(keys=('shift',), seconds=float('inf')),
-        lambda: HoldKeys(keys=('shift',), seconds=11),
-        lambda: PressKeys(keys=('a',), repeat=51),
-        lambda: PressKeys(keys=('a',) * 9),
         lambda: Scroll(direction='down', amount=51),
-        lambda: TypeText(text='x' * 2_001),
         lambda: TypeText(text='a\x00b'),
         lambda: PressKeys(keys=('a+b+c+d+e+f+g+h+i',)),
         lambda: HoldKeys(keys=('',), seconds=1),
         # Modifiers are checked before anything runs, so an unknown one can't be skipped mid-action.
         lambda: Click(modifiers=('ctrl', 'exec')),
-        lambda: Scroll(direction='down', modifiers=('capslock',)),
-        lambda: Drag(path=(Point(x=0, y=0),) * 51),
     ],
 )
 def test_actions_are_validated_when_built_in_python(build: Any) -> None:

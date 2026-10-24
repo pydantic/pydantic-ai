@@ -273,9 +273,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
     if is_modern_gemini and not is_image_model:
-        # Gemini 3 points on a 0-999 grid: asked for pixels, Gemini 3.1 Pro, 3.5 Flash and 3.8 Flash missed a
-        # 22x17 px target by 118-290 px; asked for grid coordinates, they hit it within 4.5 px (2026-10-22).
-        # Gemini 2.5 Flash missed by 53-155 px either way, so older models keep pixels.
+        # Gemini 3 points accurately on a 0-999 grid but not in pixels; Gemini 2.5 is no better on the grid.
         profile['computer_use_coordinate_grid'] = 1000
     return profile
 
