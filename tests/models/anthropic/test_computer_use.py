@@ -226,7 +226,16 @@ async def test_a_key_sequence_is_one_member_however_many_presses(allow_model_req
     assert results[2]['content'][0]['text'] == NOT_EXECUTED
 
 
-async def test_an_earlier_model_gets_computer_20251124_with_the_display_size(allow_model_requests: None) -> None:
+@pytest.mark.parametrize(
+    'model_name, tool, beta, zoom',
+    [
+        ('claude-sonnet-4-6', 'computer_20251124', 'computer-use-2025-11-24', {'enable_zoom': True}),
+        ('claude-haiku-4-5', 'computer_20250124', 'computer-use-2025-01-24', {}),
+    ],
+)
+async def test_an_earlier_model_gets_its_tool_with_the_display_size(
+    allow_model_requests: None, model_name: str, tool: str, beta: str, zoom: dict[str, Any]
+) -> None:
     provider = InMemoryProvider()
     computer_call = BetaToolUseBlock.model_validate(
         {
@@ -237,22 +246,16 @@ async def test_an_earlier_model_gets_computer_20251124_with_the_display_size(all
         }
     )
     client = MockAnthropic.create_mock([_turn(computer_call), _turn(BetaTextBlock(text='done', type='text'))])
-    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+    model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client))
     agent = Agent(model, toolsets=[computer_toolset(display_size=(1280, 800))], capabilities=[provider.capability()])
     await agent.run('Go.')
 
     assert provider.actions == [Click(x=5, y=6)]
     first, second = get_mock_chat_completion_kwargs(client)
     assert first['tools'] == [
-        {
-            'type': 'computer_20251124',
-            'name': 'computer',
-            'display_width_px': 1280,
-            'display_height_px': 800,
-            'enable_zoom': True,
-        }
+        {'type': tool, 'name': 'computer', 'display_width_px': 1280, 'display_height_px': 800, **zoom}
     ]
-    assert 'computer-use-2025-11-24' in first['betas']
+    assert beta in first['betas']
     # The call goes back as it came; its result is an ordinary tool result.
     (call,) = second['messages'][-2]['content']
     assert (call['name'], call['input'], 'toolset_name' in call) == (
