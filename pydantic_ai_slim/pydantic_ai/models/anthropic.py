@@ -3760,10 +3760,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         member_actions = [_map_computer_member(*_member(block, 'computer_toolset_20260801')) for block in blocks]
         ends = list(itertools.accumulate(len(actions) for actions in member_actions))
         raw_metadata: Any = part.metadata
-        # A result without its metadata, such as one rebuilt by a UI, reads as every call having run.
-        metadata: ComputerResult = (
-            cast(ComputerResult, raw_metadata) if isinstance(raw_metadata, dict) else {'performed': ends[-1]}
-        )
+        # A result without its metadata, such as one rebuilt by a UI, reads as every call having run, and the last
+        # one carries the summary, which says if one failed.
+        known = isinstance(raw_metadata, dict)
+        metadata: ComputerResult = cast(ComputerResult, raw_metadata) if known else {'performed': ends[-1]}
         performed = metadata.get('performed', ends[-1])
         error = metadata.get('error')
         # The content is a summary, what zoom and cursor-position actions returned, then the screen (or the note that
@@ -3786,7 +3786,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     text = ' '.join(item for item in (content[0], screen) if isinstance(item, str))
                     results.append(result(block, False, BetaTextBlockParam(text=text, type='text'), *returned))
                 elif index == last_ran and screen is not None:
-                    ok = BetaTextBlockParam(text='OK', type='text')
+                    ok = BetaTextBlockParam(text='OK' if known else str(content[0]), type='text')
                     results.append(result(block, False, ok, *returned, await content_block(screen)))
                 else:
                     results.append(result(block, False, BetaTextBlockParam(text='OK', type='text'), *returned))
