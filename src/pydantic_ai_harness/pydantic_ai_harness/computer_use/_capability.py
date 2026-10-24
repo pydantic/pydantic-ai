@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import weakref
 from collections.abc import Collection, Iterator, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Annotated, Any, cast, get_args
@@ -9,7 +10,7 @@ from typing import TYPE_CHECKING, Annotated, Any, cast, get_args
 import anyio
 from pydantic import Field
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     DISPLAY_SIZE,
@@ -32,6 +33,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models import Model
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool, ToolDefinition
@@ -45,6 +47,16 @@ from pydantic_ai.workspaces import (
     Scroll,
     WorkspaceError,
     WorkspaceUnavailableError,
+)
+from pydantic_ai_harness.compaction import (
+    ClampOversizedMessages,
+    ClearToolResults,
+    DeduplicateFileReads,
+    FallbackCompaction,
+    RelevanceCompaction,
+    SlidingWindowCompaction,
+    SummarizingCompaction,
+    TieredCompaction,
 )
 
 if TYPE_CHECKING:
@@ -90,6 +102,10 @@ _PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
 _OBSERVING_ACTIONS = frozenset({'wait', 'screenshot', 'zoom', 'cursor_position'})
 """Action types that change nothing on the screen, so `requires_approval` lets them through."""
 
+_DISPLAY_LOCKS: dict[int, anyio.Lock] = {}
+"""One lock per display backend, by `id`: agents sharing a workspace, such as parallel sub-agents, take turns at its
+display a whole call at a time, so one's clicks and typing never land between another's."""
+
 _ACTION_TYPES = frozenset(action.type for action in get_args(get_args(ComputerToolAction)[0]))
 
 
@@ -101,8 +117,16 @@ def _profile(model: Any) -> ModelProfile:
         return {}
 
 
+def _grid(model: Any) -> int | None:
+    if isinstance(model, FallbackModel):
+        # Any of its models may answer, so they point on a grid only when every one of them uses the same one.
+        grids = {_grid(inner) for inner in model.models}
+        return grids.pop() if len(grids) == 1 else None
+    return _profile(model).get('computer_use_coordinate_grid')
+
+
 def _coordinate_grid(ctx: RunContext[Any]) -> int | None:
-    return _profile(ctx.model).get('computer_use_coordinate_grid')
+    return _grid(ctx.model)
 
 
 def _points(action: ComputerToolAction) -> Sequence[Point]:
@@ -225,6 +249,20 @@ def _needs_settling(performed: list[ComputerToolAction]) -> bool:
     return False
 
 
+def _display_lock(ctx: RunContext[Any]) -> anyio.Lock:
+    try:
+        display: object = ctx.workspace.backend
+    except UserError:
+        # Durable workflow code can't reach the backend; agents sharing the run's workspace share this object.
+        display = ctx.workspace
+    key = id(display)
+    if (lock := _DISPLAY_LOCKS.get(key)) is None:
+        lock = _DISPLAY_LOCKS[key] = anyio.Lock()
+        # The id can be reused once the backend is gone, so its lock goes with it.
+        weakref.finalize(display, _DISPLAY_LOCKS.pop, key, None)
+    return lock
+
+
 def _plural(count: int, noun: str) -> str:
     return f'{count} {noun}' if count == 1 else f'{count} {noun}s'
 
@@ -238,7 +276,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     with a desktop; see [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]. The model must accept
     images.
 
-    Under durable execution, each action and screenshot is retried on its own, not the whole batch.
+    Under Temporal and Prefect, each action and screenshot is retried on its own, not the whole batch; under other
+    durable engines, such as DBOS, a retry runs the whole call again.
     """
 
     _: KW_ONLY
@@ -287,6 +326,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             sequential=True,
             max_retries=3,
             tool_kind=COMPUTER_KIND,
+            # It returns a screenshot, which has no schema to describe.
+            include_return_schema=False,
             # Each workspace call is then its own activity or task, with its own timeout and retries.
             metadata={'temporal': False, 'prefect': False},
             prepare=_with_display_size,
@@ -321,6 +362,12 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             if grid is not None:
                 actions = [_to_pixels(action, width, height, grid) for action in actions]
 
+        async with _display_lock(ctx):
+            return await self._run_on_display(ctx, actions, grid)
+
+    async def _run_on_display(
+        self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], grid: int | None
+    ) -> ToolReturn:
         performed, error, outputs = await _perform(ctx, actions, grid)
         if self.settle_seconds and _needs_settling(actions[:performed]):
             await anyio.sleep(self.settle_seconds)
@@ -396,6 +443,21 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> FunctionToolset[AgentDepsT]:
         return self._toolset
+
+    def get_ordering(self) -> CapabilityOrdering:
+        """Run inside compaction, which rebuilds each request from the history: dropping screenshots comes after it."""
+        return CapabilityOrdering(
+            wrapped_by=(
+                ClampOversizedMessages,
+                ClearToolResults,
+                DeduplicateFileReads,
+                FallbackCompaction,
+                RelevanceCompaction,
+                SlidingWindowCompaction,
+                SummarizingCompaction,
+                TieredCompaction,
+            )
+        )
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail the run at its start when its workspace has no display."""

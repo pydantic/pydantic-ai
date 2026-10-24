@@ -354,6 +354,58 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert len(computer_returns) == 28
         assert all(part.content_items()[1] == SCREENSHOT for part in computer_returns)
 
+    async def test_agents_sharing_a_display_take_turns_a_whole_call_at_a_time(self) -> None:
+        class SlowDisplay(ProviderBackend):
+            async def act(self, action: ComputerAction) -> None:
+                await anyio.sleep(0.01)  # long enough for the other agent's call to start
+                await super().act(action)
+
+        provider = InMemoryProvider()
+        backend = SlowDisplay(provider, None)
+        agents = [
+            Agent(
+                _scripted([{'type': 'click', 'x': x, 'y': 1}, {'type': 'type', 'text': text}]),
+                capabilities=[ComputerUse(settle_seconds=0)],
+            )
+            for x, text in [(1, 'first'), (2, 'second')]
+        ]
+
+        async def run(agent: Agent[None, str]) -> None:
+            await agent.run('Go.', workspace=backend)
+
+        async with anyio.create_task_group() as tg:
+            for agent in agents:
+                tg.start_soon(run, agent)
+
+        assert provider.actions in (
+            [Click(x=1, y=1), TypeText(text='first'), Click(x=2, y=1), TypeText(text='second')],
+            [Click(x=2, y=1), TypeText(text='second'), Click(x=1, y=1), TypeText(text='first')],
+        )
+
+    async def test_compaction_listed_after_it_does_not_bring_dropped_screenshots_back(self) -> None:
+        from pydantic_ai_harness.compaction import ClampOversizedMessages
+
+        sent: list[int] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            returns = _returns(messages)
+            sent.append(sum(isinstance(item, BinaryContent) for part in returns for item in part.content_items()))
+            if len(returns) < 27:
+                return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        # Compaction rebuilds each request from the history, so it has to run before the screenshots are dropped.
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[
+                InMemoryProvider().capability(),
+                ComputerUse(keep_screenshots=2, settle_seconds=0),
+                ClampOversizedMessages(max_part_chars=10**6),
+            ],
+        )
+        await agent.run('Look.')
+        assert sent[-1] == 2
+
     @pytest.mark.parametrize(
         'padding,calls,first_drop',
         [
@@ -424,17 +476,27 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         with pytest.raises(UserError, match='`ComputerUse` needs a workspace with a display'):
             await agent.run('Go.')
 
-    async def test_a_fallback_model_runs_the_tool_in_pixels(self) -> None:
-        # A fallback model has no profile of its own, so the grid of the models inside it is not read: (5, 6) stays pixels.
+    @pytest.mark.parametrize(
+        'fallback_grid,click',
+        [
+            pytest.param(1000, Click(x=640, y=400), id='models-on-one-grid-use-it'),
+            pytest.param(None, Click(x=500, y=500), id='models-that-differ-use-pixels'),
+        ],
+    )
+    async def test_a_fallback_model_points_on_a_grid_only_when_all_its_models_do(
+        self, fallback_grid: int | None, click: Click
+    ) -> None:
         provider = InMemoryProvider()
-        scripted = _scripted(
-            [{'type': 'click', 'x': 5, 'y': 6}], profile=ModelProfile(computer_use_coordinate_grid=1000)
+        grid = ModelProfile(computer_use_coordinate_grid=1000)
+        scripted = _scripted([{'type': 'click', 'x': 500, 'y': 500}], profile=grid)
+        fallback = _scripted(
+            [], profile=ModelProfile(computer_use_coordinate_grid=fallback_grid) if fallback_grid else None
         )
         agent = Agent(
-            FallbackModel(scripted, scripted), capabilities=[provider.capability(), ComputerUse(settle_seconds=0)]
+            FallbackModel(scripted, fallback), capabilities=[provider.capability(), ComputerUse(settle_seconds=0)]
         )
         assert (await agent.run('Go.')).output == 'done'
-        assert provider.actions == [Click(x=5, y=6)]
+        assert provider.actions == [click]
 
     async def test_a_model_selected_later_without_image_input_is_refused_before_its_request(self) -> None:
         text_only = FunctionModel(
