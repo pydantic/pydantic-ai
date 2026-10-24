@@ -40,15 +40,10 @@ async def main():
 
 1. Any capability whose workspace has a display: its backend implements
    [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]. See
-   [Controlling a display](../workspace.md#controlling-a-display) to give a sandbox one.
+   [Controlling a display](../workspace.md#controlling-a-display) to give a sandbox one. On a
+   [read-only](../workspace.md#read-only-access) workspace the agent can take screenshots but not act.
 
-Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them.
-
-## Requirements
-
-- **A workspace with a display.** On a [read-only](../workspace.md#read-only-access) workspace the agent can take
-  screenshots but not act.
-- **A model that accepts images.**
+The model must accept images. Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them.
 
 ## Computer use, Playwright, or Browser Use
 
