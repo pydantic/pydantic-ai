@@ -112,7 +112,7 @@ Structured server error content is serialized as JSON for both `'retry'` and `'f
 
 [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) are HTML pages a server attaches to tools. `MCPToolset` needs no setup: a call to a tool with `_meta.ui.resourceUri` keeps an `MCPAppToolResult` in `ToolReturnPart.metadata['mcp_app']` (resource URI, tool input, full result, toolset `id`), which the model never sees. The AG-UI adapter sends it as an `mcp-apps` activity, the Vercel AI adapter as a `data-mcp-apps` chunk. Read the page with `read_resource_for_app(uri)`, which returns the MCP result as is, keeping the MIME type and `_meta.ui` (CSP, permissions).
 
-Relay the page's requests with `call_tool_for_app(name, arguments)` (app-visible tools only, `isError` results returned, no `process_tool_call`) and `read_resource_for_app(uri)` (any resource); both return the MCP wire result to send back as is. Use one `MCPToolset` per server.
+Relay the page's requests with `call_tool_for_app(name, arguments)` (app-visible tools only, `isError` results returned, no `process_tool_call`) and `read_resource_for_app(uri)` (any resource); both return the MCP wire result to send back as is. Use one `MCPToolset` per server. For CopilotKit's MCP Apps renderer, pass `mcp_app_toolsets=[...]` to `AGUIAdapter.dispatch_request` and the adapter answers the page's requests without running the agent.
 
 ## Use Embeddings for RAG
 
