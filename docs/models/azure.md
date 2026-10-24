@@ -130,7 +130,7 @@ Azure Grok rejects tool schemas containing local `$ref` and `$defs`. `AzureProvi
 
 ### Custom profile with `OpenAIProvider`
 
-The generic `openai:` prefix and [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] select OpenAI profiles even when `OPENAI_BASE_URL` or `base_url` points to Azure. To keep that provider, explicitly pass the profile returned by [`AzureProvider.model_profile`][pydantic_ai.providers.azure.AzureProvider.model_profile]. This reuses the Azure Grok tool-schema conversion and preserves native structured-output schemas.
+The generic `openai:` prefix and [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] select OpenAI profiles even when `OPENAI_BASE_URL` or `base_url` points to Azure. To keep that provider, explicitly pass the profile returned by [`AzureProvider.model_profile`][pydantic_ai.providers.azure.AzureProvider]. This reuses the Azure Grok tool-schema conversion and preserves native structured-output schemas.
 
 ```python {gateway_toggle="skip"}
 from pydantic_ai import Agent
