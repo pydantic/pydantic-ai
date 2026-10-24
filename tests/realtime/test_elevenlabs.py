@@ -398,6 +398,8 @@ async def test_create_client_secret_request() -> None:
     )
 
     assert secret.value == 'ek_realtime_x'
+    # The browser connects over a WebSocket: ElevenLabs takes no WebRTC offers.
+    assert secret.webrtc_url is None
     assert captured['url'] == snapshot('https://api.eu.residency.elevenlabs.io/v1/convai/realtime/client_secrets')
     assert captured['api_key'] == 'k'
     assert captured['authorization'] is None
