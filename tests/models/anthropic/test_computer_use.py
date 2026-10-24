@@ -3,12 +3,13 @@
 from __future__ import annotations as _annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
 from pydantic_ai import Agent, Tool
-from pydantic_ai.computer_use import COMPUTER_KIND, ComputerToolAction
+from pydantic_ai.computer_use import COMPUTER_KIND, DISPLAY_SIZE, ComputerToolAction
 from pydantic_ai.exceptions import ToolFailed
 from pydantic_ai.messages import (
     ModelMessage,
@@ -23,7 +24,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.workspaces import Click, TypeText
+from pydantic_ai.workspaces import Click, PressKeys, TypeText
 
 from ...conftest import try_import
 from ...workspace_fakes import InMemoryProvider, computer_toolset
@@ -77,6 +78,19 @@ async def test_claude_member_calls_run_on_the_workspace(allow_model_requests: No
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
 
 
+@pytest.mark.vcr
+async def test_claude_computer_20251124_calls_run_on_the_workspace(
+    allow_model_requests: None, anthropic_api_key: str
+) -> None:
+    provider = InMemoryProvider()
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(model, toolsets=[computer_toolset(display_size=(1280, 800))], capabilities=[provider.capability()])
+    await agent.run(TASK)
+
+    # Claude Sonnet 4.6's real `computer_20251124` calls became `computer` calls that ran.
+    assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
+
+
 def _tool_use(id: str, name: str, input: dict[str, Any]) -> BetaToolUseBlock:
     return BetaToolUseBlock.model_validate(
         {'id': id, 'type': 'tool_use', 'name': name, 'input': input, 'toolset_name': 'computer'}
@@ -117,7 +131,6 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
     assert first['tools'] == [
         {
             'type': 'computer_toolset_20260801',
-            'configs': {'zoom': {'enabled': False}, 'cursor_position': {'enabled': False}},
         }
     ]
     # The member calls go back as they came, each answered by one result; both name the toolset.
@@ -163,6 +176,94 @@ async def test_a_failed_call_gives_every_member_its_text(allow_model_requests: N
     ]
 
 
+async def test_zoom_and_cursor_position_answer_their_own_member_calls(allow_model_requests: None) -> None:
+    client = MockAnthropic.create_mock(
+        [
+            _turn(
+                _tool_use('toolu_1', 'zoom', {'region': [0, 0, 40, 20]}),
+                _tool_use('toolu_2', 'cursor_position', {}),
+                _tool_use('toolu_3', 'left_click', {'coordinate': [5, 6]}),
+            ),
+            _turn(BetaTextBlock(text='done', type='text')),
+        ]
+    )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    await _agent(model, InMemoryProvider()).run('Go.')
+
+    _, second = get_mock_chat_completion_kwargs(client)
+    results = second['messages'][-1]['content']
+    assert [[block['type'] for block in r['content']] for r in results] == [
+        ['text', 'image'],
+        ['text', 'text'],
+        ['text', 'image'],
+    ]
+    assert results[1]['content'][1]['text'] == 'The pointer is at (640, 400).'
+
+
+async def test_a_key_sequence_is_one_member_however_many_presses(allow_model_requests: None) -> None:
+    provider = InMemoryProvider()
+    client = MockAnthropic.create_mock(
+        [
+            _turn(
+                _tool_use('toolu_1', 'key', {'text': 'ctrl+a BackSpace'}),
+                _tool_use('toolu_2', 'hold_key', {'text': 'shift', 'duration': 1}),
+                _tool_use('toolu_3', 'type', {'text': 'never typed'}),
+            ),
+            _turn(BetaTextBlock(text='done', type='text')),
+        ]
+    )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    await _agent(model, provider).run('Go.')
+
+    assert provider.actions == [PressKeys(keys=('ctrl', 'a')), PressKeys(keys=('backspace',))]
+    _, second = get_mock_chat_completion_kwargs(client)
+    results = second['messages'][-1]['content']
+    assert [(r['tool_use_id'], r['is_error']) for r in results] == [
+        ('toolu_1', False),
+        ('toolu_2', True),
+        ('toolu_3', True),
+    ]
+    assert results[2]['content'][0]['text'] == NOT_EXECUTED
+
+
+async def test_an_earlier_model_gets_computer_20251124_with_the_display_size(allow_model_requests: None) -> None:
+    provider = InMemoryProvider()
+    computer_call = BetaToolUseBlock.model_validate(
+        {
+            'id': 'toolu_1',
+            'type': 'tool_use',
+            'name': 'computer',
+            'input': {'action': 'left_click', 'coordinate': [5, 6]},
+        }
+    )
+    client = MockAnthropic.create_mock([_turn(computer_call), _turn(BetaTextBlock(text='done', type='text'))])
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+    agent = Agent(model, toolsets=[computer_toolset(display_size=(1280, 800))], capabilities=[provider.capability()])
+    await agent.run('Go.')
+
+    assert provider.actions == [Click(x=5, y=6)]
+    first, second = get_mock_chat_completion_kwargs(client)
+    assert first['tools'] == [
+        {
+            'type': 'computer_20251124',
+            'name': 'computer',
+            'display_width_px': 1280,
+            'display_height_px': 800,
+            'enable_zoom': True,
+        }
+    ]
+    assert 'computer-use-2025-11-24' in first['betas']
+    # The call goes back as it came; its result is an ordinary tool result.
+    (call,) = second['messages'][-2]['content']
+    assert (call['name'], call['input'], 'toolset_name' in call) == (
+        'computer',
+        {'action': 'left_click', 'coordinate': [5, 6]},
+        False,
+    )
+    (result,) = second['messages'][-1]['content']
+    assert [block['type'] for block in result['content']] == ['text', 'image']
+
+
 async def test_an_invalid_member_is_refused_and_nothing_runs(allow_model_requests: None) -> None:
     provider = InMemoryProvider()
     client = MockAnthropic.create_mock(
@@ -201,7 +302,7 @@ async def test_a_deferred_computer_tool_stays_a_deferred_function(allow_model_re
     ]
 
 
-async def test_an_older_model_gets_a_function(allow_model_requests: None) -> None:
+async def test_an_earlier_tool_without_the_display_size_stays_a_function(allow_model_requests: None) -> None:
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='done', type='text')))
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
     await _agent(model, InMemoryProvider()).run('Go.')
@@ -210,9 +311,9 @@ async def test_an_older_model_gets_a_function(allow_model_requests: None) -> Non
     assert [(tool['name'], 'input_schema' in tool) for tool in request['tools']] == [('computer', True)]
 
 
-def test_the_toolset_goes_to_the_claude_api_only() -> None:
+def test_bedrock_and_foundry_get_the_earlier_beta_tool() -> None:
     pytest.importorskip('botocore')
-    native: dict[str, bool] = {}
+    native: dict[str, Any] = {}
     for name, client in (
         ('direct', AsyncAnthropic(api_key='x')),
         ('vertex', AsyncAnthropicVertex(project_id='p', region='us-central1', access_token='x')),
@@ -221,8 +322,15 @@ def test_the_toolset_goes_to_the_claude_api_only() -> None:
         ('foundry', AsyncAnthropicFoundry(api_key='x', base_url='https://example.com')),
     ):
         model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-        native[name] = model.profile.get('anthropic_supports_computer_toolset', False)
-    assert native == {'direct': True, 'vertex': False, 'bedrock': False, 'mantle': False, 'foundry': False}
+        native[name] = model.profile.get('anthropic_computer_tool_version')
+    # Foundry doesn't list the Claude 5.5 models for the earlier tool, so they get a function tool there.
+    assert native == {
+        'direct': 'computer_toolset_20260801',
+        'vertex': 'computer_toolset_20260801',
+        'bedrock': 'computer_20251124',
+        'mantle': 'computer_20251124',
+        'foundry': None,
+    }
 
 
 async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(allow_model_requests: None) -> None:
@@ -280,30 +388,46 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         ),
         ('type', {'text': 'hi'}, {'type': 'type', 'text': 'hi'}),
         ('key', {'text': 'ctrl+s', 'repeat': 2}, {'type': 'keypress', 'keys': ['ctrl+s'], 'repeat': 2}),
+        # xdotool syntax: chords separated by spaces are pressed one after another.
+        (
+            'key',
+            {'text': 'ctrl+a BackSpace'},
+            [
+                {'type': 'keypress', 'keys': ['ctrl+a'], 'repeat': None},
+                {'type': 'keypress', 'keys': ['BackSpace'], 'repeat': None},
+            ],
+        ),
         ('hold_key', {'text': 'shift', 'duration': 30}, {'type': 'hold_key', 'keys': ['shift'], 'seconds': 30}),
         ('scroll', {'scroll_direction': 'up'}, {'type': 'scroll', 'direction': 'up', 'amount': None, 'modifiers': []}),
         ('wait', {'duration': 2}, {'type': 'wait', 'seconds': 2}),
         ('screenshot', {}, {'type': 'screenshot'}),
-        ('zoom', {'region': [0, 0, 10, 10]}, {'type': 'screenshot'}),
+        (
+            'zoom',
+            {'region': [1, 2, 30, 40]},
+            {'type': 'zoom', 'region': {'left': 1, 'top': 2, 'right': 30, 'bottom': 40}},
+        ),
+        ('zoom', {}, {'type': 'zoom', 'region': None}),
         ('cursor_position', {}, {'type': 'cursor_position'}),
     ],
 )
-def test_toolset_members_map_onto_the_computer_tool(name: str, input: dict[str, Any], action: dict[str, Any]) -> None:
-    assert _map_computer_member(name, input) == action
+def test_toolset_members_map_onto_the_computer_tool(name: str, input: dict[str, Any], action: Any) -> None:
+    assert _map_computer_member(name, input) == (action if isinstance(action, list) else [action])
 
 
 @pytest.mark.parametrize(
-    'model_name, native',
+    'model_name, version',
     [
-        ('claude-haiku-5-5', True),
-        ('claude-opus-4-8', True),
-        ('claude-opus-4-7', False),
+        ('claude-haiku-5-5', 'computer_toolset_20260801'),
+        ('claude-opus-4-8', 'computer_toolset_20260801'),
+        ('claude-opus-4-7', 'computer_20251124'),
+        ('claude-haiku-4-5', 'computer_20250124'),
+        ('claude-3-5-haiku-latest', None),
     ],
 )
-def test_the_toolset_goes_to_the_models_that_accept_it(model_name: str, native: bool) -> None:
+def test_each_model_gets_its_computer_use_tool(model_name: str, version: str | None) -> None:
     profile = anthropic_model_profile(model_name)
     assert profile is not None
-    assert profile.get('anthropic_supports_computer_toolset', False) is native
+    assert profile.get('anthropic_computer_tool_version') == version
 
 
 def _stream(*blocks: Any) -> list[Any]:
@@ -398,6 +522,44 @@ async def test_member_calls_in_one_response_are_one_call_streamed_or_not(allow_m
         event.part for event in events if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart)
     ]
     assert [len(part.args_as_dict()['actions']) for part in starts] == [1, 2, 3]
+
+
+async def test_each_computer_20251124_call_is_its_own_call_streamed_or_not(allow_model_requests: None) -> None:
+    def call(id: str, input: dict[str, Any]) -> BetaToolUseBlock:
+        return BetaToolUseBlock.model_validate({'id': id, 'type': 'tool_use', 'name': 'computer', 'input': input})
+
+    blocks = [
+        call('toolu_1', {'action': 'left_click', 'coordinate': [5, 6]}),
+        call('toolu_2', {'action': 'screenshot'}),
+    ]
+    computer = replace(COMPUTER, metadata={DISPLAY_SIZE: (1280, 800)})
+    params = ModelRequestParameters(function_tools=[computer], allow_text_output=True)
+    prompt: list[ModelMessage] = [ModelRequest.user_text_prompt('Go.')]
+
+    whole_client = MockAnthropic.create_mock(_turn(*blocks))
+    whole = await AnthropicModel(
+        'claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=whole_client)
+    ).request(prompt, None, params)
+    stream_client = MockAnthropic.create_stream_mock(_stream(*blocks))
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=stream_client))
+    async with model.request_stream(prompt, None, params) as stream:
+        async for _ in stream:
+            pass
+
+    def calls(response: ModelResponse) -> list[tuple[str, Any]]:
+        return [(part.tool_call_id, part.args_as_dict()) for part in response.parts if isinstance(part, ToolCallPart)]
+
+    assert (
+        calls(stream.get())
+        == calls(whole)
+        == [
+            (
+                'toolu_1',
+                {'actions': [{'type': 'click', 'x': 5, 'y': 6, 'button': 'left', 'count': 1, 'modifiers': []}]},
+            ),
+            ('toolu_2', {'actions': [{'type': 'screenshot'}]}),
+        ]
+    )
 
 
 async def test_a_streamed_member_cut_off_mid_input_keeps_only_what_parsed(allow_model_requests: None) -> None:
