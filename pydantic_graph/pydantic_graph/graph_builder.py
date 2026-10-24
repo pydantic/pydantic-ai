@@ -657,7 +657,6 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         self.active_tasks = {}
         self.active_reducers = {}
         self.iter_stream_sender, self.iter_stream_receiver = create_memory_object_stream[_GraphTaskResult]()
-        self._next_node_run_id = 1
 
     async def iter_graph(  # noqa: C901
         self, first_task: GraphTask

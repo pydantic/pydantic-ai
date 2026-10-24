@@ -359,9 +359,11 @@ class ToolManager(Generic[AgentDepsT]):
     ctx: RunContext[AgentDepsT] | None = None
     """The agent run context for a specific run step.
 
-    Once the next step's tool manager is built, or the run ends, this is replaced by a copy whose
-    `tool_manager` is `None`, so the context and this manager stop keeping each other alive.
-    Its `tools` is then empty. Contexts already handed to tools and hooks keep their tool manager.
+    Once [`for_run_step`][pydantic_ai.tool_manager.ToolManager.for_run_step] builds a new tool manager from
+    this one, or the run ends, this is replaced by a copy whose
+    [`tool_manager`][pydantic_ai.tools.RunContext.tool_manager] is `None`, so the context and this manager
+    stop keeping each other alive. The copy's [`tools`][pydantic_ai.tools.RunContext.tools] is then empty.
+    Contexts already handed to tools and hooks keep their tool manager.
     """
     tools: dict[str, ToolsetTool[AgentDepsT]] | None = None
     """The cached tools for this run step. Keyed by the name the model calls the tool
