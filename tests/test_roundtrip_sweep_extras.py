@@ -33,8 +33,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 
 
@@ -220,7 +219,7 @@ async def test_load_capability_schema_keeps_openai_strict_compatibility() -> Non
                 'type': 'object',
             }
         )
-        model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test'))
+        model = FunctionModel(model_function, profile=openai_model_profile('gpt-5'))
         customized = model.customize_request_parameters(ModelRequestParameters(function_tools=[tool]))
         assert customized.function_tools[0].strict is True
         assert customized.function_tools[0].parameters_json_schema == snapshot(
