@@ -101,7 +101,7 @@ async def main():
     print(result.output)
 ```
 
-Daytona's default snapshot has an XFCE desktop with a terminal, started on first use. The display is 1280x800; pass a size, such as `desktop=(1440, 900)`, for another. The size applies to a new sandbox, since Daytona can't resize a running one. A custom snapshot needs [Daytona's desktop packages](https://www.daytona.io/docs/en/computer-use/). The agent keeps the sandbox's shell and files too, so `Coder` and `ComputerUse` can work in the same sandbox.
+Daytona's default snapshot has an XFCE desktop with a terminal, started on first use. The display is 1280x800; pass a size, such as `desktop=(1440, 900)`, for another. The size applies to a new sandbox. A custom snapshot needs [Daytona's desktop packages](https://www.daytona.io/docs/en/computer-use/). The agent keeps the sandbox's shell and files too, so `Coder` and `ComputerUse` can work in the same sandbox.
 
 Daytona's desktop can't press F13 to F24, X keysyms such as `KP_Enter`, or the side mouse buttons; the agent is told when it asks for one.
 
