@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import timedelta
 from uuid import uuid4
 
@@ -10,7 +9,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
-from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.workspaces import Click
 
 pytest.importorskip('temporalio')
@@ -40,17 +39,8 @@ def _model(messages: list[ModelMessage], info: object) -> ModelResponse:
     return ModelResponse(parts=[TextPart('done')])
 
 
-async def _stream(messages: list[ModelMessage], info: object):
-    (part,) = _model(messages, info).parts
-    if isinstance(part, TextPart):
-        yield part.content
-    else:
-        assert isinstance(part, ToolCallPart)
-        yield {0: DeltaToolCall(name=part.tool_name, json_args=json.dumps(part.args))}
-
-
 _agent = Agent(
-    FunctionModel(_model, stream_function=_stream),
+    FunctionModel(_model),
     name='computer_use_temporal',
     capabilities=[_provider.capability(), ComputerUse(settle_seconds=0), TemporalDurability()],
 )
