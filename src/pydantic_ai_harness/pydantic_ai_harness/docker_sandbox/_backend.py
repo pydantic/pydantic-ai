@@ -223,11 +223,27 @@ DESKTOP_DOCKERFILE = """\
 FROM debian:bookworm-slim
 RUN apt-get update \\
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
-        xvfb xdotool scrot fluxbox xterm firefox-esr fonts-dejavu-core ca-certificates \\
+        xvfb xdotool scrot fluxbox tint2 xterm firefox-esr \\
+        fonts-dejavu-core fonts-wqy-microhei fonts-noto-color-emoji ca-certificates \\
     && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /usr/lib/firefox-esr/distribution /root/.fluxbox /root/.config/tint2 \\
+    && printf '%s\\n' '{"policies": {"OverrideFirstRunPage": "", "OverridePostUpdatePage": "", "DontCheckDefaultBrowser": true, "DisableTelemetry": true, "DisplayBookmarksToolbar": "never", "UserMessaging": {"SkipOnboarding": true, "MoreFromMozilla": false, "FeatureRecommendations": false, "ExtensionRecommendations": false}, "FirefoxHome": {"SponsoredTopSites": false, "SponsoredPocket": false, "Pocket": false, "Highlights": false, "Snippets": false}, "Preferences": {"datareporting.policy.dataSubmissionPolicyBypassNotification": {"Value": true, "Status": "locked"}, "browser.newtabpage.activity-stream.showWeather": {"Value": false, "Status": "locked"}, "browser.sessionstore.resume_from_crash": {"Value": false, "Status": "locked"}}}}' > /usr/lib/firefox-esr/distribution/policies.json \\
+    && printf '%s\\n' 'session.screen0.toolbar.visible: false' > /root/.fluxbox/init \\
+    && printf '%s\\n' '[app] (class=firefox-esr)' '  [Maximized] {yes}' '[end]' \\
+        '[app] (class=XTerm)' '  [Maximized] {yes}' '[end]' > /root/.fluxbox/apps \\
+    && printf '%s\\n' 'rounded = 0' 'border_width = 0' 'background_color = #2b2b2b 100' \\
+        'border_color = #2b2b2b 0' 'panel_items = LT' 'panel_position = bottom left horizontal' \\
+        'panel_size = 100% 40' 'panel_padding = 4 4 6' 'panel_background_id = 1' 'panel_layer = top' \\
+        'strut_policy = follow_size' 'launcher_icon_size = 32' 'launcher_padding = 2 4 8' \\
+        'launcher_item_app = /usr/share/applications/firefox-esr.desktop' \\
+        'launcher_item_app = /usr/share/applications/debian-xterm.desktop' \\
+        'taskbar_padding = 2 2 4' 'task_text = 1' 'task_icon = 1' 'task_font_color = #ffffff 100' \\
+        'task_maximum_size = 220 34' > /root/.config/tint2/tint2rc
 ENV LANG=C.UTF-8
 """
-"""The image `DockerSandbox(desktop=True)` builds on first use: an X server, a window manager, a terminal and a browser."""
+"""The image `DockerSandbox(desktop=True)` builds on first use: an X server, a window manager, a panel that launches
+Firefox and a terminal, and fonts for most scripts and emoji. Firefox starts without first-run pages, and new
+windows fill the screen."""
 
 _DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
 
@@ -239,10 +255,11 @@ _START_DESKTOP = (
     'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
     'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
     f"echo 'the X server did not start:' >&2; tail -n 5 {_PID_DIR}/xvfb.log >&2; exit 1; fi; "
-    'sleep 0.1; i=$((i+1)); done; fi; '
+    'sleep 0.1; i=$((i+1)); done; setsid tint2 >/dev/null 2>&1 & fi; '
     'setsid fluxbox >/dev/null 2>&1 &'
 )
-"""Starts an X display of the size `$1` names, such as `1280x800`, unless one is running, and a window manager.
+"""Starts an X display of the size `$1` names, such as `1280x800`, and its panel, unless one is running, and a window
+manager.
 
 It gives up as soon as the X server exits, or after 10 seconds. A second `fluxbox` exits when one is already running,
 so starting it every time recovers one that died or never started.

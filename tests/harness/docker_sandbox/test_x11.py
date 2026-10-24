@@ -86,15 +86,21 @@ class BlockingCommands(ScriptedCommands):
         ),
         (MoveMouse(x=5, y=6), ['xdotool', 'mousemove', '5', '6']),
         (
-            Drag(path=(Point(x=1, y=2), Point(x=3, y=4), Point(x=5, y=6))),
-            ['xdotool', 'mousemove', '1', '2', 'mousedown', '1', 'mousemove', '3', '4', 'mousemove', '5', '6']
-            + ['mouseup', '1'],
+            Drag(path=(Point(x=0, y=0), Point(x=500, y=0), Point(x=500, y=10))),
+            # Each leg is moved along in steps of at most 200 pixels, and at least two.
+            ['xdotool', 'mousemove', '0', '0', 'mousedown', '1', 'sleep', '0.1']
+            + ['sleep', '0.05', 'mousemove', '166', '0', 'sleep', '0.05', 'mousemove', '333', '0']
+            + ['sleep', '0.05', 'mousemove', '500', '0', 'sleep', '0.05', 'mousemove', '500', '5']
+            + ['sleep', '0.05', 'mousemove', '500', '10', 'sleep', '0.1', 'mouseup', '1'],
         ),
         (MouseDown(button='middle'), ['xdotool', 'mousedown', '2']),
         (MouseUp(), ['xdotool', 'mouseup', '1']),
-        (Scroll(x=7, y=8, direction='down'), ['xdotool', 'mousemove', '7', '8', 'click', '--repeat', '3', '5']),
-        (Scroll(direction='up', amount=2), ['xdotool', 'click', '--repeat', '2', '4']),
-        (TypeText(text='-n "hi"\n'), ['xdotool', 'type', '--', '-n "hi"\n']),
+        (
+            Scroll(x=7, y=8, direction='down'),
+            ['xdotool', 'mousemove', '7', '8', 'click', '--repeat', '3', '--delay', '20', '5'],
+        ),
+        (Scroll(direction='up', amount=2), ['xdotool', 'click', '--repeat', '2', '--delay', '20', '4']),
+        (TypeText(text='-n "hi"'), ['xdotool', 'type', '--', '-n "hi"']),
         # Characters outside ASCII are typed slowly enough for xdotool's key remapping to keep up.
         (TypeText(text='héllo'), ['xdotool', 'type', '--delay', '50', '--', 'héllo']),
         (PressKeys(keys=('ctrl', 's'), repeat=3), ['xdotool', 'key', '--repeat', '3', '--', 'ctrl+s']),
@@ -107,7 +113,32 @@ class BlockingCommands(ScriptedCommands):
 async def test_x11_computer_runs_one_xdotool_command_per_action(action: ComputerAction, argv: list[str]) -> None:
     commands = ScriptedCommands()
     await X11Computer(commands).act(action)
-    assert commands.calls == [(argv, False, {'DISPLAY': ':1'})]
+    assert commands.calls == [(argv, False, {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'})]
+
+
+@pytest.mark.parametrize(
+    'text, argvs',
+    [
+        pytest.param(
+            'ls\n\nexit\n',
+            [['type', '--', 'ls'], ['key', 'Return'], ['key', 'Return'], ['type', '--', 'exit'], ['key', 'Return']],
+            id='a-newline-is-enter',
+        ),
+        pytest.param(
+            'Zoë ÅÉ x',
+            [
+                ['type', '--delay', '50', '--', 'Zoë '],
+                ['key', '--delay', '50', 'shift+U00C5', 'shift+U00C9'],
+                ['type', '--delay', '50', '--', ' x'],
+            ],
+            id='a-capital-outside-ascii-is-pressed-with-shift',
+        ),
+    ],
+)
+async def test_x11_computer_presses_the_keys_xdotool_type_gets_wrong(text: str, argvs: list[list[str]]) -> None:
+    commands = ScriptedCommands()
+    await X11Computer(commands).act(TypeText(text=text))
+    assert commands.argvs == [['xdotool', *argv] for argv in argvs]
 
 
 @pytest.mark.parametrize(
@@ -173,7 +204,7 @@ async def test_x11_computer_reads_the_display_size_and_screenshot_on_its_display
     assert await computer.screenshot() == FAKE_SCREENSHOT
     (geometry, _, env), (_, shell, _) = commands.calls
     assert geometry == ['xdotool', 'getdisplaygeometry']
-    assert env == {'DISPLAY': ':1'}
+    assert env == {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'}
     assert shell is True
     assert commands.timeouts == [150, 150]
 
@@ -227,7 +258,7 @@ async def test_x11_computer_zooms_on_a_region_of_its_display() -> None:
     assert await X11Computer(commands).zoom(Region(left=10, top=20, right=110, bottom=70)) == FAKE_SCREENSHOT
     ((command, _, env),) = commands.calls
     # The region goes in as an argument, never into the script.
-    assert (command[:2], command[-1], env) == (['sh', '-c'], '10,20,100,50', {'DISPLAY': ':1'})
+    assert (command[:2], command[-1], env) == (['sh', '-c'], '10,20,100,50', {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'})
 
 
 @pytest.mark.parametrize(

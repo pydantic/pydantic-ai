@@ -3,7 +3,10 @@
 from __future__ import annotations as _annotations
 
 import base64
+import itertools
+import math
 import re
+from collections.abc import Sequence
 from contextlib import suppress
 
 import anyio
@@ -128,6 +131,20 @@ _UNICODE_TYPE_DELAY_MS = '50'
 """Milliseconds between characters when the text has any outside ASCII: `xdotool` types those by remapping a key, and
 at its default delay of 12 ms the remapping races the keystrokes and drops characters (checked live)."""
 
+_DRAG_PRESS_PAUSE = '0.1'
+"""Seconds between pressing the button and moving, and between the last move and letting go: a web page's
+drag-and-drop misses a drag whose events all arrive at once (checked live)."""
+
+_DRAG_STEP_PAUSE = '0.05'
+"""Seconds between the moves of a drag, for the same reason."""
+
+_DRAG_STEP_PIXELS = 200
+"""The longest single move in a drag: each leg of its path is split into moves this long or shorter, and at least two,
+since Firefox only starts a drag, and only lets it land, after the pointer moves more than once (checked live)."""
+
+_SCROLL_TICK_DELAY_MS = '20'
+"""Milliseconds between scroll wheel clicks, instead of `xdotool`'s 100 ms between clicks."""
+
 _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
 
@@ -165,12 +182,48 @@ def _png(output: str) -> bytes:
     return data
 
 
+def _drag_moves(path: Sequence[Point]) -> list[str]:
+    """`xdotool` arguments that move along `path` from its first point, in short steps with pauses between them."""
+    moves: list[str] = []
+    for start, end in itertools.pairwise(path):
+        steps = max(2, math.ceil(math.dist((start.x, start.y), (end.x, end.y)) / _DRAG_STEP_PIXELS))
+        for step in range(1, steps + 1):
+            x = start.x + (end.x - start.x) * step // steps
+            y = start.y + (end.y - start.y) * step // steps
+            moves += ['sleep', _DRAG_STEP_PAUSE, 'mousemove', str(x), str(y)]
+    return moves
+
+
+def _typing(text: str) -> list[list[str]]:
+    """The `xdotool` commands that type `text`.
+
+    `xdotool type` gets two things wrong, so those are pressed as keys instead. It sends a newline as Linefeed, which
+    browsers ignore, so each one is pressed as Enter. A capital outside ASCII, such as `Å`, comes out in lowercase,
+    so each one is pressed with Shift (both checked live).
+    """
+    delay = [] if text.isascii() else ['--delay', _UNICODE_TYPE_DELAY_MS]
+    commands: list[list[str]] = []
+    for index, line in enumerate(text.split('\n')):
+        if index:
+            commands.append(['key', 'Return'])
+        for capitals, run in itertools.groupby(line, key=lambda c: not c.isascii() and c.isupper()):
+            if capitals:
+                commands.append(['key', *delay, *(f'shift+U{ord(c):04X}' for c in run)])
+            else:
+                commands.append(['type', *delay, '--', ''.join(run)])
+    return commands
+
+
 def _move(x: int | None, y: int | None) -> list[str]:
     return [] if x is None or y is None else ['mousemove', str(x), str(y)]
 
 
 DISPLAY = ':1'
 """The X display the desktop runs on, as `DISPLAY` names it."""
+
+_ENV = {'DISPLAY': DISPLAY, 'LC_ALL': 'C.UTF-8'}
+"""`xdotool type` reads its text in the locale's encoding, and stops at the first character outside ASCII under a
+POSIX locale, which is what an environment without one set, such as E2B's, has."""
 
 
 class X11Computer:
@@ -184,9 +237,7 @@ class X11Computer:
         self._backend = backend
 
     async def _run(self, command: list[str] | str) -> CommandResult:
-        result = await self._backend.run(
-            command, shell=isinstance(command, str), env={'DISPLAY': DISPLAY}, timeout=_COMMAND_TIMEOUT
-        )
+        result = await self._backend.run(command, shell=isinstance(command, str), env=_ENV, timeout=_COMMAND_TIMEOUT)
         if result.exit_code != 0:
             raise WorkspaceError(
                 f'Display command failed with exit code {result.exit_code} on display {DISPLAY}: '
@@ -241,10 +292,10 @@ class X11Computer:
             case MoveMouse(x=x, y=y, modifiers=modifiers):
                 await self._xdotool(_move(x, y), hold=modifiers)
             case Drag(path=path, modifiers=modifiers):
-                start, *rest = path
-                steps = [arg for point in rest for arg in _move(point.x, point.y)]
+                start = path[0]
                 await self._xdotool(
-                    [*_move(start.x, start.y), 'mousedown', '1', *steps, 'mouseup', '1'],
+                    [*_move(start.x, start.y), 'mousedown', '1', 'sleep', _DRAG_PRESS_PAUSE, *_drag_moves(path)]
+                    + ['sleep', _DRAG_PRESS_PAUSE, 'mouseup', '1'],
                     hold=modifiers,
                     release=('mouseup', '1'),
                 )
@@ -254,10 +305,13 @@ class X11Computer:
                 await self._xdotool(['mouseup', _code(_BUTTONS, button)])
             case Scroll(x=x, y=y, direction=direction, amount=amount, modifiers=modifiers):
                 wheel = _code(_WHEEL_BUTTONS, direction)
-                await self._xdotool([*_move(x, y), 'click', '--repeat', str(amount), wheel], hold=modifiers)
+                await self._xdotool(
+                    [*_move(x, y), 'click', '--repeat', str(amount), '--delay', _SCROLL_TICK_DELAY_MS, wheel],
+                    hold=modifiers,
+                )
             case TypeText(text=text):
-                delay = [] if text.isascii() else ['--delay', _UNICODE_TYPE_DELAY_MS]
-                await self._xdotool(['type', *delay, '--', text])
+                for command in _typing(text):
+                    await self._xdotool(command)
             case PressKeys(keys=keys, repeat=repeat):
                 keysyms = [_keysym(key) for key in keys]
                 # A cancel can land between pressing and releasing, so let go of the keys then too.

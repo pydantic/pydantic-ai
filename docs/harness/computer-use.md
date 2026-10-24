@@ -36,7 +36,9 @@ async def main():
     print(result.output)
 ```
 
-Each run leaves its container running; see [Clean up](docker-sandbox.md#clean-up).
+Each run leaves its container running; see [Clean up](docker-sandbox.md#clean-up). A run that fails, such as on a
+usage limit, returns no ref to clean up with: remove its desktop in an `on_run_error` hook, as shown for
+[E2B](e2b-sandbox.md#clean-up).
 
 To give your own sandbox a display, implement [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]; see
 [Controlling a display](../workspace.md#controlling-a-display). On a [read-only](../workspace.md#read-only-access)
