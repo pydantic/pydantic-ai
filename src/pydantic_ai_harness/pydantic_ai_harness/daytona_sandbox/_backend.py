@@ -23,10 +23,17 @@ import anyio.lowlevel
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
+    ComputerAction,
     FileEntry,
+    Point,
+    Region,
     SupportsCommands,
+    SupportsCursorPosition,
+    SupportsDisplay,
     SupportsFilesystem,
     SupportsRealpath,
+    SupportsZoom,
+    UnsupportedComputerActionError,
     WorkspaceBackend,
     WorkspaceError,
     WorkspaceOutputLimitError,
@@ -56,6 +63,8 @@ try:
 except ImportError as error:
     raise ImportError('Install `pydantic-ai-harness[daytona]` to use DaytonaSandbox.') from error
 
+from pydantic_ai_harness.daytona_sandbox._desktop import DaytonaDesktop
+
 _AUTH_MESSAGE = (
     'Daytona rejected the credentials. Set DAYTONA_API_KEY, or pass a configured `AsyncDaytona` as `client=`.'
 )
@@ -78,6 +87,7 @@ _PARTIAL_OUTPUT_LIMIT = 4096
 # A command's whole output is downloaded into memory.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_BYTES = 64 * 1024
+_DEFAULT_DESKTOP_SIZE = (1280, 800)
 
 logger = logging.getLogger(__name__)
 
@@ -392,7 +402,15 @@ class _DaytonaProcess:
         await self._remove_output_files()
 
 
-class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath):
+class DaytonaSandboxBackend(
+    WorkspaceBackend,
+    SupportsCommands,
+    SupportsFilesystem,
+    SupportsRealpath,
+    SupportsDisplay,
+    SupportsZoom,
+    SupportsCursorPosition,
+):
     """A [Daytona](https://www.daytona.io) sandbox as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Commands and file operations run inside a Daytona sandbox, so the host is never exposed.
@@ -423,6 +441,10 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             sandbox's own default when `None`, discovered with `pwd -P` on first use.
         env: Environment variables every command gets; a command's own `env` is layered on top.
             They are also set on a newly created sandbox.
+        desktop: Whether the sandbox has a display for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse],
+            started on first use through Daytona's computer-use API: `True` for 1280x800, or its `(width, height)`.
+            The size applies to a newly created sandbox; Daytona can't resize a running one, so an attached
+            sandbox keeps its own. The snapshot needs Daytona's desktop packages, which its default snapshot has.
     """
 
     def __init__(
@@ -436,6 +458,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         allow_internet_access: bool = True,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None and ref.provider != 'daytona':
             raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'daytona'")
@@ -454,6 +477,9 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self._auto_stop_interval = auto_stop_interval
         self._allow_internet_access = allow_internet_access
         self._env = dict(env or {})
+        self._desktop_size = _DEFAULT_DESKTOP_SIZE if desktop is True else desktop or None
+        self._display_started = False
+        self._display_lock = anyio.Lock()
         self._working_dir = absolute_path('working_dir', working_dir)
         # `working_dir()` must return a canonical absolute path, resolved once with `pwd -P`.
         self._resolved_working_dir: str | None = None
@@ -522,10 +548,14 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         name = self._create_name
         if (existing := await self._find_created(client, name)) is not None:
             return existing
+        env_vars = dict(self._env)
+        if self._desktop_size is not None:
+            width, height = self._desktop_size
+            env_vars['VNC_RESOLUTION'] = f'{width}x{height}'
         params = daytona.CreateSandboxFromSnapshotParams(
             name=name,
             snapshot=self._snapshot,
-            env_vars=self._env or None,
+            env_vars=env_vars or None,
             auto_stop_interval=self._auto_stop_interval,
             network_block_all=not self._allow_internet_access,
             labels={'created-by': 'pydantic-ai'},
@@ -804,6 +834,51 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     return False
                 raise
             return True
+
+    @property
+    def has_display(self) -> bool:
+        return self._desktop_size is not None
+
+    @asynccontextmanager
+    async def _display(self) -> AsyncGenerator[DaytonaDesktop]:
+        if self._desktop_size is None:
+            raise UserError('This Daytona workspace has no display: create it with `desktop=True`.')
+        async with self._operation():
+            sandbox = await self.get_sandbox()
+            try:
+                async with _mapped_errors('The Daytona desktop failed', sandbox=sandbox):
+                    # One start at a time, and only until one succeeds.
+                    async with self._display_lock:
+                        if not self._display_started:
+                            await sandbox.computer_use.start(request_timeout=_REQUEST_TIMEOUT)
+                            self._display_started = True
+                    yield DaytonaDesktop(sandbox.computer_use)
+            except UnsupportedComputerActionError:
+                raise  # a refused action, such as an unknown key: the desktop is fine
+            except Exception:
+                # The desktop may have stopped, or the sandbox restarted: the next call starts it again.
+                self._display_started = False
+                raise
+
+    async def display_size(self) -> tuple[int, int]:
+        async with self._display() as desktop:
+            return await desktop.display_size()
+
+    async def screenshot(self) -> bytes:
+        async with self._display() as desktop:
+            return await desktop.screenshot()
+
+    async def act(self, action: ComputerAction) -> None:
+        async with self._display() as desktop:
+            await desktop.act(action)
+
+    async def zoom(self, region: Region) -> bytes:
+        async with self._display() as desktop:
+            return await desktop.zoom(region)
+
+    async def cursor_position(self) -> Point:
+        async with self._display() as desktop:
+            return await desktop.cursor_position()
 
 
 def _check_path(path: str) -> None:

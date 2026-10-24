@@ -1,0 +1,220 @@
+"""`DaytonaDesktop`: display control for a Daytona sandbox, through Daytona's computer-use API.
+
+Behavior verified 2026-10-24 against Daytona's default snapshot (daemon behind `daytona` 0.223.1), with `xev`
+on the sandbox's display. Re-check these before changing the mapping, by running the live display tests in
+`tests/harness/daytona_sandbox/test_daytona_live.py`:
+
+- `computer_use.start()` returns once the display answers, and starting a running desktop is harmless.
+- `VNC_RESOLUTION` set on a new sandbox, such as `1280x800`, is the display's size; without it, 1024x768.
+- Screenshots are PNGs at the display's size; a region screenshot is the region at full resolution.
+- `mouse.scroll`'s amount is wheel clicks, and `left`/`right` send X buttons 6 and 7.
+- Modifiers given to `click`, `scroll` and `press` are held around the event; `cmd` is `Super_L`.
+- `keyboard.down` and `keyboard.up` take letters and named keys, not only modifiers.
+- `keyboard.type` types any Unicode text.
+- `keyboard.press` refuses a shifted symbol such as `!`, and an X keysym name such as `KP_Enter`.
+- Pressing `f13` to `f24` crashes the sandbox's computer-use process for good: nothing restarts it.
+"""
+
+from __future__ import annotations as _annotations
+
+import base64
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import asynccontextmanager, suppress
+from typing import TYPE_CHECKING
+
+import anyio
+from daytona import ScreenshotRegion
+
+from pydantic_ai.workspaces import (
+    Click,
+    ComputerAction,
+    Drag,
+    HoldKeys,
+    MouseDown,
+    MouseUp,
+    MoveMouse,
+    Point,
+    PressKeys,
+    Region,
+    Scroll,
+    TypeText,
+    UnsupportedComputerActionError,
+    WorkspaceError,
+)
+
+if TYPE_CHECKING:
+    from daytona import AsyncComputerUse
+
+_REQUEST_TIMEOUT = 30
+
+_RELEASE_TIMEOUT = 10
+"""Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
+
+_TYPE_TIMEOUT = 120
+"""Typing 2,000 characters, the most one action types, takes about 10 s."""
+
+_BUTTONS = frozenset({'left', 'middle', 'right'})
+
+_MODIFIERS = {'ctrl': 'ctrl', 'shift': 'shift', 'alt': 'alt', 'super': 'cmd'}
+
+_NAMED_KEYS = frozenset(
+    {
+        'enter',
+        'escape',
+        'tab',
+        'backspace',
+        'delete',
+        'insert',
+        'home',
+        'end',
+        'pageup',
+        'pagedown',
+        'up',
+        'down',
+        'left',
+        'right',
+        'space',
+        *(f'f{n}' for n in range(1, 13)),
+    }
+)
+"""Normalized key names Daytona presses under the same name; `f13` to `f24` crash its desktop."""
+
+_UNSHIFTED = frozenset("abcdefghijklmnopqrstuvwxyz0123456789`-=[]\\;',./")
+
+_SHIFTED = dict(zip('~!@#$%^&*()_+{}|:"<>?', "`1234567890-=[]\\;',./"))
+"""A symbol typed with shift, and the key it is on: Daytona's display has a US keyboard layout."""
+
+_PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
+
+
+def _button(button: str) -> str:
+    if button not in _BUTTONS:
+        raise UnsupportedComputerActionError(f"Daytona's desktop has no {button!r} mouse button.")
+    return button
+
+
+def _keys(keys: Sequence[str]) -> list[str]:
+    """Daytona's names for the keys, in order, with `shift` before a shifted symbol."""
+    names: list[str] = []
+    for key in keys:
+        if key in _MODIFIERS:
+            names.append(_MODIFIERS[key])
+        elif key in _NAMED_KEYS or key in _UNSHIFTED:
+            names.append(key)
+        elif key in _SHIFTED:
+            names += ['shift', _SHIFTED[key]]
+        else:
+            raise UnsupportedComputerActionError(f"Daytona's desktop cannot press the key {key!r}.")
+    return list(dict.fromkeys(names))
+
+
+def _png(encoded: str | None) -> bytes:
+    data = base64.b64decode(encoded or '')
+    if not data.startswith(_PNG_SIGNATURE):
+        raise WorkspaceError('Daytona did not return a PNG screenshot.')
+    return data
+
+
+class DaytonaDesktop:
+    """Controls a Daytona sandbox's desktop, which must already be started, with its computer-use API."""
+
+    def __init__(self, computer_use: AsyncComputerUse):
+        self._computer_use = computer_use
+
+    async def display_size(self) -> tuple[int, int]:
+        displays = (await self._computer_use.display.get_info(request_timeout=_REQUEST_TIMEOUT)).displays or []
+        display = next((display for display in displays if display.is_active), None)
+        if display is None or not display.width or not display.height:
+            raise WorkspaceError(f'Daytona reported no display size: {displays!r}')
+        return display.width, display.height
+
+    async def screenshot(self) -> bytes:
+        response = await self._computer_use.screenshot.take_full_screen(request_timeout=_REQUEST_TIMEOUT)
+        return _png(response.screenshot)
+
+    async def zoom(self, region: Region) -> bytes:
+        area = ScreenshotRegion(
+            x=region.left, y=region.top, width=region.right - region.left, height=region.bottom - region.top
+        )
+        response = await self._computer_use.screenshot.take_region(area, request_timeout=_REQUEST_TIMEOUT)
+        return _png(response.screenshot)
+
+    async def cursor_position(self) -> Point:
+        position = await self._computer_use.mouse.get_position(request_timeout=_REQUEST_TIMEOUT)
+        if position.x is None or position.y is None:
+            raise WorkspaceError(f'Daytona reported no pointer position: {position!r}')
+        return Point(x=position.x, y=position.y)
+
+    async def _at(self, x: int | None, y: int | None) -> tuple[int, int]:
+        """The position, or the pointer's: Daytona's click and scroll always take one."""
+        if x is None or y is None:
+            point = await self.cursor_position()
+            return point.x, point.y
+        return x, y
+
+    @asynccontextmanager
+    async def _holding(self, keys: Sequence[str]) -> AsyncGenerator[None]:
+        """Hold Daytona's `keys` down, in order; if the body fails or is cancelled, let go of them all."""
+        keyboard = self._computer_use.keyboard
+        pressed: list[str] = []
+        try:
+            for key in keys:
+                pressed.append(key)  # before the request, which can press the key and still fail
+                await keyboard.down(key, request_timeout=_REQUEST_TIMEOUT)
+            yield
+        except BaseException:
+            with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True):
+                for key in reversed(pressed):
+                    with suppress(Exception):
+                        await keyboard.up(key, request_timeout=_REQUEST_TIMEOUT)
+            raise
+        for key in reversed(pressed):
+            await keyboard.up(key, request_timeout=_REQUEST_TIMEOUT)
+
+    async def act(self, action: ComputerAction) -> None:
+        mouse, keyboard = self._computer_use.mouse, self._computer_use.keyboard
+        match action:
+            case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
+                button, held = _button(button), _keys(modifiers)
+                x, y = await self._at(x, y)
+                await mouse.click(x, y, button, clicks=count, modifiers=held, request_timeout=_REQUEST_TIMEOUT)
+            case MoveMouse(x=x, y=y, modifiers=modifiers):
+                async with self._holding(_keys(modifiers)):
+                    await mouse.move(x, y, request_timeout=_REQUEST_TIMEOUT)
+            case Drag(path=path, modifiers=modifiers):
+                (start, *between, end), held = path, _keys(modifiers)
+                async with self._holding(held):
+                    try:
+                        await mouse.down(start.x, start.y, request_timeout=_REQUEST_TIMEOUT)
+                        for point in between:
+                            await mouse.move(point.x, point.y, request_timeout=_REQUEST_TIMEOUT)
+                        await mouse.up(end.x, end.y, request_timeout=_REQUEST_TIMEOUT)
+                    except BaseException:
+                        with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
+                            await mouse.up(request_timeout=_REQUEST_TIMEOUT)
+                        raise
+            case MouseDown(button=button):
+                await mouse.down(button=_button(button), request_timeout=_REQUEST_TIMEOUT)
+            case MouseUp(button=button):
+                await mouse.up(button=_button(button), request_timeout=_REQUEST_TIMEOUT)
+            case Scroll(x=x, y=y, direction=direction, amount=amount, modifiers=modifiers):
+                held = _keys(modifiers)
+                x, y = await self._at(x, y)
+                await mouse.scroll(x, y, direction, amount, modifiers=held, request_timeout=_REQUEST_TIMEOUT)
+            case TypeText(text=text):
+                await keyboard.type(text, request_timeout=_TYPE_TIMEOUT)
+            case PressKeys(keys=keys, repeat=repeat):
+                names = _keys(keys)
+                modifiers = [name for name in names if name in _MODIFIERS.values()]
+                others = [name for name in names if name not in modifiers]
+                for _ in range(repeat):
+                    if len(others) == 1:
+                        await keyboard.press(others[0], modifiers, request_timeout=_REQUEST_TIMEOUT)
+                    else:  # only modifiers, or several other keys: `press` takes one
+                        async with self._holding(names):
+                            pass
+            case HoldKeys(keys=keys, seconds=seconds):
+                async with self._holding(_keys(keys)):
+                    await anyio.sleep(seconds)
+            case _:
+                raise UnsupportedComputerActionError(f"Daytona's desktop cannot perform {action!r}.")
