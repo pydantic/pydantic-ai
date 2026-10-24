@@ -57,7 +57,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
-from pydantic_ai_harness._x11 import DISPLAY, X11Computer
+from pydantic_ai_harness._x11 import DISPLAY, X11Computer, start_x_server
 
 __all__ = ('DESKTOP_DOCKERFILE', 'DockerSandboxBackend', 'remove_container')
 
@@ -232,19 +232,11 @@ _DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode
 
 _DEFAULT_DESKTOP_SIZE = (1280, 800)
 
-_START_DESKTOP = (
-    'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
-    f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{_PID_DIR}/xvfb.log & xvfb=$!; i=0; '
-    'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
-    'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
-    f"echo 'the X server did not start:' >&2; tail -n 5 {_PID_DIR}/xvfb.log >&2; exit 1; fi; "
-    'sleep 0.1; i=$((i+1)); done; fi; '
-    'setsid fluxbox >/dev/null 2>&1 &'
-)
+_START_DESKTOP = start_x_server(f'{_PID_DIR}/xvfb.log') + 'setsid fluxbox >/dev/null 2>&1 &'
 """Starts an X display of the size `$1` names, such as `1280x800`, unless one is running, and a window manager.
 
-It gives up as soon as the X server exits, or after 10 seconds. A second `fluxbox` exits when one is already running,
-so starting it every time recovers one that died or never started.
+A second `fluxbox` exits when one is already running, so starting it every time recovers one that died or never
+started.
 """
 
 

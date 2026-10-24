@@ -19,7 +19,7 @@ which is not. envd types only a missing path; its other path failures arrive as 
 or Go's errno text, which `_path_error` reads.
 
 The `desktop` template verified 2026-10-24 against a live sandbox: Ubuntu 22.04 with Xvfb, XFCE
-(`startxfce4`), `xdotool`, `scrot` 1.7 and `setsid`, and no X server running at boot; the
+(`startxfce4`), `xdotool`, `scrot` 1.7, `setsid` and `google-chrome`, and no X server running at boot; the
 `e2b-desktop` package starts Xvfb and XFCE itself after creating it.
 """
 
@@ -67,7 +67,7 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
-from pydantic_ai_harness._x11 import DISPLAY, X11Computer
+from pydantic_ai_harness._x11 import DISPLAY, X11Computer, start_x_server
 
 if TYPE_CHECKING:
     from pydantic_ai.workspaces import WorkspaceCommand
@@ -134,13 +134,7 @@ _DEFAULT_DESKTOP_SIZE = (1280, 800)
 
 _XVFB_LOG = '/tmp/pydantic-ai-xvfb.log'
 
-_START_DESKTOP = (
-    'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
-    f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{_XVFB_LOG} & xvfb=$!; i=0; '
-    'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
-    'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
-    f"echo 'the X server did not start:' >&2; tail -n 5 {_XVFB_LOG} >&2; exit 1; fi; "
-    'sleep 0.1; i=$((i+1)); done; fi; '
+_START_DESKTOP = start_x_server(_XVFB_LOG) + (
     'if command -v startxfce4 >/dev/null && ! pgrep -x xfce4-session >/dev/null; then '
     'setsid startxfce4 >/dev/null 2>&1 & i=0; '
     'until xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1 || [ $i -ge 100 ]; do '
@@ -148,7 +142,7 @@ _START_DESKTOP = (
 )
 """Starts an X display of the size `$1` names, such as `1280x800`, unless one is running, and the XFCE desktop.
 
-It gives up as soon as the X server exits, or after 10 seconds. XFCE starts unless its session is running, so
+XFCE starts unless its session is running, so
 starting it every time recovers one that died, and the script waits up to 10 seconds for its desktop window, so
 the first screenshot isn't black; a template without XFCE gets a display with no window manager. Output goes to
 files, not the command's stream, which E2B keeps open while a background child holds it.

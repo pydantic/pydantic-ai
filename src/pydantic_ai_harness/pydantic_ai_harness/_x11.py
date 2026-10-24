@@ -173,6 +173,21 @@ DISPLAY = ':1'
 """The X display the desktop runs on, as `DISPLAY` names it."""
 
 
+def start_x_server(log: str) -> str:
+    """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless one answers.
+
+    It gives up as soon as the X server exits, or after 10 seconds, with the end of `log` as the reason.
+    """
+    return (
+        'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
+        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{log} & xvfb=$!; i=0; '
+        'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
+        'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
+        f"echo 'the X server did not start:' >&2; tail -n 5 {log} >&2; exit 1; fi; "
+        'sleep 0.1; i=$((i+1)); done; fi; '
+    )
+
+
 class X11Computer:
     """Controls an X display with `xdotool` and captures it with `scrot`, through a backend's commands.
 
