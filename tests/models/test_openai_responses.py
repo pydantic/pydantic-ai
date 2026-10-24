@@ -95,6 +95,7 @@ from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 
@@ -511,27 +512,128 @@ async def test_tool_availability_delta_ignores_visible_and_unknown_tools() -> No
     assert items == []
 
 
+_FORCE_REFUND = {'type': 'function', 'name': 'lookup_refund_policy'}
+_ALLOW_REFUND = {'type': 'allowed_tools', 'mode': 'auto', 'tools': [_FORCE_REFUND]}
+_REVEAL = ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'])])
+_STORED_RESPONSE = ModelResponse(
+    parts=[TextPart(content='Ready.')], provider_name='openai', provider_response_id='resp_1'
+)
+_ASK = ModelRequest(parts=[UserPromptPart(content='Look up the refund policy.')])
+_ITEM_ONLY_FORCED = {
+    'tool_choice': _FORCE_REFUND,
+    'tools': ['always_ready'],
+    'additional_tools': [['lookup_refund_policy']],
+}
+
+
 @pytest.mark.parametrize(
-    ('tool_choice', 'expected'),
+    ('model_name', 'messages', 'settings', 'expected'),
     [
-        pytest.param('required', 'required', id='required'),
-        # Forcing an `additional_tools`-declared name by itself works on the live API
-        # even though the name is absent from the `tools` array.
+        # GPT-5.6 accepts a `tool_choice` naming a tool that only the `additional_tools` item declares.
         pytest.param(
-            ['lookup_refund_policy'],
-            {'type': 'function', 'name': 'lookup_refund_policy'},
-            id='forced_by_name_via_history',
+            'gpt-5.6',
+            [_REVEAL],
+            {'tool_choice': 'required'},
+            {'tool_choice': 'required', 'tools': ['always_ready'], 'additional_tools': [['lookup_refund_policy']]},
+            id='gpt-5.6-required',
+        ),
+        pytest.param(
+            'gpt-5.6',
+            [_REVEAL],
+            {'tool_choice': ['lookup_refund_policy']},
+            _ITEM_ONLY_FORCED,
+            id='gpt-5.6-by-name',
+        ),
+        pytest.param(
+            'gpt-5.6',
+            [_REVEAL],
+            {'tool_choice': ToolOrOutput(function_tools=['lookup_refund_policy'])},
+            {'tool_choice': _ALLOW_REFUND, 'tools': ['always_ready'], 'additional_tools': [['lookup_refund_policy']]},
+            id='gpt-5.6-allowed-tools',
+        ),
+        # Earlier models reject that name, by name and in `allowed_tools`, and reject declaring the tool in both
+        # places too, so a request that names it redeclares it in `tools` and leaves it out of the item.
+        # `'required'` names no tool and goes out unchanged.
+        pytest.param(
+            'gpt-5.4-mini',
+            [_REVEAL],
+            {'tool_choice': 'required'},
+            {'tool_choice': 'required', 'tools': ['always_ready'], 'additional_tools': [['lookup_refund_policy']]},
+            id='gpt-5.4-mini-required',
+        ),
+        pytest.param(
+            'gpt-5.4-mini',
+            [_REVEAL],
+            {'tool_choice': ['lookup_refund_policy']},
+            {'tool_choice': _FORCE_REFUND, 'tools': ['lookup_refund_policy', 'always_ready'], 'additional_tools': []},
+            id='gpt-5.4-mini-by-name',
+        ),
+        pytest.param(
+            'gpt-5.4-mini',
+            [_REVEAL],
+            {'tool_choice': ToolOrOutput(function_tools=['lookup_refund_policy'])},
+            {'tool_choice': _ALLOW_REFUND, 'tools': ['lookup_refund_policy', 'always_ready'], 'additional_tools': []},
+            id='gpt-5.4-mini-allowed-tools',
+        ),
+        # With `openai_previous_response_id` or `openai_conversation_id` set, even on the first request of a chain,
+        # the tool stays in the item alone and the API returns its 400: a stored response without the item would
+        # hide the tool from every request that continues it, and redeclaring a forced name next to an item it
+        # holds gets a 500. `test_force_a_tool_revealed_by_a_deferred_capability_in_a_chained_run` records the 400.
+        pytest.param(
+            'gpt-5.4-mini',
+            [_REVEAL, _STORED_RESPONSE, _ASK],
+            {'tool_choice': ['lookup_refund_policy'], 'openai_previous_response_id': 'auto'},
+            {'tool_choice': _FORCE_REFUND, 'tools': ['always_ready'], 'additional_tools': []},
+            id='gpt-5.4-mini-stored-response-holds-reveal',
+        ),
+        pytest.param(
+            'gpt-5.4-mini',
+            [_REVEAL, _STORED_RESPONSE, _ASK],
+            {
+                'tool_choice': ToolOrOutput(function_tools=['lookup_refund_policy']),
+                'openai_previous_response_id': 'auto',
+            },
+            {'tool_choice': _ALLOW_REFUND, 'tools': ['always_ready'], 'additional_tools': []},
+            id='gpt-5.4-mini-stored-response-holds-reveal-allowed-tools',
+        ),
+        pytest.param(
+            'gpt-5.4-mini',
+            [_ASK, _STORED_RESPONSE, _REVEAL],
+            {'tool_choice': ['lookup_refund_policy'], 'openai_previous_response_id': 'auto'},
+            _ITEM_ONLY_FORCED,
+            id='gpt-5.4-mini-reveal-in-chained-input',
+        ),
+        pytest.param(
+            'gpt-5.4-mini',
+            [_REVEAL],
+            {'tool_choice': ['lookup_refund_policy'], 'openai_previous_response_id': 'auto'},
+            _ITEM_ONLY_FORCED,
+            id='gpt-5.4-mini-first-request-of-a-chain',
+        ),
+        pytest.param(
+            'gpt-5.4-mini',
+            [_REVEAL],
+            {'tool_choice': ['lookup_refund_policy'], 'openai_conversation_id': 'conv_1'},
+            _ITEM_ONLY_FORCED,
+            id='gpt-5.4-mini-conversation',
         ),
     ],
 )
 async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
     allow_model_requests: None,
-    tool_choice: Literal['required'] | list[str],
-    expected: Any,
+    model_name: str,
+    messages: list[ModelMessage],
+    settings: 'OpenAIResponsesModelSettings',
+    expected: dict[str, object],
 ) -> None:
-    """A tool revealed through `additional_tools` still participates in `tool_choice` resolution."""
+    """A tool revealed through `additional_tools` still participates in `tool_choice` resolution.
+
+    A mocked client rather than a recording per case: this pins every `tool_choice` form on both sides of the
+    `openai_responses_tool_choice_accepts_additional_tools` profile flag, and with and without server-side state.
+    `test_force_a_tool_revealed_by_a_deferred_capability` covers the live API on both sides of the flag.
+    """
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
-    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
     tool = ToolDefinition(
         name='lookup_refund_policy',
         description='Look up the refund policy for an order.',
@@ -551,16 +653,18 @@ async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
             revealed_tool_names={tool.name},
         ),
     )
-    await model.request(
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])],
-        OpenAIResponsesModelSettings(tool_choice=tool_choice),
-        parameters,
-    )
+    await model.request(messages, settings, parameters)
 
     request_kwargs = get_mock_responses_kwargs(mock_client)[0]
-    assert request_kwargs['tool_choice'] == expected
-    assert [tool['name'] for tool in request_kwargs['tools']] == ['always_ready']
-    assert request_kwargs['input'][0]['type'] == 'additional_tools'
+    assert {
+        'tool_choice': request_kwargs['tool_choice'],
+        'tools': [entry['name'] for entry in request_kwargs['tools']],
+        'additional_tools': [
+            [entry['name'] for entry in item['tools']]
+            for item in request_kwargs['input']
+            if item.get('type') == 'additional_tools'
+        ],
+    } == expected
 
 
 async def test_openai_responses_image_detail_vendor_metadata(allow_model_requests: None):
@@ -956,6 +1060,39 @@ async def test_openai_responses_gpt_5_6_minimal_thinking_uses_low_effort(
 
     assert result.output == snapshot('Paris')
     assert single_request_body(vcr)['reasoning'] == snapshot({'effort': 'low', 'context': 'all_turns'})
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+@pytest.mark.parametrize(
+    'model_name,thinking,expected_effort',
+    [
+        # The o-series accept `low` through `high`, so `thinking=False` sends `low`.
+        pytest.param('o4-mini', False, 'low', id='o-series-thinking-false'),
+        # GPT-5 accepts `minimal`, its lowest effort.
+        pytest.param('gpt-5-mini', False, 'minimal', id='gpt-5-thinking-false'),
+        # GPT-6 Astra accepts `low` through `max`.
+        pytest.param('gpt-6-astra', False, 'low', id='gpt-6-astra-thinking-false'),
+        # A level the model doesn't accept resolves to the closest one above it.
+        pytest.param('o4-mini', 'minimal', 'low', id='o-series-minimal'),
+    ],
+)
+async def test_openai_responses_always_reasoning_model_resolves_to_accepted_effort(
+    allow_model_requests: None,
+    openai_api_key: str,
+    vcr: Cassette,
+    model_name: str,
+    thinking: ThinkingLevel,
+    expected_effort: str,
+):
+    """VCR test: a model that can't stop reasoning rejects `effort='none'` and any effort it doesn't list, so the
+    unified `thinking` setting resolves to the closest effort it accepts, and `thinking=False` to its lowest."""
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(thinking=thinking))
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    assert result.output == 'Paris'
+    assert single_request_body(vcr)['reasoning']['effort'] == expected_effort
 
 
 async def test_openai_responses_gpt_5_5_drops_sampling_params_by_default(

@@ -556,7 +556,8 @@ class TestAdvisor:
                     Advisor('openrouter:anthropic/claude-opus-4.8', mode='native'),
                 ],
             )
-        assert warned[0].filename == __file__
+        # The run can record an unrelated warning first, such as one the garbage collector raises mid-run.
+        assert warned.pop(HarnessDeprecationWarning).filename == __file__
 
     def test_merge_warning_points_at_a_direct_combine_call(self) -> None:
         with pytest.warns(HarnessDeprecationWarning, match=r'`max_uses=2`, .* is ignored') as warned:

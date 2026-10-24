@@ -186,13 +186,14 @@ CASES = [
         present={'reasoning_effort': 'medium', 'reasoning_format': 'parsed'},
     ),
     WireCase(
-        id='groq-gpt-oss-thinking-false-noop',
+        id='groq-gpt-oss-thinking-false-lowest-effort',
         provider='groq',
         model_name='openai/gpt-oss-120b',
         thinking=False,
         # gpt-oss always reasons and can't disable via effort (none/default → 400), so `thinking=False`
-        # is silently ignored: no `reasoning_effort` and (since it's stripped as always-on) no `reasoning_format`.
-        absent=('reasoning_effort', 'reasoning_format'),
+        # sends its lowest effort, `low`, and `reasoning_format='hidden'` keeps the reasoning out of the response.
+        present={'reasoning_effort': 'low', 'reasoning_format': 'hidden'},
+        match_body=True,
     ),
     WireCase(
         id='groq-gpt-oss-explicit-effort-overrides-thinking',
@@ -238,6 +239,25 @@ CASES = [
         model_name='gemini-2.5-flash',
         thinking=False,
         present={'generationConfig.thinkingConfig.thinking_budget': 0},
+    ),
+    WireCase(
+        id='google-gemini-25-pro-false-min-budget',
+        provider='google',
+        model_name='gemini-2.5-pro',
+        thinking=False,
+        # Gemini 2.5 Pro can't turn thinking off (`thinking_budget=0` → 400 "This model only works in thinking
+        # mode"), so `thinking=False` sends its minimum budget, without asking for the thoughts back.
+        present={'generationConfig.thinkingConfig.thinking_budget': 128},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-31-pro-false-lowest-level',
+        provider='google',
+        model_name='gemini-3.1-pro-preview',
+        thinking=False,
+        # Gemini 3.1 Pro can't turn thinking off and rejects `MINIMAL`, so `thinking=False` sends `LOW`.
+        present={'generationConfig.thinkingConfig.thinking_level': 'LOW'},
+        match_body=True,
     ),
     WireCase(
         id='google-gemini-38-flash-disable',
@@ -286,7 +306,7 @@ CASES = [
         match_body=True,
     ),
     # Mistral: adjustable-reasoning models take the binary `reasoning_effort` ('high'/'none');
-    # always-on magistral must never receive it (https://docs.mistral.ai/capabilities/reasoning/).
+    # dated (always-on) magistral ids must never receive it (https://docs.mistral.ai/capabilities/reasoning/).
     WireCase(
         id='mistral-small-thinking-high',
         provider='mistral',
@@ -309,12 +329,21 @@ CASES = [
         absent=('reasoning_effort',),
     ),
     WireCase(
-        id='mistral-magistral-always-on-no-effort',
+        id='mistral-magistral-latest-thinking-true',
         provider='mistral',
         model_name='magistral-small-latest',
         thinking=True,
-        # magistral reasons always-on; `reasoning_effort` must stay off the wire.
-        absent=('reasoning_effort',),
+        # `magistral-small-latest` aliases Small 4, which reasons only with `reasoning_effort='high'`.
+        present={'reasoning_effort': 'high'},
+        match_body=True,
+    ),
+    WireCase(
+        id='mistral-magistral-latest-disable',
+        provider='mistral',
+        model_name='magistral-medium-latest',
+        thinking=False,
+        present={'reasoning_effort': 'none'},
+        match_body=True,
     ),
 ]
 
