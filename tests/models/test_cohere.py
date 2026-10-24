@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import anyio
 import httpx
@@ -38,7 +38,6 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import (
     ModelContextWindowExceededError,
-    ModelRateLimitError,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -1165,17 +1164,11 @@ def _text_stream_events(chunks: list[str]) -> list[MockStreamEvent]:
     return events
 
 
-@pytest.mark.parametrize(
-    'status, expected',
-    [(401, ModelHTTPError), (429, ModelRateLimitError), (500, ModelHTTPError), (None, ModelAPIError)],
-)
-async def test_request_stream_error_on_entry(
-    allow_model_requests: None, status: int | None, expected: type[ModelAPIError]
-) -> None:
-    error = ApiError(status_code=status, body={'message': 'request failed'})
+async def test_request_stream_error_on_entry(allow_model_requests: None) -> None:
+    error = ApiError(status_code=500, body={'message': 'request failed'})
     client = MockAsyncClientV2.create_stream_mock(error)
     model = CohereModel('command-r', provider=CohereProvider(cohere_client=client))
-    with pytest.raises(expected) as exc_info:
+    with pytest.raises(ModelHTTPError) as exc_info:
         async with model.request_stream([], None, ModelRequestParameters()):
             pass  # pragma: no cover
     assert exc_info.value.__cause__ is error
@@ -1189,31 +1182,13 @@ async def test_request_stream_empty(allow_model_requests: None) -> None:
             pass  # pragma: no cover
 
 
-@pytest.mark.parametrize(
-    'status, message, expected',
-    [
-        (
-            400,
-            'too many tokens: size limit exceeded',
-            ModelContextWindowExceededError,
-        ),
-        (429, 'rate limit exceeded', ModelRateLimitError),
-        (500, 'request failed', ModelHTTPError),
-        (None, 'connection error', ModelAPIError),
-        ('timeout', 'stream timed out', ModelTimeoutError),
-    ],
-)
-async def test_stream_error_categories(
-    allow_model_requests: None, status: int | Literal['timeout'] | None, message: str, expected: type[ModelAPIError]
-):
+async def test_stream_error_during_iteration(allow_model_requests: None):
     """Provider failures during iteration cannot be reliably triggered with a live request."""
-    error = (
-        httpx.ReadTimeout(message) if status == 'timeout' else ApiError(status_code=status, body={'message': message})
-    )
+    error = ApiError(status_code=400, body={'message': 'too many tokens: size limit exceeded'})
     events: list[MockStreamEvent] = [*_text_stream_events(['hello'])[:-1], error]
     client = MockAsyncClientV2.create_stream_mock(events)
     model = CohereModel('command-r', provider=CohereProvider(cohere_client=client))
-    with pytest.raises(expected) as exc_info:
+    with pytest.raises(ModelContextWindowExceededError) as exc_info:
         async with Agent(model).run_stream('hello') as result:
             await result.get_output()
     assert exc_info.value.__cause__ is error

@@ -82,22 +82,21 @@ agent = Agent(model)
 
 Use [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream] to receive text as it is generated:
 
-```python {test="skip"}
-import asyncio
-
+```python
 from pydantic_ai import Agent
 
 agent = Agent('cohere:command-r7b-12-2024')
 
 
 async def main():
-    async with agent.run_stream('Explain how rainbows form.') as result:
+    async with agent.run_stream('What is 7 plus 5?') as result:
         async for text in result.stream_text(delta=True):
             print(text, end='', flush=True)
-
-
-asyncio.run(main())
+            #> The answer is
+            #> 12.
 ```
+
+To run this example, import `asyncio` and call `asyncio.run(main())`.
 
 Cohere streaming also supports tool calls and thinking output on models that support reasoning.
 Leaving the context closes the Cohere SDK stream, including when you stop consuming it early.
