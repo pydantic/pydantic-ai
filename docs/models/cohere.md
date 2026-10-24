@@ -87,7 +87,7 @@ import asyncio
 
 from pydantic_ai import Agent
 
-agent = Agent('{{ cohere:medium }}')
+agent = Agent('cohere:command-r7b-12-2024')
 
 
 async def main():
