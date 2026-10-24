@@ -618,7 +618,7 @@ class GroqModel(Model[AsyncGroq]):
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
         groq_messages: list[chat.ChatCompletionMessageParam] = []
-        thinking_in_reasoning_field = self.profile.get('groq_send_back_thinking_in_reasoning_field', False)
+        send_back_thinking = self.profile.get('groq_send_back_thinking_parts', 'tags')
         for message in messages:
             if isinstance(message, ModelRequest):
                 async for item in self._map_user_message(message):
@@ -633,8 +633,9 @@ class GroqModel(Model[AsyncGroq]):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
-                        if thinking_in_reasoning_field:
-                            thinkings.append(item.content)
+                        if send_back_thinking == 'field':
+                            if item.content:
+                                thinkings.append(item.content)
                         else:
                             start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                             texts.append('\n'.join([start_tag, item.content, end_tag]))

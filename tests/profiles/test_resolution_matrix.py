@@ -1915,7 +1915,7 @@ def test_groq_moonshotai_kimi():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'ignore_streamed_leading_whitespace': True,
-            'groq_send_back_thinking_in_reasoning_field': False,
+            'groq_send_back_thinking_parts': 'tags',
             'supports_inline_system_prompts': True,
         }
     )
@@ -1932,7 +1932,7 @@ def test_groq_meta_llama4_maverick():
             'groq_supports_reasoning_disable': False,
             'groq_supports_graded_reasoning_effort': False,
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
-            'groq_send_back_thinking_in_reasoning_field': False,
+            'groq_send_back_thinking_parts': 'tags',
             'supports_inline_system_prompts': True,
         }
     )
@@ -1947,7 +1947,7 @@ def test_groq_meta_llama3_no_overlay():
             'groq_supports_reasoning_disable': False,
             'groq_supports_graded_reasoning_effort': False,
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
-            'groq_send_back_thinking_in_reasoning_field': False,
+            'groq_send_back_thinking_parts': 'tags',
             'supports_inline_system_prompts': True,
         }
     )
@@ -1963,7 +1963,7 @@ def test_groq_deepseek():
             'groq_supports_reasoning_disable': False,
             'groq_supports_graded_reasoning_effort': False,
             'ignore_streamed_leading_whitespace': True,
-            'groq_send_back_thinking_in_reasoning_field': False,
+            'groq_send_back_thinking_parts': 'tags',
             'supports_inline_system_prompts': True,
         }
     )
@@ -1987,7 +1987,7 @@ def test_groq_gpt_oss():
             'supports_inline_system_prompts': True,
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
-            'groq_send_back_thinking_in_reasoning_field': True,
+            'groq_send_back_thinking_parts': 'field',
         }
     )
 
@@ -2577,7 +2577,7 @@ def test_vercel_groq_gpt_oss():
             'thinking_always_enabled': True,
             'groq_supports_reasoning_disable': False,
             'groq_supports_graded_reasoning_effort': True,
-            'groq_send_back_thinking_in_reasoning_field': True,
+            'groq_send_back_thinking_parts': 'field',
         }
     )
 
