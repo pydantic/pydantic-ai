@@ -51,8 +51,8 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
                 assert run_id is not None
                 capability_id = operation_id.capability_id
                 sequence_key = (
-                    f'{self._event_sequence_key}:capability-run:{len(run_id)}:{run_id}:'
-                    f'{len(capability_id)}:{capability_id}{operation_id.operation}'
+                    f'pydantic_ai_capability_sequence:{len(self._event_sequence_key)}:{self._event_sequence_key}:'
+                    f'{len(run_id)}:{run_id}:{len(capability_id)}:{capability_id}{operation_id.operation}'
                 )
 
         if sequence_key is not None:

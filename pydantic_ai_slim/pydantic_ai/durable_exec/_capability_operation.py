@@ -161,6 +161,7 @@ class CapabilityCacheIdentity(CacheIdentity[CapabilityOperationParams]):
     """
 
     def project(self, params: CapabilityOperationParams) -> tuple[object, ...]:
+        # Prefect reads the trailing RunContext to scope replay counters to their owning run.
         return (params.model_id, params.arguments, params.run_context)
 
 

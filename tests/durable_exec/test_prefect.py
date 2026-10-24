@@ -4225,9 +4225,10 @@ async def test_prefect_durability_identical_capability_operations_execute_twice_
 
 
 @pytest.mark.parametrize('reverse_on_retry', [False, True])
+@pytest.mark.parametrize('separate_agents', [False, True])
 @pytest.mark.parametrize('blockbuster_enabled', [False])
 async def test_prefect_capability_operations_replay_for_each_run(
-    reverse_on_retry: bool, blockbuster_enabled: bool
+    reverse_on_retry: bool, separate_agents: bool, blockbuster_enabled: bool
 ) -> None:
     # Prefect's async result writer creates its storage directories synchronously.
     assert blockbuster_enabled is False
@@ -4247,25 +4248,33 @@ async def test_prefect_capability_operations_replay_for_each_run(
             executions.append(ctx.run_id)
             return ctx.run_id
 
-    agent = Agent(
-        TestModel(), deps_type=object, name='capability_run_replay', capabilities=[RecordRun(), PrefectDurability()]
-    )
+    # Agent names and run IDs are opaque, including namespace-like text and separators.
+    run_ids: list[str] = ['A:capability-run:1:B', 'B'] if separate_agents else ['A', 'B']
+    names: list[str] = ['left', f'left:capability-run:{len(run_ids[0])}:A'] if separate_agents else ['one']
+    agents: list[Agent[object, str]] = [
+        Agent(TestModel(), deps_type=object, name=name, capabilities=[RecordRun(), PrefectDurability()])
+        for name in names
+    ]
+    if not separate_agents:
+        agents.append(agents[0])
     attempts = 0
 
     @flow(retries=1, retry_delay_seconds=0)
     async def run_twice() -> None:
         nonlocal attempts
         attempts += 1
-        order = ['B', 'A'] if reverse_on_retry and attempts == 2 else ['A', 'B']
-        for run_id in order:
-            await agent.run('same', run_id=run_id)
+        order: list[int] = [1, 0] if reverse_on_retry and attempts == 2 else [0, 1]
+        for index in order:
+            await agents[index].run('same', run_id=run_ids[index])
         if attempts == 1:
             raise RuntimeError('retry after both runs completed their capability operation')
 
     await run_twice()
-    expected_retry = [('B', 'B'), ('A', 'A')] if reverse_on_retry else [('A', 'A'), ('B', 'B')]
-    assert observed == [('A', 'A'), ('B', 'B'), *expected_retry]
-    assert executions == ['A', 'B']
+    retry_ids: list[str] = list(reversed(run_ids)) if reverse_on_retry else run_ids
+    expected_first: list[tuple[str, str]] = [(run_id, run_id) for run_id in run_ids]
+    expected_retry: list[tuple[str, str]] = [(run_id, run_id) for run_id in retry_ids]
+    assert observed == [*expected_first, *expected_retry]
+    assert executions == run_ids
 
 
 # Each lists a toolset's `fail` tool as `<prefix>_fail`: a prefix as a string layer, a rename as a mapping one.
