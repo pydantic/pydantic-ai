@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import inspect
 from dataclasses import dataclass
 from datetime import date
@@ -9,12 +10,13 @@ from pydantic import BaseModel
 from render.workflows import TaskContext, Workflows
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolKind, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness import RenderWorkflows
 
@@ -385,3 +387,27 @@ async def test_model_compaction_preserves_settings_and_rebuilds_the_worker_model
         )
     assert result.parts == [TextPart('compacted')]
     assert tasks.task_names == ['compact__model.compact_messages']
+
+
+async def test_worker_context_names_tools_by_kind_on_copies() -> None:
+    lookup_kind = ToolKind('test_render_transports', 'lookup')
+
+    def lookup(query: str) -> str:
+        return query  # pragma: no cover - only listed
+
+    def inspect_kinds(ctx: RunContext[None]) -> str:
+        assert ctx.tool_name_for_kind(lookup_kind) == 'lookup'
+        assert dataclasses.replace(ctx).tool_name_for_kind(lookup_kind) == 'lookup'
+        return 'kinds checked'
+
+    runtime = RenderWorkflows[None](Workflows())
+    agent = Agent[None, str](
+        TestModel(call_tools=['inspect_kinds']),
+        name='worker-tool-kinds',
+        deps_type=type(None),
+        toolsets=[FunctionToolset([Tool(lookup, tool_kind=lookup_kind), inspect_kinds], id='kinds')],
+        capabilities=[runtime],
+    )
+
+    context = RecordingTaskContext()
+    assert 'kinds checked' in await run_agent_in_task(agent, runtime, context)
