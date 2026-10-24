@@ -910,38 +910,6 @@ class MenuEdited:
     """`None` when the plugin no longer declares a menu, such as after it failed to load again."""
 
 
-WorkspaceState = Literal['ready', 'running', 'stopped']
-
-
-@dataclass(frozen=True, kw_only=True)
-class WorkspaceRow:
-    """A workspace as the sidebar lists it; never its token."""
-
-    id: str
-    kind: str
-    repo: str
-    branch: str
-    path: str
-    status: WorkspaceState
-    url: str | None
-    """Its page's address without the token, while its CLAI runs."""
-
-
-@dataclass(frozen=True, kw_only=True)
-class WorkspacesInfo:
-    """The sidebar's Workspaces section: shown while the `workspaces` plugin is on."""
-
-    enabled: bool
-    workspaces: list[WorkspaceRow]
-
-
-@dataclass(frozen=True, kw_only=True)
-class WorkspaceOpened:
-    """A workspace's page, with its token, for this page to open."""
-
-    url: str
-
-
 @dataclass(kw_only=True)
 class CompletionInfo:
     """One Tab suggestion: `text` replaces the `start` characters before the cursor."""

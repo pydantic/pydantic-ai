@@ -330,7 +330,7 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str,
                     ),
                     (
                         False,
-                        {'thinking': {'clear_thinking': False}},
+                        {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': 'low'},
                         [
                             ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
                             TextPart(content='2 + 2 = 4'),
@@ -385,7 +385,7 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str,
                     ),
                     (
                         False,
-                        {'thinking': {'clear_thinking': False}},
+                        {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': 'low'},
                         [
                             ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
                             TextPart(content='2 + 2 = 4'),
@@ -411,9 +411,13 @@ async def test_zai_reasoning_effort(
 
     GLM-5.2 accepts every unified level, so its profile carries no mapping and each level goes out
     unchanged. GLM-5.3 and GLM-5.3-flash only accept `low`/`high`/`max`, so their profile maps the
-    rest onto the nearest supported one; they also always reason, so `thinking=False` is dropped
-    before it reaches the wire instead of becoming `type: 'disabled'`. A bare `thinking=True` sends
-    no effort on any of them, leaving Z.AI to apply its own default.
+    rest onto the nearest supported one; they also always reason, so `thinking=False` sends their
+    lowest effort, `low`, instead of `type: 'disabled'`. A bare `thinking=True` sends no effort on any
+    of them, leaving Z.AI to apply its own default.
+
+    The GLM-5.3 `False` rows replay a response recorded when `thinking=False` sent no `type` or effort
+    (no Z.AI key was at hand to re-record them); the payload they now pin is the same one the `minimal`
+    and `low` rows send, which those rows' recordings show the API accepting.
 
     Recording every level is what makes the API's acceptance of each value we emit part of the test
     rather than an assumption. The returned parts are the other half of it, and they are not uniform:

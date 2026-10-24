@@ -137,6 +137,14 @@ class RealtimeClientSecret:
     _: KW_ONLY
     expires_at: datetime
     """When the secret expires (timezone-aware UTC)."""
+    webrtc_url: str | None = None
+    """Where the browser posts its WebRTC SDP offer, with the secret as its bearer token.
+
+    The answer comes back as the response body, and the call's id in its `Location` header. On Azure OpenAI the
+    URL carries `webrtcfilter=on`, so the browser's data channel gets only the events that are safe for it to see,
+    as on a call answered with [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer].
+    `None` when the provider takes no WebRTC offers.
+    """
     provider_details: dict[str, Any] | None = field(default=None, repr=False)
     """Raw provider fields returned alongside the secret (e.g. the resolved `session` object).
 
@@ -373,8 +381,8 @@ class RealtimeModel(AbstractModel):
         [`RealtimeSession.hang_up`][pydantic_ai.realtime.RealtimeSession.hang_up] instead. A call that has
         already ended is not an error; the provider likely answers the same for a call negotiated with a
         different API key or project, so that reads as already ended too. Only implemented by realtime
-        models whose provider can end a WebRTC call from the server (OpenAI gpt-realtime and GPT-Live); the
-        default raises [`UserError`][pydantic_ai.exceptions.UserError].
+        models whose provider can end a WebRTC call from the server (OpenAI gpt-realtime and GPT-Live, and Azure
+        OpenAI); the default raises [`UserError`][pydantic_ai.exceptions.UserError].
         """
         self._check_hang_up(session)
         raise NotImplementedError  # pragma: no cover - a model that can hang up overrides this method

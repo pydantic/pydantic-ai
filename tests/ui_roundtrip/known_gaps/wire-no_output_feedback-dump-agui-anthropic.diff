@@ -1,0 +1,24 @@
+--- expected
++++ actual
+@@ -51,6 +51 @@
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
++    },
+@@ -58 +53 @@
+-     "text": "<system>Please return text.</system>",
++     "text": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nPlease return text.\n</retry_feedback>",
+@@ -93,6 +88 @@
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
++    },
+@@ -100 +90 @@
+-     "text": "<system>Please return text.</system>",
++     "text": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nPlease return text.\n</retry_feedback>",
