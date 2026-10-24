@@ -80,6 +80,9 @@ far: on Claude, a run costs several times more without it. Set `cache=False` in 
 
 ## Watching a run
 
+To watch the desktop live, or take over, open the link a cloud desktop's `live_view_url()` returns; see
+[Daytona](daytona-sandbox.md#give-the-agent-a-desktop) and [E2B](e2b-sandbox.md#give-the-agent-a-desktop).
+
 Every screenshot arrives as a tool result event, so an [event stream handler](../agent.md#streaming-all-events) can save
 or show each one as the run goes:
 

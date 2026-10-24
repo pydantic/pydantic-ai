@@ -188,7 +188,19 @@ async def main():
 
 A new sandbox runs E2B's `desktop` template: Ubuntu with the XFCE desktop, a terminal and Google Chrome. The display starts on first use and is 1280x800; pass a size, such as `desktop=(1440, 900)`, for another. The agent keeps the sandbox's shell and files too, so `Coder` and `ComputerUse` can work in the same sandbox.
 
-A custom `template` needs Xvfb, `xdotool`, `scrot` and `setsid`, plus whatever applications the agent should use; with `startxfce4` it also gets the XFCE desktop. Text outside ASCII can lose characters when the agent types it, a limit of `xdotool`.
+A custom `template` needs Xvfb, `xdotool`, `xmodmap`, `scrot` and `setsid`, plus whatever applications the agent should use; with `startxfce4` it also gets the XFCE desktop.
+
+`sandbox_timeout` is the sandbox's whole lifetime, an hour by default, not an idle timeout: a run still going when it runs out fails, so set it longer than your longest task.
+
+To watch the agent work, or take over, open the desktop in your browser. Create the backend before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run), and get a link from it:
+
+```python {test="skip" lint="skip"}
+backend = E2BSandboxBackend(desktop=True)
+print(await backend.live_view_url())  # starts the sandbox, its desktop and the template's noVNC viewer
+result = await agent.run('Open the terminal from the dock, run `uname -a` and tell me what it printed.', workspace=backend)
+```
+
+The link carries the viewer's password: anyone with it can see and use the desktop while the sandbox runs. A custom `template` needs `x11vnc` and noVNC in `/opt/noVNC` for it.
 
 ## Clean up
 

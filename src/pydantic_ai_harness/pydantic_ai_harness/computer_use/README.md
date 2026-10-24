@@ -83,6 +83,9 @@ far: on Claude, a run costs several times more without it. Set `cache=False` in 
 
 ## Watching a run
 
+To watch the desktop live, or take over, open the link a cloud desktop's `live_view_url()` returns; see
+[Daytona](../daytona_sandbox/#give-the-agent-a-desktop) and [E2B](../e2b_sandbox/#give-the-agent-a-desktop).
+
 Every screenshot arrives as a tool result event, so an [event stream handler](https://pydantic.dev/docs/ai/core-concepts/agent/#streaming-all-events) can save
 or show each one as the run goes:
 
