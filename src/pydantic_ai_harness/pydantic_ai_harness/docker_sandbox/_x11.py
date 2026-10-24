@@ -4,7 +4,6 @@ from __future__ import annotations as _annotations
 
 import base64
 import itertools
-import math
 import re
 from collections.abc import Sequence
 from contextlib import suppress
@@ -29,6 +28,7 @@ from pydantic_ai.workspaces import (
     UnsupportedComputerActionError,
     WorkspaceError,
 )
+from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
 
 _BUTTONS: dict[str, str] = {'left': '1', 'middle': '2', 'right': '3', 'back': '8', 'forward': '9'}
 
@@ -131,17 +131,6 @@ _UNICODE_TYPE_DELAY_MS = '50'
 """Milliseconds between characters when the text has any outside ASCII: `xdotool` types those by remapping a key, and
 at its default delay of 12 ms the remapping races the keystrokes and drops characters (checked live)."""
 
-_DRAG_PRESS_PAUSE = '0.1'
-"""Seconds between pressing the button and moving, and between the last move and letting go: a web page's
-drag-and-drop misses a drag whose events all arrive at once (checked live)."""
-
-_DRAG_STEP_PAUSE = '0.05'
-"""Seconds between the moves of a drag, for the same reason."""
-
-_DRAG_STEP_PIXELS = 200
-"""The longest single move in a drag: each leg of its path is split into moves this long or shorter, and at least two,
-since Firefox only starts a drag, and only lets it land, after the pointer moves more than once (checked live)."""
-
 _SCROLL_TICK_DELAY_MS = '20'
 """Milliseconds between scroll wheel clicks, instead of `xdotool`'s 100 ms between clicks."""
 
@@ -184,14 +173,7 @@ def _png(output: str) -> bytes:
 
 def _drag_moves(path: Sequence[Point]) -> list[str]:
     """`xdotool` arguments that move along `path` from its first point, in short steps with pauses between them."""
-    moves: list[str] = []
-    for start, end in itertools.pairwise(path):
-        steps = max(2, math.ceil(math.dist((start.x, start.y), (end.x, end.y)) / _DRAG_STEP_PIXELS))
-        for step in range(1, steps + 1):
-            x = start.x + (end.x - start.x) * step // steps
-            y = start.y + (end.y - start.y) * step // steps
-            moves += ['sleep', _DRAG_STEP_PAUSE, 'mousemove', str(x), str(y)]
-    return moves
+    return [arg for point in drag_steps(path) for arg in ['sleep', str(DRAG_STEP_PAUSE), *_move(point.x, point.y)]]
 
 
 def _typing(text: str) -> list[list[str]]:
@@ -294,8 +276,8 @@ class X11Computer:
             case Drag(path=path, modifiers=modifiers):
                 start = path[0]
                 await self._xdotool(
-                    [*_move(start.x, start.y), 'mousedown', '1', 'sleep', _DRAG_PRESS_PAUSE, *_drag_moves(path)]
-                    + ['sleep', _DRAG_PRESS_PAUSE, 'mouseup', '1'],
+                    [*_move(start.x, start.y), 'mousedown', '1', 'sleep', str(DRAG_PRESS_PAUSE), *_drag_moves(path)]
+                    + ['sleep', str(DRAG_PRESS_PAUSE), 'mouseup', '1'],
                     hold=modifiers,
                     release=('mouseup', '1'),
                 )
