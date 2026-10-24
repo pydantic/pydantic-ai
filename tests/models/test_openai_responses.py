@@ -74,6 +74,7 @@ from pydantic_ai.exceptions import (
     ModelContextWindowExceededError,
     ModelHTTPError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelRetry,
     ModelServerError,
     SuspendedResponseExpired,
@@ -15452,6 +15453,8 @@ async def test_failed_response_body_gets_category(allow_model_requests: None, co
             await agent.run('Hello')
 
     assert not isinstance(exc_info.value, ModelHTTPError)
+    # A context window overflow is a rejected request even without a status code.
+    assert isinstance(exc_info.value, ModelRequestRejectedError) == (category is ModelContextWindowExceededError)
     assert exc_info.value.provider_error_code == code
     assert exc_info.value.in_stream is False
 

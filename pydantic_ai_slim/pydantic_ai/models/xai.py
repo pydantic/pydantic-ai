@@ -17,11 +17,7 @@ from ..exceptions import (
     ModelConnectionError,
     ModelContextWindowExceededError,
     ModelHTTPError,
-    ModelOverloadedError,
-    ModelRateLimitError,
-    ModelServerError,
     ModelTimeoutError,
-    ModelUnavailableError,
     TransportPhase,
     UnexpectedModelBehavior,
     UserError,
@@ -113,8 +109,10 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
     grpc.StatusCode.RESOURCE_EXHAUSTED: 429,
     grpc.StatusCode.INTERNAL: 500,
     grpc.StatusCode.UNAVAILABLE: 503,
+    # The client's own deadline is a `ModelTimeoutError` (see `_grpc_transport_error`), so this one is the server's.
     grpc.StatusCode.DEADLINE_EXCEEDED: 504,
 }
+"""The HTTP status for a gRPC status code sent by the server, which also decides its error category."""
 
 
 @contextmanager
@@ -135,13 +133,12 @@ def _map_api_errors(model_name: str, *, in_stream: bool = False) -> Generator[No
             transport_error := _grpc_transport_error(model_name, grpc_status, details, in_stream=in_stream)
         ) is not None:
             raise transport_error from e
-        status_code = _GRPC_STATUS_TO_HTTP.get(grpc_status)
-        category = _GRPC_STATUS_CATEGORIES.get(grpc_status)
-        if grpc_status == grpc.StatusCode.INVALID_ARGUMENT and 'maximum prompt length' in details.lower():
-            category = ModelContextWindowExceededError
-        elif grpc_status == grpc.StatusCode.UNAVAILABLE and _model_errors.says_overloaded(details):
-            category = ModelOverloadedError
-        if status_code is not None:
+        if (status_code := _GRPC_STATUS_TO_HTTP.get(grpc_status)) is not None:
+            category = (
+                ModelContextWindowExceededError
+                if grpc_status == grpc.StatusCode.INVALID_ARGUMENT and 'maximum prompt length' in details.lower()
+                else _model_errors.http_status_category(status_code, details)
+            )
             raise ModelHTTPError.for_category(
                 category,
                 status_code=status_code,
@@ -159,15 +156,6 @@ def _map_api_errors(model_name: str, *, in_stream: bool = False) -> Generator[No
             in_stream=in_stream,
         ) from e
 
-
-_GRPC_STATUS_CATEGORIES: dict[grpc.StatusCode, _model_errors.HTTPErrorCategory] = {
-    grpc.StatusCode.RESOURCE_EXHAUSTED: ModelRateLimitError,
-    grpc.StatusCode.UNAVAILABLE: ModelUnavailableError,
-    grpc.StatusCode.INTERNAL: ModelServerError,
-    # The client's own deadline is a `ModelTimeoutError` (see `_grpc_transport_error`), so this one is the server's.
-    grpc.StatusCode.DEADLINE_EXCEEDED: ModelServerError,
-}
-"""Error categories for gRPC status codes sent by the server."""
 
 # The gRPC client reports its own transport failures with the same status codes a server sends, `UNAVAILABLE` and
 # `DEADLINE_EXCEEDED`, so they're told apart by how grpc-core words them in `details`, as of grpcio 1.72 to 1.84.

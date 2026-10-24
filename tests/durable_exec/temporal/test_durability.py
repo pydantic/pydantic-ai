@@ -79,8 +79,10 @@ from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
 from pydantic_ai.exceptions import (
     ModelAPIError,
+    ModelAuthenticationError,
     ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
     ModelOverloadedError,
     ModelRateLimitError,
     ModelRetry,
@@ -531,6 +533,10 @@ def _non_retryable_model_fn(messages: list[ModelMessage], info: AgentInfo) -> Mo
         raise ModelHTTPError.for_category(ModelContextWindowExceededError, status_code=400, model_name='test-model')
     if prompt.content == 'overloaded':
         raise ModelOverloadedError('test-model', 'Model is overloaded.')
+    if prompt.content == 'authentication':
+        raise ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='test-model')
+    if prompt.content == 'not_found':
+        raise ModelHTTPError.for_category(ModelNotFoundError, status_code=404, model_name='test-model')
     raise ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='test-model')
 
 
@@ -543,7 +549,11 @@ non_retryable_agent = Agent(
                 start_to_close_timeout=timedelta(seconds=60),
                 retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
             ),
-            non_retryable_model_errors=[ModelContextWindowExceededError, ModelUnavailableError],
+            non_retryable_model_errors=[
+                ModelContextWindowExceededError,
+                ModelUnavailableError,
+                ModelAuthenticationError,
+            ],
         )
     ],
 )
@@ -576,6 +586,19 @@ class NonRetryableModelErrorWorkflow:
             'overloaded', 1, 'ModelOverloadedError ModelAPIError non_retryable=True', id='subclass-of-listed-category'
         ),
         pytest.param('rate_limit', 3, 'ModelRateLimitError ModelHTTPError non_retryable=False', id='unlisted-category'),
+        pytest.param(
+            'authentication',
+            1,
+            'ModelAuthenticationError ModelHTTPError non_retryable=True',
+            id='listed-rejection-category',
+        ),
+        pytest.param(
+            # A sibling of a listed category isn't covered by it.
+            'not_found',
+            3,
+            'ModelNotFoundError ModelHTTPError non_retryable=False',
+            id='unlisted-rejection-category',
+        ),
     ],
 )
 async def test_durability_non_retryable_model_errors(client: Client, error_kind: str, attempts: int, expected: str):

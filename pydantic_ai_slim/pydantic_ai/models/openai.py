@@ -47,6 +47,7 @@ from .._utils import (
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import (
     ModelConnectionError,
+    ModelRequestRejectedError,
     SuspendedResponseExpired,
     UserError,
 )
@@ -272,6 +273,9 @@ def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: st
     if e.code == 'model_not_found':
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
     category = _model_errors.openai_compatible_category(e.status_code, e.code, e.type, e.message)
+    if e.status_code == 403 and _flags_input(body.get('metadata') if _utils.is_str_dict(body) else None):
+        # OpenRouter sends a 403 for flagged input too: a rejected request, not a credentials problem.
+        category = ModelRequestRejectedError
     return ModelHTTPError.for_category(
         category,
         status_code=e.status_code,
@@ -282,6 +286,14 @@ def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: st
         provider_error_code=e.code,
         provider_error_type=e.type,
     )
+
+
+def _flags_input(metadata: object) -> bool:
+    """Whether an error's `metadata` holds a moderation result, as OpenRouter's 403 for flagged input does.
+
+    See https://openrouter.ai/docs/api-reference/errors#moderation-errors.
+    """
+    return _utils.is_str_dict(metadata) and ('flagged_input' in metadata or 'reasons' in metadata)
 
 
 def _map_connection_error(e: APIConnectionError, model_name: str) -> ModelConnectionError:
