@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
 
 from anyio import Lock
 from pydantic import JsonValue
@@ -31,12 +31,14 @@ from pydantic_clai2.plugins import (
     LiveSession,
     LoadedPlugin,
     PluginHost,
+    QueuedInput,
     SessionCatalog,
     SessionEndReason,
     TaskCatalog,
 )
 from pydantic_clai2.plugins._factories import import_file
 from pydantic_clai2.plugins.menus import SettingsMenu
+from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import Status
 
@@ -93,6 +95,19 @@ def same_plugin(declaration: PluginSettings, shipped: PluginSettings | None) -> 
     return declaration.model_copy(update={'enabled': True}) == shipped.model_copy(update={'enabled': True})
 
 
+class PromptInputs(Protocol):
+    """A session's prompt as `LiveRuntime` reaches it: the inputs waiting for its turn, and the turn to steer."""
+
+    @property
+    def queue(self) -> list[QueuedInput]: ...
+
+    def edit_queued(self, input_id: str, text: str) -> None: ...
+
+    def remove_queued(self, input_id: str) -> None: ...
+
+    def steer(self, text: str) -> bool: ...
+
+
 class LiveRuntime:
     """A live session as `PluginHost.live` lists it, read through the host its session plugins get."""
 
@@ -104,15 +119,20 @@ class LiveRuntime:
         running: Callable[[], bool],
         queued: Callable[[], int] = lambda: 0,
         changed: Callable[[], None] = lambda: None,
+        inputs: Callable[[], PromptInputs | None] = lambda: None,
     ) -> None:
         """`host` carries the session's context; `running` says whether a turn runs in it.
 
-        `queued` says how much input waits, and `changed` tells the process's `LiveSessions` that its state may have changed.
+        `changed` tells the process's `LiveSessions` that its state may have changed. `inputs` is the session's
+        prompt, which holds the input waiting for its turn and steers that turn; `None` holds none and steers nothing.
+        `queued` counts the waiting input when `inputs` returns `None`; otherwise the count is the prompt's own
+        queue length.
         """
         self._id = live_id
         self._host = host
         self._running = running
         self._queued = queued
+        self._inputs = inputs
         self._changed = changed
         self._watchers = 0
 
@@ -167,7 +187,31 @@ class LiveRuntime:
     @property
     def queued(self) -> int:
         """How many inputs wait for the session's running turn or command to end."""
-        return self._queued()
+        inputs = self._inputs()
+        return self._queued() if inputs is None else len(inputs.queue)
+
+    @property
+    def queue(self) -> list[QueuedInput]:
+        """The inputs waiting for the session's running turn or command to end, oldest first."""
+        inputs = self._inputs()
+        return [] if inputs is None else inputs.queue
+
+    def edit_queued(self, input_id: str, text: str, /) -> None:
+        """Replace a waiting input's text, keeping its place."""
+        if (inputs := self._inputs()) is None:
+            raise LookupError(NOT_QUEUED)
+        inputs.edit_queued(input_id, text)
+
+    def remove_queued(self, input_id: str, /) -> None:
+        """Drop a waiting input."""
+        if (inputs := self._inputs()) is None:
+            raise LookupError(NOT_QUEUED)
+        inputs.remove_queued(input_id)
+
+    def steer(self, text: str, /) -> bool:
+        """Send `text` to the running turn now; `False` when nothing takes it."""
+        inputs = self._inputs()
+        return inputs is not None and inputs.steer(text)
 
     @property
     def watchers(self) -> int:

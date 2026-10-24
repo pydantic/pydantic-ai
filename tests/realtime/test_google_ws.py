@@ -212,6 +212,30 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
     assert response.usage.details.get('thoughts_tokens') == snapshot(24)
 
 
+async def test_text_only_model_answers_in_text_by_default(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """A model whose profile says it can't speak gets a `TEXT` session by default, and its answer is a `TextPart`.
+
+    `gemini-robotics-er-2-streaming-preview` rejects `AUDIO` and streams its written answer as an output
+    transcription.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel('gemini-robotics-er-2-streaming-preview', provider=provider)
+    agent = Agent(instructions='Answer in one short sentence.')
+
+    async with agent.realtime(model).session() as session:
+        await session.send('What is the capital of France?')
+        with anyio.fail_after(30):
+            await session.wait_for_reply()
+
+    [setup] = sent_frames_containing(cassette, 'Answer in one short sentence.')
+    assert setup['setup']['generationConfig'] == {'responseModalities': ['TEXT']}
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == snapshot([TextPart(content='The capital of France is Paris.')])
+
+
 async def test_rejected_config_raises_realtime_error(
     gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
 ) -> None:
@@ -487,6 +511,57 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
         )
     )
     assert session.usage.total_tokens == final.usage.total_tokens
+
+
+@pytest.mark.parametrize('model_name', [_MODEL, 'gemini-3.8-live'])
+async def test_tool_exception_still_answers_the_call(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], model_name: str
+) -> None:
+    """A tool that raises still gets a response, so the model moves on and a later reply is answered.
+
+    Left unanswered, the call stays open: Gemini 2.5's blocking call holds the model waiting on it, so no later
+    turn is answered, and Gemini 3.8's non-blocking call is made again on every later input.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel(model_name, provider=provider)
+    agent = Agent(
+        instructions='Use the get_vault_code tool when asked for the vault code. Answer in one short sentence.'
+    )
+
+    @agent.tool_plain
+    async def get_vault_code() -> str:
+        """Return the current vault code."""
+        raise RuntimeError('vault database exploded')
+
+    async with agent.realtime(model).session() as session:
+        await session.send('Please tell me the vault code.')
+        with pytest.raises(RuntimeError, match='vault database exploded'), anyio.fail_after(30):
+            async for _ in session:
+                pass
+        # The session goes on receiving: the model answers the failure, then the next question.
+        completions = 0
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    completions += 1
+                    if completions == 2:
+                        break
+                    await session.send('What is two plus two?')
+
+    assert [frame['tool_response'] for frame in sent_frames_containing(cassette, 'tool_response')] == [
+        {
+            'functionResponses': [
+                {
+                    'id': IsStr(),
+                    'name': 'get_vault_code',
+                    'response': {'output': '{"error":"The tool raised an unhandled error."}'},
+                }
+            ]
+        }
+    ]
+    final = session.all_messages()[-1]
+    assert isinstance(final, ModelResponse)
+    assert final.parts == [SpeechPart(speaker='assistant', transcript=IsStr(regex=r'(?i).*four.*'))]
 
 
 @pytest.mark.parametrize(
@@ -864,6 +939,7 @@ def test_profile_allow_seeding() -> None:
         supports_interruption=False,
         supports_output_truncation=False,
         supports_text_output=False,  # the Developer API Live models reject a TEXT response modality
+        supports_audio_output=True,
         supports_session_seeding=True,
         supports_webrtc=False,
         supports_seeding_images=True,

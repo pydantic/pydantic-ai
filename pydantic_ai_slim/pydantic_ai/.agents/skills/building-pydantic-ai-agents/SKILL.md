@@ -321,9 +321,10 @@ Key facts for building realtime agents:
   text context. Images are context-only by default; use `respond=True` to ask for a response to an
   image. Never pair `session.send('...')` with `session.create_response()`, because that asks twice.
   A string sent during a reply queues on OpenAI/Azure/xAI/Eleven Realtime and Gemini 2.5, but interrupts the active
-  reply on Gemini 3.1. On OpenAI GPT-Live a string is never a user turn at all: it is context the model
-  relays or answers (even with `respond=False`, which only doesn't *request* speech), it only lands
-  while audio is flowing (set `openai_live_idle_audio=True` for a session with no microphone), and text over 500 tokens raises `UserError`. Gemini speech models reject text output before connect, except the Vertex
+  reply on Gemini 3.1. On OpenAI GPT-Live a string goes to the delegated backend as the user's message and
+  runs it (tools included), and Live speaks the answer, often after a filler line; `respond=False` is context only
+  (which Live may still mention), Live only speaks while audio is flowing (set `openai_live_idle_audio=True` for a
+  session with no microphone), and `respond=False` text over 500 tokens raises `UserError` (a longer typed turn still runs the backend, but Live isn't told what was typed). Gemini speech models reject text output before connect, except the Vertex
   `gemini-live-2.5-flash` half-cascade, which answers in text.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`, or with
@@ -415,7 +416,7 @@ Key facts for building realtime agents:
   control-plane **sideband** with `.session(provider_session=answer.session)`. The browser owns the
   audio; the sideband session runs tools and builds history (its audio methods raise, and
   `audio_retention` must stay `'transcript_only'`). Closing the sideband only detaches it: call
-  `session.hang_up()` (or `agent.realtime(model).hang_up(answer.session)`) to end the browser's call (OpenAI only).
+  `session.hang_up()` (or `agent.realtime(model).hang_up(answer.session)`) to end the browser's call (OpenAI and Azure OpenAI).
 - **Browser WebSocket relays**: `handle_barge_in=True` cannot know browser playback position because
   forwarded chunks count as played. Have the browser report real playback and pass it to
   `interrupt(played_bytes=...)`; `played_ms=` does not flush session-queued audio.
@@ -434,7 +435,7 @@ Load only the most relevant reference first. Read additional references only if 
 | Add function tools, toolsets, MCP servers, or explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |
 | Attach a workspace, expose workspace-backed tools, or manage workspace lifecycle and durable references | [Workspaces](./references/WORKSPACES.md) |
 | Use provider-native web search, web fetch, or code execution | [Native Tools](./references/NATIVE-TOOLS.md) |
-| Use advanced tool features such as approval, retries, failed tool results, `ToolReturn`, validators, timeouts, or tool search | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
+| Use advanced tool features such as approval, retries, failed tool results, `ToolReturn`, validators, timeouts, tool search, or tools added mid-run | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
 | Work with multimodal input, message history, `run_id` / `conversation_id`, or context trimming | [Input and History](./references/INPUT-AND-HISTORY.md) |
 | Test or debug agent behavior | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 | Set up observability with Logfire, or reach every model with one Gateway key | [Set Up Observability and Model Access](#set-up-observability-and-model-access), then [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md#debug-and-validate-agent-behavior) |
@@ -491,7 +492,7 @@ Load exactly one of these unless the task clearly spans multiple families:
 | Function tools, toolsets, MCP, explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |
 | Workspaces, workspace-backed tools, lifecycle ownership, and durable references | [Workspaces](./references/WORKSPACES.md) |
 | Provider-native tools | [Native Tools](./references/NATIVE-TOOLS.md) |
-| Approval, retries, failed tool results, validators, timeouts, rich tool returns, tool search, and tool-level deferred loading | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
+| Approval, retries, failed tool results, validators, timeouts, rich tool returns, tool search, tool-level deferred loading, and mid-run tool additions | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
 | Multimodal input, message history, `run_id` / `conversation_id`, history processors | [Input and History](./references/INPUT-AND-HISTORY.md) |
 | Testing, request inspection, and Logfire debugging | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 | Multi-agent patterns, graphs, direct API, A2A, durable execution, embeddings, image generation, evals, third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |

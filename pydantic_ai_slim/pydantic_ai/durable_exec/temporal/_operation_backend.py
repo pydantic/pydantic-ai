@@ -18,6 +18,7 @@ from pydantic_ai.durable_exec._operation import (
     ModelRequestId,
     OperationConfigRole,
     ParameterTransport,
+    ParameterTransports,
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
@@ -166,12 +167,14 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         resolve_tool_config: Callable[[DurableOperationId, object | None, str], ActivityConfig | Literal[False]],
         non_retryable_model_errors: tuple[type[ModelAPIError], ...] = (),
         runtime: object | None = None,
+        parameter_transports: ParameterTransports | None = None,
     ) -> None:
         super().__init__(
             namer=TemporalOperationNamer(agent_name),
             config=TemporalOperationConfig(
                 model=model_config, event=event_config, tool=tool_config, resolve_tool=resolve_tool_config
             ),
+            parameter_transports=parameter_transports,
         )
         self._deps_type = deps_type
         self._non_retryable_model_errors = non_retryable_model_errors
