@@ -570,20 +570,20 @@ def test_aggregate_requires_the_selected_lightweight_job():
 
     assert 'content-checks' in docs_skips
     assert 'docs-only' not in docs_skips
-    assert {'docs-only', 'docs-assets', 'clai2-web'} <= content_skips
+    assert {'docs-only', 'docs-assets', 'test-clai2-web'} <= content_skips
     assert 'content-checks' not in content_skips
     assert {'docs-only', 'content-checks'} <= clai2_skips
     assert {'docs-only', 'content-checks'} <= tag_skips
     assert {'docs-only', 'content-checks'} <= default_skips
-    assert 'clai2-web' in default_skips
+    assert 'test-clai2-web' in default_skips
     assert 'test-clai2-clipboard' in check['needs']
-    assert 'clai2-web' in check['needs']
+    assert 'test-clai2-web' in check['needs']
     assert 'test-clai2-clipboard' not in clai2_skips
-    assert 'clai2-web' not in clai2_skips
+    assert 'test-clai2-web' not in clai2_skips
     assert 'test-clai2-clipboard' in tag_skips
     assert harness_skips - harness_docs_skips == {'docs-only'}
     assert harness_docs_skips <= harness_skips
-    assert {'clai2-web'} <= harness_skips
+    assert {'test-clai2-web'} <= harness_skips
     for job in (
         'quality',
         'docs-assets',
@@ -606,7 +606,7 @@ def test_clai2_clipboard_job_is_gated_on_the_classifier_output():
 
 
 def test_clai2_web_workflow_is_gated_on_the_classifier_output():
-    job = CONDITIONAL_JOB_ADAPTER.validate_python(_workflow()['jobs']['clai2-web'])
+    job = CONDITIONAL_JOB_ADAPTER.validate_python(_workflow()['jobs']['test-clai2-web'])
 
     assert job['if'] == (
         "needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_changed == 'true'"

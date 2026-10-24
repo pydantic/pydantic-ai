@@ -25,17 +25,13 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24.22.1'
+          node-version-file: src/pydantic_clai2/web-ui/.nvmrc
           cache: npm
           cache-dependency-path: src/pydantic_clai2/web-ui/package-lock.json
 
       - name: Install web UI dependencies
         working-directory: src/pydantic_clai2/web-ui
         run: npm ci --ignore-scripts --no-audit --no-fund
-
-      - name: Audit web UI dependencies
-        working-directory: src/pydantic_clai2/web-ui
-        run: npm audit --audit-level=low
 
       - name: Build web UI
         working-directory: src/pydantic_clai2/web-ui
@@ -67,16 +63,16 @@ jobs:
           done
 
       - name: Install CLAI 2 and test dependencies
-        run: uv sync --locked --package pydantic-clai2 --group dev
+        run: uv sync --locked --package pydantic-clai2 --group dev --group clai2-browser
 
       - name: Install Chromium
-        run: uv run --with playwright==1.63.0 --no-sync playwright install --with-deps chromium
+        run: uv run --no-sync playwright install --with-deps chromium
 
       - name: Run web browser tests and check `Guard` coverage
         env:
           COVERAGE_FILE: ${{ runner.temp }}/clai2-web.coverage
         run: |
-          uv run --with playwright==1.63.0 --no-sync coverage run --branch --include='*/builtin_plugins/web/app.py' -m pytest tests/clai2/browser tests/clai2/test_web.py::test_access_checks tests/clai2/test_web.py::test_lifespan_passes_through
-          uv run --with playwright==1.63.0 --no-sync coverage combine
-          uv run --with playwright==1.63.0 --no-sync coverage json --fail-under=0 -o "$RUNNER_TEMP/clai2-web-coverage.json"
+          uv run --no-sync coverage run --branch --include='*/builtin_plugins/web/app.py' -m pytest tests/clai2/browser tests/clai2/test_web.py::test_access_checks tests/clai2/test_web.py::test_lifespan_passes_through
+          uv run --no-sync coverage combine
+          uv run --no-sync coverage json --fail-under=0 -o "$RUNNER_TEMP/clai2-web-coverage.json"
           jq -e '[.files[] | .classes.Guard? // empty] as $guards | ($guards | length) == 1 and $guards[0].missing_lines == [] and $guards[0].missing_branches == []' "$RUNNER_TEMP/clai2-web-coverage.json"

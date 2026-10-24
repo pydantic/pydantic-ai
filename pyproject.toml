@@ -315,6 +315,9 @@ lint = [
     "pyright>=1.1.414",
     "ruff>=0.14.14",
 ]
+clai2-browser = [
+    "playwright",
+]
 [tool.hatch.build.targets.wheel]
 bypass-selection = true
 exclude = ["/pydantic_ai_slim/pydantic_ai/.agents"]

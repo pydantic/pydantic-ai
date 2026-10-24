@@ -1,13 +1,26 @@
 """Release smoke validation rejects incomplete and stale installed browser bundles."""
 
+import importlib.util
+from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 import pytest
 
-from src.pydantic_clai2.scripts.check_web_assets import check_web_assets
+
+@runtime_checkable
+class WebAssetsScript(Protocol):
+    check_web_assets: Callable[[Path, Path], None]
 
 
 def test_packaged_web_assets(tmp_path: Path) -> None:
+    script = Path(__file__).parents[2] / 'src' / 'pydantic_clai2' / 'scripts' / 'check_web_assets.py'
+    spec = importlib.util.spec_from_file_location('check_web_assets', script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert isinstance(module, WebAssetsScript)
+
     source = tmp_path / 'source'
     installed = tmp_path / 'installed'
     for directory in (source, installed):
@@ -16,20 +29,20 @@ def test_packaged_web_assets(tmp_path: Path) -> None:
         (directory / 'assets' / 'app.js').write_text('render()')
         (directory / 'assets' / 'index.css').write_text('body {}')
 
-    check_web_assets(installed, source)
+    module.check_web_assets(installed, source)
 
     (installed / 'assets' / 'app.js').write_text('stale()')
     with pytest.raises(ValueError, match='differ'):
-        check_web_assets(installed, source)
+        module.check_web_assets(installed, source)
 
     (installed / 'assets' / 'app.js').write_text('')
     with pytest.raises(ValueError, match='empty'):
-        check_web_assets(installed, source)
+        module.check_web_assets(installed, source)
 
     (installed / 'assets' / 'app.js').unlink()
     with pytest.raises(FileNotFoundError):
-        check_web_assets(installed, source)
+        module.check_web_assets(installed, source)
 
     (installed / 'index.html').write_text('<div id="root"></div>')
     with pytest.raises(ValueError, match='JavaScript and CSS'):
-        check_web_assets(installed, source)
+        module.check_web_assets(installed, source)

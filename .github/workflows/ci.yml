@@ -1558,7 +1558,7 @@ jobs:
             uv run --package pydantic-clai2 pytest "${tests[@]}"
           fi
 
-  clai2-web:
+  test-clai2-web:
     name: test clai2 web UI
     needs: classify
     if: >-
@@ -1908,7 +1908,7 @@ jobs:
       - test-fastmcp-4
       - test-harness-browser-use
       - test-clai2-clipboard
-      - clai2-web
+      - test-clai2-web
       - harness-integration-changes
       - harness-localstack-integration
       - harness-mongodb-integration
@@ -1936,20 +1936,20 @@ jobs:
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
               && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
               || needs.classify.outputs.harness_only == 'true'
-              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 
