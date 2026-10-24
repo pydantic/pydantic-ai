@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from typing import Any
 
 import anyio
 import pytest
@@ -130,13 +131,36 @@ async def test_an_unknown_action_type_is_refused(fake_daytona: FakeDaytona) -> N
         await backend.act(object())  # pyright: ignore[reportArgumentType]
 
 
-async def test_a_failed_hold_lets_go_of_what_it_pressed(fake_daytona: FakeDaytona) -> None:
+async def test_a_cancelled_hold_lets_go_of_what_it_pressed(fake_daytona: FakeDaytona) -> None:
     backend, sandbox = await _started(fake_daytona)
 
-    with anyio.move_on_after(0.05):
-        await backend.act(HoldKeys(keys=('ctrl', 'a'), seconds=30))
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(backend.act, HoldKeys(keys=('ctrl', 'a'), seconds=30))
+        await anyio.wait_all_tasks_blocked()  # holding, in its sleep
+        tasks.cancel_scope.cancel()
 
     assert sandbox.desktop_calls == ['keydown ctrl', 'keydown a', 'keyup a', 'keyup ctrl']
+
+
+async def test_a_failed_release_still_lets_go_of_the_other_keys(fake_daytona: FakeDaytona) -> None:
+    backend, sandbox = await _started(fake_daytona)
+    up = sandbox.computer_use.up
+    failed: list[str] = []
+
+    async def up_failing_once(
+        x: Any = None, y: int | None = None, button: str = 'left', request_timeout: float | None = None
+    ) -> None:
+        if x == 'b' and not failed:
+            failed.append(x)
+            raise DaytonaServiceUnavailableError('connection is shut down', status_code=503)
+        await up(x, y, button, request_timeout)
+
+    sandbox.computer_use.up = up_failing_once
+    with pytest.raises(DaytonaServiceUnavailableError):
+        await backend.act(PressKeys(keys=('ctrl', 'a', 'b')))
+
+    # `b` failed to come up, so it is tried again along with the keys still down.
+    assert sandbox.desktop_calls == ['keydown ctrl', 'keydown a', 'keydown b', 'keyup b', 'keyup a', 'keyup ctrl']
 
 
 async def test_a_failed_drag_releases_the_button_and_keys(fake_daytona: FakeDaytona) -> None:

@@ -319,7 +319,7 @@ class TestLiveDaytonaDesktop(WorkspaceBackendSuite):
         assert isinstance(backend, DaytonaSandboxBackend)
         assert await backend.display_size() == (1280, 800)
         await backend.run(
-            'DISPLAY=:0 setsid xfce4-terminal --geometry 60x10+100+100 -x sh -c "touch ready; cat > typed.txt" '
+            'setsid xfce4-terminal --geometry 60x10+100+100 -x sh -c "touch ready; cat > typed.txt" '
             '>/dev/null 2>&1 &',
             shell=True,
         )

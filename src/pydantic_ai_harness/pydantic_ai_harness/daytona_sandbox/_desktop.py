@@ -154,7 +154,7 @@ class DaytonaDesktop:
 
     @asynccontextmanager
     async def _holding(self, keys: Sequence[str]) -> AsyncGenerator[None]:
-        """Hold Daytona's `keys` down, in order; if the body fails or is cancelled, let go of them all."""
+        """Hold Daytona's `keys` down, in order; whatever fails or is cancelled, even letting go, lets go of them all."""
         keyboard = self._computer_use.keyboard
         pressed: list[str] = []
         try:
@@ -162,14 +162,15 @@ class DaytonaDesktop:
                 pressed.append(key)  # before the request, which can press the key and still fail
                 await keyboard.down(key, request_timeout=_REQUEST_TIMEOUT)
             yield
+            while pressed:
+                await keyboard.up(pressed[-1], request_timeout=_REQUEST_TIMEOUT)
+                pressed.pop()  # only once it's up, so a failed release is retried below
         except BaseException:
             with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True):
                 for key in reversed(pressed):
                     with suppress(Exception):
                         await keyboard.up(key, request_timeout=_REQUEST_TIMEOUT)
             raise
-        for key in reversed(pressed):
-            await keyboard.up(key, request_timeout=_REQUEST_TIMEOUT)
 
     async def act(self, action: ComputerAction) -> None:
         mouse, keyboard = self._computer_use.mouse, self._computer_use.keyboard

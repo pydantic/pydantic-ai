@@ -95,6 +95,8 @@ class BlockingCommands(ScriptedCommands):
         (Scroll(x=7, y=8, direction='down'), ['xdotool', 'mousemove', '7', '8', 'click', '--repeat', '3', '5']),
         (Scroll(direction='up', amount=2), ['xdotool', 'click', '--repeat', '2', '4']),
         (TypeText(text='-n "hi"\n'), ['xdotool', 'type', '--', '-n "hi"\n']),
+        # Characters outside ASCII are typed slowly enough for xdotool's key remapping to keep up.
+        (TypeText(text='héllo'), ['xdotool', 'type', '--delay', '50', '--', 'héllo']),
         (PressKeys(keys=('ctrl', 's'), repeat=3), ['xdotool', 'key', '--repeat', '3', '--', 'ctrl+s']),
         (PressKeys(keys=('PageDown', 'F5', 'ArrowUp')), ['xdotool', 'key', '--repeat', '1', '--', 'Next+F5+Up']),
         (PressKeys(keys=('shift', 'XF86AudioMute')), ['xdotool', 'key', '--repeat', '1', '--', 'shift+XF86AudioMute']),
@@ -173,7 +175,7 @@ async def test_x11_computer_reads_the_display_size_and_screenshot_on_its_display
     assert geometry == ['xdotool', 'getdisplaygeometry']
     assert env == {'DISPLAY': ':1'}
     assert shell is True
-    assert commands.timeouts == [60, 60]
+    assert commands.timeouts == [150, 150]
 
 
 @pytest.mark.parametrize(

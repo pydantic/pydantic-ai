@@ -653,6 +653,8 @@ class DaytonaSandboxBackend(
             # Under the lock, so a sandbox still being created is recorded before its client closes.
             async with self._lock:
                 client, self._client, self._sandbox, self._resolved_working_dir = self._client, None, None, None
+                # The sandbox may stop before it is used again, and its desktop with it.
+                self._display_started = False
             if client is not None:
                 await _close_quietly(client)
 
@@ -668,6 +670,7 @@ class DaytonaSandboxBackend(
             if self._operations == 0 and self._close_after_operation and self._owns_client and self._client is not None:
                 # Detached before any await, so an operation starting meanwhile opens its own client.
                 client, self._client, self._sandbox, self._resolved_working_dir = self._client, None, None, None
+                self._display_started = False
                 await run_to_completion(lambda: _close_quietly(client))
 
     async def working_dir(self) -> str:
