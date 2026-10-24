@@ -3992,6 +3992,11 @@ def _map_usage(
         'compaction_ephemeral_1h_input_tokens', 0
     ):
         usage_for_extraction['cache_creation'] = {'ephemeral_1h_input_tokens': ephemeral_1h_input_tokens}
+    # `_extract_usage_details` keeps int fields only; carry the Pydantic AI Gateway's injected
+    # cost objects through so `RequestUsage.extract` can pick them up.
+    for gateway_key in ('logfire_ai_gateway', 'pydantic_ai_gateway'):
+        if gateway_usage := getattr(response_usage, gateway_key, None):
+            usage_for_extraction[gateway_key] = gateway_usage
 
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens
