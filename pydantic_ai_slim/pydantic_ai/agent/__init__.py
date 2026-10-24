@@ -336,7 +336,11 @@ async def _run_lifecycle_hooks(  # noqa: C901
     run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
 
     outer_context = contextvars.copy_context()
-    _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
+    # Teardown waits for `wrap_run` through `ScopedTask`, so a cancellation of the caller reaches it in the form it
+    # arrived: shielded cleanup in `wrap_run` finishes under a cancelled `anyio` scope, and `on_run_error` is still
+    # reached.
+    _wrap = _utils.ScopedTask(run_capability.wrap_run(run_ctx, handler=_do_run))
+    _wrap_task = _wrap.task
     # Wait for handler to start or wrap_run to complete (short-circuit).
     _ready_waiter = asyncio.create_task(_run_ready.wait())
     try:
@@ -401,12 +405,12 @@ async def _run_lifecycle_hooks(  # noqa: C901
                 _body_context = contextvars.copy_context()
                 _run_done.set()
                 if _run_error is None and (result_ready is None or result_ready()):
-                    await _finalize_result(await _wrap_task)
+                    await _finalize_result(await _wrap.result())
                 elif _run_error is not None:
                     # Error path: await wrap_run to see if it recovers. `_do_run()` re-raises
                     # `_run_error`; if wrap_run catches it and returns a result, recovery succeeds.
                     try:
-                        await _finalize_result(await _wrap_task)
+                        await _finalize_result(await _wrap.result())
                     except BaseException as wrap_exc:
                         if _handler_errors and wrap_exc is _handler_errors[-1]:
                             _run_error = wrap_exc
@@ -415,14 +419,18 @@ async def _run_lifecycle_hooks(  # noqa: C901
                         elif not isinstance(wrap_exc, asyncio.CancelledError) and wrap_exc is not _run_error:
                             # Only fires for bugs in `wrap_run` implementations.
                             _run_error.__context__ = wrap_exc  # pragma: lax no cover
-                # `_run_done.set()` can't complete `_wrap_task` synchronously, so the task is
-                # always still pending here.
-                elif not _wrap_task.done():  # pragma: no branch
+                else:
                     _wrap_task.cancel()
                     try:
-                        await _wrap_task
-                    except (asyncio.CancelledError, BaseException):
-                        pass
+                        await _wrap.wait()
+                    except asyncio.CancelledError:
+                        # There's no result to wait for, so leave an `anyio` cancellation to raise again at the
+                        # caller's next checkpoint. A native cancellation is delivered only once: re-raise it.
+                        if not _utils.in_cancelled_anyio_scope():
+                            raise
+                    # Retrieve a failure in `wrap_run`'s cleanup: with no result to return, it has nowhere to go.
+                    if not _wrap_task.cancelled():
+                        _wrap_task.exception()
 
         # If neither on_run_error nor wrap_run recovered, re-raise. In an
         # @asynccontextmanager, not re-raising suppresses the exception.
