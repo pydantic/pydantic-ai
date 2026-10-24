@@ -187,8 +187,12 @@ class _Index:
                 file = self.root / source_root / path
                 if not file.is_file():
                     continue
-                tree = ast.parse(file.read_text(encoding='utf-8'), filename=str(file))
-                module = self._modules[name] = _Module(name, (Path(source_root) / path).as_posix(), is_package, tree)
+                module = self._modules[name] = _Module(
+                    name,
+                    (Path(source_root) / path).as_posix(),
+                    is_package,
+                    ast.parse(file.read_text(encoding='utf-8'), filename=str(file)),
+                )
                 self.bind_top_level(module)
                 self.bind_local_imports(module)
                 return module
@@ -236,8 +240,10 @@ class _Index:
         """The absolute module a `from ... import` statement imports from."""
         if not statement.level:
             return statement.module or ''
-        package = module.name if module.is_package else module.name.rpartition('.')[0]
-        return importlib.util.resolve_name('.' * statement.level + (statement.module or ''), package)
+        return importlib.util.resolve_name(
+            '.' * statement.level + (statement.module or ''),
+            module.name if module.is_package else module.name.rpartition('.')[0],
+        )
 
     def class_info(self, module: _Module, node: ast.ClassDef, qualname: str) -> _ClassInfo:
         if (info := self._classes.get(id(node))) is None:
@@ -377,8 +383,9 @@ def _top_level(body: list[ast.stmt]) -> Iterator[ast.stmt]:
             case ast.If(body=if_body, orelse=orelse):
                 yield from _top_level([*if_body, *orelse])
             case ast.Try(body=try_body, handlers=handlers, orelse=orelse, finalbody=finalbody):
-                handler_bodies = [handled for handler in handlers for handled in handler.body]
-                yield from _top_level([*try_body, *handler_bodies, *orelse, *finalbody])
+                yield from _top_level(
+                    [*try_body, *(handled for handler in handlers for handled in handler.body), *orelse, *finalbody]
+                )
             case _:
                 yield statement
 

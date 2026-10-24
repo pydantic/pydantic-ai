@@ -97,7 +97,8 @@ unaffected: the generator's docstring lists the dependency forms and the modules
 record.
 
 An entry whose only kind is `annotation_only` is a definition the engines name only in annotations,
-such as a type in a mirrored signature. It stays in the manifest and does not gate review.
+such as a type in a mirrored signature. It stays in the manifest, and `gates` leaves it out of the
+review routing that https://github.com/pydantic/pydantic-ai/issues/11174 tracks.
 
 `tests/durable_exec/test_durable_exec_contract_manifest.py` fails when the manifest is stale.
 Regenerate it with `uv run python scripts/durable_exec_contract.py --write` and commit the diff.

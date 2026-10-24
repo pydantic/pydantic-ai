@@ -98,6 +98,13 @@ def test_manifest_records_the_member_level_contracts():
     assert projection['kinds'] == snapshot(['attribute_read', 'projected_field'])
 
 
+def _keyed_entries(manifest: Manifest) -> Iterator[tuple[str, dict[str, list[str]]]]:
+    """Each manifest entry, keyed `<core file under pydantic_ai>::<qualname>`."""
+    for core_file, definitions in manifest.items():
+        for qualname, entry in definitions.items():
+            yield core_file.removeprefix(CORE + '/') + f'::{qualname}', entry
+
+
 @pytest.fixture
 def fixture_repo(tmp_path: Path) -> Path:
     # A miniature repository: a core package, an engine under `durable_exec/` and a Harness engine, which
@@ -488,13 +495,6 @@ def fixture_repo(tmp_path: Path) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(textwrap.dedent(source).lstrip(), encoding='utf-8')
     return tmp_path
-
-
-def _keyed_entries(manifest: Manifest) -> Iterator[tuple[str, dict[str, list[str]]]]:
-    """Each manifest entry, keyed `<core file under pydantic_ai>::<qualname>`."""
-    for core_file, definitions in manifest.items():
-        for qualname, entry in definitions.items():
-            yield f'{core_file.removeprefix(f"{CORE}/")}::{qualname}', entry
 
 
 def test_build_manifest_resolves_every_dependency_form(fixture_repo: Path):

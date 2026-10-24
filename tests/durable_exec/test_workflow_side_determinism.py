@@ -16,6 +16,8 @@ source only, so it is not a VCR test.
 - an environment read that is not a call, such as `os.environ['NAME']` or `'NAME' in os.environ`;
 - a clock read or random id drawn by a dataclass default factory (`default_factory=now_utc`,
   `default_factory=lambda: str(uuid7())`), or by a helper in a module outside the set;
+- a mutation of module or class state, through `global` or an attribute assignment such as
+  `module.attr = ...`;
 - a branch on state that differs between the recorded run and the replay.
 
 TODO: https://github.com/pydantic/pydantic-ai/issues/11168
