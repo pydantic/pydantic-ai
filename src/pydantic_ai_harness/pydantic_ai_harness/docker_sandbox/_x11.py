@@ -123,13 +123,13 @@ _XDOTOOL_COMMANDS = frozenset(
 """xdotool's command names, from its newest source: xdotool reads one among key names, in any case, as the start of the
 next command, such as `exec`."""
 
-_COMMAND_TIMEOUT = 150
+_COMMAND_TIMEOUT = 250
 """Maximum time for one display command; the longest bounded action, typing 2,000 characters outside ASCII, takes
-about 100 s."""
+about 200 s."""
 
-_UNICODE_KEY_DELAY_MS = '50'
-"""Milliseconds between characters outside ASCII: `xdotool` presses each by remapping a key, and at its default delay of
-12 ms the remapping races the keystrokes and drops characters (checked live)."""
+_UNICODE_KEY_DELAY_MS = '100'
+"""Milliseconds between characters outside ASCII: `xdotool` presses each by remapping a key, and a shorter delay races
+the remapping and drops characters (checked live: 50 ms dropped some on E2B, 100 ms none)."""
 
 _SCROLL_TICK_DELAY_MS = '20'
 """Milliseconds between scroll wheel clicks, instead of `xdotool`'s 100 ms between clicks."""
