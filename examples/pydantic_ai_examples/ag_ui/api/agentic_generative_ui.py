@@ -13,6 +13,7 @@ from starlette.routing import Route
 
 from ag_ui.core import EventType, StateDeltaEvent, StateSnapshotEvent
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 StepStatus = Literal['pending', 'completed']
@@ -70,6 +71,7 @@ agent = Agent(
         again until all the steps in current plan are completed.
         """
     ),
+    capabilities=[Caching()],
 )
 
 

@@ -1,0 +1,80 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://pydantic-ai-realtime-dev.openai.azure.com/openai/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "200"
+      content-type:
+      - application/json
+      host:
+      - pydantic-ai-realtime-dev.openai.azure.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4
+        stream: true
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the capital of France? Answer in one word.
+        reasoning:
+          context: all_turns
+  response:
+    status: 200
+    headers:
+      apim-request-id:
+      - 3dc1ead8-1930-47fe-a8bb-a3767d61f509
+      azureai-fe-is-streaming:
+      - "True"
+      azureai-fe-offer-type:
+      - paygo
+      content-type:
+      - text/event-stream; charset=utf-8
+      skip-error-remapping:
+      - "true"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0cfc3c8df15f6040006ad29ec5e7288190946cfa8ce90d7e4a","object":"response","created_at":1792188102,"status":"in_progress","background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0cfc3c8df15f6040006ad29ec5e7288190946cfa8ce90d7e4a","object":"response","created_at":1792188102,"status":"in_progress","background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_0cfc3c8df15f6040006ad29ec786ec8190a65f4e8923a1709d","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0cfc3c8df15f6040006ad29ec786ec8190a65f4e8923a1709d","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"Paris","item_id":"msg_0cfc3c8df15f6040006ad29ec786ec8190a65f4e8923a1709d","logprobs":[],"obfuscation":"U2ytWai6phn","output_index":0,"sequence_number":4}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0cfc3c8df15f6040006ad29ec786ec8190a65f4e8923a1709d","logprobs":[],"output_index":0,"sequence_number":5,"text":"Paris"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0cfc3c8df15f6040006ad29ec786ec8190a65f4e8923a1709d","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"Paris"},"sequence_number":6}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_0cfc3c8df15f6040006ad29ec786ec8190a65f4e8923a1709d","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"Paris"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":7}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0cfc3c8df15f6040006ad29ec5e7288190946cfa8ce90d7e4a","object":"response","created_at":1792188102,"status":"completed","background":false,"completed_at":1792188104,"content_filters":[{"blocked":false,"source_type":"prompt","content_filter_raw":[],"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"},"jailbreak":{"detected":false,"filtered":false}},"content_filter_offsets":{"start_offset":0,"end_offset":882,"check_offset":0}},{"blocked":false,"source_type":"completion","content_filter_raw":[],"content_filter_results":{"protected_material_text":{"detected":false,"filtered":false},"protected_material_code":{"detected":false,"filtered":false},"hate":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"}},"content_filter_offsets":{"start_offset":0,"end_offset":5,"check_offset":0}}],"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4","moderation":null,"output":[{"id":"msg_0cfc3c8df15f6040006ad29ec786ec8190a65f4e8923a1709d","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"Paris"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":18,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":23},"user":null,"metadata":{}},"sequence_number":8}
+
+  recorded_at: 2026-10-16T22:01:45.725037+00:00

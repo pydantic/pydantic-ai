@@ -5,14 +5,17 @@ Split out of `test_capabilities.py` per #7304.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 from opentelemetry.trace import NoOpTracer
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic_core import ErrorDetails, PydanticCustomError
 
+from pydantic_ai import RetryFeedbackPart
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
@@ -33,7 +36,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryInfo,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -51,13 +54,11 @@ from .capability_models import (
     MyOutput,
     make_text_response,
 )
-from .conftest import IsDatetime, IsStr, iter_message_parts
+from .conftest import IsDatetime, IsStr, iter_message_parts, legacy_retry_prompt_part
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
 
 
 # --- Output hook tests ---
@@ -262,7 +263,7 @@ class TestOnOutputValidateError:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        RetryFeedbackPart(
                             content=[
                                 {
                                     'type': 'int_parsing',
@@ -271,7 +272,7 @@ class TestOnOutputValidateError:
                                     'input': 'bad',
                                 }
                             ],
-                            tool_call_id=IsStr(),
+                            retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -281,7 +282,7 @@ class TestOnOutputValidateError:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
-                    usage=RequestUsage(input_tokens=87, output_tokens=7),
+                    usage=RequestUsage(input_tokens=94, output_tokens=7),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -289,6 +290,81 @@ class TestOnOutputValidateError:
                 ),
             ]
         )
+
+    @pytest.mark.parametrize('invalid_name', ['invalid', '{{reason}}'])
+    async def test_union_member_error_hook_preserves_error_details(self, invalid_name: str):
+        """The error hook sees member errors with their original context and documentation URL."""
+
+        class ErrorMember(BaseModel):
+            value: int = Field(gt=5)
+            name: str
+
+            @field_validator('name')
+            @classmethod
+            def validate_name(cls, value: str) -> str:
+                if value != 'valid':
+                    context: dict[str, str] = {'reason': value}
+                    if value == '{{reason}}':
+                        context['_pydantic_ai_message'] = 'original'
+                    raise PydanticCustomError('invalid_name', 'Invalid name: {reason}', context)
+                return value
+
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            data: dict[str, int | str]
+            if call_count == 1:
+                data = {'value': 3, 'name': invalid_name}
+            else:
+                data = {'value': 6, 'name': 'valid'}
+            text = json.dumps({'result': {'kind': 'ErrorMember', 'data': data}})
+            return ModelResponse(parts=[TextPart(content=text)])
+
+        errors_seen: list[ErrorDetails] = []
+        hooks = Hooks()
+
+        @hooks.on.output_validate_error
+        async def capture_error(
+            ctx: RunContext[Any],
+            *,
+            output_context: OutputContext,
+            output: str | dict[str, Any],
+            error: ValidationError | ModelRetry,
+        ) -> Any:
+            assert isinstance(error, ValidationError)
+            errors_seen.extend(error.errors())
+            raise error
+
+        with pytest.raises(ValidationError) as exc_info:
+            ErrorMember.model_validate({'value': 3, 'name': invalid_name})
+        expected_errors = exc_info.value.errors()
+
+        agent = Agent(
+            FunctionModel(model_fn), output_type=PromptedOutput([ErrorMember, MyOutput]), capabilities=[hooks]
+        )
+        result = await agent.run('hello')
+
+        if invalid_name == '{{reason}}':
+            for actual, expected in zip(errors_seen, expected_errors, strict=True):
+                assert actual['loc'] == ('result', 'data', *expected['loc'])
+                assert actual['type'] == expected['type']
+                assert actual['msg'] == expected['msg']
+                assert actual['input'] == expected['input']
+                assert actual.get('url') == expected.get('url')
+                actual_context = actual.get('ctx')
+                expected_context = expected.get('ctx')
+                assert actual_context is not None
+                assert expected_context is not None
+                for key, value in expected_context.items():
+                    assert key in actual_context
+                    assert actual_context[key] == value
+                assert len(actual_context) <= len(expected_context) + 1
+        else:
+            assert errors_seen == [{**item, 'loc': ('result', 'data', *item['loc'])} for item in expected_errors]
+        assert result.output == ErrorMember(value=6, name='valid')
+        assert call_count == 2
 
 
 class TestOnOutputValidateErrorModelRetry:
@@ -339,9 +415,9 @@ class TestOnOutputValidateErrorModelRetry:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        RetryFeedbackPart(
                             content='Please return a valid integer for value',
-                            tool_call_id=IsStr(),
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -351,7 +427,7 @@ class TestOnOutputValidateErrorModelRetry:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
-                    usage=RequestUsage(input_tokens=67, output_tokens=7),
+                    usage=RequestUsage(input_tokens=77, output_tokens=7),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -406,9 +482,9 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        RetryFeedbackPart(
                             content='Negative values are not allowed',
-                            tool_call_id=IsStr(),
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -418,7 +494,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
-                    usage=RequestUsage(input_tokens=65, output_tokens=6),
+                    usage=RequestUsage(input_tokens=75, output_tokens=6),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -470,9 +546,9 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        RetryFeedbackPart(
                             content='Zero is not a valid value',
-                            tool_call_id=IsStr(),
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -482,7 +558,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
-                    usage=RequestUsage(input_tokens=66, output_tokens=6),
+                    usage=RequestUsage(input_tokens=76, output_tokens=6),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -533,9 +609,9 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        RetryFeedbackPart(
                             content='Output too short, please elaborate',
-                            tool_call_id=IsStr(),
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -545,7 +621,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='this is long enough')],
-                    usage=RequestUsage(input_tokens=65, output_tokens=5),
+                    usage=RequestUsage(input_tokens=75, output_tokens=5),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -607,9 +683,9 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        RetryFeedbackPart(
                             content='Bad output, please try again',
-                            tool_call_id=IsStr(),
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -619,7 +695,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good')],
-                    usage=RequestUsage(input_tokens=65, output_tokens=2),
+                    usage=RequestUsage(input_tokens=75, output_tokens=2),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -672,9 +748,9 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        RetryFeedbackPart(
                             content='Cannot execute with zero value',
-                            tool_call_id=IsStr(),
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -684,7 +760,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 5}')],
-                    usage=RequestUsage(input_tokens=65, output_tokens=6),
+                    usage=RequestUsage(input_tokens=75, output_tokens=6),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -747,11 +823,13 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content='Negative values not allowed',
                             tool_name='final_result',
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
+                            outcome='retried',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -760,7 +838,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='final_result', args='{"value": 42}', tool_call_id='call-2')],
-                    usage=RequestUsage(input_tokens=62, output_tokens=8),
+                    usage=RequestUsage(input_tokens=58, output_tokens=8),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -831,11 +909,13 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content='Zero not allowed',
                             tool_name='final_result',
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
+                            outcome='retried',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -844,7 +924,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='final_result', args='{"value": 10}', tool_call_id='call-2')],
-                    usage=RequestUsage(input_tokens=61, output_tokens=8),
+                    usage=RequestUsage(input_tokens=57, output_tokens=8),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -906,11 +986,11 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content=[
                                 {
                                     'type': 'int_parsing',
-                                    'loc': ('value',),
+                                    'loc': ['value'],
                                     'msg': 'Input should be a valid integer, unable to parse string as an integer',
                                     'input': 'bad',
                                 }
@@ -918,6 +998,8 @@ class TestModelRetryFromOutputHooks:
                             tool_name='final_result',
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
+                            outcome='retried',
+                            retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -926,7 +1008,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='final_result', args='{"value": 42}', tool_call_id='call-2')],
-                    usage=RequestUsage(input_tokens=89, output_tokens=9),
+                    usage=RequestUsage(input_tokens=77, output_tokens=9),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -1000,11 +1082,13 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content='Please provide a valid integer',
                             tool_name='final_result',
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
+                            outcome='retried',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -1013,7 +1097,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='final_result', args='{"value": 42}', tool_call_id='call-2')],
-                    usage=RequestUsage(input_tokens=63, output_tokens=9),
+                    usage=RequestUsage(input_tokens=59, output_tokens=9),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -1768,14 +1852,14 @@ class TestOutputHookFullLifecycle:
         result = await agent.run('hello')
         assert result.output == MyOutput(value=1)
         assert log == [
-            'before_validate',
             'wrap_validate:before',
-            'wrap_validate:after',
+            'before_validate',
             'after_validate',
-            'before_execute',
+            'wrap_validate:after',
             'wrap_execute:before',
-            'wrap_execute:after',
+            'before_execute',
             'after_execute',
+            'wrap_execute:after',
         ]
         assert result.all_messages() == snapshot(
             [
@@ -2201,7 +2285,7 @@ class TestOutputHookErrorPaths:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        RetryFeedbackPart(
                             content=[
                                 {
                                     'type': 'json_invalid',
@@ -2210,7 +2294,7 @@ class TestOutputHookErrorPaths:
                                     'input': 'not valid json',
                                 }
                             ],
-                            tool_call_id=IsStr(),
+                            retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -2220,7 +2304,7 @@ class TestOutputHookErrorPaths:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
-                    usage=RequestUsage(input_tokens=81, output_tokens=6),
+                    usage=RequestUsage(input_tokens=90, output_tokens=6),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -2360,7 +2444,7 @@ class TestOutputHookErrorPaths:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        RetryFeedbackPart(
                             content=[
                                 {
                                     'type': 'json_invalid',
@@ -2369,7 +2453,7 @@ class TestOutputHookErrorPaths:
                                     'input': 'invalid',
                                 }
                             ],
-                            tool_call_id=IsStr(),
+                            retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -2379,7 +2463,7 @@ class TestOutputHookErrorPaths:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 1}')],
-                    usage=RequestUsage(input_tokens=81, output_tokens=4),
+                    usage=RequestUsage(input_tokens=88, output_tokens=4),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -2512,7 +2596,7 @@ class TestOutputHookErrorPaths:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        RetryFeedbackPart(
                             content=[
                                 {
                                     'type': 'json_invalid',
@@ -2521,7 +2605,7 @@ class TestOutputHookErrorPaths:
                                     'input': 'bad json',
                                 }
                             ],
-                            tool_call_id=IsStr(),
+                            retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -2531,7 +2615,7 @@ class TestOutputHookErrorPaths:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 99}')],
-                    usage=RequestUsage(input_tokens=81, output_tokens=5),
+                    usage=RequestUsage(input_tokens=89, output_tokens=5),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -2725,7 +2809,7 @@ class TestDefaultOutputErrorHooks:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        RetryFeedbackPart(
                             content=[
                                 {
                                     'type': 'json_invalid',
@@ -2734,7 +2818,7 @@ class TestDefaultOutputErrorHooks:
                                     'input': 'not json',
                                 }
                             ],
-                            tool_call_id=IsStr(),
+                            retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -2744,7 +2828,7 @@ class TestDefaultOutputErrorHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 7}')],
-                    usage=RequestUsage(input_tokens=81, output_tokens=5),
+                    usage=RequestUsage(input_tokens=89, output_tokens=5),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -4911,7 +4995,7 @@ async def test_deferred_tool_handler_batch_external_tool_return_metadata():
 
 
 async def test_deferred_tool_handler_batch_external_model_retry():
-    """Batch path: handler-supplied `ModelRetry` in `calls` surfaces as a `RetryPromptPart`, not a tool return."""
+    """Batch path: handler-supplied `ModelRetry` in `calls` surfaces as a retried tool return."""
     call_count = 0
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4933,16 +5017,14 @@ async def test_deferred_tool_handler_batch_external_model_retry():
     result = await agent.run('go')
     assert result.output == 'retried'
     messages = result.all_messages()
-    retry_parts = list(iter_message_parts(messages, ModelRequest, RetryPromptPart))
-    assert len(retry_parts) == 1
-    assert retry_parts[0].tool_call_id == 'c1'
-    assert retry_parts[0].content == 'try again'
     tool_returns = [p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart) if p.tool_call_id == 'c1']
-    assert tool_returns == []
+    assert len(tool_returns) == 1
+    assert tool_returns[0].outcome == 'retried'
+    assert tool_returns[0].content == 'try again'
 
 
 async def test_deferred_tool_handler_batch_external_retry_prompt_part():
-    """Batch path: handler-supplied `RetryPromptPart` in `calls` surfaces as a retry (names stamped from the deferred call)."""
+    """Batch path: a handler-supplied `RetryPromptPart` in `calls` settles as the call's retried return."""
     call_count = 0
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4955,7 +5037,7 @@ async def test_deferred_tool_handler_batch_external_retry_prompt_part():
     async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             calls={
-                call.tool_call_id: RetryPromptPart(content='retry via part', tool_name='', tool_call_id='')
+                call.tool_call_id: legacy_retry_prompt_part(content='retry via part', tool_name='', tool_call_id='')
                 for call in requests.calls
             }
         )
@@ -4968,7 +5050,11 @@ async def test_deferred_tool_handler_batch_external_retry_prompt_part():
 
     result = await agent.run('go')
     assert result.output == 'retried'
-    retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
+    retry_parts = [
+        part
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried'
+    ]
     assert len(retry_parts) == 1
     assert retry_parts[0].tool_call_id == 'c1'
     assert retry_parts[0].tool_name == 'external_tool'
@@ -5165,7 +5251,7 @@ async def test_deferred_tool_handler_approved_tool_returns_tool_return():
 
 
 async def test_deferred_tool_handler_approved_tool_raises_model_retry():
-    """Approved tool that raises ModelRetry produces a RetryPromptPart."""
+    """Approved tool that raises ModelRetry produces a retried `ToolReturnPart`."""
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -5187,7 +5273,9 @@ async def test_deferred_tool_handler_approved_tool_raises_model_retry():
     assert result.output == 'Retried and done.'
     # Verify the retry happened
     retry_parts = [
-        p for p in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart) if p.tool_name == 'my_tool'
+        p
+        for p in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if p.tool_name == 'my_tool' and p.outcome == 'retried'
     ]
     assert len(retry_parts) == 1
 
@@ -5603,7 +5691,7 @@ async def test_deferred_tool_handler_via_handle_call_external_model_retry():
 
 
 async def test_deferred_tool_handler_via_handle_call_external_retry_prompt_part():
-    """When a handler supplies a `RetryPromptPart` external-call result, handle_call raises `ToolRetryError` with the part."""
+    """When a handler supplies a `RetryPromptPart` external-call result, handle_call raises `ToolRetryError` with the retried return it means."""
     from pydantic_ai.exceptions import CallDeferred, ToolRetryError
     from pydantic_ai.toolsets import FunctionToolset
 
@@ -5616,7 +5704,7 @@ async def test_deferred_tool_handler_via_handle_call_external_retry_prompt_part(
     async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             calls={
-                call.tool_call_id: RetryPromptPart(content='retry via part', tool_name='', tool_call_id='')
+                call.tool_call_id: legacy_retry_prompt_part(content='retry via part', tool_name='', tool_call_id='')
                 for call in requests.calls
             }
         )

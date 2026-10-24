@@ -1,3 +1,7 @@
+---
+description: "Run each Pydantic Evals case several times with the repeat parameter to measure the variability of a non-deterministic LLM system and average scores per case."
+---
+
 # Multi-Run Evaluation
 
 Run each case multiple times to measure variability and get more reliable aggregate results.

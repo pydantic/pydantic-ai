@@ -1,0 +1,4 @@
+interface:
+  display_name: "Migrate Vercel AI SDK and Eve"
+  short_description: "Migrate Vercel agents safely"
+  default_prompt: "Use $migrating-vercel-ai-sdk-and-eve-to-pydantic-ai to migrate the smallest complete Vercel AI SDK or Eve slice to Pydantic AI while preserving its observed contracts with proportionate tests."

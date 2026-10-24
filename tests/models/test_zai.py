@@ -12,8 +12,7 @@ from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsStr, try_import
-from .conftest import RequestCapture
+from ..conftest import IsDatetime, IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
     from openai.types import chat
@@ -29,7 +28,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -169,12 +167,17 @@ async def test_zai_thinking_across_turns(allow_model_requests: None, zai_api_key
     first_thinking, second_thinking = [
         part.content for result in (first, second) for part in result.response.parts if isinstance(part, ThinkingPart)
     ]
-    assert [
-        message['reasoning_content']
-        for body in request_capture.bodies('/chat/completions')
-        for message in body['messages']
-        if message['role'] == 'assistant'
-    ] == [first_thinking, first_thinking, second_thinking]
+    replayed_thinking: list[str] = []
+    for body in request_capture.bodies('/chat/completions'):
+        messages = body['messages']
+        assert isinstance(messages, list)
+        for message in messages:
+            assert isinstance(message, dict)
+            if message.get('role') == 'assistant':
+                reasoning_content = message['reasoning_content']
+                assert isinstance(reasoning_content, str)
+                replayed_thinking.append(reasoning_content)
+    assert replayed_thinking == [first_thinking, first_thinking, second_thinking]
 
 
 async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str, request_capture: RequestCapture):
@@ -327,7 +330,7 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str,
                     ),
                     (
                         False,
-                        {'thinking': {'clear_thinking': False}},
+                        {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': 'low'},
                         [
                             ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
                             TextPart(content='2 + 2 = 4'),
@@ -382,7 +385,7 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str,
                     ),
                     (
                         False,
-                        {'thinking': {'clear_thinking': False}},
+                        {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': 'low'},
                         [
                             ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
                             TextPart(content='2 + 2 = 4'),
@@ -408,9 +411,13 @@ async def test_zai_reasoning_effort(
 
     GLM-5.2 accepts every unified level, so its profile carries no mapping and each level goes out
     unchanged. GLM-5.3 and GLM-5.3-flash only accept `low`/`high`/`max`, so their profile maps the
-    rest onto the nearest supported one; they also always reason, so `thinking=False` is dropped
-    before it reaches the wire instead of becoming `type: 'disabled'`. A bare `thinking=True` sends
-    no effort on any of them, leaving Z.AI to apply its own default.
+    rest onto the nearest supported one; they also always reason, so `thinking=False` sends their
+    lowest effort, `low`, instead of `type: 'disabled'`. A bare `thinking=True` sends no effort on any
+    of them, leaving Z.AI to apply its own default.
+
+    The GLM-5.3 `False` rows replay a response recorded when `thinking=False` sent no `type` or effort
+    (no Z.AI key was at hand to re-record them); the payload they now pin is the same one the `minimal`
+    and `low` rows send, which those rows' recordings show the API accepting.
 
     Recording every level is what makes the API's acceptance of each value we emit part of the test
     rather than an assumption. The returned parts are the other half of it, and they are not uniform:

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import check_api_compatibility
 import pytest
-from check_api_compatibility import Finding, emit_annotation, load_waivers, parse_findings
+from check_api_compatibility import Finding, emit_annotation, load_waivers, parse_findings, run_griffe
 
 
 def test_fingerprint_identifies_the_exact_finding():
@@ -34,6 +35,44 @@ def test_parse_findings():
 def test_parse_findings_rejects_unknown_output():
     with pytest.raises(ValueError, match='Unexpected Griffe output'):
         parse_findings('pydantic_ai', 'not a finding')
+
+
+@pytest.mark.subprocess(reason='parses the output stream and exit code of a real `griffecli` process')
+def test_run_griffe_reports_real_griffe_findings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    module = tmp_path / 'fixture_pkg' / '__init__.py'
+    module.parent.mkdir()
+    module.write_text('def greet(name): ...\n', encoding='utf-8')
+    git = [
+        'git',
+        '-C',
+        str(tmp_path),
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@example.com',
+        '-c',
+        'commit.gpgsign=false',
+        '-c',
+        'tag.gpgSign=false',
+        '-c',
+        'core.hooksPath=/dev/null',
+    ]
+    subprocess.run([*git, 'init', '-q'], check=True)
+    subprocess.run([*git, 'add', '.'], check=True)
+    subprocess.run([*git, 'commit', '-q', '-m', 'release'], check=True)
+    subprocess.run([*git, 'tag', 'v1'], check=True)
+    monkeypatch.chdir(tmp_path)
+
+    assert run_griffe('fixture_pkg', '.', 'v1') == []
+
+    module.write_text('def greet(name, greeting): ...\n', encoding='utf-8')
+
+    assert run_griffe('fixture_pkg', '.', 'v1') == [
+        Finding('fixture_pkg', 'fixture_pkg/__init__.py', 1, 'greet(greeting): Parameter was added as required')
+    ]
+
+    with pytest.raises(SystemExit, match='griffecli check missing_pkg failed with exit code 1'):
+        run_griffe('missing_pkg', '.', 'v1')
 
 
 def test_load_waivers(tmp_path: Path):
@@ -116,6 +155,43 @@ def test_main_warns_for_approved_breakage(
     output = capsys.readouterr().out
     assert '::warning file=messages.py,line=12::' in output
     assert 'Allowed by https://github.com/pydantic/pydantic-ai/pull/123' in output
+
+
+def test_main_skips_the_clai2_web_ui_modules(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    plugins = 'src/pydantic_clai2/pydantic_clai2/builtin_plugins'
+    skipped = [
+        Finding('pydantic_clai2', f'{plugins}/web/__init__.py', 1, 'WebPlugin: Public object was removed'),
+        Finding('pydantic_clai2', f'{plugins}/web/service.py', 2, 'WebService.host: Public object was removed'),
+        Finding('pydantic_clai2', f'{plugins}/workspaces/sessions.py', 3, '<module>: Public object was removed'),
+    ]
+    reported = [
+        Finding('pydantic_clai2', f'{plugins}/web_search.py', 4, 'WebSearch: Public object was removed'),
+        Finding(
+            'pydantic_clai2',
+            'src/pydantic_clai2/pydantic_clai2/plugins/__init__.py',
+            5,
+            'Plugin: Public object was removed',
+        ),
+    ]
+    path = tmp_path / 'allowlist.json'
+    path.write_text('{"allowed_breakages": []}', encoding='utf-8')
+
+    def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
+        return [*skipped, *reported]
+
+    monkeypatch.setattr(check_api_compatibility, 'PACKAGES', {'pydantic_clai2': 'src/pydantic_clai2'})
+    monkeypatch.setattr(check_api_compatibility, 'run_griffe', run_griffe)
+    monkeypatch.setattr('sys.argv', ['check_api_compatibility.py', '--against', 'v2.32.1', '--allowlist', str(path)])
+
+    with pytest.raises(SystemExit, match='1'):
+        check_api_compatibility.main()
+
+    output = capsys.readouterr().out
+    assert [line.split('::')[1] for line in output.splitlines()] == [
+        f'error file={finding.path},line={finding.line}' for finding in reported
+    ]
 
 
 def test_main_rejects_unused_waiver_for_current_baseline(

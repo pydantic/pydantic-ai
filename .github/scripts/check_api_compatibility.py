@@ -16,7 +16,18 @@ PACKAGES = {
     'pydantic_graph': 'pydantic_graph',
     'pydantic_evals': 'pydantic_evals',
     'clai': 'clai',
+    'pydantic_ai_harness': 'src/pydantic_ai_harness',
+    'pydantic_clai2': 'src/pydantic_clai2',
 }
+# The `clai2` web UI and the `workspaces` plugin behind it are application code, not an SDK for others to build on,
+# so their changes need no compatibility waiver. Each excludes every module in the package.
+EXCLUDED_PACKAGES = (
+    'pydantic_clai2.builtin_plugins.web',
+    'pydantic_clai2.builtin_plugins.workspaces',
+)
+# Run from its own tool environment: `griffe` 1.x, which `prefect` accepts, installs over `griffelib`'s `griffe`
+# module, and `griffecli` crashes against it. A bump can reword findings, which changes their fingerprints.
+GRIFFECLI_VERSION = '2.3.0'
 _FINDING_RE = re.compile(r'^(?P<path>.*):(?P<line>\d+): (?P<message>.*)$')
 
 
@@ -65,6 +76,8 @@ def main() -> None:
     for package, search_path in PACKAGES.items():
         findings = run_griffe(package, search_path, args.against)
         for finding in findings:
+            if is_excluded(finding, search_path):
+                continue
             waiver_key = (args.against, finding.fingerprint)
             waiver = waivers.get(waiver_key)
             if waiver is None:
@@ -92,6 +105,12 @@ def main() -> None:
         raise SystemExit(1)
 
 
+def is_excluded(finding: Finding, search_path: str) -> bool:
+    """Whether the finding is in a file of one of `EXCLUDED_PACKAGES` under `search_path`."""
+    path = Path(finding.path)
+    return any(path.is_relative_to(Path(search_path, *package.split('.'))) for package in EXCLUDED_PACKAGES)
+
+
 def load_waivers(path: Path) -> dict[tuple[str, str], Waiver]:
     allowlist = Allowlist.model_validate_json(path.read_text(encoding='utf-8'))
     waivers: dict[tuple[str, str], Waiver] = {}
@@ -106,8 +125,10 @@ def load_waivers(path: Path) -> dict[tuple[str, str], Waiver]:
 def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
     result = subprocess.run(
         [
-            sys.executable,
-            '-m',
+            'uvx',
+            '--quiet',
+            '--from',
+            f'griffecli=={GRIFFECLI_VERSION}',
             'griffecli',
             'check',
             package,
@@ -123,11 +144,17 @@ def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
         capture_output=True,
         text=True,
     )
-    if result.returncode not in {0, 1}:
+    # `griffecli` prints findings to stderr and exits 1 when there are any, but an uncaught exception also exits 1.
+    # Accept only output that parses and agrees with the exit code, so a crash can never read as a clean check.
+    try:
+        findings = parse_findings(package, result.stderr)
+    except ValueError:
+        findings = None
+    if findings is None or result.returncode != (1 if findings else 0):
         sys.stderr.write(result.stdout)
         sys.stderr.write(result.stderr)
-        raise SystemExit(result.returncode)
-    return parse_findings(package, result.stdout)
+        raise SystemExit(f'griffecli check {package} failed with exit code {result.returncode}')
+    return findings
 
 
 def parse_findings(package: str, output: str) -> list[Finding]:
