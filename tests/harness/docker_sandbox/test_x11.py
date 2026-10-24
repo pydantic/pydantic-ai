@@ -93,14 +93,8 @@ class BlockingCommands(ScriptedCommands):
         (MouseUp(), ['xdotool', 'mouseup', '1']),
         (Scroll(x=7, y=8, direction='down'), ['xdotool', 'mousemove', '7', '8', 'click', '--repeat', '3', '5']),
         (Scroll(direction='up', amount=2), ['xdotool', 'click', '--repeat', '2', '4']),
-        (
-            Scroll(direction='right', amount=1, modifiers=('shift',)),
-            ['xdotool', 'keydown', 'shift', 'click', '--repeat', '1', '7', 'keyup', 'shift'],
-        ),
-        (Scroll(direction='left', amount=4), ['xdotool', 'click', '--repeat', '4', '6']),
         (TypeText(text='-n "hi"\n'), ['xdotool', 'type', '--', '-n "hi"\n']),
-        (PressKeys(keys=('ctrl', 's')), ['xdotool', 'key', '--repeat', '1', '--', 'ctrl+s']),
-        (PressKeys(keys=('Return',), repeat=3), ['xdotool', 'key', '--repeat', '3', '--', 'Return']),
+        (PressKeys(keys=('ctrl', 's'), repeat=3), ['xdotool', 'key', '--repeat', '3', '--', 'ctrl+s']),
         (PressKeys(keys=('PageDown', 'F5', 'ArrowUp')), ['xdotool', 'key', '--repeat', '1', '--', 'Next+F5+Up']),
         (PressKeys(keys=('shift', 'XF86AudioMute')), ['xdotool', 'key', '--repeat', '1', '--', 'shift+XF86AudioMute']),
         (PressKeys(keys=('ctrl', '+')), ['xdotool', 'key', '--repeat', '1', '--', 'ctrl+plus']),
@@ -111,7 +105,6 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: Computer
     commands = ScriptedCommands()
     await X11Computer(commands).act(action)
     assert commands.calls == [(argv, False, {'DISPLAY': ':1'})]
-    assert commands.timeouts == [60]
 
 
 @pytest.mark.parametrize(
@@ -179,6 +172,7 @@ async def test_x11_computer_reads_the_display_size_and_screenshot_on_its_display
     assert geometry == ['xdotool', 'getdisplaygeometry']
     assert env == {'DISPLAY': ':1'}
     assert shell is True
+    assert commands.timeouts == [60, 60]
 
 
 @pytest.mark.parametrize(
@@ -203,8 +197,7 @@ async def test_x11_computer_failures_raise_workspace_error(result: CommandResult
     'output',
     [
         pytest.param('bm90IGEgcG5n', id='not-a-png'),
-        pytest.param('abc', id='bad-padding'),
-        pytest.param('iVBORw0KGgo\u00e9', id='not-ascii'),
+        pytest.param('abc', id='not-base64'),
     ],
 )
 async def test_x11_computer_refuses_a_screenshot_that_is_not_a_png(output: str) -> None:

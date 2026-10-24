@@ -29,9 +29,10 @@ import re
 import secrets
 import shutil
 import tempfile
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import Literal
 
 import anyio
 
@@ -58,8 +59,6 @@ from ._x11 import DISPLAY, X11Computer
 __all__ = ('DESKTOP_DOCKERFILE', 'DockerSandboxBackend', 'remove_container')
 
 PROVIDER = 'docker'
-
-T = TypeVar('T')
 
 _READY = '__pydantic_ai_docker_ready__\n'
 """Printed on stderr before the command starts; anything before it is the `docker` client's own error."""
@@ -307,8 +306,9 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         executable: str = 'docker',
         desktop: bool = False,
     ):
-        # A desktop may pass neither: it runs the desktop image, built just before its container is first created.
-        if (image is not None and ref is not None) or (image is None and ref is None and not desktop):
+        if desktop and image is None and ref is None:
+            image = _DESKTOP_IMAGE  # built just before its container is first created
+        if (image is None) == (ref is None):
             raise ValueError('pass exactly one of `image`, to create a container, or `ref`, to attach to one')
         if ref is not None and ref.provider != PROVIDER:
             raise ValueError(f'unsupported workspace provider {ref.provider!r}; expected {PROVIDER!r}')
@@ -318,7 +318,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
             raise ValueError(f'working_dir must be an absolute path in the container, got {working_dir!r}')
         if isinstance(docker_args, str):
             raise TypeError('docker_args must be a sequence of arguments, not a string')
-        self._image = _DESKTOP_IMAGE if desktop and image is None and ref is None else image
+        self._image = image
         self._ref = ref
         self._desktop = desktop
         self._display_started = False
@@ -507,7 +507,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     def has_display(self) -> bool:
         return self._desktop
 
-    async def _on_display(self, operation: Callable[[X11Computer], Awaitable[T]]) -> T:
+    @asynccontextmanager
+    async def _display(self) -> AsyncGenerator[X11Computer]:
         if not self._desktop:
             raise UserError('This Docker workspace has no display: create it with `desktop=True`.')
         # One start at a time: two would both find no display and launch two X servers.
@@ -521,7 +522,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
                     )
                 self._display_started = True
         try:
-            return await operation(X11Computer(self))
+            yield X11Computer(self)
         except UnsupportedComputerActionError:
             raise  # a refused action, such as an unknown key: the display is fine
         except WorkspaceError:
@@ -530,10 +531,13 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
             raise
 
     async def display_size(self) -> tuple[int, int]:
-        return await self._on_display(lambda computer: computer.display_size())
+        async with self._display() as computer:
+            return await computer.display_size()
 
     async def screenshot(self) -> bytes:
-        return await self._on_display(lambda computer: computer.screenshot())
+        async with self._display() as computer:
+            return await computer.screenshot()
 
     async def act(self, action: ComputerAction) -> None:
-        await self._on_display(lambda computer: computer.act(action))
+        async with self._display() as computer:
+            await computer.act(action)

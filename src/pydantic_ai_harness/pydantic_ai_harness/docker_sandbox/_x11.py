@@ -3,7 +3,6 @@
 from __future__ import annotations as _annotations
 
 import base64
-import binascii
 import re
 from contextlib import suppress
 
@@ -136,7 +135,7 @@ def _keysym(key: str) -> str:
     keysym = _KEYSYMS.get(key, key)
     # xdotool reads any argument that names one of its commands, in any case, as that command.
     if not _KEYSYM_PATTERN.fullmatch(keysym) or keysym.lower() in _XDOTOOL_COMMANDS:
-        raise UnsupportedComputerActionError(f'X11Computer cannot press the key {key!r}.')
+        raise UnsupportedComputerActionError(f'The display cannot press the key {key!r}.')
     return keysym
 
 
@@ -182,7 +181,7 @@ class X11Computer:
             raise
         # xdotool skips a key name the display doesn't know and still succeeds.
         if 'No such key name' in result.stderr:
-            raise UnsupportedComputerActionError(f'X11Computer cannot press that key: {result.stderr.strip()}')
+            raise UnsupportedComputerActionError(f'The display cannot press that key: {result.stderr.strip()}')
 
     async def display_size(self) -> tuple[int, int]:
         output = (await self._run(['xdotool', 'getdisplaygeometry'])).stdout.split()
@@ -196,7 +195,7 @@ class X11Computer:
         output = (await self._run(_SCREENSHOT)).stdout
         try:
             data = base64.b64decode(''.join(output.split()), validate=True)
-        except (binascii.Error, ValueError):
+        except ValueError:  # includes `binascii.Error`
             data = b''
         if not data.startswith(_PNG_SIGNATURE):
             raise WorkspaceError('The screenshot command did not print a base64-encoded PNG.')
@@ -233,4 +232,4 @@ class X11Computer:
             case HoldKeys(keys=keys, seconds=seconds):
                 await self._xdotool(['sleep', str(seconds)], hold=keys)
             case _:
-                raise UnsupportedComputerActionError(f'X11Computer cannot perform {action!r}.')
+                raise UnsupportedComputerActionError(f'The display cannot perform {action!r}.')
