@@ -678,6 +678,33 @@ async def delegate(
     )
 
 
+async def test_binding_another_owner_inside_a_child_leaves_the_child_behind() -> None:
+    owner, other = DelegationTasks(), DelegationTasks()
+    seen: list[str | None] = []
+
+    async def run(record: DelegationTask) -> str:
+        with owner.bind():
+            seen.append(DelegationTasks.child_id())
+        with other.bind():
+            seen.append(DelegationTasks.child_id())
+        seen.append(DelegationTasks.child_id())
+        return 'done'
+
+    async with owner.opened(), other.opened():
+        with owner.bind():
+            await owner.delegate(
+                agent_name='worker',
+                prompt='go',
+                conversation_id='root',
+                model=None,
+                background=False,
+                resume=None,
+                run=run,
+            )
+    (record,) = owner.records.values()
+    assert seen == [record.id, None, record.id]
+
+
 async def test_owner_guards_and_resume_errors() -> None:
     with pytest.raises(ValueError, match='max_depth'):
         DelegationTasks(max_depth=0)

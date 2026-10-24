@@ -16,6 +16,9 @@ from pydantic_ai_harness._provenance import tagged_text
 _TASK_REPORT_ORIGIN = 'pydantic-ai-harness.subagents.report.v1'
 """The `origin` in the metadata of the `TextContent` that carries a background task's output."""
 
+_TASK_QUESTION_ORIGIN = 'pydantic-ai-harness.subagents.question.v1'
+"""The `origin` in the metadata of the `TextContent` that carries a task's question to its parent."""
+
 # TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
 # `task_output` as a framing tag there.
 # The `<` of an opening or closing `task_output`, or the hyphenated `task-output` older reports used, which could end
@@ -39,6 +42,23 @@ def make_task_output(body: str, *, task_id: str, agent_name: str, outcome: str, 
     return UserPromptPart([TextContent(f'<task_output{attrs}>\n{body}\n</task_output>', metadata=metadata)])
 
 
+# The `<` of an opening or closing `task_question`, matched as `_TASK_OUTPUT_TAG_OPENER` matches its tag.
+_TASK_QUESTION_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?task_question(?=[\s/>]|$))', re.IGNORECASE)
+
+
+def make_task_question(question: str, *, task_id: str, agent_name: str, question_id: str) -> UserPromptPart:
+    """Frame a task's `question` to its parent as `<task_question>` data, escaped as `make_task_output` escapes output.
+
+    The question was written by the child's model, so like its output it never enters system voice.
+    """
+    attrs = f' task_id="{html.escape(task_id)}" agent_name="{html.escape(agent_name)}"'
+    body = _TASK_QUESTION_TAG_OPENER.sub('&lt;', neutralize_tags(question))
+    metadata = {'origin': _TASK_QUESTION_ORIGIN, 'task_id': task_id, 'question_id': question_id}
+    return UserPromptPart([TextContent(f'<task_question{attrs}>\n{body}\n</task_question>', metadata=metadata)])
+
+
 def is_task_report(part: ModelRequestPart) -> TypeGuard[UserPromptPart]:
-    """Whether `part` carries a background task's output, as delivered by `DelegationReports`."""
-    return isinstance(part, UserPromptPart) and tagged_text(part.content, _TASK_REPORT_ORIGIN) is not None
+    """Whether `part` carries a background task's output or a task's question, as `DelegationReports` delivers them."""
+    return isinstance(part, UserPromptPart) and any(
+        tagged_text(part.content, origin) is not None for origin in (_TASK_REPORT_ORIGIN, _TASK_QUESTION_ORIGIN)
+    )
