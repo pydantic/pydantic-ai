@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 
 import httpx2
 import pytest
+from inline_snapshot import snapshot
 from pydantic import Field, JsonValue
 from typing_extensions import TypeAliasType
 
@@ -69,63 +70,6 @@ def accept_node(node: Node) -> str:
     return 'ok'  # pragma: no cover
 
 
-_REPLACEMENT_SCHEMA: dict[str, JsonValue] = {
-    'type': 'object',
-    'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
-    'required': ['old_text', 'new_text'],
-    'additionalProperties': False,
-}
-_TOOL_SCHEMAS: dict[tuple[bool, bool | None], dict[str, JsonValue]] = {}
-for _inlined in (False, True):
-    for _strict in (None, True, False):
-        _replacement = deepcopy(_REPLACEMENT_SCHEMA)
-        if _strict is False:
-            _replacement.pop('additionalProperties')
-        _items: dict[str, JsonValue] = _replacement if _inlined else {'$ref': '#/$defs/Replacement'}
-        _replacements: dict[str, JsonValue] = {
-            'anyOf': [{'type': 'array', 'items': _items}, {'type': 'null'}],
-        }
-        if _strict is not True:
-            _replacements['default'] = None
-        _parameters: dict[str, JsonValue] = {
-            'type': 'object',
-            'properties': {'path': {'type': 'string'}, 'replacements': _replacements},
-            'required': ['path', 'replacements'] if _strict else ['path'],
-            'additionalProperties': False,
-        }
-        if not _inlined:
-            _parameters['$defs'] = {'Replacement': _replacement}
-        _TOOL_SCHEMAS[(_inlined, _strict)] = _parameters
-
-_INLINED_SCHEMAS: dict[bool | None, dict[str, JsonValue]] = {
-    None: _TOOL_SCHEMAS[(True, None)],
-    True: _TOOL_SCHEMAS[(True, True)],
-    False: _TOOL_SCHEMAS[(True, False)],
-}
-_REFERENCED_SCHEMAS: dict[bool | None, dict[str, JsonValue]] = {
-    None: _TOOL_SCHEMAS[(False, None)],
-    True: _TOOL_SCHEMAS[(False, True)],
-    False: _TOOL_SCHEMAS[(False, False)],
-}
-_NATIVE_SCHEMA: dict[str, JsonValue] = {
-    'type': 'object',
-    'properties': {'replacements': {'type': 'array', 'items': {'$ref': '#/$defs/Replacement'}}},
-    'required': ['replacements'],
-    'additionalProperties': False,
-    '$defs': {'Replacement': _REPLACEMENT_SCHEMA},
-}
-_NATIVE_SCHEMAS: dict[bool | None, dict[str, JsonValue]] = {
-    None: _NATIVE_SCHEMA,
-    True: _NATIVE_SCHEMA,
-    False: {
-        'type': 'object',
-        'properties': {'replacements': {'type': 'array', 'items': {'$ref': '#/$defs/Replacement'}}},
-        'required': ['replacements'],
-        '$defs': {
-            'Replacement': {key: value for key, value in _REPLACEMENT_SCHEMA.items() if key != 'additionalProperties'}
-        },
-    },
-}
 _TOOL_STRICT_FIELDS: dict[tuple[str, bool | None], tuple[bool, bool | None]] = {
     ('chat', None): (False, None),
     ('chat', True): (True, True),
@@ -135,70 +79,6 @@ _TOOL_STRICT_FIELDS: dict[tuple[str, bool | None], tuple[bool, bool | None]] = {
     ('responses', False): (True, False),
 }
 _NATIVE_STRICT_FLAGS: dict[bool | None, bool] = {None: True, True: True, False: False}
-
-_KEY_SCHEMAS: dict[bool, dict[bool | None, dict[str, JsonValue]]] = {False: {}, True: {}}
-_CONTAINS_SCHEMAS: dict[bool, dict[bool | None, dict[str, JsonValue]]] = {False: {}, True: {}}
-for _inlined in (False, True):
-    for _strict in (None, True, False):
-        _key: dict[str, JsonValue] = {'type': 'string'} if _inlined else {'$ref': '#/$defs/Key'}
-        _values: dict[str, JsonValue] = {
-            'type': 'object',
-            'additionalProperties': {'type': 'integer'},
-            'propertyNames': _key,
-            'properties': {},
-        }
-        if _strict is True:
-            _values.pop('propertyNames')
-            _values['description'] = f'propertyNames={_key}'
-            _values['additionalProperties'] = False
-            _values['required'] = []
-        _keys: dict[str, JsonValue] = {
-            'type': 'object',
-            'properties': {'values': _values},
-            'required': ['values'],
-            'additionalProperties': False,
-        }
-        if not _inlined:
-            _keys['$defs'] = {'Key': {'type': 'string'}}
-        _KEY_SCHEMAS[_inlined][_strict] = _keys
-
-        _positive: dict[str, JsonValue] = {'exclusiveMinimum': 0, 'type': 'integer'}
-        _positive_ref: dict[str, JsonValue] = _positive if _inlined else {'$ref': '#/$defs/Positive'}
-        _array: dict[str, JsonValue] = {
-            'type': 'array',
-            'items': {'anyOf': [_positive_ref, {'type': 'string'}]},
-            'contains': _positive_ref,
-        }
-        if _strict is True:
-            _array.pop('contains')
-            _array['description'] = f'contains={_positive_ref}'
-        _contains: dict[str, JsonValue] = {
-            'type': 'object',
-            'properties': {'values': _array},
-            'required': ['values'],
-            'additionalProperties': False,
-        }
-        if not _inlined:
-            _contains['$defs'] = {'Positive': _positive}
-        _CONTAINS_SCHEMAS[_inlined][_strict] = _contains
-
-_NODE_SCHEMAS: dict[bool | None, dict[str, JsonValue]] = {}
-for _strict in (None, True, False):
-    _children: dict[str, JsonValue] = {
-        'anyOf': [{'type': 'array', 'items': {'$ref': '#'}}, {'type': 'null'}],
-    }
-    if _strict is not True:
-        _children['default'] = None
-    _node: dict[str, JsonValue] = {
-        'type': 'object',
-        'properties': {'value': {'type': 'string'}, 'children': _children},
-        'required': ['value', 'children'] if _strict else ['value'],
-    }
-    if _strict is not False:
-        _node['additionalProperties'] = False
-    _node_root = deepcopy(_node)
-    _node_root['$defs'] = {'Node': _node}
-    _NODE_SCHEMAS[_strict] = _node_root
 _EDITS_OUTPUT = Edits([Replacement('old', 'new')])
 _EDITS_CONTENT = '{"replacements": [{"old_text": "old", "new_text": "new"}]}'
 
@@ -207,7 +87,7 @@ _EDITS_CONTENT = '{"replacements": [{"old_text": "old", "new_text": "new"}]}'
 class Case:
     id: str
     tool_schemas: dict[bool | None, dict[str, JsonValue]]
-    provider_name: Literal['azure', 'azure-custom', 'openai'] = 'azure'
+    provider_name: Literal['azure', 'azure-custom', 'openai', 'openai-azure'] = 'azure'
     model_name: str = 'grok-4-1-fast-reasoning'
     function: Callable[..., str] = edit_file
     native_schema: dict[bool | None, dict[str, JsonValue]] | None = None
@@ -216,59 +96,1536 @@ class Case:
 
 
 CASES: list[Case] = [
-    Case('azure-grok', _INLINED_SCHEMAS),
-    Case('azure-grok-mixed-case', _INLINED_SCHEMAS, model_name='Grok-4-1-fast-reasoning'),
-    Case('azure-openai', _REFERENCED_SCHEMAS, model_name='gpt-4o'),
-    Case('azure-deepseek', _REFERENCED_SCHEMAS, model_name='DeepSeek-R1'),
-    Case('generic-openai', _REFERENCED_SCHEMAS, provider_name='openai'),
+    Case(
+        'azure-grok',
+        snapshot(
+            {
+                None: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [
+                                {
+                                    'items': {
+                                        'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                                        'required': ['old_text', 'new_text'],
+                                        'type': 'object',
+                                        'additionalProperties': False,
+                                    },
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                },
+                True: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'anyOf': [
+                                {
+                                    'items': {
+                                        'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                                        'required': ['old_text', 'new_text'],
+                                        'type': 'object',
+                                        'additionalProperties': False,
+                                    },
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ]
+                        },
+                    },
+                    'required': ['path', 'replacements'],
+                    'type': 'object',
+                },
+                False: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [
+                                {
+                                    'items': {
+                                        'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                                        'required': ['old_text', 'new_text'],
+                                        'type': 'object',
+                                    },
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                },
+            }
+        ),
+    ),
+    Case(
+        'azure-grok-mixed-case',
+        snapshot(
+            {
+                None: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [
+                                {
+                                    'items': {
+                                        'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                                        'required': ['old_text', 'new_text'],
+                                        'type': 'object',
+                                        'additionalProperties': False,
+                                    },
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                },
+                True: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'anyOf': [
+                                {
+                                    'items': {
+                                        'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                                        'required': ['old_text', 'new_text'],
+                                        'type': 'object',
+                                        'additionalProperties': False,
+                                    },
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ]
+                        },
+                    },
+                    'required': ['path', 'replacements'],
+                    'type': 'object',
+                },
+                False: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [
+                                {
+                                    'items': {
+                                        'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                                        'required': ['old_text', 'new_text'],
+                                        'type': 'object',
+                                    },
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                },
+            }
+        ),
+        model_name='Grok-4-1-fast-reasoning',
+    ),
+    Case(
+        'azure-openai',
+        snapshot(
+            {
+                None: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [{'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                True: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'anyOf': [{'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}, {'type': 'null'}]
+                        },
+                    },
+                    'required': ['path', 'replacements'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                False: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [{'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                        }
+                    },
+                },
+            }
+        ),
+        model_name='gpt-4o',
+    ),
+    Case(
+        'azure-deepseek',
+        snapshot(
+            {
+                None: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [{'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                True: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'anyOf': [{'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}, {'type': 'null'}]
+                        },
+                    },
+                    'required': ['path', 'replacements'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                False: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [{'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                        }
+                    },
+                },
+            }
+        ),
+        model_name='DeepSeek-R1',
+    ),
+    Case(
+        'generic-openai',
+        snapshot(
+            {
+                None: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [{'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                True: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'anyOf': [{'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}, {'type': 'null'}]
+                        },
+                    },
+                    'required': ['path', 'replacements'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                False: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [{'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                        }
+                    },
+                },
+            }
+        ),
+        provider_name='openai',
+    ),
     Case(
         'azure-grok-native',
-        _INLINED_SCHEMAS,
-        native_schema=_NATIVE_SCHEMAS,
+        snapshot(
+            {
+                None: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [
+                                {
+                                    'items': {
+                                        'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                                        'required': ['old_text', 'new_text'],
+                                        'type': 'object',
+                                        'additionalProperties': False,
+                                    },
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                },
+                True: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'anyOf': [
+                                {
+                                    'items': {
+                                        'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                                        'required': ['old_text', 'new_text'],
+                                        'type': 'object',
+                                        'additionalProperties': False,
+                                    },
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ]
+                        },
+                    },
+                    'required': ['path', 'replacements'],
+                    'type': 'object',
+                },
+                False: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [
+                                {
+                                    'items': {
+                                        'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                                        'required': ['old_text', 'new_text'],
+                                        'type': 'object',
+                                    },
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                },
+            }
+        ),
+        native_schema=snapshot(
+            {
+                None: {
+                    'properties': {'replacements': {'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}},
+                    'required': ['replacements'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                True: {
+                    'properties': {'replacements': {'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}},
+                    'required': ['replacements'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                False: {
+                    'properties': {'replacements': {'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}},
+                    'required': ['replacements'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                        }
+                    },
+                },
+            }
+        ),
         expected_output=_EDITS_OUTPUT,
         response_content=_EDITS_CONTENT,
     ),
     Case(
         'azure-openai-native',
-        _REFERENCED_SCHEMAS,
+        snapshot(
+            {
+                None: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [{'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                True: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'anyOf': [{'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}, {'type': 'null'}]
+                        },
+                    },
+                    'required': ['path', 'replacements'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                False: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [{'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                        }
+                    },
+                },
+            }
+        ),
         model_name='gpt-4o',
-        native_schema=_NATIVE_SCHEMAS,
+        native_schema=snapshot(
+            {
+                None: {
+                    'properties': {'replacements': {'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}},
+                    'required': ['replacements'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                True: {
+                    'properties': {'replacements': {'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}},
+                    'required': ['replacements'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                False: {
+                    'properties': {'replacements': {'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}},
+                    'required': ['replacements'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                        }
+                    },
+                },
+            }
+        ),
         expected_output=_EDITS_OUTPUT,
         response_content=_EDITS_CONTENT,
     ),
     Case(
         'generic-openai-native',
-        _REFERENCED_SCHEMAS,
+        snapshot(
+            {
+                None: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [{'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                True: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'anyOf': [{'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}, {'type': 'null'}]
+                        },
+                    },
+                    'required': ['path', 'replacements'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                False: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [{'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                        }
+                    },
+                },
+            }
+        ),
         provider_name='openai',
-        native_schema=_NATIVE_SCHEMAS,
+        native_schema=snapshot(
+            {
+                None: {
+                    'properties': {'replacements': {'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}},
+                    'required': ['replacements'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                True: {
+                    'properties': {'replacements': {'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}},
+                    'required': ['replacements'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                False: {
+                    'properties': {'replacements': {'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}},
+                    'required': ['replacements'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                        }
+                    },
+                },
+            }
+        ),
         expected_output=_EDITS_OUTPUT,
         response_content=_EDITS_CONTENT,
     ),
     Case(
         'azure-custom-profile-native',
-        _REFERENCED_SCHEMAS,
+        snapshot(
+            {
+                None: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [{'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                True: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'anyOf': [{'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}, {'type': 'null'}]
+                        },
+                    },
+                    'required': ['path', 'replacements'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                False: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [{'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                        }
+                    },
+                },
+            }
+        ),
         provider_name='azure-custom',
-        native_schema=_NATIVE_SCHEMAS,
+        native_schema=snapshot(
+            {
+                None: {
+                    'properties': {'replacements': {'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}},
+                    'required': ['replacements'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                True: {
+                    'properties': {'replacements': {'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}},
+                    'required': ['replacements'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                False: {
+                    'properties': {'replacements': {'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}},
+                    'required': ['replacements'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                        }
+                    },
+                },
+            }
+        ),
         expected_output=_EDITS_OUTPUT,
         response_content=_EDITS_CONTENT,
     ),
-    Case('azure-grok-property-names', _KEY_SCHEMAS[True], function=accept_keys),
-    Case('generic-openai-property-names', _KEY_SCHEMAS[False], provider_name='openai', function=accept_keys),
-    Case('azure-grok-contains', _CONTAINS_SCHEMAS[True], function=accept_contains),
-    Case('generic-openai-contains', _CONTAINS_SCHEMAS[False], provider_name='openai', function=accept_contains),
-    Case('azure-grok-recursive', _NODE_SCHEMAS, function=accept_node),
-    Case('generic-openai-recursive', _NODE_SCHEMAS, provider_name='openai', function=accept_node),
+    Case(
+        'azure-grok-property-names',
+        snapshot(
+            {
+                None: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'additionalProperties': {'type': 'integer'},
+                            'propertyNames': {'type': 'string'},
+                            'type': 'object',
+                            'properties': {},
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                },
+                True: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'additionalProperties': False,
+                            'type': 'object',
+                            'description': "propertyNames={'type': 'string'}",
+                            'properties': {},
+                            'required': [],
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                },
+                False: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'additionalProperties': {'type': 'integer'},
+                            'propertyNames': {'type': 'string'},
+                            'type': 'object',
+                            'properties': {},
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                },
+            }
+        ),
+        function=accept_keys,
+    ),
+    Case(
+        'generic-openai-property-names',
+        snapshot(
+            {
+                None: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'additionalProperties': {'type': 'integer'},
+                            'propertyNames': {'$ref': '#/$defs/Key'},
+                            'type': 'object',
+                            'properties': {},
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                    '$defs': {'Key': {'type': 'string'}},
+                },
+                True: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'additionalProperties': False,
+                            'type': 'object',
+                            'description': "propertyNames={'$ref': '#/$defs/Key'}",
+                            'properties': {},
+                            'required': [],
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                    '$defs': {'Key': {'type': 'string'}},
+                },
+                False: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'additionalProperties': {'type': 'integer'},
+                            'propertyNames': {'$ref': '#/$defs/Key'},
+                            'type': 'object',
+                            'properties': {},
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                    '$defs': {'Key': {'type': 'string'}},
+                },
+            }
+        ),
+        provider_name='openai',
+        function=accept_keys,
+    ),
+    Case(
+        'azure-grok-contains',
+        snapshot(
+            {
+                None: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'contains': {'exclusiveMinimum': 0, 'type': 'integer'},
+                            'items': {'anyOf': [{'exclusiveMinimum': 0, 'type': 'integer'}, {'type': 'string'}]},
+                            'type': 'array',
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                },
+                True: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'items': {'anyOf': [{'exclusiveMinimum': 0, 'type': 'integer'}, {'type': 'string'}]},
+                            'type': 'array',
+                            'description': "contains={'exclusiveMinimum': 0, 'type': 'integer'}",
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                },
+                False: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'contains': {'exclusiveMinimum': 0, 'type': 'integer'},
+                            'items': {'anyOf': [{'exclusiveMinimum': 0, 'type': 'integer'}, {'type': 'string'}]},
+                            'type': 'array',
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                },
+            }
+        ),
+        function=accept_contains,
+    ),
+    Case(
+        'generic-openai-contains',
+        snapshot(
+            {
+                None: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'contains': {'$ref': '#/$defs/Positive'},
+                            'items': {'anyOf': [{'$ref': '#/$defs/Positive'}, {'type': 'string'}]},
+                            'type': 'array',
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                    '$defs': {'Positive': {'exclusiveMinimum': 0, 'type': 'integer'}},
+                },
+                True: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'items': {'anyOf': [{'$ref': '#/$defs/Positive'}, {'type': 'string'}]},
+                            'type': 'array',
+                            'description': "contains={'$ref': '#/$defs/Positive'}",
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                    '$defs': {'Positive': {'exclusiveMinimum': 0, 'type': 'integer'}},
+                },
+                False: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'contains': {'$ref': '#/$defs/Positive'},
+                            'items': {'anyOf': [{'$ref': '#/$defs/Positive'}, {'type': 'string'}]},
+                            'type': 'array',
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                    '$defs': {'Positive': {'exclusiveMinimum': 0, 'type': 'integer'}},
+                },
+            }
+        ),
+        provider_name='openai',
+        function=accept_contains,
+    ),
+    Case(
+        'azure-grok-recursive',
+        snapshot(
+            {
+                None: {
+                    '$defs': {
+                        'Node': {
+                            'properties': {
+                                'value': {'type': 'string'},
+                                'children': {
+                                    'default': None,
+                                    'anyOf': [{'items': {'$ref': '#'}, 'type': 'array'}, {'type': 'null'}],
+                                },
+                            },
+                            'required': ['value'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                    'properties': {
+                        'value': {'type': 'string'},
+                        'children': {
+                            'default': None,
+                            'anyOf': [{'items': {'$ref': '#'}, 'type': 'array'}, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['value'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                },
+                True: {
+                    '$defs': {
+                        'Node': {
+                            'properties': {
+                                'value': {'type': 'string'},
+                                'children': {'anyOf': [{'items': {'$ref': '#'}, 'type': 'array'}, {'type': 'null'}]},
+                            },
+                            'required': ['value', 'children'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                    'properties': {
+                        'value': {'type': 'string'},
+                        'children': {'anyOf': [{'items': {'$ref': '#'}, 'type': 'array'}, {'type': 'null'}]},
+                    },
+                    'required': ['value', 'children'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                },
+                False: {
+                    '$defs': {
+                        'Node': {
+                            'properties': {
+                                'value': {'type': 'string'},
+                                'children': {
+                                    'default': None,
+                                    'anyOf': [{'items': {'$ref': '#'}, 'type': 'array'}, {'type': 'null'}],
+                                },
+                            },
+                            'required': ['value'],
+                            'type': 'object',
+                        }
+                    },
+                    'properties': {
+                        'value': {'type': 'string'},
+                        'children': {
+                            'default': None,
+                            'anyOf': [{'items': {'$ref': '#'}, 'type': 'array'}, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['value'],
+                    'type': 'object',
+                },
+            }
+        ),
+        function=accept_node,
+    ),
+    Case(
+        'generic-openai-recursive',
+        snapshot(
+            {
+                None: {
+                    '$defs': {
+                        'Node': {
+                            'properties': {
+                                'value': {'type': 'string'},
+                                'children': {
+                                    'default': None,
+                                    'anyOf': [{'items': {'$ref': '#'}, 'type': 'array'}, {'type': 'null'}],
+                                },
+                            },
+                            'required': ['value'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                    'properties': {
+                        'value': {'type': 'string'},
+                        'children': {
+                            'default': None,
+                            'anyOf': [{'items': {'$ref': '#'}, 'type': 'array'}, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['value'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                },
+                True: {
+                    '$defs': {
+                        'Node': {
+                            'properties': {
+                                'value': {'type': 'string'},
+                                'children': {'anyOf': [{'items': {'$ref': '#'}, 'type': 'array'}, {'type': 'null'}]},
+                            },
+                            'required': ['value', 'children'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                    'properties': {
+                        'value': {'type': 'string'},
+                        'children': {'anyOf': [{'items': {'$ref': '#'}, 'type': 'array'}, {'type': 'null'}]},
+                    },
+                    'required': ['value', 'children'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                },
+                False: {
+                    '$defs': {
+                        'Node': {
+                            'properties': {
+                                'value': {'type': 'string'},
+                                'children': {
+                                    'default': None,
+                                    'anyOf': [{'items': {'$ref': '#'}, 'type': 'array'}, {'type': 'null'}],
+                                },
+                            },
+                            'required': ['value'],
+                            'type': 'object',
+                        }
+                    },
+                    'properties': {
+                        'value': {'type': 'string'},
+                        'children': {
+                            'default': None,
+                            'anyOf': [{'items': {'$ref': '#'}, 'type': 'array'}, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['value'],
+                    'type': 'object',
+                },
+            }
+        ),
+        provider_name='openai',
+        function=accept_node,
+    ),
+    Case(
+        'generic-openai-azure-profile',
+        snapshot(
+            {
+                None: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [
+                                {
+                                    'items': {
+                                        'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                                        'required': ['old_text', 'new_text'],
+                                        'type': 'object',
+                                        'additionalProperties': False,
+                                    },
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                },
+                True: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'anyOf': [
+                                {
+                                    'items': {
+                                        'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                                        'required': ['old_text', 'new_text'],
+                                        'type': 'object',
+                                        'additionalProperties': False,
+                                    },
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ]
+                        },
+                    },
+                    'required': ['path', 'replacements'],
+                    'type': 'object',
+                },
+                False: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [
+                                {
+                                    'items': {
+                                        'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                                        'required': ['old_text', 'new_text'],
+                                        'type': 'object',
+                                    },
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                },
+            }
+        ),
+        provider_name='openai-azure',
+    ),
+    Case(
+        'generic-openai-azure-profile-native',
+        snapshot(
+            {
+                None: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [
+                                {
+                                    'items': {
+                                        'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                                        'required': ['old_text', 'new_text'],
+                                        'type': 'object',
+                                        'additionalProperties': False,
+                                    },
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                },
+                True: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'anyOf': [
+                                {
+                                    'items': {
+                                        'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                                        'required': ['old_text', 'new_text'],
+                                        'type': 'object',
+                                        'additionalProperties': False,
+                                    },
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ]
+                        },
+                    },
+                    'required': ['path', 'replacements'],
+                    'type': 'object',
+                },
+                False: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'path': {'type': 'string'},
+                        'replacements': {
+                            'default': None,
+                            'anyOf': [
+                                {
+                                    'items': {
+                                        'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                                        'required': ['old_text', 'new_text'],
+                                        'type': 'object',
+                                    },
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ],
+                        },
+                    },
+                    'required': ['path'],
+                    'type': 'object',
+                },
+            }
+        ),
+        provider_name='openai-azure',
+        native_schema=snapshot(
+            {
+                None: {
+                    'properties': {'replacements': {'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}},
+                    'required': ['replacements'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                True: {
+                    'properties': {'replacements': {'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}},
+                    'required': ['replacements'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                },
+                False: {
+                    'properties': {'replacements': {'items': {'$ref': '#/$defs/Replacement'}, 'type': 'array'}},
+                    'required': ['replacements'],
+                    'type': 'object',
+                    '$defs': {
+                        'Replacement': {
+                            'properties': {'old_text': {'type': 'string'}, 'new_text': {'type': 'string'}},
+                            'required': ['old_text', 'new_text'],
+                            'type': 'object',
+                        }
+                    },
+                },
+            }
+        ),
+        expected_output=_EDITS_OUTPUT,
+        response_content=_EDITS_CONTENT,
+    ),
+    Case(
+        'generic-openai-azure-profile-property-names',
+        snapshot(
+            {
+                None: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'additionalProperties': {'type': 'integer'},
+                            'propertyNames': {'type': 'string'},
+                            'type': 'object',
+                            'properties': {},
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                },
+                True: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'additionalProperties': False,
+                            'type': 'object',
+                            'description': "propertyNames={'type': 'string'}",
+                            'properties': {},
+                            'required': [],
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                },
+                False: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'additionalProperties': {'type': 'integer'},
+                            'propertyNames': {'type': 'string'},
+                            'type': 'object',
+                            'properties': {},
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                },
+            }
+        ),
+        provider_name='openai-azure',
+        function=accept_keys,
+    ),
+    Case(
+        'generic-openai-azure-profile-contains',
+        snapshot(
+            {
+                None: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'contains': {'exclusiveMinimum': 0, 'type': 'integer'},
+                            'items': {'anyOf': [{'exclusiveMinimum': 0, 'type': 'integer'}, {'type': 'string'}]},
+                            'type': 'array',
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                },
+                True: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'items': {'anyOf': [{'exclusiveMinimum': 0, 'type': 'integer'}, {'type': 'string'}]},
+                            'type': 'array',
+                            'description': "contains={'exclusiveMinimum': 0, 'type': 'integer'}",
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                },
+                False: {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'contains': {'exclusiveMinimum': 0, 'type': 'integer'},
+                            'items': {'anyOf': [{'exclusiveMinimum': 0, 'type': 'integer'}, {'type': 'string'}]},
+                            'type': 'array',
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                },
+            }
+        ),
+        provider_name='openai-azure',
+        function=accept_contains,
+    ),
+    Case(
+        'generic-openai-azure-profile-recursive',
+        snapshot(
+            {
+                None: {
+                    '$defs': {
+                        'Node': {
+                            'properties': {
+                                'value': {'type': 'string'},
+                                'children': {
+                                    'default': None,
+                                    'anyOf': [{'items': {'$ref': '#'}, 'type': 'array'}, {'type': 'null'}],
+                                },
+                            },
+                            'required': ['value'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                    'properties': {
+                        'value': {'type': 'string'},
+                        'children': {
+                            'default': None,
+                            'anyOf': [{'items': {'$ref': '#'}, 'type': 'array'}, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['value'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                },
+                True: {
+                    '$defs': {
+                        'Node': {
+                            'properties': {
+                                'value': {'type': 'string'},
+                                'children': {'anyOf': [{'items': {'$ref': '#'}, 'type': 'array'}, {'type': 'null'}]},
+                            },
+                            'required': ['value', 'children'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                    'properties': {
+                        'value': {'type': 'string'},
+                        'children': {'anyOf': [{'items': {'$ref': '#'}, 'type': 'array'}, {'type': 'null'}]},
+                    },
+                    'required': ['value', 'children'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                },
+                False: {
+                    '$defs': {
+                        'Node': {
+                            'properties': {
+                                'value': {'type': 'string'},
+                                'children': {
+                                    'default': None,
+                                    'anyOf': [{'items': {'$ref': '#'}, 'type': 'array'}, {'type': 'null'}],
+                                },
+                            },
+                            'required': ['value'],
+                            'type': 'object',
+                        }
+                    },
+                    'properties': {
+                        'value': {'type': 'string'},
+                        'children': {
+                            'default': None,
+                            'anyOf': [{'items': {'$ref': '#'}, 'type': 'array'}, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['value'],
+                    'type': 'object',
+                },
+            }
+        ),
+        provider_name='openai-azure',
+        function=accept_node,
+    ),
 ]
 
 
 @pytest.mark.parametrize('api', ['chat', 'responses'])
-@pytest.mark.parametrize('strict', [None, True, False])
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
 async def test_azure_grok_tool_schema(
     allow_model_requests: None,
     request_capture: RequestCapture,
     api: Literal['chat', 'responses'],
-    strict: bool | None,
     case: Case,
 ):
     """Capture the SDK's actual request; Azure acceptance is reporter-verified, not simulated here."""
@@ -318,38 +1675,53 @@ async def test_azure_grok_tool_schema(
         endpoint = 'https://example.services.ai.azure.com/openai/v1'
         provider = (
             AzureProvider(azure_endpoint=endpoint, api_key='test', http_client=client)
-            if case.provider_name != 'openai'
+            if case.provider_name in ('azure', 'azure-custom')
             else OpenAIProvider(base_url=endpoint, api_key='test', http_client=client)
         )
         profile = (
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
             if case.provider_name == 'azure-custom'
+            else AzureProvider.model_profile(case.model_name)
+            if case.provider_name == 'openai-azure'
             else None
         )
         model = (OpenAIChatModel if api == 'chat' else OpenAIResponsesModel)(
             case.model_name, provider=provider, profile=profile
         )
-        agent = Agent(model, output_type=NativeOutput(Edits, strict=strict)) if case.native_schema else Agent(model)
+        # All three strict modes exercise different conversion and wire-flag behavior.
+        # Both APIs share schema expectations but serialize strict flags differently.
+        tool_schemas: dict[bool | None, JsonValue] = {}
+        native_schemas: dict[bool | None, JsonValue] = {}
+        for strict in (None, True, False):
+            agent = (
+                Agent(model, output_type=NativeOutput(Edits, strict=strict))
+                if case.native_schema is not None
+                else Agent(model)
+            )
 
-        agent.tool_plain(strict=strict)(case.function)
+            agent.tool_plain(strict=strict)(case.function)
 
-        assert (await agent.run('Say hi.')).output == case.expected_output
+            assert (await agent.run('Say hi.')).output == case.expected_output
 
-    body = request_capture.body('/chat/completions' if api == 'chat' else '/responses')
-    tools = body['tools']
-    assert isinstance(tools, list)
-    tool = tools[0]
-    assert isinstance(tool, dict)
-    if api == 'chat':
-        tool = tool['function']
-        assert isinstance(tool, dict)
-    assert tool['parameters'] == case.tool_schemas[strict]
-    assert ('strict' in tool, tool.get('strict')) == _TOOL_STRICT_FIELDS[(api, strict)]
+            body = request_capture.bodies('/chat/completions' if api == 'chat' else '/responses')[-1]
+            tools = body['tools']
+            assert isinstance(tools, list)
+            tool = tools[0]
+            assert isinstance(tool, dict)
+            if api == 'chat':
+                tool = tool['function']
+                assert isinstance(tool, dict)
+            tool_schemas[strict] = tool['parameters']
+            assert ('strict' in tool, tool.get('strict')) == _TOOL_STRICT_FIELDS[(api, strict)]
 
+            if case.native_schema is not None:
+                output_format = body['response_format'] if api == 'chat' else body['text']
+                assert isinstance(output_format, dict)
+                output_format = output_format['json_schema'] if api == 'chat' else output_format['format']
+                assert isinstance(output_format, dict)
+                native_schemas[strict] = output_format['schema']
+                assert output_format['strict'] is _NATIVE_STRICT_FLAGS[strict]
+
+    assert tool_schemas == case.tool_schemas
     if case.native_schema is not None:
-        output_format = body['response_format'] if api == 'chat' else body['text']
-        assert isinstance(output_format, dict)
-        output_format = output_format['json_schema'] if api == 'chat' else output_format['format']
-        assert isinstance(output_format, dict)
-        assert output_format['schema'] == case.native_schema[strict]
-        assert output_format['strict'] is _NATIVE_STRICT_FLAGS[strict]
+        assert native_schemas == case.native_schema

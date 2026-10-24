@@ -293,7 +293,7 @@ class JsonSchemaTransformer(ABC):
         return cases
 
 
-class _JsonSchemaTransformerWithOutputOverride(JsonSchemaTransformer):  # pyright: ignore[reportUnusedClass]
+class JsonSchemaTransformerWithOutputOverride(JsonSchemaTransformer):
     """A tool-schema transformer that selects a different transformer for output objects."""
 
     output_object_transformer: ClassVar[type[JsonSchemaTransformer]]

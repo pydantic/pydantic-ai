@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import (
     JsonSchema,
-    _JsonSchemaTransformerWithOutputOverride,  # pyright: ignore[reportPrivateUsage]
+    JsonSchemaTransformerWithOutputOverride,
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
@@ -403,7 +403,7 @@ class AzureProvider(_OpenAICompatibleProvider):
 
 
 class _AzureGrokJsonSchemaTransformer(
-    OpenAIJsonSchemaTransformer, InlineDefsJsonSchemaTransformer, _JsonSchemaTransformerWithOutputOverride
+    OpenAIJsonSchemaTransformer, InlineDefsJsonSchemaTransformer, JsonSchemaTransformerWithOutputOverride
 ):
     output_object_transformer = OpenAIJsonSchemaTransformer
 

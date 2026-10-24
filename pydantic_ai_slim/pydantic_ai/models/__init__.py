@@ -67,7 +67,7 @@ from .._instructions import (
 )
 from .._json_schema import (
     JsonSchemaTransformer,
-    _JsonSchemaTransformerWithOutputOverride,  # pyright: ignore[reportPrivateUsage]
+    JsonSchemaTransformerWithOutputOverride,
 )
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -1030,7 +1030,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             if output_object := model_request_parameters.output_object:
                 output_transformer = (
                     transformer.output_object_transformer
-                    if issubclass(transformer, _JsonSchemaTransformerWithOutputOverride)
+                    if issubclass(transformer, JsonSchemaTransformerWithOutputOverride)
                     else transformer
                 )
                 model_request_parameters = replace(
