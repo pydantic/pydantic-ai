@@ -9,45 +9,23 @@ they are not VCR tests.
 from __future__ import annotations
 
 import ast
-import importlib.util
 import json
 import re
 import sys
 import textwrap
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Protocol, runtime_checkable
 
 import pytest
 from inline_snapshot import snapshot
 
-REPO_ROOT = Path(__file__).parents[2]
+sys.path.insert(0, str(Path(__file__).parents[2] / 'scripts'))
+
+import durable_exec_contract as generator
+from durable_exec_contract import REPO_ROOT, Manifest
+
 CORE = 'pydantic_ai_slim/pydantic_ai'
 _DURABILITY_BASE = re.compile(r'(?:\w+\.)*BaseDurabilityCapability(?:\[.*\])?')
-
-Manifest = dict[str, dict[str, dict[str, list[str]]]]
-
-
-@runtime_checkable
-class _ContractGenerator(Protocol):
-    MANIFEST_PATH: str
-    ENGINES: dict[str, str]
-    build_manifest: Callable[[Path], Manifest]
-    render_manifest: Callable[[Manifest], str]
-    gates: Callable[[Mapping[str, Sequence[str]]], bool]
-    main: Callable[..., int]
-
-
-_spec = importlib.util.spec_from_file_location(
-    'durable_exec_contract', REPO_ROOT / 'scripts' / 'durable_exec_contract.py'
-)
-assert _spec is not None and _spec.loader is not None
-_module = importlib.util.module_from_spec(_spec)
-# `dataclasses` looks the defining module up in `sys.modules` while it builds the classes.
-sys.modules[_spec.name] = _module
-_spec.loader.exec_module(_module)
-assert isinstance(_module, _ContractGenerator)
-generator = _module
 
 
 def test_manifest_is_current(capsys: pytest.CaptureFixture[str]):
