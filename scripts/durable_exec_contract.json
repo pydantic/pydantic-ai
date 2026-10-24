@@ -1034,7 +1034,8 @@
     },
     "RunContext.run_id": {
       "engines": [
-        "durable_exec"
+        "durable_exec",
+        "prefect"
       ],
       "kinds": [
         "attribute_read"
@@ -1044,7 +1045,8 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.serialize_run_context",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::WorkspaceCallCacheIdentity.project"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::WorkspaceCallCacheIdentity.project",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_operation_backend.py::PrefectOperationBackend.execute"
       ]
     },
     "RunContext.run_step": {
