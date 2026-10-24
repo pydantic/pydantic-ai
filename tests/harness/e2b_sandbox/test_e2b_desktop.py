@@ -34,6 +34,7 @@ class FakeDisplay:
         self.starts: list[str] = []
         self.xdotool: list[str] = []
         self.captures: list[str] = []
+        self.viewers: list[str] = []
 
     def __call__(self, command: str, timeout: float | None) -> tuple[str, str, int]:
         if 'Xvfb' in command:
@@ -51,6 +52,11 @@ class FakeDisplay:
                 return '1280 800\n', '', 0
             if command == 'xdotool getmouselocation --shell':
                 return 'X=5\nY=6\nSCREEN=0\n', '', 0
+        elif 'novnc_proxy' in command:
+            self.viewers.append(command)
+            if not self.up:
+                return '', 'the viewer did not start:\nno display', 1
+            return 'Pass1234', '', 0
         elif 'scrot' in command:
             self.captures.append(command)
             return base64.b64encode(FAKE_SCREENSHOT).decode(), '', 0
@@ -80,7 +86,8 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(fake_e2b: Fa
 
     assert len(display.starts) == 1
     assert display.xdotool[-2:] == ['xdotool getdisplaygeometry', 'xdotool mousemove 3 4 click --repeat 1 1']
-    assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'DISPLAY': ':1'}
+    # E2B's locale is POSIX, under which `xdotool type` stops at the first character outside ASCII.
+    assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'}
 
 
 async def test_screenshots_zooms_and_the_pointer_come_from_the_display(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
@@ -90,6 +97,26 @@ async def test_screenshots_zooms_and_the_pointer_come_from_the_display(fake_e2b:
     assert await workspace.zoom(Region(left=2, top=3, right=12, bottom=8)) == FAKE_SCREENSHOT
     assert await workspace.cursor_position() == Point(x=5, y=6)
     assert display.captures[-1].endswith(' sh 2,3,10,5')
+
+
+async def test_the_live_view_url_opens_the_viewer_with_its_password(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
+    backend = E2BSandboxBackend(desktop=True)
+
+    url = await backend.live_view_url()
+
+    sandbox_id = fake_e2b.sandboxes[0].sandbox_id
+    assert url == f'https://6080-{sandbox_id}.e2b.example/vnc.html?autoconnect=true&resize=scale&password=Pass1234'
+    (viewer,) = display.viewers
+    assert 'x11vnc -display :1' in viewer and '--listen 6080' in viewer
+
+
+async def test_a_viewer_that_does_not_start_is_an_error(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
+    backend = E2BSandboxBackend(desktop=True)
+    await backend.display_size()
+    display.up = False  # the start script's own failure, as the fake answers it
+
+    with pytest.raises(WorkspaceError, match=r'could not start the desktop viewer.*the viewer did not start'):
+        await backend.live_view_url()
 
 
 async def test_commands_see_the_desktop(fake_e2b: FakeE2B, display: FakeDisplay) -> None:

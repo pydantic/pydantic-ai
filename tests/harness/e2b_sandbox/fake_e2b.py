@@ -640,6 +640,9 @@ class FakeSandbox:
             self.commands = _HostCommands(self, control)
         self.killed = False
 
+    def get_host(self, port: int) -> str:
+        return f'{port}-{self.sandbox_id}.e2b.example'
+
     async def kill(self) -> bool:
         # Real `kill` is a DELETE on the control plane that returns once E2B has removed the
         # sandbox, and `False` when it was already gone (a 404). From then on the SDK's own

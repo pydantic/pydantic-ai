@@ -134,6 +134,24 @@ _DEFAULT_DESKTOP_SIZE = (1280, 800)
 
 _XVFB_LOG = '/tmp/pydantic-ai-xvfb.log'
 
+_VIEWER_PORT = 6080
+
+_START_VIEWER = (
+    'd=/tmp/pydantic-ai-viewer; mkdir -p "$d"; '
+    '[ -s "$d/password" ] || tr -dc A-Za-z0-9 </dev/urandom | head -c 8 > "$d/password"; '
+    'if ! pgrep -x x11vnc >/dev/null; then '
+    'x11vnc -storepasswd "$(cat "$d/password")" "$d/passwd" >/dev/null 2>&1; '
+    f'setsid x11vnc -display {DISPLAY} -forever -shared -localhost -rfbport 5900 -rfbauth "$d/passwd" '
+    '>"$d/x11vnc.log" 2>&1 & fi; '
+    'if ! pgrep -f \'[w]ebsockify\' >/dev/null; then rm -f "$d/novnc.log"; '
+    f'setsid /opt/noVNC/utils/novnc_proxy --vnc localhost:5900 --listen {_VIEWER_PORT} >"$d/novnc.log" 2>&1 & fi; '
+    'i=0; until grep -q "Navigate to this URL" "$d/novnc.log" 2>/dev/null; do '
+    '[ $i -ge 100 ] && { echo "the viewer did not start:" >&2; tail -n 5 "$d/novnc.log" >&2; exit 1; }; '
+    'sleep 0.1; i=$((i+1)); done; cat "$d/password"'
+)
+"""Starts the template's VNC server and noVNC viewer behind a password, unless they are running, and prints the
+password. Both run until the sandbox stops."""
+
 _START_DESKTOP = start_x_server(_XVFB_LOG) + (
     'if command -v startxfce4 >/dev/null && ! pgrep -x xfce4-session >/dev/null; then '
     'setsid startxfce4 >/dev/null 2>&1 & i=0; '
@@ -821,6 +839,22 @@ class E2BSandboxBackend(
     async def cursor_position(self) -> Point:
         async with self._display() as computer:
             return await computer.cursor_position()
+
+    async def live_view_url(self) -> str:
+        """A link to watch the desktop, and use it, in a browser, through the template's noVNC viewer.
+
+        The link carries the viewer's password: anyone with it can see and use the desktop while the sandbox runs.
+        """
+        async with self._display():
+            result = await self.run(['sh', '-c', _START_VIEWER], timeout=30)
+        if result.exit_code != 0:
+            raise WorkspaceError(
+                f'could not start the desktop viewer: the template needs x11vnc and noVNC in /opt/noVNC '
+                f'({(result.stderr or result.stdout).strip()})'
+            )
+        sandbox = await self.get_sandbox()
+        host = sandbox.get_host(_VIEWER_PORT)
+        return f'https://{host}/vnc.html?autoconnect=true&resize=scale&password={result.stdout.strip()}'
 
 
 async def kill_sandbox(sandbox_id: str) -> None:
