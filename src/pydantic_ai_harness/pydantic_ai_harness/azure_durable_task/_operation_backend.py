@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, contextmanager
 from dataclasses import dataclass
 from typing import Annotated, Generic, Literal, TypeVar, cast
@@ -79,6 +79,23 @@ _RESULT = TypeAdapter(_ActivityResult)
 def _serialization_failure(error: Exception) -> object:
     message = str(error if isinstance(error, _SerializationFailure) else _SerializationFailure(error))
     return _RESULT.dump_python(_ActivityResult(format=_RESULT_FORMAT, serialization_error=message), mode='json')
+
+
+@dataclass
+class _Activity:
+    name: str
+    execute: Callable[[object], Awaitable[object]]
+    portal: Callable[[], BlockingPortal | None]
+
+    @property
+    def __name__(self) -> str:
+        return self.name
+
+    def __call__(self, context: task.ActivityContext, payload: object) -> object:
+        portal = self.portal()
+        if portal is None:
+            raise UserError('Enter `AzureDurableTaskDurability.register(worker)` before starting the worker.')
+        return portal.call(self.execute, payload)
 
 
 class _BoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[ParamsT, WireT, ResultT]):
@@ -194,13 +211,9 @@ class AzureDurableTaskOperationBackend(RegisteredOperationBackend[task.RetryPoli
             except UserError as exc:
                 return _RESULT.dump_python(_ActivityResult(format=_RESULT_FORMAT, user_error=str(exc)), mode='json')
 
-        def activity(context: task.ActivityContext, payload: object) -> object:
-            if self._portal is None:
-                raise UserError('Enter `AzureDurableTaskDurability.register(worker)` before starting the worker.')
-            return self._portal.call(execute, payload)
-
-        activity.__name__ = name
-        return _BoundOperation(operation, name=name, retry_policy=config), [activity]
+        return _BoundOperation(operation, name=name, retry_policy=config), [
+            _Activity(name, execute, lambda: self._portal)
+        ]
 
     @contextmanager
     def worker_scope(self, worker: TaskHubGrpcWorker) -> Generator[None]:

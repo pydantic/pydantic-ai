@@ -3,8 +3,8 @@
 `AzureDurableTaskDurability` lets agents survive worker restarts with
 [Durable Task](https://github.com/microsoft/durabletask-python) and Azure Durable Task Scheduler.
 You write the orchestrator; the capability registers model requests, tool operations and durable
-capability operations as activities. Azure Durable Functions also uses Durable Task, but its
-Python hosting adapter is a separate, planned integration.
+capability operations as activities. An optional [Azure Functions design preview](#azure-functions)
+registers those activities in the Functions programming model.
 
 Completed activity results come from orchestration history during replay. Outside an orchestration,
 the agent runs normally. Parallel tools remain parallel. Streaming is buffered at activity boundaries,
@@ -75,6 +75,106 @@ Workers and clients can run in separate processes; clients do not need the agent
 The orchestrator chooses its JSON-compatible output. For a Pydantic output model, return
 `result.output.model_dump(mode='json')` and validate it on the client if needed.
 There is no client-side reconstruction of `AgentRunResult`.
+
+## Azure Functions
+
+This is a preview of activity registration, not an HTTP application wrapper.
+It requires Python 3.13+, `azure-functions-durable==2.0.0rc3` and `azure-functions==2.4.0b1`.
+These pre-release pins deliberately opt into the SDK's new Durable Task runtime.
+The 1.x Functions runtime is not compatible. The `azure-functions` extra installs the
+Functions SDKs only on Python 3.13+; the portable integration still supports Python 3.11+.
+
+```bash
+pip/uv-add "pydantic-ai-harness[azure-functions]"
+```
+
+In `function_app.py`, attach the existing capability to an agent and register its bound
+activities after defining its tools. `register_activities` accepts a `df.DFApp` or
+`df.Blueprint`; repeat the call for additional agents. Functions owns the activity event
+loop, so do not enter the portable `register(worker)` context manager here.
+
+```python {test="skip"}
+import logging
+from collections.abc import Generator
+
+import azure.durable_functions as df
+import azure.functions as func
+from durabletask import task
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
+from pydantic_ai_harness.azure_durable_task.functions import register_activities
+
+app = df.DFApp()
+agent = Agent(
+    TestModel(custom_output_text='Hosted durably'),
+    name='support',
+    capabilities=[AzureDurableTaskDurability()],
+)
+durability = AzureDurableTaskDurability.from_agent(agent)
+assert durability is not None
+register_activities(app, durability)
+
+
+def support(context: task.OrchestrationContext, prompt: str) -> Generator[task.Task[object], object, str]:
+    result = yield from run_durable(context, lambda: agent.run(prompt))
+    return result.output
+
+
+app.orchestration_trigger(context_name='context')(support)
+
+
+@app.timer_trigger(schedule='0 0 0 * * *', arg_name='timer', run_on_startup=True, use_monitor=False)
+@app.durable_client_input(client_name='client')
+async def start(timer: func.TimerRequest, client: df.DurableFunctionsClient) -> None:
+    instance_id = await client.schedule_new_orchestration('support', input='Hello')
+    state = await client.wait_for_orchestration_completion(instance_id, timeout=60)
+    if state is None:
+        raise TimeoutError(f'Orchestration {instance_id!r} did not complete.')
+    state.raise_if_failed()
+    logging.info('Agent output: %s', state.serialized_output)
+```
+
+The [runnable sample](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/examples/azure_functions/)
+uses a native timer trigger and the SDK's `durable_client_input` binding to start and
+inspect a run, without HTTP endpoints. `run_on_startup=True` is for local demonstration:
+it starts an agent on each host startup as well as the daily schedule. Choose your own
+trigger and schedule for deployment.
+
+For local use, activate the environment containing this draft checkout and its extra,
+start [Azurite](https://learn.microsoft.com/en-us/azure/storage/common/storage-use-azurite),
+then run the sample directory with `AzureWebJobsStorage=UseDevelopmentStorage=true`
+and `FUNCTIONS_WORKER_RUNTIME=python`:
+
+```bash
+func start
+```
+
+The checked-in `host.json` selects Azure Storage and a sample task hub.
+The timer logs `Agent output: "Hosted durably"` after the orchestration completes.
+The sample uses `TestModel`, so no model credentials are needed.
+Before deploying, replace `TestModel`, configure credentials and use a distinct task hub.
+Follow the [Functions Python deployment guide](https://learn.microsoft.com/en-us/azure/azure-functions/functions-reference-python)
+and [Durable Task Scheduler provider guide](https://learn.microsoft.com/en-us/azure/azure-functions/durable/durable-task-scheduler)
+for hosting and a Scheduler-backed alternative to Azure Storage. For that alternative,
+configure the provider's emulator connection instead of the sample's Azure Storage provider;
+the portable SDK worker's emulator configuration is not a Functions connection string.
+This draft has not validated Scheduler-backed Functions or deployment to Azure.
+
+The adapter preserves scheduler activity names in the durable binding and uses separate
+hashed Functions names. It adds no telemetry, agent wrapper, client, automatic orchestrator,
+approval policy, streaming endpoint or HTTP-management abstraction.
+Stable SDK pins remain a design question.
+
+### HTTP endpoints and hosting helpers
+
+HTTP app wrappers and run/status/respond routes belong in a separate Azure-maintained
+package (package and documentation link pending), not in Pydantic AI Harness.
+That package will depend on the harness integration; the harness will not depend on it.
+This keeps Azure-specific HTTP routing, authentication and approval policy with the host's maintainers.
+Use the native orchestration review pattern below when implementing your own application.
+
+<!-- Azure-maintained package link placeholder: replace after ownership and repository are confirmed. -->
 
 ## Deploy to Azure Durable Task Scheduler
 

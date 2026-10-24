@@ -63,6 +63,17 @@ generated names. Native `CURRENT_OR_OLDER` supports drain-in-place; `STRICT` and
 event and `continue_as_new(new_version=...)`, retaining pending calls but advancing
 review identity and requiring fresh decisions. There is no agent/run/client wrapper.
 
+The optional Functions design preview uses `[azure-functions]` on Python 3.13+,
+with exact pre-release SDK pins. Import `register_activities` from
+`pydantic_ai_harness.azure_durable_task.functions` and pass a `df.DFApp` or
+`df.Blueprint` plus the bound capability, after defining tools. Do not enter
+`register(worker)` in Functions: the host owns its activity loop. Users still own
+the orchestration trigger, HTTP starters, native durable client and review policy.
+The runnable sample starts an orchestration from a native timer trigger and SDK client.
+HTTP app wrappers, routes and hosted approval policy belong in a separate Azure-maintained
+package linked from the docs, not in the harness; its package and link are still pending.
+Do not substitute the incompatible 1.x Functions runtime.
+
 ## StepPersistence
 
 Records an append-only event log, full-history snapshots at settled tool-cycle boundaries, and a ledger

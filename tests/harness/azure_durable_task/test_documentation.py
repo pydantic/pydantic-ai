@@ -90,7 +90,7 @@ def test_documented_setup_examples(
     for example_worker in (durable_worker, azure_worker):
         monkeypatch.setattr(example_worker, 'start', lambda: starts.append(True))
         monkeypatch.setattr(example_worker, 'stop', lambda: None)
-    examples = python_examples()
+    examples = [source for source in python_examples() if 'azure_durable_task.functions import' not in source]
     assert len(examples) == 6
     setup_examples = [examples[0], examples[1], next(source for source in examples if 'class Dependencies:' in source)]
     namespaces: list[dict[str, object]] = []
