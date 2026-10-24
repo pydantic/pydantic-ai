@@ -127,9 +127,9 @@ _COMMAND_TIMEOUT = 150
 """Maximum time for one display command; the longest bounded action, typing 2,000 characters outside ASCII, takes
 about 100 s."""
 
-_UNICODE_TYPE_DELAY_MS = '50'
-"""Milliseconds between characters when the text has any outside ASCII: `xdotool` types those by remapping a key, and
-at its default delay of 12 ms the remapping races the keystrokes and drops characters (checked live)."""
+_UNICODE_KEY_DELAY_MS = '50'
+"""Milliseconds between characters outside ASCII: `xdotool` presses each by remapping a key, and at its default delay of
+12 ms the remapping races the keystrokes and drops characters (checked live)."""
 
 _SCROLL_TICK_DELAY_MS = '20'
 """Milliseconds between scroll wheel clicks, instead of `xdotool`'s 100 ms between clicks."""
@@ -179,20 +179,21 @@ def _drag_moves(path: Sequence[Point]) -> list[str]:
 def _typing(text: str) -> list[list[str]]:
     """The `xdotool` commands that type `text`.
 
-    `xdotool type` gets two things wrong, so those are pressed as keys instead. It sends a newline as Linefeed, which
-    browsers ignore, so each one is pressed as Enter. A capital outside ASCII, such as `Å`, comes out in lowercase,
-    so each one is pressed with Shift (both checked live).
+    `xdotool type` gets three things wrong, so those are pressed as keys instead (all checked live). It sends a newline
+    as Linefeed, which browsers ignore, so each one is pressed as Enter. Outside ASCII, it stops at the second character
+    when every keycode is taken, as on E2B's desktop, so each such character is pressed by its Unicode name. And a
+    capital outside ASCII, such as `Å`, comes out in lowercase, so it is pressed with Shift.
     """
-    delay = [] if text.isascii() else ['--delay', _UNICODE_TYPE_DELAY_MS]
     commands: list[list[str]] = []
     for index, line in enumerate(text.split('\n')):
         if index:
             commands.append(['key', 'Return'])
-        for capitals, run in itertools.groupby(line, key=lambda c: not c.isascii() and c.isupper()):
-            if capitals:
-                commands.append(['key', *delay, *(f'shift+U{ord(c):04X}' for c in run)])
+        for is_ascii, run in itertools.groupby(line, key=str.isascii):
+            if is_ascii:
+                commands.append(['type', '--', ''.join(run)])
             else:
-                commands.append(['type', *delay, '--', ''.join(run)])
+                keys = [f'shift+U{ord(c):04X}' if c.isupper() else f'U{ord(c):04X}' for c in run]
+                commands.append(['key', '--delay', _UNICODE_KEY_DELAY_MS, *keys])
     return commands
 
 
