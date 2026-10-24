@@ -46,8 +46,6 @@ HISTORY: list[ModelMessage] = [
     ModelResponse(
         parts=[
             ThinkingPart(content='The tool says sunny.'),
-            # Encrypted reasoning from another provider has no content to send.
-            ThinkingPart(content='', signature='encrypted', provider_name='openai'),
             ThinkingPart(content='Keep it short.'),
             TextPart(content='It is sunny in Paris.'),
         ]
@@ -107,10 +105,6 @@ The tool says sunny.
 </think>
 
 <think>
-
-</think>
-
-<think>
 Keep it short.
 </think>
 
@@ -122,8 +116,7 @@ It is sunny in Paris.\
 }
 
 
-@pytest.mark.parametrize('model_name', list(ASSISTANT_MESSAGES))
-async def test_thinking_in_message_history(allow_model_requests: None, model_name: str):
+async def assistant_messages_sent(model_name: str, history: list[ModelMessage]) -> list[dict[str, Any]]:
     bodies: list[dict[str, Any]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -143,8 +136,39 @@ async def test_thinking_in_message_history(allow_model_requests: None, model_nam
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
         model = GroqModel(model_name, provider=GroqProvider(api_key='test-key', http_client=http_client))
-        await Agent(model).run('And tomorrow?', message_history=HISTORY)
+        await Agent(model).run('And tomorrow?', message_history=history)
 
-    assert [message for message in bodies[0]['messages'] if message['role'] == 'assistant'] == (
-        ASSISTANT_MESSAGES[model_name]
+    return [message for message in bodies[0]['messages'] if message['role'] == 'assistant']
+
+
+@pytest.mark.parametrize('model_name', list(ASSISTANT_MESSAGES))
+async def test_thinking_in_message_history(allow_model_requests: None, model_name: str):
+    assert await assistant_messages_sent(model_name, HISTORY) == ASSISTANT_MESSAGES[model_name]
+
+
+async def test_empty_thinking_not_sent_in_reasoning_field(allow_model_requests: None):
+    """Encrypted reasoning from another provider has no content, so it adds nothing to the `reasoning` field."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='What is the weather in Paris?')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='', signature='encrypted', provider_name='openai'),
+                ThinkingPart(content='Keep it short.'),
+                ThinkingPart(content='', signature='encrypted', provider_name='openai'),
+                TextPart(content='It is sunny in Paris.'),
+            ]
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Thanks.')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='', signature='encrypted', provider_name='openai'),
+                TextPart(content='You are welcome.'),
+            ]
+        ),
+    ]
+    assert await assistant_messages_sent('openai/gpt-oss-120b', history) == snapshot(
+        [
+            {'role': 'assistant', 'reasoning': 'Keep it short.', 'content': 'It is sunny in Paris.'},
+            {'role': 'assistant', 'content': 'You are welcome.'},
+        ]
     )
