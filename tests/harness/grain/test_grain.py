@@ -185,6 +185,19 @@ class TestGrain:
     def test_custom_id_is_forwarded(self, capability: Grain[str | None]) -> None:
         assert capability.get_toolset().id == 'tenant-grain'
 
+    @pytest.mark.parametrize(
+        'capability',
+        [
+            Grain[str | None](id='tenant-grain', auth='grain-token', read_only=True),
+            Grain[str | None](id='tenant-grain', auth=per_user_token, read_only=True),
+            Grain[str | None](id='tenant-grain', client='https://example.com/mcp', read_only=True),
+        ],
+        ids=['token', 'function', 'client'],
+    )
+    def test_read_only_keeps_the_id(self, capability: Grain[str | None]) -> None:
+        # Durable execution finds a run's held connection by the toolset's `id`.
+        assert capability.get_toolset().id == 'tenant-grain'
+
     @pytest.mark.parametrize('id', [None, ''])
     def test_unset_id_means_the_default(self, id: str | None) -> None:
         capability = Grain[None](id=id, auth='grain-token')

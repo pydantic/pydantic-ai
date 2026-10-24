@@ -166,6 +166,19 @@ class TestPylon:
     def test_custom_id_is_forwarded(self, capability: Pylon[str | None]) -> None:
         assert capability.get_toolset().id == 'tenant-pylon'
 
+    @pytest.mark.parametrize(
+        'capability',
+        [
+            Pylon[str | None](id='tenant-pylon', auth='pylon-token', read_only=True),
+            Pylon[str | None](id='tenant-pylon', auth=per_user_token, read_only=True),
+            Pylon[str | None](id='tenant-pylon', client='https://example.com/mcp', read_only=True),
+        ],
+        ids=['token', 'function', 'client'],
+    )
+    def test_read_only_keeps_the_id(self, capability: Pylon[str | None]) -> None:
+        # Durable execution finds a run's held connection by the toolset's `id`.
+        assert capability.get_toolset().id == 'tenant-pylon'
+
     def test_defer_loading_needs_no_id(self) -> None:
         Agent(TestModel(), capabilities=[Pylon(auth='pylon-token', defer_loading=True)])
 
