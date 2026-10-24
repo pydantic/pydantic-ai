@@ -831,7 +831,7 @@ async def test_bedrock_inference_profile_converse(
 
 
 async def test_bedrock_inference_profile_count_tokens(allow_model_requests: None):
-    """`count_tokens` sends the base model id, not the inference-profile ARN, which CountTokens does not accept.
+    """`count_tokens` sends the base model id, not the `bedrock_inference_profile` ARN.
 
     Not a VCR test: Bedrock CountTokens rejects every Claude 5-family id, so the stub client records the request.
     """

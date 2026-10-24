@@ -3,8 +3,8 @@
 The Anthropic SDK blocks its high-level `count_tokens()` on Bedrock, so `_messages_count_tokens`
 posts the low-level Bedrock Runtime `/model/{model}/count-tokens` request via
 `models/anthropic/_bedrock_count_tokens.py::count_tokens_via_bedrock`. These tests pin that request
-and the malformed-response edge case. They mock `client.post`: Bedrock CountTokens rejects every
-Claude 5-family id, so there is no current model to record against.
+and the malformed-response edge case. They mock `client.post` rather than record a cassette: Bedrock
+CountTokens rejects every Claude 5-family id.
 """
 
 from __future__ import annotations as _annotations
@@ -15,8 +15,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from pydantic_ai import ModelRequest, SystemPromptPart, UnexpectedModelBehavior, UserPromptPart
+from pydantic_ai import (
+    Agent,
+    ModelRequest,
+    SystemPromptPart,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.usage import UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..conftest import TestEnv, try_import
@@ -73,6 +81,27 @@ async def test_anthropic_bedrock_count_tokens_request(allow_model_requests: None
             'metadata': {'user_id': 'pydantic-ai-test'},
         }
     )
+
+
+async def test_anthropic_bedrock_per_request_count_tokens_before_request(allow_model_requests: None):
+    """`per_request_input_tokens_limit` with `count_tokens_before_request=True` raises before any message request."""
+    post = AsyncMock(return_value={'inputTokens': 18})
+    bedrock_client = AsyncAnthropicBedrock(
+        aws_access_key='test-access-key',
+        aws_secret_key='test-secret-key',
+        aws_region='us-east-1',
+    )
+    bedrock_client.post = post
+    agent = Agent(
+        AnthropicModel('anthropic.claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=bedrock_client))
+    )
+
+    with pytest.raises(UsageLimitExceeded, match='per_request_input_tokens_limit of 10'):
+        await agent.run(
+            'hello', usage_limits=UsageLimits(per_request_input_tokens_limit=10, count_tokens_before_request=True)
+        )
+
+    assert post.await_count == 1
 
 
 async def test_anthropic_bedrock_count_tokens_unexpected_response(allow_model_requests: None, env: TestEnv):
