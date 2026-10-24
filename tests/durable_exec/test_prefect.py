@@ -4224,12 +4224,73 @@ async def test_prefect_durability_identical_capability_operations_execute_twice_
     assert calls == 2
 
 
-@pytest.mark.parametrize('reverse_on_retry', [False, True])
-@pytest.mark.parametrize('separate_agents', [False, True])
+@dataclass(frozen=True)
+class CapabilityReplayCase:
+    agent_names: tuple[str, str]
+    run_ids: tuple[str, str]
+    retry_order: tuple[int, int]
+    observed: list[tuple[str, str]]
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        pytest.param(
+            CapabilityReplayCase(
+                agent_names=('one', 'one'),
+                run_ids=('A', 'B'),
+                retry_order=(0, 1),
+                observed=[('A', 'A'), ('B', 'B'), ('A', 'A'), ('B', 'B')],
+            ),
+            id='same-agent-same-order',
+        ),
+        pytest.param(
+            CapabilityReplayCase(
+                agent_names=('one', 'one'),
+                run_ids=('A', 'B'),
+                retry_order=(1, 0),
+                observed=[('A', 'A'), ('B', 'B'), ('B', 'B'), ('A', 'A')],
+            ),
+            id='same-agent-reversed',
+        ),
+        pytest.param(
+            CapabilityReplayCase(
+                agent_names=('left', 'left:capability-run:20:A'),
+                run_ids=('A:capability-run:1:B', 'B'),
+                retry_order=(0, 1),
+                observed=[
+                    ('A:capability-run:1:B', 'A:capability-run:1:B'),
+                    ('B', 'B'),
+                    ('A:capability-run:1:B', 'A:capability-run:1:B'),
+                    ('B', 'B'),
+                ],
+            ),
+            id='separate-agents-same-order',
+        ),
+        pytest.param(
+            CapabilityReplayCase(
+                agent_names=('left', 'left:capability-run:20:A'),
+                run_ids=('A:capability-run:1:B', 'B'),
+                retry_order=(1, 0),
+                observed=[
+                    ('A:capability-run:1:B', 'A:capability-run:1:B'),
+                    ('B', 'B'),
+                    ('B', 'B'),
+                    ('A:capability-run:1:B', 'A:capability-run:1:B'),
+                ],
+            ),
+            id='separate-agents-reversed',
+        ),
+    ],
+)
 @pytest.mark.parametrize('blockbuster_enabled', [False])
 async def test_prefect_capability_operations_replay_for_each_run(
-    reverse_on_retry: bool, separate_agents: bool, blockbuster_enabled: bool
+    case: CapabilityReplayCase, blockbuster_enabled: bool
 ) -> None:
+    """Use TestModel to isolate replay of a real Prefect operation executed before model requests.
+
+    The assertions pin the operation's replayed value and body count, independently of provider transport.
+    """
     # Prefect's async result writer creates its storage directories synchronously.
     assert blockbuster_enabled is False
     executions: list[str] = []
@@ -4249,32 +4310,25 @@ async def test_prefect_capability_operations_replay_for_each_run(
             return ctx.run_id
 
     # Agent names and run IDs are opaque, including namespace-like text and separators.
-    run_ids: list[str] = ['A:capability-run:1:B', 'B'] if separate_agents else ['A', 'B']
-    names: list[str] = ['left', f'left:capability-run:{len(run_ids[0])}:A'] if separate_agents else ['one']
-    agents: list[Agent[object, str]] = [
-        Agent(TestModel(), deps_type=object, name=name, capabilities=[RecordRun(), PrefectDurability()])
-        for name in names
-    ]
-    if not separate_agents:
-        agents.append(agents[0])
+    agents: dict[str, Agent[object, str]] = {
+        name: Agent(TestModel(), deps_type=object, name=name, capabilities=[RecordRun(), PrefectDurability()])
+        for name in dict.fromkeys(case.agent_names)
+    }
     attempts = 0
 
     @flow(retries=1, retry_delay_seconds=0)
     async def run_twice() -> None:
         nonlocal attempts
         attempts += 1
-        order: list[int] = [1, 0] if reverse_on_retry and attempts == 2 else [0, 1]
+        order = case.retry_order if attempts == 2 else (0, 1)
         for index in order:
-            await agents[index].run('same', run_id=run_ids[index])
+            await agents[case.agent_names[index]].run('same', run_id=case.run_ids[index])
         if attempts == 1:
             raise RuntimeError('retry after both runs completed their capability operation')
 
     await run_twice()
-    retry_ids: list[str] = list(reversed(run_ids)) if reverse_on_retry else run_ids
-    expected_first: list[tuple[str, str]] = [(run_id, run_id) for run_id in run_ids]
-    expected_retry: list[tuple[str, str]] = [(run_id, run_id) for run_id in retry_ids]
-    assert observed == [*expected_first, *expected_retry]
-    assert executions == run_ids
+    assert observed == case.observed
+    assert executions == list(case.run_ids)
 
 
 # Each lists a toolset's `fail` tool as `<prefix>_fail`: a prefix as a string layer, a rename as a mapping one.

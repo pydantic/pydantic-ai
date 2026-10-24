@@ -160,7 +160,7 @@ Unlike Temporal and DBOS, Prefect creates a task per call rather than registerin
 
 ### Durable Capability Operations
 
-Custom [`@durable_operation`](../capabilities/custom.md#durable-capability-operations) calls use the run's
+Custom [`@durable_operation`][pydantic_ai.capabilities.durable_operation] calls use the run's
 [`run_id`][pydantic_ai.tools.RunContext.run_id] and a per-operation call sequence in their task cache
 keys. Distinct, stable explicit `run_id=` values keep each run's results attached to that run even
 when runs arrive in a different order on a flow retry. Repeated identical calls within one run
