@@ -213,7 +213,7 @@ hooks = Hooks()
 async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
     if ctx.workspace.ref is not None:
         # Shielded, so an `anyio` deadline around the run doesn't cut the kill short,
-        # and bounded, so a hung API call can't hang the run past that deadline.
+        # and bounded, so a hung API call can't hang the run indefinitely.
         with anyio.move_on_after(30, shield=True):
             await E2BSandbox().destroy(ctx.workspace.ref)
     raise error
