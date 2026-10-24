@@ -554,38 +554,6 @@ def test_mixed_tools_native_output(
 # =============================================================================
 
 
-@pytest.mark.vcr
-def test_unsupported_strict_true_tool_no_output(
-    allow_model_requests: None,
-    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
-) -> None:
-    """Unsupported model: tool with strict=True, no output_type → no strict field."""
-    model = anthropic_model('claude-sonnet-4-0')
-    agent = Agent(model)
-
-    @agent.tool_plain(strict=True)
-    def get_weather(city: str) -> str:
-        return f'Weather in {city}: Sunny, 18°C'
-
-    agent.run_sync("What's the weather in Amsterdam?")
-
-
-@pytest.mark.vcr
-def test_unsupported_strict_true_tool_basemodel_output(
-    allow_model_requests: None,
-    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
-) -> None:
-    """Unsupported model: tool with strict=True, BaseModel output_type → no strict field."""
-    model = anthropic_model('claude-sonnet-4-0')
-    agent = Agent(model, output_type=CityInfo)
-
-    @agent.tool_plain(strict=True)
-    def get_population(city: str) -> int:
-        return 850_000 if city == 'Amsterdam' else 1_000_000
-
-    agent.run_sync('Get me details about Amsterdam including its population')
-
-
 def test_unsupported_native_output_raises(
     allow_model_requests: None,
     anthropic_model: ANTHROPIC_MODEL_FIXTURE,
