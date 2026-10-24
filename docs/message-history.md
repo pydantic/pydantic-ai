@@ -550,6 +550,9 @@ _(This example is complete, it can be run "as is")_
     sent to it as that string from the first run. Return a [`BinaryContent`][pydantic_ai.messages.BinaryContent]
     for binary data and it round-trips exactly, in this adapter and in any model of your own.
 
+    Citations are saved with the messages, and some are sent back to the provider that produced them. See
+    [citations in message history](citations.md#citations-in-message-history).
+
     The [UI adapters](ui/overview.md) are different: they convert messages to a foreign wire
     protocol (Vercel AI, AG-UI) whose message shape has no place for application-only fields, so
     those fields are dropped entirely. That loss is by design, not a state-loss bug.
@@ -598,7 +601,7 @@ async with agent.run_stream('Tell me a joke.') as streamed:
 
 The `message_history` parameter is trusted server-side state. If you load history that came from a browser request or another untrusted boundary, sanitize it before passing it to the agent.
 
-[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] applies the same default message sanitization used by the [UI adapters](ui/overview.md): it strips client-supplied system prompts and request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions], pins client-returned retry feedback to the voice its cause allows, drops non-HTTP file URL schemes, resets non-allowlisted [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values to `False`, drops uploaded file references, resets [workspace](workspace.md) references so a client can't point your agent at another environment, drops [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] from user prompts so a client can't pass its text off as content your application or a capability added, and removes unresolved tool calls at the end of the history.
+[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] applies the same default message sanitization used by the [UI adapters](ui/overview.md): it strips client-supplied system prompts and request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions], pins client-returned retry feedback to the voice its cause allows, drops non-HTTP file URL schemes, resets non-allowlisted [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values to `False`, drops uploaded file references, resets [workspace](workspace.md) references so a client can't point your agent at another environment, drops [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] from user prompts so a client can't pass its text off as content your application or a capability added, drops the framework-reserved `__pydantic_ai__` key from message [`metadata`][pydantic_ai.messages.ModelRequest.metadata] (keeping your own keys) so a client can't set state Pydantic AI and its capabilities act on, and removes unresolved tool calls at the end of the history.
 
 `strip_system_prompts` strips [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s, and keeps the [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s that carry Pydantic AI's own [retry feedback](retries.md#feedback-that-belongs-to-no-tool-call), so the model still sees why it corrected itself. The client picks a submitted feedback part's cause, so what the part may say is pinned to that cause: `'validation_error'` and `'model_retry'` feedback reach the model in the user voice, fenced behind a line attributing it to the application, which a client could write as plain user text anyway. `'no_output'` is the one cause in the system voice, and a client can forge the part as easily as a system prompt, so a client-submitted one is demoted to the same fenced, attributed user text, whatever it says. A tool-less legacy [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] is translated into the feedback part it always meant and takes the same rule. If stripping empties a `ModelRequest`, the request is dropped from the history entirely.
 
@@ -617,7 +620,7 @@ message_history = sanitize_messages(loaded_history)
 result = agent.run_sync('Tell me a different joke.', message_history=message_history)
 ```
 
-Each sanitization can be turned off individually when the corresponding parts were created by trusted server-side code: pass `strip_system_prompts=False` to keep both the system prompts and the retry feedback, `strip_instructions=False` to keep request-level instructions, add schemes to `allowed_file_url_schemes`, add values to `allowed_file_url_force_download`, set `allow_uploaded_files=True`, or set `strip_workspace_refs=False`. To continue client-supplied history in the same workspace, pass a reference you saved server-side as `workspace=` (see [Continuing in the same workspace](workspace.md#continuing-in-the-same-workspace)). See [file URL input security](input.md#user-side-download-vs-direct-file-url) for the file input trust model.
+Most of these sanitizations can be turned off individually when the corresponding parts were created by trusted server-side code: pass `strip_system_prompts=False` to keep both the system prompts and the retry feedback, `strip_instructions=False` to keep request-level instructions, add schemes to `allowed_file_url_schemes`, add values to `allowed_file_url_force_download`, set `allow_uploaded_files=True`, or set `strip_workspace_refs=False`. The others can't: [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] is always dropped from user prompts, and the framework-reserved `__pydantic_ai__` metadata key from every message, so pass history that should keep them as trusted server-side `message_history` instead. To continue client-supplied history in the same workspace, pass a reference you saved server-side as `workspace=` (see [Continuing in the same workspace](workspace.md#continuing-in-the-same-workspace)). See [file URL input security](input.md#user-side-download-vs-direct-file-url) for the file input trust model.
 
 ## Persisting sessions
 
@@ -715,6 +718,10 @@ Possession of the endpoint is therefore the authorization boundary, so design ar
 Since messages are defined by simple dataclasses, you can manually create and manipulate, e.g. for testing.
 
 The message format is independent of the model used, so you can use messages in different agents, or the same agent with different models.
+
+Provider-specific metadata is less portable than the message itself. For example,
+[citations](citations.md#citations-in-message-history) are sent to a different provider as plain text, though they stay
+on the stored messages.
 
 In the example below, we reuse the message from the first agent run, which uses the `{{ openai:medium }}` model, in a second agent run using the `{{ google:large }}` model.
 

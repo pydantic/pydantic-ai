@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+import struct
+from typing import Any, cast
 
 import anyio
 import pytest
@@ -80,7 +81,7 @@ class TestComputerUse:
         assert provider.actions == [Click(x=10, y=20), TypeText(text='hi'), PressKeys(keys=('ctrl', 's'))]
         first, second = _returns(result.all_messages())
         assert first.content == ['Ran 3 actions. Screenshot attached (1280x800).', SCREENSHOT]
-        assert first.metadata == {'performed': 3}
+        assert first.metadata == {'performed': 3, 'screenshot_size': (1280, 800)}
         assert second.content == ['Ran 2 actions. Screenshot attached (1280x800).', SCREENSHOT]
 
     async def test_a_failed_action_stops_the_rest_and_still_returns_a_screenshot(self) -> None:
@@ -107,6 +108,7 @@ class TestComputerUse:
         assert tool_return.metadata == {
             'performed': 1,
             'error': "the fake display cannot perform 'hold_key'",
+            'screenshot_size': (1280, 800),
         }
 
     async def test_a_failed_last_action_skips_nothing(self) -> None:
@@ -195,12 +197,12 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             '(0, 0) is the top left corner and (999, 999) the bottom right.',
         )
 
-    async def test_require_approval_lets_looking_through_and_defers_acting(self) -> None:
+    async def test_requires_approval_lets_looking_through_and_defers_acting(self) -> None:
         provider = InMemoryProvider()
         agent = Agent(
             # A batch that looks and then acts is deferred whole.
             _scripted([{'type': 'screenshot'}], [{'type': 'screenshot'}, {'type': 'click', 'x': 1, 'y': 1}]),
-            capabilities=[provider.capability(), ComputerUse(require_approval=True, settle_seconds=0)],
+            capabilities=[provider.capability(), ComputerUse(requires_approval=True, settle_seconds=0)],
             output_type=[str, DeferredToolRequests],
         )
         result = await agent.run('Go.')
@@ -210,7 +212,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             {'actions': [{'type': 'screenshot'}, {'type': 'click', 'x': 1, 'y': 1}]}
         ]
         (looked,) = _returns(result.all_messages())
-        assert looked.metadata == {'performed': 1}
+        assert looked.metadata == {'performed': 1, 'screenshot_size': (1280, 800)}
         assert provider.actions == []
 
         (call,) = result.output.approvals
@@ -220,7 +222,61 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         )
         assert provider.actions == [Click(x=1, y=1)]
 
-    async def test_a_call_its_provider_flagged_waits_for_approval_without_require_approval(self) -> None:
+    async def test_requires_approval_can_name_the_action_types_to_ask_about(self) -> None:
+        provider = InMemoryProvider()
+        agent = Agent(
+            _scripted([{'type': 'click', 'x': 1, 'y': 1}], [{'type': 'type', 'text': 'hi'}]),
+            capabilities=[provider.capability(), ComputerUse(requires_approval={'type', 'keypress'}, settle_seconds=0)],
+            output_type=[str, DeferredToolRequests],
+        )
+        result = await agent.run('Go.')
+
+        assert isinstance(result.output, DeferredToolRequests)
+        assert [call.args_as_dict() for call in result.output.approvals] == [
+            {'actions': [{'type': 'type', 'text': 'hi'}]}
+        ]
+        assert provider.actions == [Click(x=1, y=1)]
+
+    def test_combined_approvals_ask_about_every_action_type_either_names(self) -> None:
+        combined = ComputerUse.combine(
+            [ComputerUse[Any](requires_approval={'type'}), ComputerUse[Any](requires_approval={'keypress'})]
+        )
+        assert isinstance(combined, ComputerUse)
+        assert combined.requires_approval == {'type', 'keypress'}
+        none = ComputerUse.combine([ComputerUse[Any](), ComputerUse[Any]()])
+        assert isinstance(none, ComputerUse)
+        assert none.requires_approval is False
+
+    async def test_zoom_and_the_pointer_position_come_back_before_the_screenshot(self) -> None:
+        model = _scripted(
+            [{'type': 'zoom', 'region': {'left': 0, 'top': 0, 'right': 100, 'bottom': 50}}, {'type': 'cursor_position'}]
+        )
+        agent = Agent(model, capabilities=[InMemoryProvider().capability(), ComputerUse()])
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+
+        summary, zoomed, pointer, screenshot = cast(list[Any], tool_return.content)
+        assert summary == 'Ran 2 actions. Screenshot attached (1280x800).'
+        assert struct.unpack('>II', zoomed.data[16:24]) == (100, 50)
+        assert pointer == 'The pointer is at (640, 400).'
+        assert screenshot == SCREENSHOT
+
+    async def test_a_grid_model_zooms_and_reads_the_pointer_on_its_grid(self) -> None:
+        model = _scripted(
+            [
+                {'type': 'zoom', 'region': {'left': 0, 'top': 0, 'right': 500, 'bottom': 1000}},
+                {'type': 'cursor_position'},
+            ],
+            profile=ModelProfile(computer_use_coordinate_grid=1000),
+        )
+        agent = Agent(model, capabilities=[InMemoryProvider().capability(), ComputerUse()])
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+
+        _, zoomed, pointer, _ = cast(list[Any], tool_return.content)
+        assert struct.unpack('>II', zoomed.data[16:24]) == (640, 800)
+        assert pointer == 'The pointer is at (500, 500).'
+        assert tool_return.metadata == {'performed': 2, 'coordinate_grid': 1000, 'screenshot_size': (1280, 800)}
+
+    async def test_a_call_its_provider_flagged_waits_for_approval_without_requires_approval(self) -> None:
         provider = InMemoryProvider()
         check = {'id': 'sc_1', 'code': 'malicious_instructions', 'message': 'The page asks for a password.'}
 
@@ -309,7 +365,8 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         (tool,) = seen
         assert (tool.name, tool.sequential, tool.tool_kind) == ('computer', True, 'computer')
         # Under durable execution, each workspace call is its own activity or task rather than the whole call one.
-        assert tool.metadata == {'temporal': False, 'prefect': False}
+        # The display size is for providers whose native tool declares it.
+        assert tool.metadata == {'temporal': False, 'prefect': False, 'display_size': (1280, 800)}
 
     @pytest.mark.parametrize(
         'workspace',

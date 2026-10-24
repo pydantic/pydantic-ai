@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import sys
 import textwrap
 from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass, fields
@@ -22,6 +23,7 @@ from pydantic_ai import (
     Tool,
     durable_exec,
 )
+from pydantic_ai._tool_execution import _ToolCallProcessor  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._utils import get_union_args
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.durable_exec import (
@@ -54,6 +56,7 @@ from pydantic_ai.durable_exec._toolset import (
     _ApprovalRequired,  # pyright: ignore[reportPrivateUsage]
     _CallDeferred,  # pyright: ignore[reportPrivateUsage]
     _ModelRetry,  # pyright: ignore[reportPrivateUsage]
+    _RunCancelled,  # pyright: ignore[reportPrivateUsage]
     _ToolFailed,  # pyright: ignore[reportPrivateUsage]
     _ToolReturn,  # pyright: ignore[reportPrivateUsage]
     _ValidationError,  # pyright: ignore[reportPrivateUsage]
@@ -66,6 +69,7 @@ from pydantic_ai.durable_exec._toolset import (
 )
 from pydantic_ai.durable_exec._utils import unwrap_model
 from pydantic_ai.durable_exec._workspace import WORKSPACE_OPERATION_ID
+from pydantic_ai.exceptions import RunCancelled, RunTimedOut
 from pydantic_ai.messages import (
     BinaryContent,
     CapabilityEvent,
@@ -162,6 +166,32 @@ def test_public_engine_builder_exports() -> None:
         'RoleBasedOperationConfig',
         'ToolsetKind',
         'ToolsetValidateToolArgumentsId',
+        'BoundDurableOperation',
+        'CacheIdentity',
+        'CallToolResult',
+        'capability_operation_result_type',
+        'CapabilityMethodDeclaration',
+        'CapabilityOperationParams',
+        'durable_unit_scope',
+        'DurableOperation',
+        'DurableOperationConfig',
+        'DurableRunContext',
+        'DynamicToolsetCallToolParams',
+        'DynamicToolsResult',
+        'EventStreamHandlerParams',
+        'ModelCancelSuspendedResponseParams',
+        'ModelCompactMessagesParams',
+        'ModelRequestContextProjection',
+        'ModelRequestParams',
+        'ParameterTransport',
+        'ParameterTransports',
+        'ResultCodec',
+        'ToolsetCallToolParams',
+        'ToolsetGetToolsParams',
+        'revalidate_function_call',
+        'WorkspaceCall',
+        'WorkspaceCallParams',
+        'WorkspaceCallResult',
     ]
     assert all(getattr(durable_exec, name) is not None for name in durable_exec.__all__)
 
@@ -593,6 +623,11 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
             },
         ),
         (_ToolFailed('failed'), {'message': 'failed', 'kind': 'tool_failed'}),
+        (_RunCancelled('stopped'), {'message': 'stopped', 'timed_out': False, 'kind': 'run_cancelled'}),
+        (
+            _RunCancelled('deadline', timed_out=True),
+            {'message': 'deadline', 'timed_out': True, 'kind': 'run_cancelled'},
+        ),
     ],
 )
 def test_call_tool_result_json_payload_goldens(value: CallToolResult, expected: dict[str, Any]) -> None:
@@ -607,7 +642,7 @@ def _source_tree(source: type | Callable[..., object]) -> ast.AST:
 
 def _caught_exception_names(tree: ast.AST) -> set[str]:
     return {
-        ast.unparse(exception)
+        exception.attr if isinstance(exception, ast.Attribute) else ast.unparse(exception)
         for handler in ast.walk(tree)
         if isinstance(handler, ast.ExceptHandler) and handler.type is not None
         for exception in (handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type])
@@ -615,16 +650,17 @@ def _caught_exception_names(tree: ast.AST) -> set[str]:
 
 
 def test_call_tool_result_carries_every_tool_manager_control_flow_exception() -> None:
-    """Every exception `ToolManager` handles around a toolset call must cross a durable unit as a value.
+    """Every exception core handles around a toolset call must cross a durable unit as a value.
 
     A durable toolset runs the tool call (or its argument validation) inside a unit:
     `wrap_tool_call_result` turns each control-flow exception into a `CallToolResult` member there,
-    and `unwrap_tool_call_result` raises it again on the other side, where `ToolManager` handles it.
-    An exception `ToolManager` starts handling without a matching arm leaves the unit as an ordinary
-    error, so the engine retries or fails the unit instead of the agent seeing a retry, a deferral or
-    a failed tool return. The sets are read from the source rather than copied, so a new `except` arm
-    in `ToolManager` fails here until it gets a `CallToolResult` member or a `handled_caller_side_only`
-    entry with its reason. Not a VCR test: no request differs when an arm is missing.
+    and `unwrap_tool_call_result` raises it again on the other side, where `ToolManager` or
+    `_ToolCallProcessor._call_tool` handles it. An exception either of them starts handling without a
+    matching arm leaves the unit as an ordinary error, so the engine retries or fails the unit instead
+    of the agent seeing a retry, a deferral or a failed tool return. The sets are read from the source
+    rather than copied, so a new `except` arm in either fails here until it gets a `CallToolResult`
+    member or a `handled_caller_side_only` entry with its reason. Not a VCR test: no request differs
+    when an arm is missing.
     """
     handled_caller_side_only = {
         'BaseException',  # `handle_call` tells a realtime session its call failed validation, then re-raises
@@ -635,7 +671,9 @@ def test_call_tool_result_carries_every_tool_manager_control_flow_exception() ->
         'ToolFailedError',  # core's own wrapper, raised once an unwrapped `ToolFailed` is handled
         '_ValidationDeferral',  # core's own wrapper for a deferral its argument validator raised
     }
-    core_handled = _caught_exception_names(_source_tree(ToolManager))
+    core_handled = _caught_exception_names(_source_tree(ToolManager)) | _caught_exception_names(
+        _source_tree(_ToolCallProcessor[Any, Any]._call_tool)  # pyright: ignore[reportPrivateUsage]
+    )
     carried = _caught_exception_names(_source_tree(wrap_tool_call_result))
     reraised = {
         ast.unparse(raised.exc.func.value if isinstance(raised.exc.func, ast.Attribute) else raised.exc.func)
@@ -650,11 +688,17 @@ def test_call_tool_result_carries_every_tool_manager_control_flow_exception() ->
         if isinstance(node, ast.Name)
     }
 
-    assert carried == reraised, '`wrap_tool_call_result` and `unwrap_tool_call_result` disagree'
+    # `unwrap_tool_call_result` may raise a subclass of the exception a member carries (`RunTimedOut`).
+    toolset_namespace = vars(sys.modules[wrap_tool_call_result.__module__])
+    reraised_arms = {
+        next((base.__name__ for base in toolset_namespace[name].__mro__ if base.__name__ in carried), name)
+        for name in reraised
+    }
+    assert carried == reraised_arms, '`wrap_tool_call_result` and `unwrap_tool_call_result` disagree'
     assert handled_caller_side_only - core_handled == set(), 'stale `handled_caller_side_only` entries'
     assert carried & handled_caller_side_only == set()
     assert core_handled - handled_caller_side_only == carried, (
-        'Add a `CallToolResult` member and wrap/unwrap arms for each new exception `ToolManager` handles, '
+        'Add a `CallToolResult` member and wrap/unwrap arms for each new exception core handles, '
         'or list it in `handled_caller_side_only` with its reason.'
     )
     assert recorded_members == {member.__name__ for member in get_union_args(CallToolResult)}, (
@@ -675,6 +719,7 @@ def test_call_tool_result_carries_every_tool_manager_control_flow_exception() ->
                         'id': None,
                         'provider_name': None,
                         'provider_details': None,
+                        'citations': None,
                         'part_kind': 'text',
                     }
                 ],
@@ -1080,3 +1125,23 @@ async def test_validation_error_crosses_call_tool_result_boundary() -> None:
     payload = await wrap_tool_call_result(run_args_validator(async_validated_tool, {'value': 1}, ctx))
     with pytest.raises(ValidationError, match='valid integer'):
         unwrap_tool_call_result(payload)
+
+
+@pytest.mark.parametrize('exc_type', [RunCancelled, RunTimedOut])
+async def test_run_cancelled_crosses_call_tool_result_boundary(exc_type: type[RunCancelled]) -> None:
+    """A sub-agent's `RunCancelled` raised in a durable unit is raised again, with its type, on the other side.
+
+    `_ToolCallProcessor._call_tool` then turns it into a failed tool return, as it does in-process.
+    The payload goes through `JSON_CODEC` as it would across a Temporal activity boundary. Not a VCR
+    test: the exception type never reaches a model request, only hooks on the calling side.
+    """
+
+    async def cancelled_sub_agent() -> None:
+        raise exc_type('the sub-agent stopped')
+
+    payload = JSON_CODEC.load(
+        CallToolResult, JSON_CODEC.dump(CallToolResult, await wrap_tool_call_result(cancelled_sub_agent()))
+    )
+    with pytest.raises(exc_type, match='the sub-agent stopped') as exc_info:
+        unwrap_recorded_tool_call_result(payload)
+    assert type(exc_info.value) is exc_type

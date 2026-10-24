@@ -14,11 +14,14 @@
             - SupportsFilesystem
             - SupportsRealpath
             - SupportsDisplay
+            - SupportsZoom
+            - SupportsCursorPosition
             - ComputerAction
             - Click
             - MoveMouse
             - Drag
             - Point
+            - Region
             - MouseDown
             - MouseUp
             - MouseButton

@@ -278,7 +278,7 @@ class TestOutputGuardrailOrdering:
         ordering = OutputGuardrail(guard=lambda _: True).get_ordering()
         assert ordering == CapabilityOrdering(position='outermost', wrapped_by=[Instrumentation])
 
-    async def test_redaction_span_includes_content_when_enabled(self):
+    async def test_redaction_span_records_only_the_replacement_when_enabled(self):
         tracer, exporter = _recording_tracer()
         og = OutputGuardrail(guard=lambda _: GuardrailResult.replace('clean'))
 
@@ -294,7 +294,6 @@ class TestOutputGuardrailOrdering:
         assert dict(span.attributes or {}) == {
             'guardrail.direction': 'output',
             'guardrail.action': 'replace',
-            'guardrail.original': 'dirty',
             'guardrail.replacement': 'clean',
         }
 

@@ -313,5 +313,6 @@ tests/
 │   └── test_*.py
 ├── providers/
 │   └── test_*.py            # provider initialization tests (unit)
+├── ui_roundtrip/            # UI adapter round trips through the real JS clients (needs `npm ci --ignore-scripts`)
 └── test_*.py                # feature tests (prefer VCR + parametrize)
 ```

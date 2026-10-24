@@ -51,13 +51,14 @@ pip/uv-add 'pydantic-ai-slim[retries]'
 
 ### A retrying client
 
-Here's an example of adding retry functionality with smart retry handling:
+Pass the retrying transport to [`create_async_httpx2_client()`][pydantic_ai.models.create_async_httpx2_client], so the client keeps the timeouts and user agent of the clients Pydantic AI builds, and hand the client to the provider. Then set [`ModelSettings['max_retries']`](#setting-the-sdk-retry-count-per-request) to `0`, so the transport is the only layer that retries rather than one whose attempts [multiply](#retry-multiplication) with the provider SDK's own:
 
 ```python {title="smart_retry_example.py"}
-from httpx2 import AsyncClient, ConnectError, HTTPStatusError
+import httpx2
 from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from pydantic_ai import Agent
+from pydantic_ai.models import create_async_httpx2_client
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.retries import (
@@ -78,7 +79,7 @@ def create_retrying_client():
     transport = AsyncHTTPX2TenacityTransport(
         config=RetryConfig(
             # Retry on HTTP errors and connection issues
-            retry=retry_if_exception_type((HTTPStatusError, ConnectError)),
+            retry=retry_if_exception_type((httpx2.HTTPStatusError, httpx2.ConnectError)),
             # Smart waiting: respects Retry-After headers, falls back to exponential backoff
             wait=wait_retry_after(
                 fallback_strategy=wait_exponential(multiplier=1, max=60),
@@ -91,13 +92,15 @@ def create_retrying_client():
         ),
         validate_response=should_retry_status
     )
-    return AsyncClient(transport=transport)
+    return create_async_httpx2_client(transport=transport)
 
-# Use the retrying client with a model
+# Use the retrying client with a model, and leave retrying to the transport
 client = create_retrying_client()
 model = OpenAIChatModel('{{ openai:medium.name }}', provider=OpenAIProvider(http_client=client))
-agent = Agent(model)
+agent = Agent(model, model_settings={'max_retries': 0})
 ```
+
+The transport you pass replaces the one the client would build, so it owns the connection pool. Without `wrapped`, a retrying transport sends its attempts through an `httpx2.AsyncHTTPTransport` it creates with the same pool limits as Pydantic AI's own clients (1000 connections, up to 100 kept alive). HTTPX also stops reading proxies from the `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` environment variables once a client has a transport, so give the retrying transport your own `wrapped` transport with a `proxy` if you need one. A `wrapped` transport you build has HTTPX's default pool of 100 connections, 20 kept alive, unless you set its `limits` too: `wrapped=httpx2.AsyncHTTPTransport(proxy=..., limits=httpx2.Limits(max_connections=1000, max_keepalive_connections=100))`.
 
 ### Wait strategies
 
@@ -135,9 +138,9 @@ This wait strategy:
 For asynchronous HTTP clients (recommended for most use cases):
 
 ```python {title="async_transport_example.py"}
-from httpx2 import AsyncClient
 from tenacity import stop_after_attempt
 
+from pydantic_ai.models import create_async_httpx2_client
 from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
 
 
@@ -154,7 +157,7 @@ transport = AsyncHTTPX2TenacityTransport(
 )
 
 # Create a client using the transport:
-client = AsyncClient(transport=transport)
+client = create_async_httpx2_client(transport=transport)
 ```
 
 #### HTTPX2TenacityTransport
@@ -189,9 +192,10 @@ client = Client(transport=transport)
 #### Rate limit handling with `Retry-After` support
 
 ```python {title="rate_limit_handling.py"}
-from httpx2 import AsyncClient, HTTPStatusError
+from httpx2 import HTTPStatusError
 from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from pydantic_ai.models import create_async_httpx2_client
 from pydantic_ai.retries import (
     AsyncHTTPX2TenacityTransport,
     RetryConfig,
@@ -213,7 +217,7 @@ def create_rate_limit_client():
         ),
         validate_response=lambda r: r.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx
     )
-    return AsyncClient(transport=transport)
+    return create_async_httpx2_client(transport=transport)
 
 # Example usage
 client = create_rate_limit_client()
@@ -228,6 +232,7 @@ The `wait_retry_after` function automatically detects `Retry-After` (or `retry-a
 import httpx2
 from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from pydantic_ai.models import create_async_httpx2_client
 from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
 
 
@@ -245,7 +250,7 @@ def create_network_resilient_client():
             reraise=True
         )
     )
-    return httpx2.AsyncClient(transport=transport)
+    return create_async_httpx2_client(transport=transport)
 
 # Example usage
 client = create_network_resilient_client()
@@ -258,6 +263,7 @@ client = create_network_resilient_client()
 import httpx2
 from tenacity import retry_if_exception, stop_after_attempt, wait_exponential
 
+from pydantic_ai.models import create_async_httpx2_client
 from pydantic_ai.retries import (
     AsyncHTTPX2TenacityTransport,
     RetryConfig,
@@ -288,7 +294,7 @@ def create_custom_retry_client():
         ),
         validate_response=lambda r: r.raise_for_status()
     )
-    return httpx2.AsyncClient(transport=transport)
+    return create_async_httpx2_client(transport=transport)
 
 client = create_custom_retry_client()
 # Client will retry server errors (5xx) and network errors, but not client errors (4xx)
@@ -316,7 +322,7 @@ from smart_retry_example import create_retrying_client
 
 client = create_retrying_client()
 model = OpenAIChatModel('{{ openai:medium.name }}', provider=OpenAIProvider(http_client=client))
-agent = Agent(model)
+agent = Agent(model, model_settings={'max_retries': 0})
 ```
 
 #### Any OpenAI-compatible provider
@@ -337,7 +343,7 @@ model = OpenAIChatModel(
         http_client=client
     )
 )
-agent = Agent(model)
+agent = Agent(model, model_settings={'max_retries': 0})
 ```
 
 #### Anthropic
@@ -351,7 +357,7 @@ from smart_retry_example import create_retrying_client
 
 client = create_retrying_client()
 model = AnthropicModel('{{ anthropic:medium.name }}', provider=AnthropicProvider(http_client=client))
-agent = Agent(model)
+agent = Agent(model, model_settings={'max_retries': 0})
 ```
 
 ### Best practices
@@ -391,7 +397,7 @@ from smart_retry_example import create_retrying_client
 
 client = create_retrying_client()
 model = OpenAIChatModel('{{ openai:medium.name }}', provider=OpenAIProvider(http_client=client))
-agent = Agent(model)
+agent = Agent(model, model_settings={'max_retries': 0})
 ```
 
 ### Performance considerations
