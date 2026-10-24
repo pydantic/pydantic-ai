@@ -429,6 +429,7 @@ def test_agent_data_uses_content_only_route(tmp_path: Path, changed_files: list[
         ('examples/README.md', 'false'),
         ('examples/guide.mdc', 'false'),
         ('pydantic_ai_slim/README.md', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/README.md', 'false'),
         ('pydantic_evals/pydantic_evals/README.md', 'false'),
         ('pydantic_graph/README.md', 'false'),
         ('agent_docs/index.md', 'false'),

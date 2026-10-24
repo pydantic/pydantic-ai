@@ -1,3 +1,5 @@
+"""Exercise pytest lifecycle behavior with no provider requests for VCR to record."""
+
 from __future__ import annotations
 
 from pathlib import Path
