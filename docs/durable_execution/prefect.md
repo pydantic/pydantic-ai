@@ -160,6 +160,10 @@ Unlike Temporal and DBOS, Prefect creates a task per call rather than registerin
 
 ### Durable Capability Operations
 
+Capability tasks include the agent's name in their cache key, so two agents in one flow never
+share a cached result. A flow retried across the upgrade that introduced this re-runs capability
+tasks once instead of reading them from the cache.
+
 Custom [`@durable_operation`][pydantic_ai.capabilities.durable_operation] calls use the run's
 [`run_id`][pydantic_ai.tools.RunContext.run_id] and a per-operation call sequence in their task cache
 keys. Distinct, stable explicit `run_id=` values keep each run's results attached to that run even
@@ -194,7 +198,7 @@ IDs still depend on arrival order, so pass explicit IDs for concurrent branches 
     new environment instead of reattaching the original one. Let in-flight workspace flows finish
     before upgrading. No manual cache deletion is required.
 
-Event stream handler and capability tasks include the agent's name in their cache key, so two agents in one
+Event stream handler tasks include the agent's name in their cache key, so two agents in one
 flow never share a cached result. A flow retried across the upgrade that introduced this re-runs those tasks
 once instead of reading them from the cache.
 
