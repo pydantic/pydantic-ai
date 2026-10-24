@@ -86,15 +86,35 @@ that runs with the gateway's credentials.
 
 The headless runner streams model responses so it can record assistant messages, reasoning,
 tool calls and results (including native tools), and usage in the canonical session. The
-engine subscribes to typed core events through the public `Agent.on_event` API. The inline
-parser selects their framed JSONL records from captured engine stdio. The gh-aw runtime
-bootstrap writes the canonical stream to `agent-session.jsonl`: `session.init`,
+engine subscribes to typed core events through the public `Agent.on_event` API. The Python
+recorder writes signed JSONL records directly to engine stderr through a non-inheritable
+descriptor. The Node setup process replaces itself with Python, which redirects ordinary
+stderr to engine stdout. The public-key header goes to the protected stream; CLI diagnostics
+and child output remain ordinary terminal output. The signing key is
+generated in the recorder process after Linux disables same-user `/proc` inspection; it is
+not written to the environment, stdin, or a file.
+
+The gh-aw runtime asks AWF to capture engine stderr in a host-only directory that AWF has
+validated against the agent's mounts and other writable paths. After the sandbox exits,
+gh-aw parses only that protected stderr capture; the shared terminal log is never an input
+to the session parser. The AWF command wrapper must replace any same-user shell before tools
+run, so the non-dumpable Python recorder is the only tool-UID process holding the protected
+pipe. A surviving parent would let a tool replace the public-key header through `/proc`.
+The parser also verifies Ed25519 signatures, contiguous frame numbers, and a terminal
+`session.result`. A missing terminal, authenticated sequence gap, or authenticated event
+after the terminal prevents canonical publication. Authenticated prefixes remain separate
+parser diagnostics, without authoritative status or usage. A complete failure recording,
+including partial content observed before interruption, retains its failure result. Repository
+`PAI_AGENT` and any caller-supplied `PYTHONPATH` are trusted engine configuration.
+Python can import from `PYTHONPATH` before the recorder starts, and `PAI_AGENT` runs in
+the recorder interpreter. Point either setting only at code you trust.
+The runtime bootstrap writes the canonical stream to `agent-session.jsonl`: `session.init`,
 `user.message`, `assistant.message`, `assistant.reasoning`, `tool.execution_start`,
 `tool.execution_complete`, and `session.result`. The result includes reported usage when
 available; startup failures still record status without usage when none is available. Errors
 and tool calls still pending at interruption are represented as observed. If finalizing the
-recording fails, the launcher reports the error on stderr, preserves the CLI exit status,
-and attempts a status-only result. The engine does not synthesize tool IDs, completions,
+recording fails, the launcher reports the error as terminal output, preserves the CLI exit
+status, and attempts a status-only result. The engine does not synthesize tool IDs, completions,
 or turn counts. A compatible gh-aw conclusion also collects usage and `aw_session.jsonl`,
 including gateway and safe-output activity.
 
@@ -274,18 +294,32 @@ covers the rest of the job's configuration.
 
 ## gh-aw compatibility
 
-This definition requires gh-aw [v0.91.1](https://github.com/github/gh-aw/releases/tag/v0.91.1)
-or a newer compatible release for canonical session records and merged usage that match
-the unified-session schema. Install the pinned extension with:
+This definition requires the protected session capture contract being integrated in
+[github/gh-aw#69586](https://github.com/github/gh-aw/pull/69586), backed by AWF's protected
+command capture from
+[github/gh-aw-firewall#10169](https://github.com/github/gh-aw-firewall/pull/10169).
+A compatible gh-aw runtime must:
 
-```bash
-gh extension install github/gh-aw --pin v0.91.1
-```
+- accept `engine.behaviors.execution.protected-session-capture: true` only with an enabled
+  AWF sandbox and usable log parser;
+- invoke AWF's protected command capture and reject TTY, external-microVM, Docker-socket,
+  capture-failure, truncated-capture, and agent-visible destination configurations;
+- select the captured stderr bytes from AWF's attempt metadata, preserving partial bytes and
+  the actual AWF exit status when execution is interrupted;
+- set `GH_AW_PROTECTED_SESSION_CAPTURE=1` for the engine and parser only when that protected
+  path is active; and
+- parse only the protected stderr capture, never `/tmp/gh-aw/agent-stdio.log` or the captured
+  ordinary stdout stream.
 
-The default stable release is below this runtime floor. Existing workflows must be
-recompiled with a compatible gh-aw pin and have their generated lockfile committed.
-Installing a newer `gh aw` CLI locally does not alter an already committed lockfile or
-the runtime it selects.
+The engine refuses to start when the runtime marker is absent. The AWF container must keep
+`SYS_PTRACE` unavailable to agent processes so they cannot inspect the recorder's signing key.
+No released gh-aw version
+contains this contract yet. Existing workflows will need to install the compatible tagged
+release, recompile, and commit their generated lockfile; installing a newer `gh aw` CLI does
+not alter an already committed lockfile or the runtime it selects.
+
+The protected-capture runtime rejects workflows with `evals`, whose secondary engine invocation
+reads `evals.log`. Omit `evals` when using this engine.
 
 The workflow summary is the canonical success/failure report. Categorical summary labels
 for specific MCP failures and maximum-turn outcomes are removed; MCP startup and
