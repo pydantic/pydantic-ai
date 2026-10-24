@@ -204,11 +204,10 @@ with try_import() as imports_successful:
         AnthropicModel,
         AnthropicModelSettings,
         AnthropicStreamedResponse,
-        _fetched_page,  # pyright: ignore[reportPrivateUsage]
-        _is_expired_container_error,  # pyright: ignore[reportPrivateUsage]
-        _map_citations,  # pyright: ignore[reportPrivateUsage]
-        _map_usage,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.models.anthropic._citations import fetched_page, map_citations
+    from pydantic_ai.models.anthropic._errors import is_expired_container_error
+    from pydantic_ai.models.anthropic._response import map_usage
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.profiles.anthropic import anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -260,7 +259,7 @@ def test_anthropic_content_block_citation_is_a_document_citation():
     )
 
     # The location is inside the cited document, not the answer, so it stays in the raw citation data.
-    assert _map_citations([citation], 'answer') == [
+    assert map_citations([citation], 'answer') == [
         Citation(
             sources=[DocumentCitationSource(document_id='file-1', title='Report', excerpts=['block excerpt'])],
             anchor=ContentCitationAnchor(start=0, end=6),
@@ -399,7 +398,7 @@ def test_anthropic_client_search_result_citation_is_not_normalized(source: str):
         type='search_result_location',
     )
 
-    assert _map_citations([citation], 'answer') is None
+    assert map_citations([citation], 'answer') is None
 
 
 def _web_fetch_result(content: BetaWebFetchBlock | BetaWebFetchToolResultErrorBlock) -> BetaWebFetchToolResultBlock:
@@ -420,8 +419,8 @@ def test_anthropic_pdf_or_failed_fetch_is_not_a_fetched_page():
     )
     error = BetaWebFetchToolResultErrorBlock(type='web_fetch_tool_result_error', error_code='url_not_accessible')
 
-    assert _fetched_page(_web_fetch_result(pdf)) is None
-    assert _fetched_page(_web_fetch_result(error)) is None
+    assert fetched_page(_web_fetch_result(pdf)) is None
+    assert fetched_page(_web_fetch_result(error)) is None
 
 
 @pytest.mark.parametrize('stream', [pytest.param(False, id='request'), pytest.param(True, id='stream')])
@@ -553,7 +552,7 @@ def test_anthropic_character_citation_not_on_fetched_page_is_a_document_citation
         type='char_location',
     )
 
-    assert _map_citations([citation], 'answer', [('https://example.com/page', 'Page text')]) == [
+    assert map_citations([citation], 'answer', [('https://example.com/page', 'Page text')]) == [
         Citation(
             sources=[DocumentCitationSource(title='Page', excerpts=['Other text'])],
             anchor=ContentCitationAnchor(start=0, end=6),
@@ -590,7 +589,7 @@ def test_anthropic_fetched_page_url_only_when_one_page_matches(pages: list[tuple
         type='char_location',
     )
 
-    [mapped] = _map_citations([citation], 'answer', pages) or []
+    [mapped] = map_citations([citation], 'answer', pages) or []
 
     expected: CitationSource = (
         WebCitationSource(url, title='Terms', excerpts=['Terms'])
@@ -606,7 +605,7 @@ def test_anthropic_citation_without_source_fields_is_skipped():
         cited_text='', document_index=0, start_char_index=0, end_char_index=0, type='char_location'
     )
 
-    assert _map_citations([citation], 'answer') is None
+    assert map_citations([citation], 'answer') is None
 
 
 def test_anthropic_citation_of_unknown_type_is_skipped():
@@ -620,7 +619,7 @@ def test_anthropic_citation_of_unknown_type_is_skipped():
         ),
     )
 
-    assert _map_citations(block.citations or [], block.text) is None
+    assert map_citations(block.citations or [], block.text) is None
 
 
 def test_anthropic_citation_of_empty_text_is_unanchored():
@@ -629,7 +628,7 @@ def test_anthropic_citation_of_empty_text_is_unanchored():
         type='web_search_result_location', url='https://example.com', cited_text='', encrypted_index='opaque-index'
     )
 
-    assert _map_citations([citation], '') == [Citation(sources=[WebCitationSource(url='https://example.com')])]
+    assert map_citations([citation], '') == [Citation(sources=[WebCitationSource(url='https://example.com')])]
 
 
 async def test_anthropic_stream_mixed_web_and_document_citations(allow_model_requests: None):
@@ -4009,7 +4008,7 @@ def test_expired_container_error(status_code: int, error_type: str | None, messa
         response=httpx2.Response(status_code=status_code, request=httpx2.Request('POST', 'https://example.com/v1')),
         body=body,
     )
-    assert _is_expired_container_error(error) is expected
+    assert is_expired_container_error(error) is expected
 
 
 def test_model_connection_error(allow_model_requests: None) -> None:
@@ -6905,7 +6904,7 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
 def test_usage(
     message_callback: Callable[[], BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent], usage: RunUsage
 ):
-    assert _map_usage(message_callback(), 'anthropic', '', 'unknown') == usage
+    assert map_usage(message_callback(), 'anthropic', '', 'unknown') == usage
 
 
 def test_usage_otel_attributes_omit_first_class_token_details_with_compaction():
@@ -6937,7 +6936,7 @@ def test_usage_otel_attributes_omit_first_class_token_details_with_compaction():
             ],
         )
     )
-    mapped = _map_usage(message, 'anthropic', '', 'unknown')
+    mapped = map_usage(message, 'anthropic', '', 'unknown')
     assert mapped.input_tokens == 212
     assert mapped.details['input_tokens'] == 23  # still accessible on `details`
     attributes = mapped.opentelemetry_attributes()
@@ -6963,9 +6962,9 @@ def test_usage_otel_attributes_omit_first_class_token_details_with_compaction():
 
 def test_streaming_usage():
     start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
-    initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
+    initial_usage = map_usage(start, 'anthropic', '', 'unknown')
     delta = BetaRawMessageDeltaEvent(delta=Delta(), usage=BetaMessageDeltaUsage(output_tokens=5), type='message_delta')
-    final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
+    final_usage = map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
     assert final_usage == snapshot(
         RequestUsage(input_tokens=1, output_tokens=5, details={'input_tokens': 1, 'output_tokens': 5})
     )
@@ -6978,13 +6977,13 @@ def test_streaming_usage_thinking_tokens():
     cassette cannot protect because the matcher replays whatever delta was recorded regardless.
     """
     start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
-    initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
+    initial_usage = map_usage(start, 'anthropic', '', 'unknown')
     delta = BetaRawMessageDeltaEvent(
         delta=Delta(),
         usage=BetaMessageDeltaUsage(output_tokens=5, output_tokens_details=BetaOutputTokensDetails(thinking_tokens=3)),
         type='message_delta',
     )
-    final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
+    final_usage = map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
     assert final_usage == snapshot(
         RequestUsage(
             input_tokens=1,
@@ -6998,17 +6997,17 @@ def test_streaming_usage_thinking_tokens():
 def test_map_usage_bedrock_start_event_without_message():
     """On Bedrock the SDK drops SSE event types, so Bedrock-only chunks are non-validating
     `construct_type`d into `BetaRawMessageStartEvent(message=None)`, violating the annotation.
-    `_map_usage` must not dereference `message.message.usage` on such events (https://github.com/pydantic/pydantic-ai/issues/5774).
+    `map_usage` must not dereference `message.message.usage` on such events (https://github.com/pydantic/pydantic-ai/issues/5774).
 
     A unit test rather than VCR: the `message=None` event is an SDK construct artifact, not a
     server response shape, so it can't be elicited from a recorded request.
     """
     # `model_construct` skips validation, mirroring the SDK's `construct_type` on Bedrock.
     start = BetaRawMessageStartEvent.model_construct(type='message_start', message=None)
-    assert _map_usage(start, 'anthropic', '', 'unknown') == snapshot(RequestUsage())
+    assert map_usage(start, 'anthropic', '', 'unknown') == snapshot(RequestUsage())
 
     existing = RequestUsage(input_tokens=7, output_tokens=3)
-    assert _map_usage(start, 'anthropic', '', 'unknown', existing_usage=existing) == existing
+    assert map_usage(start, 'anthropic', '', 'unknown', existing_usage=existing) == existing
 
 
 async def test_streaming_bedrock_start_event_without_message_is_skipped(allow_model_requests: None):
@@ -7087,11 +7086,11 @@ def test_streaming_usage_with_compaction():
         ),
         type='message_start',
     )
-    initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
+    initial_usage = map_usage(start, 'anthropic', '', 'unknown')
     delta = BetaRawMessageDeltaEvent(
         delta=Delta(), usage=BetaMessageDeltaUsage(input_tokens=23, output_tokens=500), type='message_delta'
     )
-    final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
+    final_usage = map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
     assert final_usage == snapshot(
         RequestUsage(
             input_tokens=212,
@@ -9674,7 +9673,7 @@ async def test_anthropic_advisor_usage_iterations():
             ),
         ],
     )
-    mapped = _map_usage(
+    mapped = map_usage(
         completion_message([BetaTextBlock(text='ok', type='text')], usage_with_advisor),
         'anthropic',
         'https://api.anthropic.com',
@@ -16642,7 +16641,7 @@ async def test_anthropic_compaction_usage_with_cache(
     The Anthropic compaction docs only say top-level `input_tokens`/`output_tokens` exclude
     compaction iteration usage — they're silent on cache tokens. This cassette pins the real
     shape: top-level `cache_creation_input_tokens` is `0` even though the compaction iteration
-    wrote ~55k tokens to cache, so `_map_usage` must sum the compaction cache back in to avoid
+    wrote ~55k tokens to cache, so `map_usage` must sum the compaction cache back in to avoid
     understating the real cost. The compaction iteration writes with the request's TTL, so with a
     one-hour TTL its writes are also one-hour writes, priced at the one-hour rate.
 
@@ -16687,7 +16686,7 @@ def test_anthropic_compaction_1h_cache_write_survives_the_streamed_merge() -> No
             parsed = BetaRawMessageDeltaEvent.model_validate(event)
         else:
             continue
-        request_usage = _map_usage(parsed, 'anthropic', 'https://api.anthropic.com', 'claude-sonnet-4-6', request_usage)
+        request_usage = map_usage(parsed, 'anthropic', 'https://api.anthropic.com', 'claude-sonnet-4-6', request_usage)
 
     assert request_usage == snapshot(
         RequestUsage(
