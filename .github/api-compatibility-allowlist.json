@@ -158,6 +158,18 @@
     },
     {
       "against": "v2.60.0",
+      "fingerprint": "5bc7f71bf09d601cd93fbc74208b311ea5bbfcd8a84ebc6ede3faca190b04be6",
+      "reason": "Adds `ModelSettingsDeltaPart` to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11111"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "2b86fd98d5caacbace46a62288b4939e6ff7fa1db6d5b074e0ab93a82d12487f",
+      "reason": "Adds `ModelSettingsDeltaEvent` to `HandleResponseEvent`; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11111"
+    },
+    {
+      "against": "v2.60.0",
       "fingerprint": "714f89e677ce258adda7ed9d8c9e80cf31ae1b2d52102ee76531d3e8e3c6041b",
       "reason": "False positive: `TemporalDurability.engine_spec` is the same `DurabilityEngineSpec` value, now defined once as the module constant `TEMPORAL_ENGINE_SPEC` so the run context can word its errors; Griffe compares the expression text.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11088"
