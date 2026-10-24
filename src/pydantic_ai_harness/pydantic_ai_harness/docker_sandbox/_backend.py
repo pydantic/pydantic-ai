@@ -57,8 +57,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
-
-from ._x11 import DISPLAY, X11Computer
+from pydantic_ai_harness._x11 import DISPLAY, X11Computer
 
 __all__ = ('DESKTOP_DOCKERFILE', 'DockerSandboxBackend', 'remove_container')
 

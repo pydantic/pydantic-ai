@@ -38,6 +38,8 @@ async def main():
 
 Each run leaves its container running; see [Clean up](docker-sandbox.md#clean-up).
 
+For a desktop in an E2B cloud sandbox instead, use [`E2BSandbox(desktop=True)`](e2b-sandbox.md#give-the-agent-a-desktop).
+
 To give your own sandbox a display, implement [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]; see
 [Controlling a display](../workspace.md#controlling-a-display). On a [read-only](../workspace.md#read-only-access)
 workspace the agent can take screenshots but not act.

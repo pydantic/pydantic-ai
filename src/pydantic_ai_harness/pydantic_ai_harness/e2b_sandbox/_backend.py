@@ -17,6 +17,10 @@ plane and a `TimeoutException` from envd (its proxy's 502); a 429 is `RateLimitE
 which is not. envd types only a missing path; its other path failures arrive as a 400
 (`InvalidArgumentException`) or a 500 (`SandboxException`) whose message carries envd's wording
 or Go's errno text, which `_path_error` reads.
+
+The `desktop` template verified 2026-10-24 against a live sandbox: Ubuntu 22.04 with Xvfb, XFCE
+(`startxfce4`), `xdotool`, `scrot` 1.7 and `setsid`, and no X server running at boot; the
+`e2b-desktop` package starts Xvfb and XFCE itself after creating it.
 """
 
 from __future__ import annotations
@@ -36,9 +40,16 @@ import anyio.lowlevel
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
+    ComputerAction,
     FileEntry,
+    Point,
+    Region,
     SupportsCommands,
+    SupportsCursorPosition,
+    SupportsDisplay,
     SupportsFilesystem,
+    SupportsZoom,
+    UnsupportedComputerActionError,
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
@@ -56,6 +67,7 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
+from pydantic_ai_harness._x11 import DISPLAY, X11Computer
 
 if TYPE_CHECKING:
     from pydantic_ai.workspaces import WorkspaceCommand
@@ -114,6 +126,33 @@ _SDK_STREAM_UNBOUNDED = 0
 # The local backend's cap and preview: the SDK's handle keeps all of a command's output in memory.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_CHARS = 64 * 1024
+
+_DESKTOP_TEMPLATE = 'desktop'
+"""E2B's desktop template, which a new sandbox with `desktop` and no `template` runs."""
+
+_DEFAULT_DESKTOP_SIZE = (1280, 800)
+
+_XVFB_LOG = '/tmp/pydantic-ai-xvfb.log'
+
+_START_DESKTOP = (
+    'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
+    f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{_XVFB_LOG} & xvfb=$!; i=0; '
+    'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
+    'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
+    f"echo 'the X server did not start:' >&2; tail -n 5 {_XVFB_LOG} >&2; exit 1; fi; "
+    'sleep 0.1; i=$((i+1)); done; fi; '
+    'if command -v startxfce4 >/dev/null && ! pgrep -x xfce4-session >/dev/null; then '
+    'setsid startxfce4 >/dev/null 2>&1 & i=0; '
+    'until xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1 || [ $i -ge 100 ]; do '
+    'sleep 0.1; i=$((i+1)); done; fi'
+)
+"""Starts an X display of the size `$1` names, such as `1280x800`, unless one is running, and the XFCE desktop.
+
+It gives up as soon as the X server exits, or after 10 seconds. XFCE starts unless its session is running, so
+starting it every time recovers one that died, and the script waits up to 10 seconds for its desktop window, so
+the first screenshot isn't black; a template without XFCE gets a display with no window manager. Output goes to
+files, not the command's stream, which E2B keeps open while a background child holds it.
+"""
 
 
 def _require_asyncio() -> None:
@@ -204,7 +243,9 @@ def _refused_message(context: str, error: e2b.SandboxException) -> str:
     return message
 
 
-class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
+class E2BSandboxBackend(
+    WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsDisplay, SupportsZoom, SupportsCursorPosition
+):
     """An [E2B](https://e2b.dev) sandbox as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Commands and file operations run inside an E2B microVM, not on the host.
@@ -226,6 +267,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     The E2B SDK runs every request on asyncio, so under Trio every operation raises
     `UserError` before it reaches E2B.
 
+    With `desktop` the sandbox has a display, started on first use and driven with `xdotool` and
+    `scrot`, so a custom template needs Xvfb, `xdotool`, `scrot` and `setsid`.
+
     Args:
         sandbox: A live `e2b.AsyncSandbox` you already have. Whoever created it owns killing it.
         ref: Identity of an existing sandbox to attach to on first use.
@@ -243,6 +287,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             `pwd -P` on first use.
         env: Environment variables every command gets, on a created or an attached sandbox;
             per-command `env` is layered on top. Nothing is read from the host environment.
+        desktop: Whether the sandbox has a display for
+            [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or
+            its `(width, height)`. Without a `template`, a new sandbox runs E2B's `desktop` template.
     """
 
     def __init__(
@@ -255,6 +302,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None and ref.provider != 'e2b':
             raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'e2b'")
@@ -279,6 +327,11 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         self._env = dict(env) if env is not None else None
         self._allow_internet_access = allow_internet_access
         self._probe_setsid = template is not None or sandbox is not None or ref is not None
+        if desktop and template is None:
+            self._template = _DESKTOP_TEMPLATE
+        self._desktop_size = _DEFAULT_DESKTOP_SIZE if desktop is True else desktop or None
+        self._display_started = False
+        self._display_lock = anyio.Lock()
         self._setsid: bool | None = None
         self._setsid_lock = anyio.Lock()
 
@@ -721,6 +774,56 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                     except Exception:
                         # A leftover claim is a small directory in `/tmp`; it cannot fence a later command.
                         logger.debug('Could not remove E2B stop claim %s', claim, exc_info=True)
+
+    @property
+    def has_display(self) -> bool:
+        return self._desktop_size is not None
+
+    @asynccontextmanager
+    async def _display(self) -> AsyncGenerator[X11Computer]:
+        if self._desktop_size is None:
+            raise UserError('This E2B sandbox has no display: create it with `desktop=True`.')
+        width, height = self._desktop_size
+        # One start at a time: two would both find no display and launch two X servers.
+        async with self._display_lock:
+            if not self._display_started:
+                start = ['sh', '-c', _START_DESKTOP, 'sh', f'{width}x{height}']
+                result = await self.run(start, env={'DISPLAY': DISPLAY}, timeout=30)
+                if result.exit_code != 0:
+                    assert self._ref is not None  # set by the command that just ran
+                    raise WorkspaceError(
+                        f'could not start the display in E2B sandbox {self._ref.id}: the template '
+                        f'needs Xvfb, xdotool, scrot and setsid ({(result.stderr or result.stdout).strip()})'
+                    )
+                self._display_started = True
+        try:
+            yield X11Computer(self)
+        except UnsupportedComputerActionError:
+            raise  # a refused action, such as an unknown key: the display is fine
+        except WorkspaceError:
+            # The X server may have died: the next call checks and starts it again.
+            self._display_started = False
+            raise
+
+    async def display_size(self) -> tuple[int, int]:
+        async with self._display() as computer:
+            return await computer.display_size()
+
+    async def screenshot(self) -> bytes:
+        async with self._display() as computer:
+            return await computer.screenshot()
+
+    async def act(self, action: ComputerAction) -> None:
+        async with self._display() as computer:
+            await computer.act(action)
+
+    async def zoom(self, region: Region) -> bytes:
+        async with self._display() as computer:
+            return await computer.zoom(region)
+
+    async def cursor_position(self) -> Point:
+        async with self._display() as computer:
+            return await computer.cursor_position()
 
 
 async def kill_sandbox(sandbox_id: str) -> None:
