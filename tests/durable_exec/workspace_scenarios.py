@@ -24,9 +24,16 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.durable_exec._workspace import DurableWorkspace
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import ReadOnlyWorkspace, Workspace, WorkspaceBackend, WorkspaceReadOnlyError, WorkspaceRef
+from pydantic_ai.workspaces import (
+    Mount,
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceBackend,
+    WorkspaceReadOnlyError,
+    WorkspaceRef,
+)
 
-from ..workspace_fakes import InMemoryProvider
+from ..workspace_fakes import InMemoryProvider, MemoryFilesystem
 
 
 class ScenarioFailed(Exception):
@@ -87,6 +94,16 @@ async def read_seed(ctx: RunContext[Any]) -> str:
     return await ctx.workspace.read_text('seed.txt')
 
 
+MOUNTED = MemoryFilesystem({'/seed.txt': b'from storage'})
+"""What the `mounted` agent's `data` folder holds; tools reach it from durable units."""
+
+
+async def copy_seed(ctx: RunContext[Any]) -> str:
+    seed = await ctx.workspace.read_text('data/seed.txt')
+    await ctx.workspace.write_text('data/copy.txt', seed)
+    return seed
+
+
 async def write_note(ctx: RunContext[Any]) -> str:
     await ctx.workspace.write_text('note.txt', 'on disk')
     return (await ctx.workspace.run(['cat', 'note.txt'])).stdout
@@ -103,9 +120,19 @@ class ScenarioAgents:
     local: Agent[None, str]
     amnesiac: Agent[None, str]
     uncaught: Agent[None, str]
+    mounted: Agent[None, str]
 
     def all(self) -> list[Agent[None, str]]:
-        return [self.fresh, self.plain, self.read_only, self.explicit, self.local, self.amnesiac, self.uncaught]
+        return [
+            self.fresh,
+            self.plain,
+            self.read_only,
+            self.explicit,
+            self.local,
+            self.amnesiac,
+            self.uncaught,
+            self.mounted,
+        ]
 
 
 def scenario_agents(
@@ -147,6 +174,12 @@ def scenario_agents(
         ),
         uncaught=Agent(
             TestModel(), name=f'{prefix}uncaught', capabilities=[ReadMissingInHook(), workspaces(), durability()]
+        ),
+        mounted=Agent(
+            TestModel(call_tools=['copy_seed']),
+            name=f'{prefix}mounted',
+            tools=[copy_seed],
+            capabilities=[LocalWorkspace(local_dir, mounts=[Mount('data', MOUNTED)]), durability()],
         ),
     )
 
@@ -280,6 +313,16 @@ async def local(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dict
     }
 
 
+async def mounted(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dict[str, Any]:
+    result = await agents.mounted.run('Copy the seed.')
+    workspace = result.workspace
+    return {
+        'output': result.output,
+        'listing': [entry.name for entry in await workspace.list_dir('data')],
+        'copy': await workspace.read_text('data/copy.txt'),
+    }
+
+
 async def amnesiac(agents: ScenarioAgents, arg: str | None, engine_id: str) -> str:
     return (await agents.amnesiac.run('Nothing to do.')).output
 
@@ -290,7 +333,19 @@ async def uncaught(agents: ScenarioAgents, arg: str | None, engine_id: str) -> s
 
 SCENARIOS: dict[str, Scenario] = {
     scenario.__name__: scenario
-    for scenario in (fresh, multi_turn, two_agents, run_id, read_only, explicit, binary, local, amnesiac, uncaught)
+    for scenario in (
+        fresh,
+        multi_turn,
+        two_agents,
+        run_id,
+        read_only,
+        explicit,
+        binary,
+        local,
+        mounted,
+        amnesiac,
+        uncaught,
+    )
 }
 
 
@@ -385,6 +440,23 @@ async def check_local(run: Runner, agents: ScenarioAgents) -> None:
         shutil.rmtree(agents.local_dir, ignore_errors=True)
 
 
+async def check_mounted(run: Runner, agents: ScenarioAgents) -> None:
+    """Tools in durable units and calls from workflow code reach the mount's storage, not the environment."""
+    shutil.rmtree(agents.local_dir, ignore_errors=True)
+    os.makedirs(agents.local_dir)
+    MOUNTED.files.pop('/copy.txt', None)
+    try:
+        assert await run('mounted', None) == {
+            'output': '{"copy_seed":"from storage"}',
+            'listing': ['copy.txt', 'seed.txt'],
+            'copy': 'from storage',
+        }
+        assert MOUNTED.files['/copy.txt'] == b'from storage'
+        assert os.listdir(agents.local_dir) == []
+    finally:
+        shutil.rmtree(agents.local_dir, ignore_errors=True)
+
+
 async def check_failure(name: str, type: str, fragment: str, run: Runner, agents: ScenarioAgents) -> None:
     """An error the run can't recover from fails the workflow or flow with that same error."""
     try:
@@ -421,6 +493,7 @@ CASES: dict[str, Check] = {
     ),
     'binary': check_binary,
     'local': check_local,
+    'mounted': check_mounted,
     'amnesiac': partial(check_failure, 'amnesiac', 'UserError', 'which the run just created'),
     'uncaught': partial(check_failure, 'uncaught', 'FileNotFoundError', '/remote/missing.txt'),
 }
