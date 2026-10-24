@@ -263,15 +263,32 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
     def _build_tasks_to_run(self, repeat: int) -> list[tuple[Case[InputsT, OutputT, MetadataT], str, str | None]]:
         """Build the list of (case, report_case_name, source_case_name) tuples for evaluation."""
+        # Keep automatically generated names unique when they overlap with an explicit case name.
+        # Report rendering and multi-run aggregation use names as identifiers, so duplicate names
+        # would otherwise silently overwrite or merge cases.
+        used_names = {case.name for case in self.cases if case.name}
+        case_names: list[str] = []
+        for i, case in enumerate(self.cases, 1):
+            if case.name:
+                case_name = case.name
+            else:
+                base_name = f'Case {i}'
+                case_name = base_name
+                suffix = 2
+                while case_name in used_names:
+                    case_name = f'{base_name} ({suffix})'
+                    suffix += 1
+            used_names.add(case_name)
+            case_names.append(case_name)
+
         if repeat > 1:
             return [
                 (case, f'{case_name} [{run_idx}/{repeat}]', case_name)
-                for i, case in enumerate(self.cases, 1)
+                for case, case_name in zip(self.cases, case_names, strict=True)
                 for run_idx in range(1, repeat + 1)
-                if (case_name := case.name or f'Case {i}')
             ]
         else:
-            return [(case, case.name or f'Case {i}', None) for i, case in enumerate(self.cases, 1)]
+            return [(case, case_name, None) for case, case_name in zip(self.cases, case_names, strict=True)]
 
     async def evaluate(
         self,
