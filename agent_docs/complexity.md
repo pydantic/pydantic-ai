@@ -17,19 +17,21 @@ uv run scripts/check_complexity.py --base "$(git merge-base HEAD main)"
 
 ```text
 pydantic_ai_slim/pydantic_ai/agent/__init__.py:4443: _PreparedAgentRun::open 31 -> 35: already over the limit, and this change made it worse (agent_docs/complexity.md#existing-debt)
-    looks like closure-hosted: hoist the nested function to a method or a module function, passing what it captures (agent_docs/complexity.md#closure-hosted)
     C003 at line 4512, about -12: move the block into a private method, or a function next to its caller (agent_docs/complexity.md#extract-a-method)
+    C003 at line 4470, about -9: move the block into a private method, or a function next to its caller (agent_docs/complexity.md#extract-a-method)
+    C005 at line 4459, about -2: name the compound condition as a predicate method (agent_docs/complexity.md#extract-a-method)
+    pick the case whose shape matches the function, and apply its fix (agent_docs/complexity.md#cases)
 ```
 
 - The first line names the function, its score before and after the change, and the [failure](#failures).
-- The `looks like` line names the [case](#cases): the shape of the function, and the fix that fits that shape in this repo. The check guesses the case from the function's syntax and names, so it can be wrong. When the fix does not fit, find the case below that describes the function.
-- The remaining lines are complexipy's suggestions, each pointed at a [fix](#fixes). The reduction is complexipy's estimate.
+- Each line that starts with a rule ID, such as `C003`, is a complexipy suggestion, pointed at a [fix](#fixes). The reduction is complexipy's estimate.
+- The last line points at the [cases](#cases). Each case pairs a shape with the fix that fits it in this repo. Pick the case whose **Shape** describes the function, and apply its fix.
 
 ## Failures
 
 ### New function
 
-The function did not exist before the change. Split it before it lands: apply the fix for its case, starting with the suggestions under it.
+The function did not exist before the change. Split it before it lands: apply the fix for its [case](#cases), starting with complexipy's suggestions.
 
 ### Crossed the limit
 

@@ -116,8 +116,8 @@ uv run --frozen --only-group lint scripts/check_complexity.py --base <merge-base
 
 The check reads the candidate as git objects, so it executes no candidate content. The command may
 create `.venv` in the policy-base checkout, which is removed with that checkout. Report each function
-and each ignore it fails as a finding. For a function, name the fix that `agent_docs/complexity.md` gives
-for the case the check reports, and check that the fix fits the function.
+and each ignore it fails as a finding. For a function, name the case in `agent_docs/complexity.md` whose
+shape matches it, and that case's fix.
 
 ## Return the review locally
 

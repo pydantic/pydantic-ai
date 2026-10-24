@@ -4,9 +4,8 @@ Functions already above the limit pass until a change makes them more complex. A
 above the limit fails, unless the same change removed a function of the same name that was at least as
 complex (a move), or one of exactly the same complexity (a rename).
 
-Each failure names the shape of the function, its case in `agent_docs/complexity.md`, and the
-complexipy suggestions for it. The limit and the checked roots come from `[tool.complexipy]` in
-`pyproject.toml`.
+Each failure lists complexipy's suggestions for the function and links the cases in `agent_docs/complexity.md`.
+The limit and the checked roots come from `[tool.complexipy]` in `pyproject.toml`.
 
 Usage:
     uv run scripts/check_complexity.py --staged                     # the index against HEAD, for pre-commit
@@ -26,7 +25,7 @@ import sys
 import tokenize
 import tomllib
 from collections import Counter
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import takewhile
 from pathlib import Path
@@ -44,20 +43,6 @@ _IGNORE = re.compile(
 )
 
 _Failure = Literal['new', 'crossed', 'worsened']
-_Case = Literal[
-    'closure-hosted',
-    'orchestration',
-    'name-dispatch',
-    'stream-state-machine',
-    'tree-walk',
-    'presentation',
-    'vocab-translator',
-    'history-pass',
-    'part-ladder',
-    'precedence-resolution',
-    'check-chain',
-    'algorithm',
-]
 
 _FAILURES: dict[_Failure, tuple[str, str]] = {
     'new': ('new-function', 'new function over the limit'),
@@ -76,53 +61,8 @@ _RULES = {
     'C011': ('flatten-nested-try', 'move the inner `try` into its own method'),
 }
 
-_CASES: dict[_Case, str] = {
-    'closure-hosted': 'hoist the nested function to a method or a module function, passing what it captures',
-    'orchestration': 'move the pure steps out, and keep every `yield`, cleanup and cancellation path in place',
-    'name-dispatch': 'dispatch with `match` on the key, ending in `case _:` that raises or calls `assert_never`',
-    'stream-state-machine': 'keep stream state on fields, and handle each event in a method returning its events',
-    'tree-walk': 'separate the traversal from one handler method per node kind',
-    'presentation': 'build each row, card or frame in its own method',
-    'vocab-translator': '`match` over the closed union, ending in `assert_never`, with one builder per variant',
-    'history-pass': 'build an index first, then rebuild with a comprehension and `dataclasses.replace`',
-    'part-ladder': '`match` on the part type, and map each part in its own method',
-    'precedence-resolution': 'resolve each layer in its own named method',
-    'check-chain': 'group the checks into named predicates, one per section',
-    'algorithm': 'use guard clauses, and name the conditions as predicates',
-}
-
-_PART = re.compile(
-    r'(Part|PartDelta|ModelRequest|ModelResponse|ModelMessage|Url|BinaryContent|Block|Param|Content|Item)$'
-)
-_EVENT = re.compile(r'(Event|Chunk|Delta|Frame)$')
-_TOOL = re.compile(r'(Tool|ToolChoice)$')
-_NESTED_FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 _DEF = re.compile(r'\s*(?:async\s+)?def\s')
 _ROLE_DECORATOR = re.compile(r'\s*@(?:\w+\.)*(overload|setter|deleter)\s*(?:#.*)?$')
-_MESSAGES = re.compile(r'message|parts|history')
-_MESSAGE_TYPES = re.compile(r'ModelMessage|ModelRequest|ModelResponse')
-_CONCURRENCY_CALLS = frozenset(
-    {'create_task', 'create_task_group', 'TaskGroup', 'start_soon', 'gather', 'wait', 'cancel', 'shield', 'CancelScope'}
-    | {'move_on_after', 'fail_after', 'ExitStack', 'AsyncExitStack'}
-)
-_RICH_CALLS = frozenset({'Table', 'Text', 'Panel', 'Group', 'Columns', 'Syntax', 'Markdown', 'add_row', 'add_column'})
-
-_STREAM_OWNER = re.compile(r'StreamedResponse$|Connection$|SessionCore$|EventStream$|Renderer$')
-_STREAM_NAME = re.compile(r'event|frame|chunk|^apply$|observe|dispatch|_delta$|_command$|receive|scan')
-_DISPATCH_NAME = re.compile(r'^infer_|_command$|handle_key|_route$|_errors?$|_extract$|_translate$')
-_TREE_NAME = re.compile(
-    r'transform|walk|schema|xml|_gen$|graph|tree|flatten|_expand|_type_to|externalize|_restore|_strip'
-)
-_PRESENTATION_PATH = re.compile(r'pydantic_clai2/ui/|/reporting/|/_cli/')
-_PRESENTATION_NAME = re.compile(r'render|frame|rows|panel|table|menu|picker|choose|completions')
-_VOCAB_NAME = re.compile(
-    r'tool_choice|native_tools|_config$|_params$|settings|thinking|cache_control|cache_points|options'
-)
-_HISTORY_NAME = re.compile(
-    r'^_?(drop|merge|repair|order|synthesize|move|wrap|replace|prune|clean|narrow|dangling|group|split|strip|'
-    r'deliver|update|discovered|reevaluate|trim|find|collect|remove|iter|without|fit|rebuild|is_|visible|include)'
-)
-_PRECEDENCE_NAME = re.compile(r'__init__|resolve|override|_prepare|_build|get_model_settings|_merge_|configure')
 
 
 @dataclass
@@ -148,7 +88,6 @@ class _Offender:
     function: FunctionComplexity
     old: int | None
     failure: _Failure
-    case: _Case = 'algorithm'
 
 
 @dataclass
@@ -156,65 +95,6 @@ class _Removed:
     path: str
     name: str
     complexity: int
-
-
-@dataclass
-class _Shape:
-    """What the case tests read off a function: its names, and tallies of the constructs in its own body."""
-
-    path: str
-    owner: str
-    name: str
-    closure_share: float = 0.0
-    is_async_generator: bool = False
-    returns_messages: bool = False
-    recursive: bool = False
-    concurrency: int = 0
-    part_types: int = 0
-    event_types: int = 0
-    tool_types: int = 0
-    type_tests: int = 0
-    string_tests: int = 0
-    ternaries: int = 0
-    rich_calls: int = 0
-    raises: int = 0
-    ifs: int = 0
-    top_level_ifs: int = 0
-    message_loops: int = 0
-
-
-# The first case whose test holds names the function, so the narrower shapes come first.
-_CASE_TESTS: tuple[tuple[_Case, Callable[[_Shape], bool]], ...] = (
-    ('closure-hosted', lambda s: s.closure_share >= 0.5),
-    ('orchestration', lambda s: s.concurrency > 0),
-    ('name-dispatch', lambda s: bool(_DISPATCH_NAME.search(s.name)) and s.string_tests + s.type_tests >= 4),
-    (
-        'stream-state-machine',
-        lambda s: (
-            s.event_types >= 2
-            or bool(_STREAM_OWNER.search(s.owner))
-            and (s.is_async_generator or bool(_STREAM_NAME.search(s.name)))
-        ),
-    ),
-    ('tree-walk', lambda s: s.recursive or bool(_TREE_NAME.search(s.name))),
-    (
-        'presentation',
-        lambda s: bool(_PRESENTATION_PATH.search(s.path) or _PRESENTATION_NAME.search(s.name)) or s.rich_calls >= 3,
-    ),
-    ('vocab-translator', lambda s: s.tool_types > 0 or bool(_VOCAB_NAME.search(s.name))),
-    (
-        'history-pass',
-        lambda s: (
-            (s.part_types >= 2 or s.message_loops > 0) and (s.returns_messages or bool(_HISTORY_NAME.search(s.name)))
-        ),
-    ),
-    ('part-ladder', lambda s: s.part_types >= 2 or s.message_loops > 0),
-    ('name-dispatch', lambda s: s.string_tests >= 5 and s.string_tests >= 0.6 * s.ifs),
-    ('precedence-resolution', lambda s: bool(_PRECEDENCE_NAME.search(s.name)) or s.ternaries >= 4),
-    ('orchestration', lambda s: s.is_async_generator),
-    ('check-chain', lambda s: s.raises >= 2 or s.top_level_ifs >= max(0.4 * s.ifs, 1)),
-    ('algorithm', lambda s: True),
-)
 
 
 def _git(*args: str, stdin: bytes | None = None) -> bytes:
@@ -373,110 +253,6 @@ def _collect(changes: list[_Change], limit: int) -> list[_Offender]:
     return kept
 
 
-def _type_names(node: ast.expr) -> list[str]:
-    match node:
-        case ast.Tuple(elts=elts):
-            return [name for elt in elts for name in _type_names(elt)]
-        case ast.Name(id=name) | ast.Attribute(attr=name):
-            return [name]
-        case _:
-            return []
-
-
-def _callee(node: ast.expr) -> str:
-    match node:
-        case ast.Name(id=name) | ast.Attribute(attr=name):
-            return name
-        case _:
-            return ''
-
-
-def _is_string(node: ast.expr) -> bool:
-    match node:
-        case ast.Constant(value=str()):
-            return True
-        case ast.Tuple(elts=[_, *_] as elts) | ast.Set(elts=[_, *_] as elts) | ast.List(elts=[_, *_] as elts):
-            return all(_is_string(elt) for elt in elts)
-        case _:
-            return False
-
-
-def _own_nodes(node: ast.AST) -> Iterator[ast.AST]:
-    """The nodes of a function's body, without the bodies of the functions and classes it defines."""
-    for child in ast.iter_child_nodes(node):
-        yield child
-        if not isinstance(child, (*_NESTED_FUNCTIONS, ast.ClassDef)):
-            yield from _own_nodes(child)
-
-
-def _tally_types(shape: _Shape, types: ast.expr) -> None:
-    for name in _type_names(types):
-        shape.type_tests += 1
-        shape.part_types += bool(_PART.search(name))
-        shape.event_types += bool(_EVENT.search(name))
-        shape.tool_types += bool(_TOOL.search(name))
-
-
-def _tally_call(shape: _Shape, call: ast.Call) -> None:
-    callee = _callee(call.func)
-    match call:
-        case ast.Call(func=ast.Name(id='isinstance'), args=[_, types]):
-            _tally_types(shape, types)
-        case ast.Call(func=ast.Name() | ast.Attribute(value=ast.Name(id='self' | 'cls'))) if callee == shape.name:
-            shape.recursive = True
-        case ast.Call(func=ast.Attribute(attr='startswith' | 'endswith'), args=[ast.Constant(value=str()), *_]):
-            shape.string_tests += 1
-        case _:
-            shape.concurrency += callee in _CONCURRENCY_CALLS
-            shape.rich_calls += callee in _RICH_CALLS
-
-
-def _tally(shape: _Shape, node: ast.AST) -> None:
-    match node:
-        case ast.Call():
-            _tally_call(shape, node)
-        case ast.MatchClass(cls=cls):
-            _tally_types(shape, cls)
-        case ast.Compare(left=left, comparators=comparators):
-            shape.string_tests += sum(_is_string(side) for side in (left, *comparators))
-        case ast.Try(finalbody=[_, *_]) | ast.TryStar(finalbody=[_, *_]) | ast.AsyncWith():
-            shape.concurrency += 1
-        case ast.Yield() | ast.YieldFrom():
-            shape.is_async_generator = True
-        case ast.For(iter=items) | ast.AsyncFor(iter=items):
-            shape.message_loops += bool(_MESSAGES.search(ast.unparse(items)))
-        case ast.IfExp():
-            shape.ternaries += 1
-        case ast.Raise():
-            shape.raises += 1
-        case ast.If():
-            shape.ifs += 1
-        case _:
-            pass
-
-
-def _shape(path: str, function: FunctionComplexity, node: ast.FunctionDef | ast.AsyncFunctionDef) -> _Shape:
-    owner, _, name = function.name.rpartition('::')
-    shape = _Shape(path, owner, name)
-    for child in _own_nodes(node):
-        _tally(shape, child)
-    shape.is_async_generator &= isinstance(node, ast.AsyncFunctionDef)
-    shape.returns_messages = node.returns is not None and bool(_MESSAGE_TYPES.search(ast.unparse(node.returns)))
-    shape.top_level_ifs = sum(isinstance(statement, ast.If) for statement in node.body)
-    nested = [
-        (n.lineno, n.end_lineno or n.lineno)
-        for n in ast.walk(node)
-        if n is not node and isinstance(n, _NESTED_FUNCTIONS)
-    ]
-    in_nested = sum(lc.complexity for lc in function.line_complexities if any(a <= lc.line <= b for a, b in nested))
-    shape.closure_share = in_nested / max(function.complexity, 1)
-    return shape
-
-
-def _case(shape: _Shape) -> _Case:
-    return next(case for case, test in _CASE_TESTS if test(shape))
-
-
 def _definitions(source: str) -> dict[tuple[str, int], ast.FunctionDef | ast.AsyncFunctionDef]:
     """The module- and class-level functions complexipy scores, by qualified name and first line."""
     found: dict[tuple[str, int], ast.FunctionDef | ast.AsyncFunctionDef] = {}
@@ -489,14 +265,6 @@ def _definitions(source: str) -> dict[tuple[str, int], ast.FunctionDef | ast.Asy
                 first = statement.decorator_list[0].lineno if statement.decorator_list else statement.lineno
                 found[(f'{prefix}{statement.name}', first)] = statement
     return found
-
-
-def _name_cases(offenders: list[_Offender], changes: list[_Change]) -> None:
-    sources = {c.new_path: c.new_source for c in changes if c.new_path and c.new_source}
-    definitions = {path: _definitions(sources[path]) for path in {o.path for o in offenders}}
-    for o in offenders:
-        node = definitions[o.path][(o.function.name, o.function.line_start)]
-        o.case = _case(_shape(o.path, o.function, node))
 
 
 def _ignored(source: str | None) -> dict[str, FunctionComplexity]:
@@ -550,12 +318,13 @@ def _escape(value: str, prop: bool = False) -> str:
 
 
 def _advice(o: _Offender) -> list[str]:
-    lines = [f'looks like {o.case}: {_CASES[o.case]} ({GUIDE}#{o.case})']
+    lines: list[str] = []
     for plan in o.function.refactor_plans[:3]:
         anchor, text = _RULES.get(plan.rule_id, ('fixes', plan.title))
         lines.append(
             f'{plan.rule_id} at line {plan.line_start}, about -{plan.estimated_reduction}: {text} ({GUIDE}#{anchor})'
         )
+    lines.append(f'pick the case whose shape matches the function, and apply its fix ({GUIDE}#cases)')
     return lines
 
 
@@ -579,12 +348,12 @@ def _write_summary(offenders: list[_Offender], limit: int, summary: str) -> None
     rows = [
         f'### Cognitive complexity (limit {limit})',
         '',
-        '| Function | Change | Failure | Case |',
-        '|---|---|---|---|',
+        '| Function | Change | Failure |',
+        '|---|---|---|',
     ]
     for o in offenders:
         function = f'`{o.path}:{o.function.line_start}` `{o.function.name}`'
-        rows.append(f'| {function} | {_delta(o)} | {_FAILURES[o.failure][1]} | [{o.case}]({GUIDE}#{o.case}) |')
+        rows.append(f'| {function} | {_delta(o)} | {_FAILURES[o.failure][1]} |')
     with open(summary, 'a', encoding='utf-8') as out:
         out.write('\n'.join(rows) + '\n')
 
@@ -652,7 +421,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     changes = _select(_changes(options, roots), options.files)
     _load(changes, options.base, options.head)
     offenders = _collect(changes, limit)
-    _name_cases(offenders, changes)
     unexplained = _report_ignores([ignore for change in changes for ignore in _ignores(change)], options.github)
     if offenders:
         print(f'\ncognitive complexity limit is {limit}; {len(offenders)} function(s) got worse ({GUIDE}):\n')
