@@ -5,6 +5,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import (
     OpenAIJsonSchemaTransformer,
@@ -121,6 +122,12 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 openai_responses_supports_max_reasoning_effort=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # The native `computer` tool is accepted by the models with tool search, verified live 2026-10-22 on
+                # gpt-5.4, gpt-5.4-mini, gpt-5.5, gpt-5.6 and the four GPT-6 models; gpt-5.4-nano and gpt-5.2 reject
+                # it with a 400. Set here rather than in `openai_model_profile` because it is unverified on the
+                # OpenAI-compatible endpoints that share it; there the `computer` tool is a function tool.
+                # https://developers.openai.com/api/docs/guides/tools-computer-use
+                openai_supports_computer_tool=ToolSearchTool in profile.get('supported_native_tools', ()),
             ),
         )
 

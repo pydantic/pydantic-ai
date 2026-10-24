@@ -508,6 +508,13 @@ class OpenAIModelProfile(ModelProfile, total=False):
     Responses APIs. When disabled, `CachePoint` markers are filtered out.
     """
 
+    openai_supports_computer_tool: bool
+    """Whether the Responses API accepts the native `computer` tool for this model. Default: False.
+
+    When enabled, a tool of the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind is sent as OpenAI's native
+    computer tool; otherwise it is sent as a function tool.
+    """
+
     openai_responses_tool_choice_accepts_additional_tools: bool
     """Whether the Responses API accepts a `tool_choice` naming a tool that only an `additional_tools` input item
     declares. Default: `False`.
