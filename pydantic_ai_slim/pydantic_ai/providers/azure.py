@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
@@ -142,6 +143,16 @@ class AzureProvider(_OpenAICompatibleProvider):
             # single honest boundary to record. Users pass `retention=` to `prompt_cache_outlook`.
             # https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/prompt-caching
             base = openai_model_profile(model_name)
+            # Azure documents the native `computer` tool on gpt-5.4 (limited access), the models OpenAI serves it on,
+            # which are the ones with tool search. Not verified live here. A deployment named other than its model
+            # sets `openai_supports_computer_tool` in its profile.
+            # https://learn.microsoft.com/en-us/azure/foundry-classic/openai/how-to/computer-use
+            base = merge_profile(
+                base,
+                OpenAIModelProfile(
+                    openai_supports_computer_tool=ToolSearchTool in base.get('supported_native_tools', ())
+                ),
+            )
 
         # Azure Chat Completions API doesn't support document input.
         base = merge_profile(base, OpenAIModelProfile(openai_chat_supports_document_input=False))

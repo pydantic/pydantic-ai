@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 
 import pytest
 
-from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef, WorkspaceTimeoutError
+from pydantic_ai.workspaces import Click, PressKeys, TypeText, WorkspaceBackend, WorkspaceRef, WorkspaceTimeoutError
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 from pydantic_ai_harness.docker_sandbox import DockerSandbox, DockerSandboxBackend
 
@@ -135,3 +135,36 @@ class TestLiveDocker(WorkspaceBackendSuite):
             shell=True,
         )
         assert alive.exit_code != 0
+
+
+@pytest.mark.docker_live
+class TestLiveDockerDesktop(WorkspaceBackendSuite):
+    """Runs against real containers of the desktop image, which the first test builds if this machine lacks it."""
+
+    @pytest.fixture
+    def can_detect_exit_with_inherited_output_pipes(self) -> bool:
+        return EXECUTABLE == 'podman'
+
+    @pytest.fixture
+    async def backend(self) -> AsyncIterator[WorkspaceBackend]:
+        backend = DockerSandboxBackend(executable=EXECUTABLE, desktop=True)
+        yield backend
+        if backend.ref is not None:
+            await _destroy(backend)
+
+    async def test_typed_text_reaches_the_focused_window(self, backend: WorkspaceBackend) -> None:
+        assert isinstance(backend, DockerSandboxBackend)
+        await backend.display_size()  # starts the display
+        await backend.run(
+            'setsid xterm -geometry 60x10+100+100 -e sh -c "cat > typed.txt" >/dev/null 2>&1 &',
+            shell=True,
+            env={'DISPLAY': ':1'},
+        )
+        await backend.run(['xdotool', 'search', '--sync', '--onlyvisible', '--class', 'xterm'], env={'DISPLAY': ':1'})
+
+        await backend.act(Click(x=300, y=180))
+        await backend.act(TypeText(text='héllo, desktop 你好'))
+        await backend.act(PressKeys(keys=('enter',)))
+
+        typed = await backend.run('until [ -s typed.txt ]; do sleep 0.1; done; cat typed.txt', shell=True, timeout=30)
+        assert typed.stdout == 'héllo, desktop 你好\n'

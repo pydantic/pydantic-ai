@@ -19,31 +19,37 @@ returns a screenshot of the screen afterwards.
 pip/uv-add "pydantic-ai-harness[anthropic]"
 ```
 
-Swap `anthropic` for your model provider's extra.
+Swap `anthropic` for your model provider's extra. The example needs Docker running locally; the first run builds a
+desktop image, which takes a few minutes.
 
 ## Usage
 
-```python {title="computer_use.py" test="skip" lint="skip"}
+```python {title="computer_use.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness import ComputerUse, DockerSandbox
 
-agent = Agent(
-    '{{ anthropic:medium }}',
-    capabilities=[my_desktop_sandbox, ComputerUse()],  # (1)!
-)
+agent = Agent('{{ anthropic:medium }}', capabilities=[DockerSandbox(desktop=True), ComputerUse()])
 
 
 async def main():
-    result = await agent.run('Open the text editor and write a haiku about sandboxes.')
+    result = await agent.run('Open Firefox and find the current Python release on python.org.')
     print(result.output)
 ```
 
-1. Any capability whose workspace has a display: its backend implements
-   [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]. See
-   [Controlling a display](../workspace.md#controlling-a-display) to give a sandbox one. On a
-   [read-only](../workspace.md#read-only-access) workspace the agent can take screenshots but not act.
+Each run leaves its container running; see [Clean up](docker-sandbox.md#clean-up). A run that fails, such as on a
+usage limit, returns no ref to clean up with: remove its desktop in an `on_run_error` hook, as shown for
+[E2B](e2b-sandbox.md#clean-up).
+
+To give your own sandbox a display, implement [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]; see
+[Controlling a display](../workspace.md#controlling-a-display). On a [read-only](../workspace.md#read-only-access)
+workspace the agent can take screenshots but not act.
 
 The model must accept images. Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them.
+
+Claude 4 and later models and GPT-5.4 and later (except GPT-5.4 nano) get `computer` as their provider's native
+computer tool, the format they were trained on; see [Anthropic](../models/anthropic.md#computer-use) and
+[OpenAI](../models/openai.md) for which tool and platforms. Every other model that accepts images gets it as a function
+tool.
 
 ## Computer use, Playwright, or Browser Use
 

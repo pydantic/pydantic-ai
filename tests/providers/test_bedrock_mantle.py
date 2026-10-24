@@ -346,6 +346,7 @@ def test_bedrock_mantle_profiles() -> None:
             'openai_supports_minimal_reasoning_effort': False,
             'openai_responses_tool_call_ids_are_response_scoped': True,
             'supported_native_tools': frozenset(),
+            'openai_supports_computer_tool': True,
         }
     )
     # Compare against a direct genai-prices query so the test doesn't pin a data value.
