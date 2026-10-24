@@ -44,7 +44,7 @@ from .._utils import (
     number_to_datetime,
 )
 from ..capabilities.abstract import AbstractCapability
-from ..computer_use import COMPUTER_KIND, SAFETY_CHECKS, computer_tool
+from ..computer_use import COMPUTER_KIND, SAFETY_CHECKS, computer_tool_name
 from ..exceptions import (
     ModelConnectionError,
     SuspendedResponseExpired,
@@ -3070,6 +3070,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             and item.id in tool_search_output_call_ids
         }
         paired_tool_search_output_ids = {item.id for item in tool_search_outputs.values()}
+        call_id_scope = (
+            response.id if self.profile.get('openai_responses_tool_call_ids_are_response_scoped', False) else None
+        )
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
                 items.extend(_map_reasoning_item(item, self.system))
@@ -3110,12 +3113,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     ToolCallPart(
                         item.name,
                         item.arguments,
-                        tool_call_id=_response_tool_call_id(
-                            item.call_id,
-                            response.id
-                            if self.profile.get('openai_responses_tool_call_ids_are_response_scoped', False)
-                            else None,
-                        ),
+                        tool_call_id=_response_tool_call_id(item.call_id, call_id_scope),
                         id=item.id,
                         provider_name=self.system,
                         provider_details=fn_provider_details,
@@ -3154,20 +3152,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             elif isinstance(item, ResponseCompactionItem):
                 items.append(_map_compaction_item(item, self.system))
             elif isinstance(item, responses.ResponseComputerToolCall):
-                if computer_def := computer_tool(model_request_parameters):
-                    items.append(
-                        _map_computer_call(
-                            item,
-                            computer_def.name,
-                            _response_tool_call_id(
-                                item.call_id,
-                                response.id
-                                if self.profile.get('openai_responses_tool_call_ids_are_response_scoped', False)
-                                else None,
-                            ),
-                            self.system,
-                        )
-                    )
+                if computer_name := computer_tool_name(model_request_parameters):
+                    call_id = _response_tool_call_id(item.call_id, call_id_scope)
+                    items.append(_map_computer_call(item, computer_name, call_id, self.system))
             elif isinstance(item, responses.ResponseCustomToolCall):  # pragma: no cover
                 # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
                 pass
@@ -3786,8 +3773,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """
         openai_profile = self.profile
         # The `computer` tool is sent as OpenAI's native computer tool, whose calls `_map_computer_call` maps back.
-        native_computer = self._native_computer_tool(model_request_parameters)
-        native_computer_name = native_computer.name if native_computer is not None else None
+        computer_name = self._native_computer_name(model_request_parameters)
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
@@ -3814,7 +3800,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 name = next(iter(tool_names))
                 tool_choice = (
                     ToolChoiceTypesParam(type='computer')
-                    if name == native_computer_name
+                    if name == computer_name
                     else ToolChoiceFunctionParam(type='function', name=name)
                 )
             else:
@@ -3829,7 +3815,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     # `tool_defs` rather than `declared_tool_defs`: a `'via_history'` tool travels in an
                     # `additional_tools` item instead of `tools`, and the API accepts it in `allowed_tools`.
                     tools=[
-                        {'type': 'computer'} if n == native_computer_name else {'type': 'function', 'name': n}
+                        {'type': 'computer'} if n == computer_name else {'type': 'function', 'name': n}
                         for n in model_request_parameters.tool_defs
                         if n in tool_names
                     ],
@@ -3845,20 +3831,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # filtering), so `_search_tools` continues to run normally.
         client_tool_search = _has_tool_search(model_request_parameters)
         tools: list[responses.FunctionToolParam | responses.ComputerToolParam] = [
-            self._map_tool_definition(t, visibility=model_request_parameters.visibility_of(t.name))
+            responses.ComputerToolParam(type='computer')
+            if t.name == computer_name
+            else self._map_tool_definition(t, visibility=model_request_parameters.visibility_of(t.name))
             for t in model_request_parameters.declared_tool_defs.values()
             if not (client_tool_search and t.tool_kind == 'tool-search')
-            and not (native_computer is not None and t.name == native_computer.name)
         ]
-        if native_computer is not None:
-            tools.append(responses.ComputerToolParam(type='computer'))
         return tools, tool_choice
 
-    def _native_computer_tool(self, model_request_parameters: ModelRequestParameters) -> ToolDefinition | None:
-        """The `computer` tool when this model takes it as OpenAI's native computer tool."""
+    def _native_computer_name(self, model_request_parameters: ModelRequestParameters) -> str | None:
+        """The `computer` tool's name when this model takes it as OpenAI's native computer tool."""
         if not self.profile.get('openai_supports_computer_tool', False):
             return None
-        return computer_tool(model_request_parameters)
+        return computer_tool_name(model_request_parameters)
 
     def _get_native_tools(  # noqa: C901
         self, model_request_parameters: ModelRequestParameters
@@ -4170,8 +4155,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # plus a replayed search return), and one declaration per request is enough.
         rendered_additional_tools: set[str] = set()
         # Computer calls replayed as `computer_call` items, whose results must be `computer_call_output`s.
-        native_computer = self._native_computer_tool(model_request_parameters) is not None
-        computer_calls: dict[str, ToolCallPart] = {}
+        computer_is_native = self._native_computer_name(model_request_parameters) is not None
+        # The safety checks of each replayed computer call, by call ID.
+        computer_calls: dict[str, Any] = {}
         replayed_call_ids: set[str] = set()
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message_index, message in enumerate(messages):
@@ -4210,13 +4196,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
                         call_id = _provider_response_tool_call_id(call_id, response_id)
-                        computer_call = computer_calls.get(call_id)
-                        if computer_call is not None or (
+                        if call_id in computer_calls or (
                             # A call not replayed here is in the stored response (`previous_response_id` or a
                             # conversation), where this model made it as a `computer_call`.
-                            native_computer and part.tool_kind == COMPUTER_KIND.id and call_id not in replayed_call_ids
+                            computer_is_native
+                            and part.tool_kind == COMPUTER_KIND.id
+                            and call_id not in replayed_call_ids
                         ):
-                            openai_messages.extend(_map_computer_call_output(part, computer_call, call_id))
+                            openai_messages.extend(
+                                _map_computer_call_output(part, call_id, computer_calls.get(call_id))
+                            )
                         elif call_id in client_replay_call_ids and isinstance(part, ToolSearchReturnPart):
                             # Replay the local `search_tools` result as a
                             # `tool_search_output` so the provider rehydrates the
@@ -4333,13 +4322,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         replayed_call_ids.add(call_id)
 
                         if (
-                            native_computer
+                            computer_is_native
                             and item.provider_name == self.system
                             and item.provider_details
                             and (computer_call := item.provider_details.get('computer_call'))
                         ):
                             # Sent back as it came, so the API can pair its output and safety checks.
-                            computer_calls[call_id] = item
+                            computer_calls[call_id] = item.provider_details.get(SAFETY_CHECKS)
                             replayed_call = {k: v for k, v in computer_call.items() if k != 'id' or should_send_item_id}
                             openai_messages.append(cast(responses.ResponseComputerToolCallParam, replayed_call))
                         elif client_tool_search_active and isinstance(item, ToolSearchCallPart):
@@ -5482,7 +5471,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
                     if isinstance(chunk.item, responses.ResponseComputerToolCall) and (
-                        computer_def := computer_tool(self.model_request_parameters)
+                        computer_name := computer_tool_name(self.model_request_parameters)
                     ):
                         call_id = _response_tool_call_id(
                             chunk.item.call_id,
@@ -5490,7 +5479,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         )
                         yield self._parts_manager.handle_part(
                             vendor_part_id=chunk.item.id,
-                            part=_map_computer_call(chunk.item, computer_def.name, call_id, self.provider_name),
+                            part=_map_computer_call(chunk.item, computer_name, call_id, self.provider_name),
                         )
                     elif isinstance(chunk.item, responses.ResponseFunctionToolCall) and (item_id := chunk.item.id):
                         # The Codex backend can send a call's arguments only in the done events, without deltas.
@@ -6994,14 +6983,12 @@ def _map_computer_call(
 
 
 def _map_computer_call_output(
-    part: ToolReturnPart, call: ToolCallPart | None, call_id: str
+    part: ToolReturnPart, call_id: str, safety_checks: Any
 ) -> list[responses.ResponseInputItemParam]:
     """A `computer` result as a `computer_call_output`, followed by a user message when it needs more than an image.
 
-    The API needs a screenshot in every output, so a result without one (it failed, was denied, or had its screenshot
-    left out of this request) sends a blank image instead. The call's safety checks are acknowledged when it ran:
-    `ComputerUse(require_approval=True)` is how a user reviews a call before it does. A call with checks is always in
-    the request: `previous_response_id` doesn't continue past one.
+    The API needs a screenshot in every output, so a result without one sends a blank image instead. The call's
+    safety checks are acknowledged only when it ran, which means it was approved.
     """
     screenshot = next((file.data_uri for file in part.files if isinstance(file, BinaryImage)), None)
     output: responses.response_input_param.ComputerCallOutput = {
@@ -7009,8 +6996,8 @@ def _map_computer_call_output(
         'call_id': call_id,
         'output': {'type': 'computer_screenshot', 'image_url': screenshot or _BLANK_SCREENSHOT},
     }
-    if part.outcome == 'success' and call is not None and (checks := (call.provider_details or {}).get(SAFETY_CHECKS)):
-        output['acknowledged_safety_checks'] = checks
+    if part.outcome == 'success' and safety_checks:
+        output['acknowledged_safety_checks'] = safety_checks
     metadata: Any = part.metadata
     items: list[responses.ResponseInputItemParam] = [output]
     if screenshot is None or part.outcome != 'success' or (isinstance(metadata, dict) and 'error' in metadata):
