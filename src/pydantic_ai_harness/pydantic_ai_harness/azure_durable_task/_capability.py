@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Callable, Mapping
-from contextlib import AbstractContextManager, AsyncExitStack, asynccontextmanager
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
+from contextlib import AsyncExitStack, ExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any, ClassVar, Literal
 
-from durabletask.task import RetryPolicy
+from durabletask.task import RetryPolicy, get_name
 from durabletask.worker import TaskHubGrpcWorker
 from pydantic import JsonValue, TypeAdapter, ValidationError
 from pydantic_core import to_json
@@ -26,7 +26,7 @@ from pydantic_ai.durable_exec import (
     conversation_id_from_run_id,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolsetTool
@@ -85,6 +85,7 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         event_options: RetryPolicy | None = None,
         capability_options: RetryPolicy | None = None,
         resolve_tool_options: ToolOptionsResolver | None = None,
+        continue_as_new: Callable[[RunContext[AgentDepsT]], Awaitable[None] | None] | None = None,
     ) -> None:
         """Configure worker-side models, event handling and native activity retry policies.
 
@@ -102,6 +103,10 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
                 `False` runs a function tool inline. Inline tools must be deterministic and I/O-free.
                 Function tools can also opt out with `metadata={'azure_durable_task': False}`.
                 Keep native policies out of JSON-serialized tool metadata.
+            continue_as_new: Sync or async callback before each model request in an orchestration.
+                Return to defer, or raise `ContinueAsNew(input)` so the user orchestrator can call
+                the SDK's `continue_as_new`. Choose a deterministic threshold; this SDK has no
+                server-suggestion API. `None` disables the callback.
         """
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
 
@@ -112,6 +117,7 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
             capability=capability_options,
             resolve_tool=partial(_resolve_options, tool_options, resolve_tool_options),
         )
+        self.continue_as_new = continue_as_new
         self._backend: AzureDurableTaskOperationBackend | None = None
         # AbstractAgent.deps_type erases its generic parameter; the runtime schema validates it in activities.
         self._deps_adapter: TypeAdapter[Any] | None = None
@@ -142,13 +148,51 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
             raise UserError('Bind `AzureDurableTaskDurability` to an agent before registering its activities.')
         return self._backend
 
-    def register(self, worker: TaskHubGrpcWorker) -> AbstractContextManager[None]:
+    @contextmanager
+    def register(
+        self,
+        worker: TaskHubGrpcWorker,
+        *,
+        previous_versions: Mapping[str, AbstractAgent[Any, Any]] | None = None,
+    ) -> Generator[None]:
         """Register activities and own their runtime until the worker has stopped and drained.
 
         Use the bound capability returned by `AzureDurableTaskDurability.from_agent(agent)`.
-        Register your orchestrators directly with the SDK worker.
+        `previous_versions` retains older agents' activity implementations under their
+        original, distinct names. Configure SDK worker version admission and dispatch
+        your own orchestrator on `ctx.version`; this method stamps no versions.
+        Overlapping activity names fail before any activity registration.
         """
-        return self.get_durable_operation_backend().worker_scope(worker)
+        backends = [self.get_durable_operation_backend()]
+        for version, agent in (previous_versions or {}).items():
+            capability = AzureDurableTaskDurability.from_agent(agent)
+            if capability is None:
+                raise UserError(f'Retained version {version!r} needs an agent with `AzureDurableTaskDurability`.')
+            backends.append(capability.get_durable_operation_backend())
+        names: set[str] = set()
+        for backend in backends:
+            for activity in backend.registrations():
+                name = get_name(activity)
+                if name in names:
+                    raise UserError(
+                        f'Retained Azure Durable Task activity name {name!r} is not unique. '
+                        'Keep old agent names unchanged and choose a distinct name for each retained version.'
+                    )
+                names.add(name)
+        with ExitStack() as stack:
+            for backend in backends:
+                stack.enter_context(backend.worker_scope(worker))
+            yield
+
+    async def before_model_request(
+        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        """Offer the application a settled continuation boundary, as Temporal does."""
+        if self.in_durable_context and self.continue_as_new is not None:
+            pending = self.continue_as_new(ctx)
+            if pending is not None:
+                await pending
+        return await super().before_model_request(ctx, request_context)
 
     @asynccontextmanager
     async def _activity_scope(self, deps_input: JsonValue) -> AsyncGenerator[None]:
