@@ -99,6 +99,11 @@ async def test_screenshots_zoom_and_the_pointer_come_from_the_display(docker: Fa
     assert await workspace.cursor_position() == Point(x=640, y=400)
 
 
+async def test_commands_see_the_desktop(docker: FakeDocker, container_dir: Path) -> None:
+    result = await _desktop(container_dir, image='my-desktop').run('echo "$DISPLAY"', shell=True)
+    assert result.stdout == ':1\n'
+
+
 async def test_a_desktop_size_sets_the_display_it_starts(docker: FakeDocker, container_dir: Path) -> None:
     docker.remove_display()
     backend = DockerSandboxBackend(image='my-desktop', working_dir=str(container_dir), desktop=(1440, 900))
