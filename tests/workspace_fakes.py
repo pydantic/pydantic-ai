@@ -14,10 +14,14 @@ from pydantic_ai.workspaces import (
     CommandResult,
     ComputerAction,
     FileEntry,
+    Point,
     ReadOnlyWorkspace,
+    Region,
     SupportsCommands,
+    SupportsCursorPosition,
     SupportsDisplay,
     SupportsFilesystem,
+    SupportsZoom,
     UnsupportedComputerActionError,
     Workspace,
     WorkspaceBackend,
@@ -371,7 +375,9 @@ class InMemoryProvider:
         return ProviderWorkspaces(self, read_only=read_only)
 
 
-class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsDisplay):
+class ProviderBackend(
+    WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsDisplay, SupportsZoom, SupportsCursorPosition
+):
     def __init__(self, provider: InMemoryProvider, ref: WorkspaceRef | None) -> None:
         self._provider = provider
         self._ref = ref
@@ -478,6 +484,14 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, Su
         if action.type not in {'click', 'move', 'drag', 'mouse_down', 'mouse_up', 'scroll', 'type', 'keypress'}:
             raise UnsupportedComputerActionError(f'the fake display cannot perform {action.type!r}')
         self._provider.actions.append(action)
+
+    async def zoom(self, region: Region) -> bytes:
+        await self._files()
+        return _png(region.right - region.left, region.bottom - region.top)
+
+    async def cursor_position(self) -> Point:
+        await self._files()
+        return Point(x=640, y=400)
 
 
 class ProviderWorkspaces(AbstractCapability[Any]):

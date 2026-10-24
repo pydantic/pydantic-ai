@@ -511,6 +511,12 @@ For tests, `with agent.override(workspace=LocalWorkspaceBackend(path)):` tempora
 workspace instead of the agent's capability, the ref in history, or a per-run `workspace=`, as
 `override(model=)` does for the model.
 
+## Third-party workspaces
+
+Other packages implement the same workspace interface. [`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend), a community package by [Vstorm](https://vstorm.co/), provides workspaces backed by Kubernetes pods, local Docker containers, Daytona, a `sandboxd` service that holds the Docker socket so your application container doesn't have to, and in-memory JSON documents your application can keep in its own database.
+
+To add a package to this list, open a pull request. To build your own, see [Writing a backend](#writing-a-backend).
+
 ## Writing a backend
 
 A backend is the object that talks to one environment; `Workspace` wraps it to give tools the
@@ -535,7 +541,9 @@ New action kinds may be added to `ComputerAction`, so `act` must raise
 doesn't know; [`WorkspaceBackendSuite`][pydantic_ai.workspaces.conformance.WorkspaceBackendSuite] checks this. Coordinates are pixels of the screenshot, so a backend
 whose screen is scaled, such as a high-density display, reports the screenshot's size and scales actions to
 match. Keep the screenshot at most 2,000 pixels on each side: Claude rejects larger images once a request
-carries more than 20 of them. `LocalWorkspace` has no display.
+carries more than 20 of them. A backend can also implement
+[`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom], to capture part of the display at full resolution, and
+[`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition]. `LocalWorkspace` has no display.
 
 ### Resolving symlinks
 

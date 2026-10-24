@@ -14,14 +14,17 @@ from typing_extensions import get_protocol_members
 
 from pydantic_ai.exceptions import UserError
 
-from .computer import ComputerAction
+from .computer import ComputerAction, Point, Region
 from .protocol import (
     CommandResult,
     FileEntry,
     SupportsCommands,
+    SupportsCursorPosition,
     SupportsDisplay,
     SupportsFilesystem,
     SupportsRealpath,
+    SupportsZoom,
+    UnsupportedComputerActionError,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -554,6 +557,26 @@ class Workspace(WorkspaceBackend):
     async def act(self, action: ComputerAction) -> None:
         """Perform a mouse or keyboard action on the display. Raises `UserError` if the workspace has no display."""
         await self._display.act(action)
+
+    async def zoom(self, region: Region) -> bytes:
+        """Capture part of the display as PNG bytes, at full resolution.
+
+        Raises `UnsupportedComputerActionError` if the backend can't zoom.
+        """
+        backend = self._display  # a workspace without a display says so first
+        if not isinstance(backend, SupportsZoom):
+            raise UnsupportedComputerActionError('This display cannot zoom.')
+        return await backend.zoom(region)
+
+    async def cursor_position(self) -> Point:
+        """The pointer's position in screenshot pixels.
+
+        Raises `UnsupportedComputerActionError` if the backend can't report it.
+        """
+        backend = self._display
+        if not isinstance(backend, SupportsCursorPosition):
+            raise UnsupportedComputerActionError('This display cannot report the pointer position.')
+        return await backend.cursor_position()
 
     async def read_text(self, path: str, *, encoding: str = 'utf-8') -> str:
         """Read a file as text; undecodable bytes raise `UnicodeDecodeError`."""

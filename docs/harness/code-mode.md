@@ -131,7 +131,7 @@ When you mark tools or whole toolsets `defer_loading=True` ([Tool Search](../too
 
 That fold-in grows `run_code`'s description, which invalidates the prompt-cache prefix once at the moment of discovery (turns with no discovery stay cache-warm). Two ways to avoid the bust:
 
-- Pass `dynamic_catalog=True` to keep `run_code`'s description static across discoveries. The catalog of sandboxed-tool signatures moves into the agent instructions (as a dynamic [`InstructionPart`][pydantic_ai.messages.InstructionPart]) and newly-discovered tools are announced via [`ctx.enqueue`][pydantic_ai.tools.RunContext.enqueue] instead of by rebuilding the description:
+- Pass `dynamic_catalog=True` to make discoveries append to the conversation instead of rewriting it. The catalog of sandboxed-tool signatures moves out of `run_code`'s description into the agent instructions, as a dynamic [`InstructionPart`][pydantic_ai.messages.InstructionPart] with the id `toolset:code_mode:catalog` and [`on_change='append'`](../agent.md#appending-instruction-changes): when a discovery adds a function, the updated catalog is appended to the message history. When Tool Search found the tool, a short system prompt part sent through [`ctx.enqueue`][pydantic_ai.tools.RunContext.enqueue] also names the new functions; loading a capability appends only the catalog update. Deferred tools that `run_code` will take over are kept off the wire until they're found: the model finds them with the local `search_tools` tool, or by loading the capability that owns them, and from then on calls them from `run_code` only. The tool definitions and the instructions of earlier requests stay as they were sent, so the prompt cache survives the discovery:
 
   ```python
   from pydantic_ai_harness import CodeMode
@@ -139,7 +139,15 @@ That fold-in grows `run_code`'s description, which invalidates the prompt-cache 
   CodeMode(dynamic_catalog=True)
   ```
 
-  This pays off when paired with Tool Search: the tool-definitions block stays byte-stable so the prefix cache survives discoveries, at the cost of a larger (but cache-friendly) system prompt. With a fixed toolset and no Tool Search, the default keeps the system prompt shorter and is the better choice.
+  The catalog renders tool definitions into the instructions, including the names, descriptions and schemas an MCP server supplies. Tool definitions are trusted operator configuration: the model already receives them in the request's tool definitions with the same authority, so moving them into instructions gives them no authority they didn't have. Connect only MCP servers you trust. The discovery announcement names functions only by their Python identifiers, and keeps the tool names as found in its metadata.
+
+  The cache stays intact only if a callable `tools` selector gives the same answer for a tool before and after it's revealed. A selector that keeps a hidden tool native and sandboxes it once revealed declares the tool and then drops the declaration, which moves the cached prefix, as without `dynamic_catalog`.
+
+  The catalog block is keyed through the toolset id `code_mode`, which `CodeModeToolset` takes only with `dynamic_catalog=True`. If the agent has another toolset with the id `code_mode` that contributes instructions, the run raises a `UserError` for the duplicate id. Rename that toolset.
+
+  Two setups still declare such a tool natively, because only the provider's native tool search can find it there: the `'bm25'` and `'regex'` Tool Search strategies, which have no local `search_tools`, and a `tools` selector that keeps another deferred tool native, which keeps the native search on the wire in place of `search_tools`. In those setups the declaration is dropped when the tool moves into `run_code`, as it is without `dynamic_catalog`.
+
+  This pays off with Tool Search or deferred capabilities, at the cost of a larger system prompt. With a fixed toolset, the default keeps the system prompt shorter and is the better choice.
 
 - To instead keep a Tool Search corpus fully native -- never folded into `run_code`, but not callable from inside it -- exclude it with a `tools` selector; corpus members carry `with_native` set to the managing native tool:
 

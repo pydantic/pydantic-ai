@@ -184,6 +184,10 @@ class GitHubCopilotProvider(_OpenAICompatibleProvider):
             if model_name.startswith(prefix):
                 family_profile = profile_func(model_name)
                 break
+        if family_profile is not None and 'openai_reasoning_efforts' in family_profile:
+            # The OpenAI family's accepted efforts were verified against OpenAI's API, while Copilot enforces its own
+            # per-id lists, so unified levels are forwarded unchanged rather than remapped to them.
+            family_profile = {k: v for k, v in family_profile.items() if k != 'openai_reasoning_efforts'}
 
         # As `GitHubCopilotProvider` is always used with `GitHubCopilotModel`, which is based on
         # `OpenAIChatModel`, we maintain the base `OpenAIJsonSchemaTransformer` unless the family
