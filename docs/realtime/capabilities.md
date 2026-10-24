@@ -29,6 +29,13 @@ and all. What does not run is anything tied to the request-response graph:
 [output processing](../hooks.md#output-processing-hooks) hooks — a session has no graph nodes, no
 per-request boundary, and no output stage.
 
+Opening a session emits a `UserWarning` for each capability that implements any of those hooks,
+naming the capability and its hooks, since what it does there won't happen in the session — for
+example, [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] works through
+`before_model_request`. A [`Hooks`][pydantic_ai.capabilities.Hooks] capability warns only for the
+hooks it registers. Built-ins whose behavior the session provides another way, such as
+[`Instrumentation`][pydantic_ai.capabilities.Instrumentation], don't warn.
+
 ## Run hooks
 
 `before_run`, `after_run`, `wrap_run`, and `on_run_error` [run hooks](../hooks.md#run-hooks) run
@@ -39,7 +46,7 @@ result-transformation semantics as [`iter()`][pydantic_ai.agent.AbstractAgent.it
 
 `wrap_run_event_stream` wraps the consumer-facing session iterator. It can observe or transform
 shared [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] members and realtime-only
-[`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members (see the
+[`RealtimeSessionEvent`][pydantic_ai.messages.RealtimeSessionEvent] members (see the
 [event reference](events.md)) without changing history or tool execution. There is no
 `event_stream_handler` parameter on `realtime()`; a handler-style consumer is attached with the
 [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] capability, which works through

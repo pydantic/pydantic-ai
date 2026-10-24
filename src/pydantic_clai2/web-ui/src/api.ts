@@ -14,11 +14,11 @@ import type {
   PluginRow,
   Project,
   ServerMessage,
+  Steering,
   Switch,
   TaskTranscript,
   Transcript,
   WatchMessage,
-  WorkspacesInfo,
 } from './protocol'
 
 // The page's token: the server puts it in a meta tag; `npm run dev` serves its own page, so the address has it.
@@ -119,6 +119,13 @@ export function sessionApi(id: string | null) {
     /** Enter a prompt or `/command`; `images`, base64-encoded, go with a prompt. */
     send: (text: string, images: readonly string[] = []) =>
       call<Entered>('POST', `${base}/input`, images.length ? { text, images } : { text }),
+    /** Send a prompt to the running turn now, as Alt+Enter at the prompt does; one that cannot steer is entered instead. */
+    steer: (text: string) => call<Steering>('POST', `${base}/steer`, { text }),
+    /** Rewrite a queued input in place; a 404 means it already ran or was removed. */
+    editQueued: (id: string, text: string) => call<void>('PUT', `${base}/queue/${encodeURIComponent(id)}`, { text }),
+    removeQueued: (id: string) => call<void>('DELETE', `${base}/queue/${encodeURIComponent(id)}`),
+    /** Send a queued prompt to the running turn now; `steered: false` leaves it queued. */
+    steerQueued: (id: string) => call<{ steered: boolean }>('POST', `${base}/queue/${encodeURIComponent(id)}/steer`),
     interrupt: () => call<{ interrupted: boolean }>('POST', `${base}/interrupt`),
     /** One of the images a prompt in this session's transcript lists, as a `data:` URL; fetched once per page. */
     image: (id: string) => image(base, id),
@@ -169,11 +176,13 @@ export const api = {
     call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/settings`, { changes, reset }),
   pluginMenu: (name: string) => call<void>('POST', `/api/plugins/${encodeURIComponent(name)}/menu`),
   task: (id: string) => call<TaskTranscript>('GET', `/api/tasks/${id}`),
-  taskAction: (id: string, action: 'stop' | 'background' | 'resume') => call<void>('POST', `/api/tasks/${id}/${action}`),
+  taskAction: (id: string, action: 'stop' | 'background') => call<void>('POST', `/api/tasks/${id}/${action}`),
   steer: (id: string, text: string) => call<{ steered: boolean }>('POST', `/api/tasks/${id}/steer`, { text }),
+  /** Run a finished task again with `text` as your message, on its own; it answers once the task runs. */
+  promptTask: (id: string, text: string) => call<void>('POST', `/api/tasks/${id}/prompt`, { text }),
   panels: () => call<PanelInfo[]>('GET', '/api/panels'),
-  workspaces: () => call<WorkspacesInfo>('GET', '/api/workspaces'),
-  openWorkspace: (id: string) => call<{ url: string }>('POST', `/api/workspaces/${encodeURIComponent(id)}/open`),
+  /** Make a workspace's session live, starting one in its checkout if it has none; it answers its conversation ID. */
+  openWorkspace: (id: string) => call<Opened>('POST', `/api/workspaces/${encodeURIComponent(id)}/open`),
 }
 
 /** The orchestrator chat: its own agent and conversation, beside the session. */
@@ -183,22 +192,6 @@ export const orchestrator = {
   interrupt: () => call<{ interrupted: boolean }>('POST', '/api/orchestrator/interrupt'),
   answer: (id: string, answers: AnswerBody[] | null) => call<void>('POST', '/api/orchestrator/answer', { id, answers }),
   clear: () => call<void>('POST', '/api/orchestrator/clear'),
-}
-
-/** Start a workspace's CLAI if needed and open its own page in a new tab. */
-export async function openWorkspacePage(id: string): Promise<void> {
-  // Opened now, while the click still counts as one, and pointed at the page once its CLAI answers.
-  const tab = window.open('', '_blank')
-  try {
-    const { url } = await api.openWorkspace(id)
-    if (tab) {
-      tab.opener = null
-      tab.location.href = url
-    } else window.location.assign(url)
-  } catch (error) {
-    tab?.close()
-    throw error
-  }
 }
 
 /** Interrupt the running turn, reporting a failure, such as a server that has gone, through `onError`. */

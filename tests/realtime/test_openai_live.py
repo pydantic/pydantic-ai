@@ -12,6 +12,7 @@ import asyncio
 import base64
 import itertools
 import json
+import re
 import warnings
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
@@ -37,6 +38,7 @@ from pydantic_ai.messages import (
     CachePoint,
     DocumentUrl,
     FilePart,
+    FunctionToolResultEvent,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -65,6 +67,7 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     RealtimeError,
     RealtimeModelProfile,
+    RealtimeModelProfileSpec,
     RealtimeSession,
     RealtimeSessionReconnectEvent,
     RealtimeTurnCompleteEvent,
@@ -276,8 +279,11 @@ def test_delegation_settings_reach_the_backend(model: OpenAILiveModel) -> None:
         # Resolved against the backend's profile, as a direct Responses request to it would be.
         pytest.param('gpt-5.6-sol', 'minimal', 'low', id='no-minimal-effort'),
         pytest.param('gpt-5', 'minimal', 'minimal', id='minimal-effort'),
-        # A backend that always reasons can't be turned off, so `False` leaves it at its default.
-        pytest.param('gpt-5', False, None, id='always-reasons'),
+        # The delegation's efforts stop at `xhigh`, even for a backend whose Responses API takes `max`.
+        pytest.param('gpt-6.1-sol', 'max', 'xhigh', id='max-effort'),
+        # A backend that always reasons can't be turned off, so `False` sends its lowest effort.
+        pytest.param('gpt-5', False, 'minimal', id='always-reasons'),
+        pytest.param('gpt-6-astra', False, 'low', id='always-reasons-no-minimal-effort'),
         # A backend that doesn't reason is sent no effort at all.
         pytest.param('gpt-4.1', 'high', None, id='does-not-reason'),
     ],
@@ -394,6 +400,34 @@ async def test_an_image_needs_respond_true(model: OpenAILiveModel) -> None:
         'response.create',
         'session.close',
     ]
+
+
+async def test_session_start_carries_seeded_system_prompts(model: OpenAILiveModel) -> None:
+    """The standing system prompt opens the backend instructions; a later one is seeded in place as `<system>` text."""
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _FakeWebSocket([started])
+    history = [
+        ModelRequest(parts=[SystemPromptPart(content='Standing prompt.'), UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[SystemPromptPart(content='Mid-conversation note.'), UserPromptPart(content='more')]),
+        ModelResponse(parts=[TextPart(content='sure')]),
+    ]
+
+    with _patched_connect(ws):
+        async with Agent(instructions='Agent instructions.').realtime(model, message_history=history).session():
+            pass
+
+    session = json.loads(ws.sent[0])['session']
+    assert session['delegation']['responses']['instructions'] == 'Standing prompt.\n\nAgent instructions.'
+    assert session['input'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': 'hi'}]},
+            {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'hello'}]},
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': '<system>Mid-conversation note.</system>'}]},
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': 'more'}]},
+            {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'sure'}]},
+        ]
+    )
 
 
 def test_seeding_projects_history_to_text() -> None:
@@ -633,8 +667,9 @@ def test_audio_seconds_are_priced_as_the_live_model() -> None:
     assert reported.usage.cost == snapshot(Decimal('0.03'))
 
 
-async def test_text_is_sent_as_context_not_a_user_turn() -> None:
-    """Live has no user-message event: speakable text is commentary, silent context is thinking."""
+async def test_text_turn_runs_the_backend_and_context_is_thinking() -> None:
+    """Live has no user-message event: a text turn is the backend's user message, which it is run on, and Live hears
+    what was asked as silent context; text sent as context alone is only that."""
     sent: list[dict[str, Any]] = []
 
     class _Recorder(OpenAILiveConnection):
@@ -642,17 +677,25 @@ async def test_text_is_sent_as_context_not_a_user_turn() -> None:
             sent.append(event)
 
     connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
-    await connection.send('Say this out loud.')
+    await connection.send('What is the weather in London?')
     await connection.send(TextContext('Know this quietly.'))
 
     assert sent == snapshot(
         [
             {
-                'type': 'session.commentary.append',
-                'event_id': 'pydantic_ai.commentary.0',
+                'type': 'session.thinking.append',
                 'delegation_id': None,
-                'content': 'Say this out loud.',
+                'content': 'The user typed: What is the weather in London?',
             },
+            {
+                'type': 'response.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [{'type': 'input_text', 'text': 'What is the weather in London?'}],
+                },
+            },
+            {'type': 'response.create', 'event_id': 'pydantic_ai.text.0'},
             {'type': 'session.thinking.append', 'delegation_id': None, 'content': 'Know this quietly.'},
         ]
     )
@@ -2269,29 +2312,98 @@ def _text_of(tokens: int) -> str:
     return ' '.join(['hello'] * tokens)
 
 
-@pytest.mark.parametrize('respond', [True, False])
-async def test_context_text_over_the_cap_is_refused_before_sending(respond: bool) -> None:
+async def test_context_text_over_the_cap_is_refused_before_sending() -> None:
     """Live rejects context over 500 tokens with an error that arrives after `send()` has returned.
 
-    By then the text was recorded as sent, and a `respond=True` send left `wait_for_reply()` waiting for
-    a reply that was never coming.
+    By then the text was recorded as sent.
     """
     started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
     ws = _FakeWebSocket([started])
     with _patched_connect(ws):
         async with Agent().realtime(OpenAILiveModel('gpt-live-1', provider='openai')).session() as session:
-            with pytest.raises(UserError, match='at most 500 tokens of text per `send\\(\\)`, and this is 501'):
-                await session.send(_text_of(501), respond=respond)
-            with anyio.fail_after(1):
-                await session.wait_for_reply()
+            with pytest.raises(
+                UserError,
+                match=re.escape('at most 500 tokens of context per `send(..., respond=False)`, and this is 501'),
+            ):
+                await session.send(_text_of(501), respond=False)
             assert session.all_messages() == []
             # 500 is within the cap, and goes out.
-            await session.send(_text_of(500), respond=respond)
+            await session.send(_text_of(500), respond=False)
 
-    assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == [
-        'session.commentary.append' if respond else 'session.thinking.append',
-        'session.close',
-    ]
+    assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == ['session.thinking.append', 'session.close']
+
+
+async def test_enqueued_system_prompt_is_the_operators_not_the_users() -> None:
+    """`enqueue(SystemPromptPart(...))` still runs the backend, but isn't framed as something the user typed.
+
+    Framed that way, Live later told the caller they had said it (checked live). Live hears it as context as it
+    is, `<system>`-tagged, and the backend as a developer message.
+    """
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _FakeWebSocket([started])
+    with _patched_connect(ws):
+        async with Agent().realtime(OpenAILiveModel('gpt-live-1', provider='openai')).session() as session:
+            session.enqueue(SystemPromptPart(content='The caller was verified as Jamie. Greet them by name.'))
+            with anyio.fail_after(5):
+                while not any(json.loads(frame)['type'] == 'response.create' for frame in ws.sent):
+                    await anyio.sleep(0.01)
+            messages = session.all_messages()
+
+    assert [json.loads(frame) for frame in ws.sent[1:-1]] == snapshot(
+        [
+            {
+                'type': 'session.thinking.append',
+                'delegation_id': None,
+                'content': '<system>The caller was verified as Jamie. Greet them by name.</system>',
+            },
+            {
+                'type': 'response.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'developer',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': '<system>The caller was verified as Jamie. Greet them by name.</system>',
+                        }
+                    ],
+                },
+            },
+            {'type': 'response.create', 'event_id': 'pydantic_ai.text.0'},
+        ]
+    )
+    # History records the text the session delivered, as for any enqueued system prompt.
+    assert [
+        type(part.content) for message in messages for part in message.parts if isinstance(part, UserPromptPart)
+    ] == [str]
+
+
+async def test_typed_turn_too_long_to_tell_live_still_runs_the_backend() -> None:
+    """The backend takes typed text of any length; only the note telling Live what was typed is capped.
+
+    A typed turn whose note would be over Live's 500-token context cap goes to the backend without it.
+    """
+    sent: list[dict[str, Any]] = []
+
+    class _Recorder(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
+    # 496 tokens fit alongside the note that introduces them; 497 don't.
+    await connection.send(_text_of(496))
+    await connection.send(_text_of(497))
+
+    assert [event['type'] for event in sent] == snapshot(
+        [
+            'session.thinking.append',
+            'response.item.create',
+            'response.create',
+            'response.item.create',
+            'response.create',
+        ]
+    )
+    assert sent[3]['item']['content'] == [{'type': 'input_text', 'text': _text_of(497)}]
 
 
 def test_a_new_transcript_segment_is_spaced_from_the_last() -> None:
@@ -2428,6 +2540,64 @@ async def test_requests_count_backend_responses_not_spoken_replies() -> None:
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
     assert len(responses) == 2
     assert session.usage.requests == 1
+
+
+async def test_audio_a_delegated_call_splits_from_its_words_is_not_recorded_as_speech() -> None:
+    """Live's transcript runs ahead of its audio, so the end of a sentence can be heard after the call that cut it.
+
+    That audio got a speech part of its own, which history recorded as an empty assistant `SpeechPart`: its words
+    are in the speech before the call.
+    """
+    voice = {'type': 'session.output_audio.delta', 'delta': 'f39/f39/f38='}
+    ws = _FakeWebSocket(
+        _live_frames(
+            _delegation_created('d1'),
+            {
+                'type': 'session.output_transcript.delta',
+                'delta': 'Checking on that.',
+                'start_ms': 0,
+                'end_ms': 1,
+                'event_id': 'e',
+            },
+            voice,
+            {'type': 'response.event', 'event_id': 'e', 'delegation_id': 'd1', 'event': _backend_call('c1')},
+            voice,
+            _backend_completion('d1'),
+        ),
+        delay=0.05,
+    )
+    agent = Agent()
+
+    @agent.tool_plain
+    async def weather() -> str:
+        return 'Sunny.'
+
+    model = OpenAILiveModel(
+        'gpt-live-1', provider='openai', settings=OpenAILiveModelSettings(openai_live_turn_silence_ms=10)
+    )
+    streamed: list[SpeechPart] = []
+    with _patched_connect(ws):
+        async with agent.realtime(model).session() as session:
+            # Once the split-off audio streamed and the call was answered, closing the session ends the reply.
+            answered = False
+            with anyio.fail_after(5):
+                async for event in session:  # pragma: no branch
+                    if isinstance(event, PartStartEvent) and isinstance(event.part, SpeechPart):
+                        streamed.append(event.part)
+                    answered = answered or isinstance(event, FunctionToolResultEvent)
+                    if answered and len(streamed) == 2:
+                        break
+
+    # The audio was still streamed, for playback, as a part of its own.
+    assert len(streamed) == 2
+    calling, returned = session.all_messages()
+    assert calling.parts == snapshot(
+        [
+            SpeechPart(speaker='assistant', transcript='Checking on that.'),
+            ToolCallPart(tool_name='weather', args='{}', tool_call_id='c1'),
+        ]
+    )
+    assert [type(part) for part in returned.parts] == [ToolReturnPart]
 
 
 @pytest.mark.parametrize('reported_zero', [False, True], ids=['missing-usage', 'reported-zero'])
@@ -2710,9 +2880,9 @@ async def test_special_token_text_is_counted_as_live_counts_it() -> None:
             sent.append(event)
 
     connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
-    await connection.send(_text_of(499) + '<|endoftext|>')
+    await connection.send(TextContext(_text_of(499) + '<|endoftext|>'))
     with pytest.raises(UserError, match='and this is 501'):
-        await connection.send(_text_of(500) + '<|endoftext|>')
+        await connection.send(TextContext(_text_of(500) + '<|endoftext|>'))
     assert len(sent) == 1
 
 
@@ -2899,12 +3069,14 @@ async def test_audio_sent_as_the_pump_wakes_holds_its_frame_back() -> None:
 # --- browser WebRTC ---------------------------------------------------------------------------------
 
 
-def _webrtc_model(handler: Any, *, settings: OpenAILiveModelSettings | None = None) -> OpenAILiveModel:
+def _webrtc_model(
+    handler: Any, *, settings: OpenAILiveModelSettings | None = None, profile: RealtimeModelProfileSpec | None = None
+) -> OpenAILiveModel:
     """A Live model whose signaling request is served by `handler` instead of the network."""
     provider = OpenAIProvider(
         api_key='sk-test', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     )
-    return OpenAILiveModel('gpt-live-1', provider=provider, settings=settings)
+    return OpenAILiveModel('gpt-live-1', provider=provider, settings=settings, profile=profile)
 
 
 def _created(session_id: str = 'live_test') -> httpx2.Response:
@@ -3004,12 +3176,46 @@ async def test_a_rejected_offer_is_an_http_error() -> None:
     assert exc_info.value.model_name == 'gpt-live-1'
 
 
+async def test_an_offer_ignores_the_profiles_sample_rates() -> None:
+    """WebRTC negotiates the audio format, so a rate the WebSocket path would reject doesn't stop a call."""
+    sent: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        return _created()
+
+    model = _webrtc_model(handler, profile={'audio_input_sample_rate': 48000, 'audio_output_sample_rate': 48000})
+    await model.answer_webrtc_offer('v=0')
+
+    assert 'audio' not in sent[0]['session']
+
+
 async def test_unsupported_settings_raise_before_answering_an_offer() -> None:
     def handler(request: httpx2.Request) -> httpx2.Response:
         raise AssertionError('no HTTP request expected')  # pragma: no cover
 
     with pytest.raises(UserError, match='`max_tokens` cannot be set'):
         await _webrtc_model(handler).answer_webrtc_offer('v=0', model_settings=OpenAILiveModelSettings(max_tokens=10))
+
+
+async def test_the_auto_transcription_default_can_be_set_explicitly() -> None:
+    """Live always transcribes with its own model, which is what `'auto'` asks for.
+
+    So settings shared across providers can spell out the default and start the same session as leaving
+    it out; a pinned model still raises (`test_unsupported_settings_raise_before_connecting`).
+    """
+    sent: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        return _created()
+
+    model = _webrtc_model(handler)
+    await model.answer_webrtc_offer('v=0')
+    await model.answer_webrtc_offer('v=0', model_settings=OpenAILiveModelSettings(input_transcription_model='auto'))
+
+    default, explicit_auto = sent
+    assert explicit_auto == default
 
 
 async def test_there_are_no_client_secrets(model: OpenAILiveModel) -> None:
@@ -3033,8 +3239,12 @@ def _started_frame(**session: Any) -> str:
     )
 
 
+#: The empty update a sideband asks for on attaching, which changes nothing but reports the session.
+_EMPTY_SESSION_UPDATE = json.dumps({'type': 'session.update', 'session': {}}, separators=(',', ':'))
+
+
 async def test_the_sideband_runs_the_session_it_attaches_to(model: OpenAILiveModel) -> None:
-    """The sideband sends nothing to set up: Live replays `session.started`, which names the backend."""
+    """The sideband configures nothing: Live replays `session.started`, which names the backend."""
     ws = _FakeWebSocket(
         [_started_frame(delegation={'type': 'responses', 'responses': {'model': 'gpt-5.6-luna', 'tools': []}})]
     )
@@ -3051,7 +3261,7 @@ async def test_the_sideband_runs_the_session_it_attaches_to(model: OpenAILiveMod
             assert connection._map_output_audio(b'\x7f\x7f' * 240) == []  # pyright: ignore[reportPrivateUsage]
             assert connection._response_open  # pyright: ignore[reportPrivateUsage]
             assert connection._map_output_audio(bytes(480)) == []  # pyright: ignore[reportPrivateUsage]
-    assert ws.sent == []
+    assert ws.sent == [_EMPTY_SESSION_UPDATE]
 
 
 async def test_a_sideband_on_a_client_delegated_session_has_no_backend(model: OpenAILiveModel) -> None:
@@ -3135,7 +3345,60 @@ async def test_a_sideband_opened_with_the_offers_history_seeds_nothing(model: Op
             model_request_parameters=ModelRequestParameters(),
         ):
             pass
-    assert ws.sent == []
+    assert ws.sent == [_EMPTY_SESSION_UPDATE]
+
+
+def _updated_frame(**session: Any) -> str:
+    return json.dumps(
+        {
+            'type': 'session.updated',
+            'event_id': 'e',
+            'session': {'id': 'live_test', 'expires_at': 0, 'model': 'gpt-live-1', 'status': 'active', **session},
+        }
+    )
+
+
+class _LateSidebandWebSocket(_FakeWebSocket):
+    """A sideband that attaches once `session.started` has aged out of the events Live sends it again.
+
+    Checked live: after a few seconds, the attach brings nothing but later events, and Live answers the
+    empty `session.update` with `session.updated`, which reports the session, its seeded `input` included.
+    """
+
+    def __init__(self, session: dict[str, Any]) -> None:
+        super().__init__([])
+        self._session = session
+
+    async def send(self, data: str) -> None:
+        await super().send(data)
+        if json.loads(data)['type'] == 'session.update':  # pragma: no branch
+            self._frames.append(_updated_frame(**self._session))
+            self._arrived.set()
+
+
+async def test_a_late_sideband_learns_the_session_from_session_updated(model: OpenAILiveModel) -> None:
+    """A sideband attaching after `session.started` has aged out still attaches, and still checks the history."""
+    delegation: dict[str, Any] = {'type': 'responses', 'responses': {'model': 'gpt-5.6-luna', 'tools': []}}
+    ws = _LateSidebandWebSocket({'delegation': delegation, 'input': _SEEDED_INPUT})
+    with _patched_connect(ws):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='openai', session_id='live_test'),
+            messages=_HISTORY,
+            model_settings=OpenAILiveModelSettings(handshake_timeout=1),
+            model_request_parameters=ModelRequestParameters(),
+        ) as connection:
+            assert connection._backend_model == 'gpt-5.6-luna'  # pyright: ignore[reportPrivateUsage]
+    assert ws.sent[0] == _EMPTY_SESSION_UPDATE
+
+    with _patched_connect(_LateSidebandWebSocket({'input': _SEEDED_INPUT})):
+        with pytest.raises(UserError, match='must be opened with the same `message_history`'):
+            async with model.connect_webrtc(
+                WebRTCSession(provider_name='openai', session_id='live_test'),
+                messages=[],
+                model_settings=OpenAILiveModelSettings(handshake_timeout=1),
+                model_request_parameters=ModelRequestParameters(),
+            ):
+                pass  # pragma: no cover
 
 
 async def test_a_sideband_accepts_history_live_echoes_with_other_whitespace(model: OpenAILiveModel) -> None:

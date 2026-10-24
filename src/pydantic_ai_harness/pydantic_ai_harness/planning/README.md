@@ -4,9 +4,6 @@ Give an agent a structured, self-updating task list -- without ever invalidating
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/planning/)
 
-> [!NOTE]
-> This capability incorporates the task-list features of the standalone [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) library -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed (`write_todos` -> `write_plan`, `read_todos` -> `read_plan`, `add_todo` -> `add_task`, `update_todo_status(es)` -> `update_task_status(es)`, `remove_todo` -> `remove_task`; subtask tools keep their names).
-
 ## The problem
 
 Long agentic runs drift: the model loses track of what it set out to do and what's left. The usual fix -- keep a running plan and re-inject it into the system prompt each turn -- invalidates the prompt cache. The system prompt sits at the front of the request, so every plan edit changes the cached prefix and forces the whole conversation to be re-processed at full token price.
@@ -195,6 +192,10 @@ from pydantic_ai_harness import Planning
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[Planning])
 ```
+
+## Relationship to `pydantic-ai-todo`
+
+`Planning` incorporates the task-list features of [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo), a community package by [Vstorm](https://vstorm.co/) -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed (`write_todos` -`write_plan`, `read_todos` -`read_plan`, `add_todo` -`add_task`, `update_todo_status(es)` -`update_task_status(es)`, `remove_todo` -`remove_task`; subtask tools keep their names).
 
 ## Further reading
 

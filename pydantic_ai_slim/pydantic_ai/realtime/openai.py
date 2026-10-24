@@ -49,7 +49,6 @@ if TYPE_CHECKING:
     from openai.types.realtime.realtime_truncation_param import RealtimeTruncationParam
 
 from .._http import AsyncHTTPClient
-from .._instrumentation import get_instructions
 from ..exceptions import UserError
 from ..messages import (
     BinaryAudio,
@@ -135,6 +134,7 @@ from ._utils import (
     reconnect_with_backoff,
     require_pcm_audio,
     resolve_advertised_tools,
+    session_instructions,
 )
 from .codec import (
     AudioDelta,
@@ -1692,6 +1692,8 @@ class OpenAIRealtimeModel(RealtimeModel):
             model_name=self.model_name,
             session_config=self._webrtc_session_config(instructions, tools, model_settings),
             expires_after_seconds=expires_after_seconds,
+            # The same endpoint `answer_webrtc_offer` relays to, with the same query (Azure's `webrtcfilter=on`).
+            webrtc_url=self._webrtc_calls_url() if self.profile.get('supports_webrtc') else None,
         )
 
     async def answer_webrtc_offer(
@@ -1737,7 +1739,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         self._check_webrtc_session_provider(session)
         settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         handshake_timeout = settings.get('handshake_timeout', 30.0)
-        instructions = get_instructions(messages, model_request_parameters) or ''
+        instructions = session_instructions(messages, model_request_parameters)
         session_config = self._session_config(
             instructions, model_request_parameters.function_tools, model_settings=settings
         )
@@ -1822,7 +1824,7 @@ class OpenAIRealtimeModel(RealtimeModel):
     ) -> AsyncGenerator[OpenAIRealtimeConnection]:
         settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         handshake_timeout = settings.get('handshake_timeout', 30.0)
-        instructions = get_instructions(messages, model_request_parameters) or ''
+        instructions = session_instructions(messages, model_request_parameters)
         session_config = self._session_config(
             instructions=instructions, tools=model_request_parameters.function_tools, model_settings=settings
         )

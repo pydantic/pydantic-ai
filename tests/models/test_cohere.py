@@ -10,10 +10,12 @@ from typing import Any, cast
 
 import httpx
 import pytest
+from cassetter import Cassette
 
 from pydantic_ai import (
     Agent,
     CachePoint,
+    DocumentUrl,
     ImageUrl,
     ModelAPIError,
     ModelHTTPError,
@@ -29,16 +31,20 @@ from pydantic_ai import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import MultiModalContent
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
+from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
 
 with try_import() as imports_successful:
@@ -175,6 +181,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -193,6 +200,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -366,6 +374,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -465,6 +474,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -503,6 +513,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -528,6 +539,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
+                provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -617,6 +629,26 @@ async def test_multimodal(allow_model_requests: None):
                 ),
             ]
         )
+
+
+@pytest.mark.parametrize(
+    'file',
+    [
+        ImageUrl(url='https://example.com/image.png'),
+        DocumentUrl(url='https://example.com/document.pdf'),
+        UploadedFile(file_id='file-abc', provider_name='openai'),
+    ],
+)
+def test_multimodal_tool_return(file: MultiModalContent):
+    """A file in a tool return raises instead of being dropped from the tool message.
+
+    An agent run replaces an image, document, audio or video file with a note before mapping, but a direct
+    `Model.request` doesn't, and an `UploadedFile` reaches the mapping either way. The error is raised before
+    any request is made, so there is nothing to record.
+    """
+    req = ModelRequest(parts=[ToolReturnPart(tool_name='get_file', content=['Here it is.', file], tool_call_id='1')])
+    with pytest.raises(NotImplementedError, match='Files are not supported in Cohere tool returns'):
+        list(CohereModel._map_user_message(req))  # pyright: ignore[reportPrivateUsage]
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
@@ -725,12 +757,43 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
+                provider_response_id='cf7be73f-dcee-4589-9eea-2dca902b27ec',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
         ]
     )
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+@pytest.mark.parametrize(
+    ('thinking', 'expected_thinking', 'expect_thinking_part'),
+    [
+        pytest.param(False, {'type': 'disabled'}, False, id='false'),
+        pytest.param(True, {'type': 'enabled'}, True, id='true'),
+        pytest.param('minimal', {'type': 'enabled', 'token_budget': 512}, True, id='minimal'),
+        pytest.param('xhigh', {'type': 'enabled', 'token_budget': 31000}, True, id='xhigh'),
+    ],
+)
+async def test_cohere_unified_thinking(
+    allow_model_requests: None,
+    co_api_key: str,
+    vcr: Cassette,
+    thinking: ThinkingLevel,
+    expected_thinking: dict[str, Any],
+    expect_thinking_part: bool,
+):
+    """The unified `thinking` setting maps to Cohere's `thinking` parameter: `False` turns reasoning off, and an
+    effort level caps it at a `token_budget`."""
+    model = CohereModel('command-a-reasoning-08-2025', provider=CohereProvider(api_key=co_api_key))
+    agent = Agent(model, model_settings=ModelSettings(thinking=thinking))
+
+    result = await agent.run('What is 2+2? Reply with just the number.')
+
+    assert '4' in result.output
+    assert single_request_body(vcr)['thinking'] == expected_thinking
+    assert any(isinstance(part, ThinkingPart) for part in result.response.parts) is expect_thinking_part
 
 
 @pytest.mark.vcr()
@@ -827,6 +890,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
+                provider_response_id='a7a1995c-1980-4683-8382-e8dda3598388',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
