@@ -35,7 +35,6 @@ GRIFFECLI_VERSION = '2.3.0'
 GRIFFE_PUBLIC_REDUNDANT_ALIASES_VERSION = '0.3.2'
 _FINDING_RE = re.compile(r'^(?P<path>.*):(?P<line>\d+): (?P<message>.*)$')
 _ATTRIBUTE_VALUE_CHANGED = ': Attribute value was changed: '
-_PRIVATE_PARAMETER_RE = re.compile(r'\(_\w*\)$')
 
 
 class Waiver(BaseModel):
@@ -48,7 +47,11 @@ class Waiver(BaseModel):
 
 
 class ModelNameLiteral(BaseModel):
-    """A type alias listing model names for IDE autocompletion, which isn't a compatibility surface."""
+    """A type alias listing model names for IDE autocompletion, whose `Literal` members can change without a waiver.
+
+    Removing a name from an alias without a `str |` arm is still a permitted compatibility impact: it needs the
+    `compatibility impact` label and a release note.
+    """
 
     model_config = ConfigDict(extra='forbid', frozen=True)
 
@@ -97,18 +100,22 @@ def main() -> None:
     for package, search_path in PACKAGES.items():
         findings = run_griffe(package, search_path, args.against)
         for finding in findings:
-            if _PRIVATE_PARAMETER_RE.search(finding.symbol) or is_excluded(finding, search_path):
+            if is_excluded(finding, search_path):
                 continue
             if (finding.path, finding.symbol) in model_name_literals and (
                 changes := literal_member_changes(finding.message)
             ):
                 added, removed = changes
-                emit_annotation(
-                    'warning' if removed else 'notice',
-                    finding,
+                message = (
                     f'{finding.symbol}: model names added: {sorted(added)}, removed: {sorted(removed)}. '
-                    'Model-name aliases are not a compatibility surface and need no waiver.',
+                    'Model-name alias changes need no waiver.'
                 )
+                if removed:
+                    message += (
+                        ' Removing a name from an alias without a `str |` arm is a permitted compatibility impact: '
+                        'add the `compatibility impact` label and a release note.'
+                    )
+                emit_annotation('warning' if removed else 'notice', finding, message)
                 continue
             waiver_key = (args.against, finding.fingerprint)
             waiver = waivers.get(waiver_key)

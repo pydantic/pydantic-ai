@@ -154,12 +154,15 @@ def test_literal_member_changes_ignores_other_findings():
         (
             "Names: Attribute value was changed: Literal['a'] -> Literal['a', 'b']",
             True,
-            "::notice file=models.py,line=12::Names: model names added: ['b'], removed: [].",
+            "::notice file=models.py,line=12::Names: model names added: ['b'], removed: []. "
+            'Model-name alias changes need no waiver.\n',
         ),
         (
             "Names: Attribute value was changed: Literal['a', 'b'] -> Literal['a']",
             True,
-            "::warning file=models.py,line=12::Names: model names added: [], removed: ['b'].",
+            "::warning file=models.py,line=12::Names: model names added: [], removed: ['b']. "
+            'Model-name alias changes need no waiver. Removing a name from an alias without a `str |` arm is a '
+            'permitted compatibility impact: add the `compatibility impact` label and a release note.\n',
         ),
         ("Names: Attribute value was changed: Literal['a'] -> Literal['a', 'b']", False, '::error'),
         ("Names: Attribute value was changed: str | Literal['a'] -> Literal['a']", True, '::error'),
@@ -237,26 +240,6 @@ def test_main_rejects_waiver_for_listed_model_name_literal(
         check_api_compatibility.main()
 
     assert f'::error::Unused API compatibility waiver for v2.32.1: {finding.fingerprint}' in capsys.readouterr().out
-
-
-def test_main_skips_private_parameters(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-):
-    path = tmp_path / 'allowlist.json'
-    path.write_text('{"allowed_breakages": []}', encoding='utf-8')
-
-    def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
-        return [
-            Finding('pydantic_ai', 'run.py', 3, 'RunContext.__init__(_cache): Parameter default was changed: 1 -> 2')
-        ]
-
-    monkeypatch.setattr(check_api_compatibility, 'PACKAGES', {'pydantic_ai': 'pydantic_ai_slim'})
-    monkeypatch.setattr(check_api_compatibility, 'run_griffe', run_griffe)
-    monkeypatch.setattr('sys.argv', ['check_api_compatibility.py', '--against', 'v2.32.1', '--allowlist', str(path)])
-
-    check_api_compatibility.main()
-
-    assert capsys.readouterr().out == ''
 
 
 def test_main_fails_for_unapproved_breakage(
