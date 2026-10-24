@@ -45,8 +45,10 @@ async def main():
 
 The model must accept images. Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them.
 
-GPT-5.4 and later, except GPT-5.4 nano, on OpenAI, Azure OpenAI and Bedrock Mantle get `computer` as OpenAI's native
-computer tool, the format they were trained on. Every other model that accepts images gets it as a function tool.
+Claude 4 and later models and GPT-5.4 and later (except GPT-5.4 nano) get `computer` as their provider's native
+computer tool, the format they were trained on; see [Anthropic](../models/anthropic.md#computer-use) and
+[OpenAI](../models/openai.md) for which tool and platforms. Every other model that accepts images gets it as a function
+tool.
 
 ## Computer use, Playwright, or Browser Use
 
