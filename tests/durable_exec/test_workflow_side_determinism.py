@@ -142,8 +142,24 @@ _DENYLIST: dict[str, str] = {
     'httpx.stream': _IO,
     'httpx.get': _IO,
     'httpx.post': _IO,
+    'httpx.put': _IO,
+    'httpx.delete': _IO,
+    'httpx.head': _IO,
+    'httpx.patch': _IO,
+    'httpx.options': _IO,
     'httpx2.Client': _IO,
     'httpx2.AsyncClient': _IO,
+    'httpx2.request': _IO,
+    'httpx2.stream': _IO,
+    'httpx2.get': _IO,
+    'httpx2.post': _IO,
+    'httpx2.put': _IO,
+    'httpx2.delete': _IO,
+    'httpx2.head': _IO,
+    'httpx2.patch': _IO,
+    'httpx2.options': _IO,
+    'httpx2.query': _IO,
+    'httpx2.websocket': _IO,
     'pydantic_ai._http.create_async_httpx2_client': _IO,
     'subprocess.': _IO,
     'os.system': _IO,
@@ -524,8 +540,24 @@ def test_every_denylist_key_matches_the_call_it_names():
     httpx.stream('GET', 'url')
     httpx.get('url')
     httpx.post('url')
+    httpx.put('url')
+    httpx.delete('url')
+    httpx.head('url')
+    httpx.patch('url')
+    httpx.options('url')
     httpx2.Client()
     httpx2.AsyncClient()
+    httpx2.request('GET', 'url')
+    httpx2.stream('GET', 'url')
+    httpx2.get('url')
+    httpx2.post('url')
+    httpx2.put('url')
+    httpx2.delete('url')
+    httpx2.head('url')
+    httpx2.patch('url')
+    httpx2.options('url')
+    httpx2.query('url')
+    httpx2.websocket('url')
     _http.create_async_httpx2_client()
     socket.socket()
     urllib.request.urlopen('url')
