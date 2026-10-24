@@ -93,7 +93,8 @@ override, read or project, each with the engine sites that depend on it. A manif
 core change touches one of those definitions. Open each listed site and confirm it still holds:
 serialized field lists, overridden signatures, projection fields. Add a workflow-level test where
 the engine's runtime behavior depends on the change. A missing entry does not prove an engine is
-unaffected: the generator's docstring lists the dependency forms the walk does not record.
+unaffected: the generator's docstring lists the dependency forms and the modules the walk does not
+record.
 
 An entry whose only kind is `annotation_only` is a definition the engines name only in annotations,
 such as a type in a mirrored signature. It stays in the manifest and does not gate review.

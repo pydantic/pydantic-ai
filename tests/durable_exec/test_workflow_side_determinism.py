@@ -13,6 +13,7 @@ source only, so it is not a VCR test.
 - a call made through another name or object;
 - a callee `_DENYLIST` does not name, such as file-system I/O through `os`, `shutil`, `pathlib` or
   `io`, which no workflow-side module makes today;
+- an environment read that is not a call, such as `os.environ['NAME']` or `'NAME' in os.environ`;
 - a clock read or random id drawn by a dataclass default factory (`default_factory=now_utc`,
   `default_factory=lambda: str(uuid7())`), or by a helper in a module outside the set;
 - a branch on state that differs between the recorded run and the replay.
@@ -82,9 +83,6 @@ _CLOCK = 'reads a clock that has moved by the time the run replays'
 _RANDOM = 'draws randomness that a replay does not reproduce'
 _SLEEP = 'sleeps on the event loop, which only Temporal journals as a timer, so other engines do not replay the delay; await `_agent_graph_sleep`, which an engine routes through `set_agent_graph_sleep`'
 _THREAD = 'finishes on another thread in an order that a replay does not reproduce'
-_THREAD_HANDOFF = (
-    'runs the function on a worker thread that cannot hand the result back to the workflow loop, so the run hangs'
-)
 _COMPLETION_ORDER = 'hands back finished tasks in an order a replay need not reproduce, so Temporal supplies `workflow.wait` and `workflow.as_completed` instead'
 _IO = 'performs I/O whose result can differ on replay; do it in an activity'
 _ENV = "reads the worker process's environment, which can differ on the worker that replays"
@@ -128,7 +126,9 @@ _DENYLIST: dict[str, str] = {
     'time.sleep': _SLEEP,
     'threading.Thread': _THREAD,
     'threading.Timer': _THREAD,
-    'anyio.to_thread.': _THREAD_HANDOFF,
+    'anyio.to_thread.': (
+        'runs the function on a worker thread that cannot hand the result back to the workflow loop, so the run hangs'
+    ),
     'concurrent.futures.': _THREAD,
     'asyncio.wait': _COMPLETION_ORDER,
     'asyncio.as_completed': _COMPLETION_ORDER,
@@ -213,6 +213,13 @@ class DeniedCall:
     """The reason the call's pragma gives, `''` if it gives none, or `None` without a pragma."""
 
 
+def _denylist_key(callee: str) -> str | None:
+    """The `_DENYLIST` key that denies `callee`: the callee itself, or a key ending in `.` it falls under."""
+    if callee in _DENYLIST:
+        return callee
+    return next((key for key in _DENYLIST if key.endswith('.') and callee.startswith(key)), None)
+
+
 class _CallFinder(ast.NodeVisitor):
     def __init__(self, source: str, module: str, is_package: bool) -> None:
         self.comments = {
@@ -279,17 +286,14 @@ class _CallFinder(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         callee = self.dotted(node.func)
-        if callee is not None and (
-            denial := _DENYLIST.get(callee)
-            or next((reason for key, reason in _DENYLIST.items() if key.endswith('.') and callee.startswith(key)), None)
-        ):
+        if callee is not None and (key := _denylist_key(callee)) is not None:
             reason = None
             for lineno in range(node.lineno, (node.end_lineno or node.lineno) + 1):
                 if lineno not in self.claimed_pragmas and (pragma := _PRAGMA.search(self.comments.get(lineno, ''))):
                     self.claimed_pragmas.add(lineno)
                     reason = pragma['reason'].strip()
                     break
-            self.calls.append(DeniedCall('.'.join(self.scopes) or '<module>', callee, denial, reason))
+            self.calls.append(DeniedCall('.'.join(self.scopes) or '<module>', callee, _DENYLIST[key], reason))
         self.generic_visit(node)
 
 
@@ -537,12 +541,7 @@ def test_every_denylist_key_matches_the_call_it_names():
     callees = [call.callee for call in nondeterministic_calls(source, 'pydantic_ai.agent', is_package=True)]
 
     assert len(callees) == sum('(' in line for line in source.splitlines())
-    unmatched = [
-        key
-        for key in _DENYLIST
-        if not any(callee == key or (key.endswith('.') and callee.startswith(key)) for callee in callees)
-    ]
-    assert unmatched == []
+    assert set(_DENYLIST) - {_denylist_key(callee) for callee in callees} == set()
     removed = [
         key
         for key in _DENYLIST

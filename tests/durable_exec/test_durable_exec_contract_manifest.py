@@ -14,7 +14,7 @@ import json
 import re
 import sys
 import textwrap
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -31,7 +31,6 @@ Manifest = dict[str, dict[str, dict[str, list[str]]]]
 @runtime_checkable
 class _ContractGenerator(Protocol):
     MANIFEST_PATH: str
-    WRITE_COMMAND: str
     ENGINES: dict[str, str]
     build_manifest: Callable[[Path], Manifest]
     render_manifest: Callable[[Manifest], str]
@@ -491,18 +490,24 @@ def fixture_repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _keyed_entries(manifest: Manifest) -> Iterator[tuple[str, dict[str, list[str]]]]:
+    """Each manifest entry, keyed `<core file under pydantic_ai>::<qualname>`."""
+    for core_file, definitions in manifest.items():
+        for qualname, entry in definitions.items():
+            yield f'{core_file.removeprefix(f"{CORE}/")}::{qualname}', entry
+
+
 def test_build_manifest_resolves_every_dependency_form(fixture_repo: Path):
     """Imports, overrides, annotation-resolved reads and projections, on a repository small enough to read."""
     manifest = generator.build_manifest(fixture_repo)
 
     flattened = {
-        f'{core_file.removeprefix(f"{CORE}/")}::{qualname}': (
+        key: (
             entry['kinds'],
             entry['engines'],
             [site.rsplit('::', 1)[1] for site in entry['sites']],
         )
-        for core_file, definitions in manifest.items()
-        for qualname, entry in definitions.items()
+        for key, entry in _keyed_entries(manifest)
     }
     assert flattened == snapshot(
         {
@@ -628,12 +633,11 @@ def test_gates_ignores_annotation_only_entries(fixture_repo: Path):
     manifest = generator.build_manifest(fixture_repo)
 
     kinds = {
-        f'{core_file.removeprefix(f"{CORE}/")}::{qualname}': (
+        key: (
             entry['kinds'],
             generator.gates(entry),
         )
-        for core_file, definitions in manifest.items()
-        for qualname, entry in definitions.items()
+        for key, entry in _keyed_entries(manifest)
         if 'annotation_only' in entry['kinds']
     }
     assert kinds == snapshot(
