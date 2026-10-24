@@ -476,8 +476,10 @@ class DaytonaSandboxBackend(
         self._create_name: str | None = None
         self._auto_stop_interval = auto_stop_interval
         self._allow_internet_access = allow_internet_access
-        self._env = dict(env or {})
         self._desktop_size = _DEFAULT_DESKTOP_SIZE if desktop is True else desktop or None
+        # Commands see the desktop too, so a program the agent starts from the shell opens on it. Daytona's desktop
+        # runs on display `:0` (checked live).
+        self._env = {**({'DISPLAY': ':0'} if self._desktop_size else {}), **(env or {})}
         self._display_started = False
         self._display_lock = anyio.Lock()
         self._working_dir = absolute_path('working_dir', working_dir)

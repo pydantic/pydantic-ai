@@ -233,8 +233,8 @@ async def test_a_desktop_size_is_set_on_a_new_sandbox(fake_daytona: FakeDaytona)
     await DaytonaSandboxBackend().get_sandbox()
 
     assert [params.env_vars for params in fake_daytona.create_params] == [
-        {'A': '1', 'VNC_RESOLUTION': '1440x900'},
-        {'VNC_RESOLUTION': '1280x800'},
+        {'DISPLAY': ':0', 'A': '1', 'VNC_RESOLUTION': '1440x900'},
+        {'DISPLAY': ':0', 'VNC_RESOLUTION': '1280x800'},
         None,
     ]
 
@@ -265,4 +265,4 @@ async def test_a_desktop_capability_gives_a_new_run_a_display(fake_daytona: Fake
     result = await agent.run('go')
 
     assert result.output == '{"probe":"1280x800"}'
-    assert fake_daytona.create_params[0].env_vars == {'VNC_RESOLUTION': '1280x800'}
+    assert fake_daytona.create_params[0].env_vars == {'DISPLAY': ':0', 'VNC_RESOLUTION': '1280x800'}
