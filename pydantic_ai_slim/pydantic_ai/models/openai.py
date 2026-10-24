@@ -7320,7 +7320,9 @@ def _map_computer_call(
         ]
     args: dict[str, Any] | str = {
         'actions': [
-            mapped for action in actions for mapped in _map_computer_action(action.model_dump(mode='json', exclude_none=True))
+            mapped
+            for action in actions
+            for mapped in _map_computer_action(action.model_dump(mode='json', exclude_none=True))
         ]
         # A call with no actions only asks to look.
         or [{'type': 'screenshot'}]

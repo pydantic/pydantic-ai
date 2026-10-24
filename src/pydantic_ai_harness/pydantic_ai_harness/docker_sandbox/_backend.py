@@ -289,7 +289,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay, 
         working_dir: The absolute directory in the container where commands start and relative paths
             resolve; created on first use if the container doesn't have it. `None` uses the image's own
             (`WORKDIR`, or `/`).
-        env: Environment variables for every command, on top of the image's; the per-call `env` goes on top.
+        env: Environment variables for every command, on top of the image's (and `DISPLAY`, with a desktop); the
+            per-call `env` goes on top.
         allow_internet_access: Whether a new container gets outbound network access, including this machine's
             local network; `False` runs it with `--network none`.
         docker_args: Extra `docker run` arguments for a new container, such as `['--memory', '2g']` or
@@ -331,7 +332,9 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay, 
         self._display_started = False
         self._display_lock = anyio.Lock()
         self._working_dir = None if working_dir is None else posixpath.normpath(working_dir)
-        self._env = _checked_env(env or {})
+        # Commands see the desktop too, so a program the agent starts from the shell opens on it.
+        display_env = {'DISPLAY': DISPLAY} if self._desktop_size else {}
+        self._env = _checked_env({**display_env, **(env or {})})
         self._allow_internet_access = allow_internet_access
         self._docker_args = tuple(docker_args)
         self._executable = resolve_executable(executable)
