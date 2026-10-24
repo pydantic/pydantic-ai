@@ -1,5 +1,5 @@
 ---
-description: "Fix common Pydantic AI errors: 'This event loop is already running' in Jupyter, 'Event loop is closed', run_sync inside a tool, and missing provider API keys."
+description: "Fix common Pydantic AI errors: 'This event loop is already running' in Jupyter, 'Event loop is closed', run_sync inside a tool, missing provider prefix, and missing provider API keys."
 ---
 
 # Troubleshooting
@@ -57,3 +57,41 @@ To try Pydantic AI without an API key, use the built-in [`'test'` model](testing
 You can use custom `httpx2` (or legacy `httpx`) clients in your models in order to access specific requests, responses, and headers at runtime.
 
 It's particularly helpful to use `logfire`'s [HTTPX integration](logfire.md#monitoring-http-requests) to monitor the above.
+
+## Model Configuration
+
+### [`UserError`][pydantic_ai.exceptions.UserError]: `Unknown model: <name>. Did you mean '<provider>:<name>'?`
+
+In Pydantic AI, string model identifiers require an explicit provider prefix (for example, `'{{ openai:medium }}'`). If you pass an unadorned model name such as `'{{ openai:medium.name }}'`, Pydantic AI does not guess the provider and raises this error, suggesting the matching known model identifier.
+
+To resolve this, specify the provider prefix explicitly, or instantiate the concrete model class:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel
+
+# Option 1: Specify provider prefix
+agent = Agent('{{ openai:medium }}')
+
+# Option 2: Instantiate concrete model
+agent = Agent(OpenAIResponsesModel('{{ openai:medium.name }}'))
+```
+
+## Tool and Capability Configuration
+
+### `TypeError` in `prepare_tools`
+
+When defining a custom `prepare_tools` hook or capability to dynamically filter tools before a model turn, the hook must return a list of tool definitions (`list[ToolDefinition]`), even if no tools should be active for that step. Returning `None` triggers a runtime error.
+
+Return an empty list `[]` instead of `None`:
+
+```python {test="skip"}
+from pydantic_ai import RunContext
+from pydantic_ai.tools import ToolDefinition
+
+
+async def filter_tools(ctx: RunContext[None], tools: list[ToolDefinition]) -> list[ToolDefinition]:
+    if ctx.retry > 0:
+        return []  # Return empty list, not None
+    return tools
+```
