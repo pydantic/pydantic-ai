@@ -27,6 +27,12 @@ Choose the backend tier from the engine SDK's execution model:
   the four model operations during agent assembly, so `registrations()` is complete before worker
   start; pass the collected registrations to the engine SDK when creating the worker.
 
+When durable units can run in another process (Temporal activities, Render child tasks), give the
+backend a `ParameterTransports` subclass that moves the public `*Params` types across the boundary,
+and serialize and rebuild their `RunContext` with `DurableRunContext` (subclass it for
+engine-specific wording or extra fields). Do not copy its field lists, guards or workspace
+restoration into the integration.
+
 Set the public `engine_spec` once using `DurabilityEngineSpec`. Declare the engine name, durable
 unit noun, durable container noun, codec, unsupported runtime toolset kinds, wrapped toolset kinds,
 toolset lifecycles, tool-call result upgrade policy, discovery policy, sequential tool policy, and
