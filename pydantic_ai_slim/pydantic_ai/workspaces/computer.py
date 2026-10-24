@@ -243,7 +243,7 @@ class PressKeys:
     type: Literal['keypress'] = 'keypress'
     keys: _Keys
     """One key per entry, pressed together: `["enter"]`, `["ctrl", "a"]`, `["super", "shift", "t"]`."""
-    repeat: Annotated[int, Field(ge=1, le=50)] = 1
+    repeat: Annotated[int, Field(ge=1, le=100)] = 1
     """How many times to press the combination."""
 
 
@@ -254,8 +254,8 @@ class HoldKeys:
     type: Literal['hold_key'] = 'hold_key'
     keys: _Keys
     """One key per entry, held together."""
-    seconds: Annotated[float, Field(gt=0, le=10)]
-    """How long to hold them."""
+    seconds: Annotated[float, Field(gt=0, le=30)]
+    """How long to hold them, up to 30 seconds."""
 
 
 ComputerAction: TypeAlias = Annotated[
