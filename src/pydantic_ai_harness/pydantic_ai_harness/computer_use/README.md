@@ -122,6 +122,8 @@ async def main():
   [external storage](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads), or set `keep_screenshots`.
 - With [instrumentation](https://pydantic.dev/docs/ai/integrations/logfire/#excluding-binary-content), every request's screenshots are recorded on its span; pass
   `InstrumentationSettings(include_binary_content=False)` to leave them out.
+- [`Advisor(forward_history=True)`](../advisor/) forwards the run's history with every screenshot, not only the newest
+  ones, so each local consultation costs more as the conversation grows, and Anthropic refuses one past 600 images.
 - Inside a [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model) with models that don't all point on Gemini 3's
   grid, Gemini 3 gets pixel coordinates and points less accurately, so put it only in a fallback with other Gemini 3
   models.
