@@ -1399,18 +1399,24 @@ async def test_stream_request_non_http_error_mid_stream(allow_model_requests: No
 
 
 @pytest.mark.parametrize(
-    'error, expected',
+    'status, message, expected',
     [
         (
-            ApiError(status_code=400, body={'message': 'too many tokens: size limit exceeded'}),
+            400,
+            'too many tokens: size limit exceeded',
             ModelContextWindowExceededError,
         ),
-        (ApiError(status_code=429, body={'message': 'rate limit exceeded'}), ModelRateLimitError),
-        (httpx.ReadTimeout('stream timed out'), ModelTimeoutError),
+        (429, 'rate limit exceeded', ModelRateLimitError),
+        (None, 'stream timed out', ModelTimeoutError),
     ],
 )
-async def test_stream_error_categories(allow_model_requests: None, error: Exception, expected: type[ModelAPIError]):
+async def test_stream_error_categories(
+    allow_model_requests: None, status: int | None, message: str, expected: type[ModelAPIError]
+):
     """Provider failures during iteration cannot be reliably triggered with a live request."""
+    error = (
+        ApiError(status_code=status, body={'message': message}) if status is not None else httpx.ReadTimeout(message)
+    )
     events: list[MockStreamEvent] = [*_text_stream_events(['hello'])[:-1], error]
     client = MockAsyncClientV2.create_stream_mock(events)
     model = CohereModel('command-r', provider=CohereProvider(cohere_client=client))
@@ -1594,9 +1600,12 @@ async def test_stream_content_index(allow_model_requests: None, index: int | Non
     assert result.response.parts == [TextPart('hello world')]
 
 
-@pytest.mark.parametrize('reported_usage', [None, Usage(), Usage(tokens=UsageTokens(input_tokens=2, output_tokens=3))])
-async def test_stream_usage(allow_model_requests: None, reported_usage: Usage | None):
+@pytest.mark.parametrize('reported, has_tokens', [(False, False), (True, False), (True, True)])
+async def test_stream_usage(allow_model_requests: None, reported: bool, has_tokens: bool):
     """Missing usage cannot be reliably requested from the real API."""
+    reported_usage = (
+        Usage(tokens=UsageTokens(input_tokens=2, output_tokens=3) if has_tokens else None) if reported else None
+    )
     events = _text_stream_events(['hello'])
     events[-1] = MessageEndV2ChatStreamResponse(
         delta=ChatMessageEndEventDelta(finish_reason='COMPLETE', usage=reported_usage)
@@ -1608,9 +1617,9 @@ async def test_stream_usage(allow_model_requests: None, reported_usage: Usage | 
             pass
     expected = (
         RequestUsage(unmeasured_requests=1)
-        if reported_usage is None
+        if not reported
         else RequestUsage(input_tokens=2, output_tokens=3)
-        if reported_usage.tokens is not None
+        if has_tokens
         else RequestUsage()
     )
     assert response.get().usage == expected
