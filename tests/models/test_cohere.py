@@ -11,34 +11,42 @@ from typing import Any, cast
 import anyio
 import httpx
 import pytest
+from cassetter import Cassette
 
 from pydantic_ai import (
     Agent,
     CachePoint,
+    DocumentUrl,
     ImageUrl,
     ModelAPIError,
     ModelHTTPError,
     ModelRequest,
     ModelResponse,
     ModelRetry,
-    RetryPromptPart,
+    ModelTimeoutError,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import ModelRequestParameters, ToolDefinition
+from pydantic_ai.exceptions import ModelContextWindowExceededError, ModelRateLimitError, UserError
+from pydantic_ai.messages import MultiModalContent
+from pydantic_ai.models import ModelRequestParameters, StreamedResponse, ToolDefinition
 from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
+from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
@@ -73,6 +81,7 @@ with try_import() as imports_successful:
         Usage,
         UsageTokens,
         UserChatMessageV2,
+        V2ChatStreamResponse,
     )
     from cohere.core.api_error import ApiError
 
@@ -92,6 +101,8 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='cohere not installed'),
 ]
+
+READINESS_WAIT_TIMEOUT = 10
 
 
 def test_init():
@@ -149,7 +160,9 @@ class MockAsyncClientV2:
     def create_stream_mock(
         cls, stream: Exception | Sequence[MockStreamEvent] | Sequence[Sequence[MockStreamEvent]]
     ) -> AsyncClientV2:
-        return cast(AsyncClientV2, cls(stream=stream))
+        client = AsyncClientV2(api_key='test')
+        setattr(client, 'chat_stream', cls(stream=stream).chat_stream)
+        return client
 
     async def chat(self, *_args: Any, **kwargs: Any) -> ChatResponse:
         self.chat_kwargs.append(kwargs)
@@ -163,17 +176,19 @@ class MockAsyncClientV2:
         self.index += 1
         return response
 
-    def chat_stream(self, *_args: Any, **kwargs: Any) -> MockAsyncStream[MockStreamEvent]:
+    async def chat_stream(self, **kwargs: object) -> AsyncIterator[V2ChatStreamResponse]:
         self.chat_kwargs.append(kwargs)
         assert self.stream is not None
-        raise_if_exception(self.stream)
-        assert not isinstance(self.stream, Exception)
-        if isinstance(self.stream[0], Sequence):
-            response = MockAsyncStream(iter(cast(list[MockStreamEvent], self.stream[self.index])))
-        else:
-            response = MockAsyncStream(iter(cast(list[MockStreamEvent], self.stream)))
+        if isinstance(self.stream, Exception):
+            raise self.stream
+        response = self.stream[self.index] if self.stream and isinstance(self.stream[0], Sequence) else self.stream
+        assert isinstance(response, Sequence)
         self.index += 1
-        return response
+        for event in response:
+            assert not isinstance(event, Sequence)
+            if isinstance(event, Exception):
+                raise event
+            yield event
 
 
 def completion_message(message: AssistantMessageResponse, *, usage: cohere.Usage | None = None) -> ChatResponse:
@@ -199,14 +214,14 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.0000')))
+    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.0000')))
+    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -217,7 +232,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=RequestUsage(cost=Decimal('0.0000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
@@ -235,7 +250,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=RequestUsage(cost=Decimal('0.0000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
@@ -408,7 +423,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                usage=RequestUsage(cost=Decimal('0.0000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
@@ -519,11 +534,13 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -568,7 +585,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=RequestUsage(cost=Decimal('0.0000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
@@ -588,6 +605,7 @@ async def test_request_tool_call(allow_model_requests: None):
             details={'input_tokens': 4, 'output_tokens': 2},
             tool_calls=1,
             cost=Decimal('6.375E-7'),
+            unmeasured_requests=1,
         )
     )
 
@@ -664,6 +682,26 @@ async def test_multimodal(allow_model_requests: None):
         )
 
 
+@pytest.mark.parametrize(
+    'file',
+    [
+        ImageUrl(url='https://example.com/image.png'),
+        DocumentUrl(url='https://example.com/document.pdf'),
+        UploadedFile(file_id='file-abc', provider_name='openai'),
+    ],
+)
+def test_multimodal_tool_return(file: MultiModalContent):
+    """A file in a tool return raises instead of being dropped from the tool message.
+
+    An agent run replaces an image, document, audio or video file with a note before mapping, but a direct
+    `Model.request` doesn't, and an `UploadedFile` reaches the mapping either way. The error is raised before
+    any request is made, so there is nothing to record.
+    """
+    req = ModelRequest(parts=[ToolReturnPart(tool_name='get_file', content=['Here it is.', file], tool_call_id='1')])
+    with pytest.raises(NotImplementedError, match='Files are not supported in Cohere tool returns'):
+        list(CohereModel._map_user_message(req))  # pyright: ignore[reportPrivateUsage]
+
+
 def test_model_status_error(allow_model_requests: None) -> None:
     mock_client = MockAsyncClientV2.create_mock(
         ApiError(
@@ -698,7 +736,8 @@ def test_model_non_http_error(allow_model_requests: None) -> None:
     assert exc_info.value.model_name == 'command-r'
 
 
-async def test_model_transport_error(allow_model_requests: None) -> None:
+@pytest.mark.parametrize('stream', [False, True])
+async def test_model_transport_error(allow_model_requests: None, stream: bool) -> None:
     """`cohere` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -706,11 +745,19 @@ async def test_model_transport_error(allow_model_requests: None) -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
         cohere_client = AsyncClientV2(api_key='test-key', base_url='http://localhost', httpx_client=http_client)
-        agent = Agent(CohereModel('command-r', provider=CohereProvider(cohere_client=cohere_client)))
+        agent = Agent(
+            CohereModel('command-r', provider=CohereProvider(cohere_client=cohere_client)),
+            model_settings=ModelSettings(max_retries=0),
+        )
         with pytest.raises(ModelAPIError) as exc_info:
-            await agent.run('hello')
+            if stream:
+                async with agent.run_stream('hello'):
+                    pass  # pragma: no cover
+            else:
+                await agent.run('hello')
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelTimeoutError
+    assert exc_info.value.phase == 'read'
     assert exc_info.value.message == 'timed out'
     assert isinstance(exc_info.value.__cause__, httpx.ReadTimeout)
 
@@ -775,6 +822,36 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
             ),
         ]
     )
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+@pytest.mark.parametrize(
+    ('thinking', 'expected_thinking', 'expect_thinking_part'),
+    [
+        pytest.param(False, {'type': 'disabled'}, False, id='false'),
+        pytest.param(True, {'type': 'enabled'}, True, id='true'),
+        pytest.param('minimal', {'type': 'enabled', 'token_budget': 512}, True, id='minimal'),
+        pytest.param('xhigh', {'type': 'enabled', 'token_budget': 31000}, True, id='xhigh'),
+    ],
+)
+async def test_cohere_unified_thinking(
+    allow_model_requests: None,
+    co_api_key: str,
+    vcr: Cassette,
+    thinking: ThinkingLevel,
+    expected_thinking: dict[str, Any],
+    expect_thinking_part: bool,
+):
+    """The unified `thinking` setting maps to Cohere's `thinking` parameter: `False` turns reasoning off, and an
+    effort level caps it at a `token_budget`."""
+    model = CohereModel('command-a-reasoning-08-2025', provider=CohereProvider(api_key=co_api_key))
+    agent = Agent(model, model_settings=ModelSettings(thinking=thinking))
+
+    result = await agent.run('What is 2+2? Reply with just the number.')
+
+    assert '4' in result.output
+    assert single_request_body(vcr)['thinking'] == expected_thinking
+    assert any(isinstance(part, ThinkingPart) for part in result.response.parts) is expect_thinking_part
 
 
 @pytest.mark.vcr()
@@ -906,7 +983,7 @@ async def test_cohere_model_builtin_tools(allow_model_requests: None, co_api_key
 async def test_cohere_empty_response_skipped_in_history(allow_model_requests: None):
     """An empty `ModelResponse(parts=[])` must not be sent back as an assistant message with
     neither content nor tool calls, which Cohere rejects with a 400. The agent graph retries
-    empty responses by emitting a `RetryPromptPart`, relying on the model adapter to omit the
+    empty responses by emitting a `RetryFeedbackPart`, relying on the model adapter to omit the
     empty response from the API payload.
     """
     completions = [
@@ -927,7 +1004,7 @@ async def test_cohere_empty_response_skipped_in_history(allow_model_requests: No
     # self-correct.
     second_call_messages = cast(MockAsyncClientV2, mock_client).chat_kwargs[1]['messages']
     assert not any(message.role == 'assistant' for message in second_call_messages)
-    assert [message.role for message in second_call_messages] == snapshot(['user', 'user'])
+    assert [message.role for message in second_call_messages] == snapshot(['user', 'system'])
 
 
 @pytest.mark.parametrize(
@@ -975,8 +1052,13 @@ async def test_zero_argument_tool_call(arguments: str | None, expected_args: str
 
     parts = [part for message in result.all_messages() for part in message.parts]
     assert ToolCallPart(tool_name='get_current_time', args=expected_args, tool_call_id='tc-1') in parts
-    assert any(isinstance(part, ToolReturnPart) and part.tool_name == 'get_current_time' for part in parts)
-    assert not any(isinstance(part, RetryPromptPart) for part in parts)
+    # `outcome == 'success'` is what says the tool actually ran: an args-validation failure answers
+    # the same call with a retried return carrying the same name.
+    assert any(
+        isinstance(part, ToolReturnPart) and part.tool_name == 'get_current_time' and part.outcome == 'success'
+        for part in parts
+    )
+    assert not any(isinstance(part, RetryFeedbackPart) for part in parts)
     assert result.output == 'it is noon'
 
 
@@ -1316,38 +1398,37 @@ async def test_stream_request_non_http_error_mid_stream(allow_model_requests: No
     assert exc_info.value.model_name == 'command-r'
 
 
+@pytest.mark.parametrize(
+    'error, expected',
+    [
+        (
+            ApiError(status_code=400, body={'message': 'too many tokens: size limit exceeded'}),
+            ModelContextWindowExceededError,
+        ),
+        (ApiError(status_code=429, body={'message': 'rate limit exceeded'}), ModelRateLimitError),
+        (httpx.ReadTimeout('stream timed out'), ModelTimeoutError),
+    ],
+)
+async def test_stream_error_categories(allow_model_requests: None, error: Exception, expected: type[ModelAPIError]):
+    """Provider failures during iteration cannot be reliably triggered with a live request."""
+    events: list[MockStreamEvent] = [*_text_stream_events(['hello'])[:-1], error]
+    client = MockAsyncClientV2.create_stream_mock(events)
+    model = CohereModel('command-r', provider=CohereProvider(cohere_client=client))
+    with pytest.raises(expected) as exc_info:
+        async with Agent(model).run_stream('hello') as result:
+            await result.get_output()
+    assert exc_info.value.__cause__ is error
+
+
 async def test_stream_event_edge_cases():
     """Regression: boundary conditions in `_get_event_iterator` that must yield no part event."""
-    events: list[Any] = [
-        # A real Cohere stream begins with a message-start event, which this model doesn't yet
-        # handle: it must fall through the isinstance chain without raising or yielding.
+    events: list[V2ChatStreamResponse] = [
+        # Metadata-only events and empty deltas produce no parts.
         cohere.MessageStartV2ChatStreamResponse(type='message-start'),
-        # ContentStart with no index: guard clause skips content-type tracking.
-        ContentStartV2ChatStreamResponse(
-            index=None,
-            delta=ChatContentStartEventDelta(
-                message=ChatContentStartEventDeltaMessage(
-                    content=ChatContentStartEventDeltaMessageContent(type='thinking')
-                )
-            ),
-        ),
-        # ContentDelta with no index: guard clause skips entirely.
+        ContentDeltaV2ChatStreamResponse(delta=None),
+        ContentDeltaV2ChatStreamResponse(delta=ChatContentDeltaEventDelta(message=None)),
         ContentDeltaV2ChatStreamResponse(
-            index=None,
-            delta=ChatContentDeltaEventDelta(
-                message=ChatContentDeltaEventDeltaMessage(
-                    content=ChatContentDeltaEventDeltaMessageContent(text='ignored')
-                )
-            ),
-        ),
-        # A real thinking index registered, then a delta with empty thinking content (falsy).
-        ContentStartV2ChatStreamResponse(
-            index=0,
-            delta=ChatContentStartEventDelta(
-                message=ChatContentStartEventDeltaMessage(
-                    content=ChatContentStartEventDeltaMessageContent(type='thinking')
-                )
-            ),
+            delta=ChatContentDeltaEventDelta(message=ChatContentDeltaEventDeltaMessage(content=None))
         ),
         ContentDeltaV2ChatStreamResponse(
             index=0,
@@ -1363,6 +1444,8 @@ async def test_stream_event_edge_cases():
             ),
         ),
         # ToolCallStart with no tool_calls on the message: guard clause skips.
+        ToolCallStartV2ChatStreamResponse(index=None),
+        ToolCallDeltaV2ChatStreamResponse(index=None),
         ToolCallStartV2ChatStreamResponse(
             index=2,
             delta=ChatToolCallStartEventDelta(message=ChatToolCallStartEventDeltaMessage(tool_calls=None)),
@@ -1400,7 +1483,7 @@ async def test_stream_event_edge_cases():
         _model_name='command-r7b-12-2024',
         _provider_name='cohere',
         _provider_url='https://api.cohere.com',
-        _response=cast(Any, MockAsyncStream(iter(events))),
+        _response=PeekableAsyncStream(MockAsyncStream(iter(events))),
     )
 
     part_events = [e async for e in response._get_event_iterator()]  # pyright: ignore[reportPrivateUsage]
@@ -1414,14 +1497,16 @@ async def test_close_stream_closes_underlying_source():
     """`close_stream` must close the provider stream, not silently no-op."""
     closed = anyio.Event()
 
-    async def source() -> AsyncIterator[Any]:
+    async def source() -> AsyncIterator[V2ChatStreamResponse]:
         try:
             yield MessageEndV2ChatStreamResponse(delta=None)
             await anyio.sleep_forever()  # pragma: no cover
         finally:
             closed.set()
 
-    peekable: PeekableAsyncStream[Any, AsyncIterator[Any]] = PeekableAsyncStream(source())
+    peekable: PeekableAsyncStream[V2ChatStreamResponse, AsyncIterator[V2ChatStreamResponse]] = PeekableAsyncStream(
+        source()
+    )
     response = CohereStreamedResponse(
         model_request_parameters=ModelRequestParameters(),
         _model_name='command-r7b-12-2024',
@@ -1435,15 +1520,19 @@ async def test_close_stream_closes_underlying_source():
     assert closed.is_set()
 
 
-async def test_request_stream_closes_source_on_early_exit(allow_model_requests: None):
+@pytest.mark.parametrize('active_pull', [False, True])
+async def test_request_stream_closes_source_on_early_exit(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, active_pull: bool
+):
     """Abandoning the stream without consuming it must still tear down the connection.
 
     `chat_stream` wraps the SDK's `async with` on the HTTP response, so leaving
     `request_stream`'s context early has to close it or the connection leaks.
     """
     closed = anyio.Event()
+    pulling = anyio.Event()
 
-    async def source() -> AsyncIterator[Any]:
+    async def source() -> AsyncIterator[V2ChatStreamResponse]:
         try:
             yield ContentStartV2ChatStreamResponse(
                 index=0,
@@ -1459,29 +1548,191 @@ async def test_request_stream_closes_source_on_early_exit(allow_model_requests: 
                     )
                 ),
             )
-            await anyio.sleep_forever()  # pragma: no cover
+            pulling.set()
+            await anyio.sleep_forever()
         finally:
             closed.set()
 
     stream = source()
 
-    class _GeneratorClient:
-        """`chat_stream` returns an async generator, as the real `AsyncClientV2` does."""
+    def chat_stream(**_kwargs: object) -> AsyncIterator[V2ChatStreamResponse]:
+        return stream
 
-        _client_wrapper = MockClientWrapper()
+    client = AsyncClientV2(api_key='test')
+    monkeypatch.setattr(client, 'chat_stream', chat_stream)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=client))
 
-        def chat_stream(self, *_args: Any, **_kwargs: Any) -> AsyncIterator[Any]:
-            return stream
-
-    m = CohereModel(
-        'command-r7b-12-2024',
-        provider=CohereProvider(cohere_client=cast(Any, _GeneratorClient())),
-    )
-
-    async with m.request_stream(
-        [ModelRequest(parts=[UserPromptPart('hello')])], None, ModelRequestParameters()
-    ) as response:
+    async def consume(response: StreamedResponse):
         async for _ in response:
-            break  # abandon mid-stream, leaving the connection live
+            pass
+
+    async with anyio.create_task_group() as group:
+        async with m.request_stream(
+            [ModelRequest(parts=[UserPromptPart('hello')])], None, ModelRequestParameters()
+        ) as response:
+            async for _ in response:
+                break
+            if active_pull:
+                group.start_soon(consume, response)
+                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                    await pulling.wait()
 
     assert closed.is_set()
+
+
+@pytest.mark.parametrize('index', [None, 0])
+async def test_stream_content_index(allow_model_requests: None, index: int | None):
+    """The SDK allows an absent index; consecutive deltas must still share a part."""
+    events = _text_stream_events(['hello', ' world'])
+    for event in events:
+        if isinstance(event, ContentDeltaV2ChatStreamResponse):
+            event.index = index
+    client = MockAsyncClientV2.create_stream_mock(events)
+    model = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=client))
+    async with Agent(model).run_stream('hello') as result:
+        assert await result.get_output() == 'hello world'
+    assert result.response.parts == [TextPart('hello world')]
+
+
+@pytest.mark.parametrize('reported_usage', [None, Usage(), Usage(tokens=UsageTokens(input_tokens=2, output_tokens=3))])
+async def test_stream_usage(allow_model_requests: None, reported_usage: Usage | None):
+    """Missing usage cannot be reliably requested from the real API."""
+    events = _text_stream_events(['hello'])
+    events[-1] = MessageEndV2ChatStreamResponse(
+        delta=ChatMessageEndEventDelta(finish_reason='COMPLETE', usage=reported_usage)
+    )
+    client = MockAsyncClientV2.create_stream_mock(events)
+    model = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=client))
+    async with model.request_stream([], None, ModelRequestParameters()) as response:
+        async for _ in response:
+            pass
+    expected = (
+        RequestUsage(unmeasured_requests=1)
+        if reported_usage is None
+        else RequestUsage(input_tokens=2, output_tokens=3)
+        if reported_usage.tokens is not None
+        else RequestUsage()
+    )
+    assert response.get().usage == expected
+    assert response.get().state == 'complete'
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_stream_text_with_vcr(allow_model_requests: None, co_api_key: str):
+    model = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+    async with Agent(model).run_stream('Say hello in one short sentence.') as result:
+        chunks = [text async for text in result.stream_text(delta=True, debounce_by=None)]
+        assert ''.join(chunks) == await result.get_output()
+    response = result.response
+    assert response.text == snapshot('Hello!')
+    assert response.text is not None
+    assert response.parts == [TextPart(response.text)]
+    assert response.usage == snapshot(
+        RequestUsage(
+            details={'input_tokens': 7, 'output_tokens': 2},
+            output_tokens=5,
+            cache_read_tokens=480,
+            input_tokens=502,
+            cost=Decimal('0.000019575'),
+        )
+    )
+    assert response.finish_reason == 'stop'
+    assert response.provider_details == {'finish_reason': 'COMPLETE'}
+    assert response.state == 'complete'
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_stream_tool_with_vcr(allow_model_requests: None, co_api_key: str):
+    model = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+    agent = Agent(model)
+    calls: list[str] = []
+
+    @agent.tool_plain
+    async def get_temperature(city: str) -> str:
+        """Get the current temperature in a city."""
+        calls.append(city)
+        return '24 degrees Celsius'
+
+    async with agent.run_stream(
+        'Use get_temperature to find the temperature in Paris, then report the result.'
+    ) as result:
+        output = await result.get_output()
+    assert calls == ['Paris']
+    assert output == snapshot('The temperature in Paris is 24 degrees Celsius.')
+    responses = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
+    tool_calls = responses[0].tool_calls
+    assert len(tool_calls) == 1
+    assert tool_calls[0].tool_name == 'get_temperature'
+    assert tool_calls[0].args_as_dict() == {'city': 'Paris'}
+    assert tool_calls[0].tool_call_id
+    assert [response.finish_reason for response in responses] == ['tool_call', 'stop']
+    assert [response.state for response in responses] == ['complete', 'complete']
+    assert [response.usage for response in responses] == snapshot(
+        [
+            RequestUsage(
+                details={'input_tokens': 50, 'output_tokens': 23},
+                output_tokens=53,
+                cache_read_tokens=1024,
+                input_tokens=1450,
+                cost=Decimal('0.000062325'),
+            ),
+            RequestUsage(
+                details={'input_tokens': 57, 'output_tokens': 11},
+                output_tokens=23,
+                cache_read_tokens=1024,
+                input_tokens=1538,
+                cost=Decimal('0.000061125'),
+            ),
+        ]
+    )
+    assert result.usage == snapshot(
+        RunUsage(
+            details={'input_tokens': 107, 'output_tokens': 34},
+            output_tokens=76,
+            cache_read_tokens=2048,
+            input_tokens=2988,
+            cost=Decimal('0.000123450'),
+            requests=2,
+            tool_calls=1,
+        )
+    )
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_stream_thinking_with_vcr(allow_model_requests: None, co_api_key: str):
+    model = CohereModel('command-a-reasoning-08-2025', provider=CohereProvider(api_key=co_api_key))
+    async with Agent(model, model_settings=ModelSettings(thinking=True)).run_stream(
+        'What is 17 times 19? Give just the answer.'
+    ) as result:
+        responses = [response async for response in result.stream_response(debounce_by=None)]
+        assert await result.get_output() == snapshot('323')
+    response = result.response
+    assert any(isinstance(part, ThinkingPart) and part.content for part in response.parts)
+    assert any(isinstance(part, TextPart) and part.content for part in response.parts)
+    assert response.parts == snapshot(
+        [
+            ThinkingPart(
+                content="""\
+Okay, so I need to figure out what 17 times 19 is. Let me think. Hmm, multiplying two numbers that are both close to 20. Wait, 17 is 3 less than 20, and 19 is 1 less than 20. Maybe there's a trick here.
+
+Alternatively, I can just do the multiplication the standard way. Let's try that first. 17 times 19. Break it down: 17 times 10 is 170, and 17 times 9 is 153. Then add them together. 170 + 153. Let me add those. 170 + 150 is 320, and then +3 more is 323. So is that right? Wait, 17*19=323? Let me check another way to be sure.
+
+Another method: using the difference of squares. Since 17 and 19 are both around 18. Wait, 17 is 18-1 and 19 is 18+1. So (18-1)(18+1) = 18² -1². That would be 324 -1 = 323. Oh, same answer. So that confirms it. So 17*19 is 323. Hmm, that seems correct. Let me verify once more with another approach.
+
+Alternatively, 17*20 is 340, right? Because 17*20 is 340. But since 19 is one less than 20, subtract 17 from 340. So 340 -17 = 323. Yep, same result. Okay, so all three methods give me 323. I think that's the right answer. So the answer is 323.\
+"""
+            ),
+            TextPart(content='323'),
+        ]
+    )
+    assert response.usage == snapshot(
+        RequestUsage(
+            details={'input_tokens': 15, 'output_tokens': 431},
+            output_tokens=447,
+            cache_read_tokens=1344,
+            input_tokens=1401,
+        )
+    )
+    assert response.finish_reason == 'stop'
+    assert response.state == 'complete'
+    assert responses

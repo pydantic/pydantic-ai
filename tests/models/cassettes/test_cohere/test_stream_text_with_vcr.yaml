@@ -1,0 +1,69 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.cohere.com/v2/chat
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "119"
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    body:
+      type: json
+      content:
+        model: command-r7b-12-2024
+        messages:
+        - role: user
+          content: Say hello in one short sentence.
+        stream: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-type:
+      - text/event-stream
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 GMT
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: text
+      content: |+
+        event: message-start
+        data: {"id":"34f67179-e015-4e1f-ab0a-7dff75044872","type":"message-start","delta":{"message":{"role":"assistant","content":[],"tool_plan":"","tool_calls":[],"citations":[]}}}
+
+        event: content-start
+        data: {"type":"content-start","index":0,"delta":{"message":{"content":{"type":"text","text":""}}}}
+
+        event: content-delta
+        data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":"Hello"}}}}
+
+        event: content-delta
+        data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":"!"}}}}
+
+        event: content-end
+        data: {"type":"content-end","index":0}
+
+        event: message-end
+        data: {"type":"message-end","delta":{"finish_reason":"COMPLETE","usage":{"billed_units":{"input_tokens":7,"output_tokens":2},"tokens":{"input_tokens":502,"output_tokens":5},"cached_tokens":480}}}
+
+        data: [DONE]
+
+  recorded_at: 2026-10-24T18:40:28.142560+00:00

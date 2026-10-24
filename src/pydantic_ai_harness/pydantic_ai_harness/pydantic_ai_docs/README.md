@@ -13,10 +13,10 @@ the agent rarely needs in full and pins a snapshot that drifts from `main`.
 ## The solution
 
 `PydanticAIDocs` exposes one tool, `read_pyai_docs(topic)`, that locates the requested page and
-returns it verbatim -- nothing is bundled into context up front. Each call resolves the
-topic from a configured local checkout first, then falls back to fetching the page from
-`pydantic/pydantic-ai:main`, so it works whether or not you have a local checkout (the
-remote fallback needs network access).
+returns it in full, with its model aliases resolved -- nothing is bundled into context up front.
+Each call resolves the topic from a configured local checkout first, then falls back to fetching
+the page from `pydantic/pydantic-ai:main`, so it works whether or not you have a local checkout
+(the remote fallback needs network access).
 
 Topics: `capabilities`, `hooks`, `tools`, `tools-advanced`, `toolsets`, `agent`.
 
@@ -50,6 +50,12 @@ Each call resolves in this order:
    `https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs/`.
 3. **Neither resolves** -- a descriptive error naming the local path tried and the URL.
 
+Docs pages name models through aliases, which the docs site replaces with current models. Before
+returning a page that uses one, the tool reads the alias file, `model_aliases/aliases.json`, in the
+same order and replaces each alias with the model it names. An alias the file does not define is
+left as written, and so is every alias when neither source can provide the file. A page without
+aliases reads nothing else, so a checkout from before the alias file existed keeps working.
+
 The capability never runs git. Keep the local checkout current yourself; the remote path
 always reads `main`, so it is the fresh fallback.
 
@@ -66,3 +72,14 @@ directory. With neither path set, every call goes straight to the remote source.
 
 Caching is isolated per run so content read from one workspace is not reused in another. Set
 `cache=False` to re-read or re-fetch on every call within a run.
+
+## Two of them
+
+`PydanticAIDocs` declares the default `id` `'pydantic_ai_docs'`. The `id` keys the capability's instructions, so they
+can be addressed, and lets `defer_loading=True` work without one. Two `PydanticAIDocs`s on one agent that
+share it are one docs source stated twice: they become one when they agree, and the agent raises a
+`UserError` when it's built if they differ. To keep two, give each its own `id` and wrap them
+in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/), since both register `read_pyai_docs`.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run
+started. Two identical ones now become one, and two that differ fail when the agent is built.

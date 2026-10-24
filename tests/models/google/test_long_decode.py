@@ -207,7 +207,7 @@ _ONE_REQUEST_CASES = [
                         provider_details={'thought_signature': _b64(b'signature')},
                     )
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=6),
+                usage=RequestUsage(input_tokens=10, output_tokens=6, cost=Decimal('0.00008')),
                 model_name='gemini-4-argon',
                 timestamp=IsDatetime(),
                 provider_name='google',
@@ -233,7 +233,7 @@ _ONE_REQUEST_CASES = [
                         provider_details={'thought_signature': _b64(b'signature')},
                     )
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=6),
+                usage=RequestUsage(input_tokens=10, output_tokens=6, cost=Decimal('0.00008')),
                 model_name='gemini-4-argon',
                 timestamp=IsDatetime(),
                 provider_name='google',
@@ -372,7 +372,7 @@ async def test_continued_requests_are_one_response(stream: bool, allow_model_req
                 ),
                 TextPart(content='4\n5'),
             ],
-            usage=RequestUsage(input_tokens=26, output_tokens=8),
+            usage=RequestUsage(input_tokens=26, output_tokens=8, cost=Decimal('0.000132')),
             model_name='gemini-4-argon',
             timestamp=IsDatetime(),
             provider_name='google',
@@ -382,7 +382,7 @@ async def test_continued_requests_are_one_response(stream: bool, allow_model_req
             finish_reason='stop',
             run_id=IsStr(),
             conversation_id=IsStr(),
-            metadata={'__pydantic_ai__': {'initial_input_tokens': 10}},
+            metadata={'__pydantic_ai__': {'context_input_tokens': 10}},
         )
     )
 
@@ -488,7 +488,7 @@ async def test_per_request_input_limit_reads_the_first_request(
     if error is None:
         output, response = await _run(agent, stream, usage_limits=usage_limits)
         assert output == '1\n2\n3\n4\n5'
-        assert response.usage == RequestUsage(input_tokens=44, output_tokens=9)
+        assert (response.usage.input_tokens, response.usage.output_tokens) == (44, 9)
     else:
         with pytest.raises(UsageLimitExceeded, match=error):
             await _run(agent, stream, usage_limits=usage_limits)
@@ -522,7 +522,7 @@ async def test_failed_continuation_request_raises(stream: bool, allow_model_requ
                             provider_details={'thought_signature': _b64(b'signature')},
                         )
                     ],
-                    usage=RequestUsage(input_tokens=10, output_tokens=6),
+                    usage=RequestUsage(input_tokens=10, output_tokens=6, cost=Decimal('0.00008')),
                     model_name='gemini-4-argon',
                     timestamp=IsDatetime(),
                     provider_name='google',
@@ -611,7 +611,7 @@ async def test_stream_drop_that_would_repeat_output_raises(allow_model_requests:
         [
             ModelResponse(
                 parts=[TextPart(content='1\n2\n')],
-                usage=RequestUsage(input_tokens=18, output_tokens=8),
+                usage=RequestUsage(input_tokens=18, output_tokens=8, cost=Decimal('0.000116')),
                 model_name='gemini-4-argon',
                 timestamp=IsDatetime(),
                 provider_name='google',
@@ -619,7 +619,7 @@ async def test_stream_drop_that_would_repeat_output_raises(allow_model_requests:
                 provider_response_id='request-1',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'initial_input_tokens': 8}},
+                metadata={'__pydantic_ai__': {'context_input_tokens': 8}},
                 state='interrupted',
             )
         ]
@@ -649,6 +649,7 @@ _RECORDED_CASES = [
                     input_text_tokens=32986,
                     output_text_tokens=36396,
                     output_tokens=36396,
+                    cost=Decimal('0.429932'),
                 ),
                 model_name='gemini-4-argon',
                 timestamp=IsDatetime(),
@@ -659,7 +660,7 @@ _RECORDED_CASES = [
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'initial_input_tokens': 109}},
+                metadata={'__pydantic_ai__': {'context_input_tokens': 109}},
             )
         ),
     ),
@@ -676,6 +677,7 @@ _RECORDED_CASES = [
                     input_text_tokens=65756,
                     output_text_tokens=72897,
                     output_tokens=72897,
+                    cost=Decimal('0.860482'),
                 ),
                 model_name='gemini-4-argon',
                 timestamp=IsDatetime(),
@@ -686,7 +688,7 @@ _RECORDED_CASES = [
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'initial_input_tokens': 110}},
+                metadata={'__pydantic_ai__': {'context_input_tokens': 110}},
             )
         ),
     ),

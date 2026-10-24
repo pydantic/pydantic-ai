@@ -1,48 +1,24 @@
 ---
-description: "Find community capability packages for Pydantic AI, covering todos, context management, subagents, guardrails, sandboxing, Agent Skills, SQL analytics and RAG."
+description: "Find community capability packages for Pydantic AI, covering multi-agent orchestration, Agent Skills, SQL analytics and RAG."
 ---
 
 # Third-Party Capabilities
 
 [Capabilities](overview.md) are the recommended way for third-party packages to extend Pydantic AI, since they can bundle tools with hooks, instructions, and model settings. See [Extensibility](../extensibility.md) for the full ecosystem, including [third-party toolsets](../toolsets.md#third-party-toolsets) that can also be wrapped as capabilities.
 
-Many of the use cases below are also covered by first-party capabilities in Pydantic AI itself or [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/), the official capability library. Where that's the case, we point to the built-in option first, and list the community packages as alternatives.
-
-## Task Management
-
-For model-owned task planning and progress tracking, [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) ships [`Planning`](https://pydantic.dev/docs/ai/harness/planning/), a cache-friendly self-updating task plan. As a community alternative with subtask, dependency, and PostgreSQL persistence support:
-
-* [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) - `TodoCapability` with `add_todo`, `read_todos`, `write_todos`, `update_todo_status`, and `remove_todo` tools. Supports subtasks, dependencies, and PostgreSQL persistence. Also available as a lower-level `TodoToolset`.
-
-## Context Management
-
-Pydantic AI has [built-in compaction](compaction.md) — provider-native APIs and model-agnostic history summarization — and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/compaction/) adds a full menu of compaction strategies. As a community alternative:
-
-* [`summarization-pydantic-ai`](https://github.com/vstorm-co/summarization-pydantic-ai) - Four capabilities for managing long conversations: `ContextManagerCapability` (real-time token tracking, auto-compression at a configurable threshold, and large tool-output truncation); `SummarizationCapability` (LLM-powered history compression); `SlidingWindowCapability` (zero-cost message trimming); `LimitWarnerCapability` (injects a finish-soon hint before hard context limits). Also available as standalone `history_processors`: `SummarizationProcessor`, `SlidingWindowProcessor`, and `LimitWarnerProcessor`.
+Before reaching for a package here, check the [capability index](overview.md#available-capabilities), which covers Pydantic AI and [Pydantic AI Harness](../harness/index.md), the official capability library, including planning, compaction, sub-agents, guardrails, file system and shell access, and sandboxes. This page lists community packages for use cases those don't cover, or that build on them.
 
 ## Multi-Agent Orchestration
 
-Pydantic AI supports [multi-agent patterns](../multi-agent-applications.md) directly, and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/subagents/) ships [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) for delegating self-contained tasks to named child agents. As a community alternative:
+Pydantic AI Harness's [`SubAgents`](../harness/subagents.md) delegates tasks to a roster of named sub-agents, in the foreground or, with managed delegation sessions, in the background. For an orchestrator the model drives itself:
 
-* [`subagents-pydantic-ai`](https://github.com/vstorm-co/subagents-pydantic-ai) - `SubAgentCapability` adds tools for multi-agent delegation: `task` (spawn a subagent), `check_task`, `wait_tasks`, `list_active_tasks`, `soft_cancel_task`, `hard_cancel_task`, and `answer_subagent`. Supports sync, async, and auto-execution modes, nested subagents, and runtime agent creation. Also available as a lower-level toolset via `create_subagent_toolset`.
-
-## Guardrails & Safety {#guardrails-safety}
-
-[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/guardrails/) provides input and output guardrails that validate or block requests and responses, and Pydantic AI enforces usage, token, and request limits via [`UsageLimits`](../agent.md#usage-limits). As a community alternative bundling several ready-made shields, including USD cost tracking:
-
-* [`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields) - Ready-to-use guardrail capabilities: `CostTracking` (tracks token usage and USD cost per run, raises `BudgetExceededError` on budget overrun); `ToolGuard` (block or require approval for specific tools); `InputGuard` and `OutputGuard` (custom sync or async validation functions); `PromptInjection`, `PiiDetector`, `SecretRedaction`, `BlockedKeywords`, and `NoRefusals` content shields.
-
-## File Operations & Sandboxing {#file-operations-sandboxing}
-
-[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) ships sandboxed [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) and [`Shell`](https://pydantic.dev/docs/ai/harness/shell/) capabilities, plus [`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) for running tool calls as sandboxed Python. As a community alternative:
-
-* [`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend) - `ConsoleCapability` registers `ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, and `execute` tools with a fine-grained permission system. Backends include `StateBackend` (in-memory, for testing), `LocalBackend` (real filesystem), `DockerSandbox` (isolated container execution), and `CompositeBackend` (routing across backends). Also available as a lower-level `ConsoleToolset`.
+* [`subagents-pydantic-ai`](https://github.com/vstorm-co/subagents-pydantic-ai) by [Vstorm](https://vstorm.co/) - `SubAgentCapability` lets the model create specialist sub-agents at run time (`create_agent`, or one-shot `delegate`) and manage background tasks through its own tools: `check_task` and `wait_tasks` to collect results, `send_message_to_subagent` to steer a running task, `answer_subagent` to reply when a sub-agent asks for clarification, and `soft_cancel_task` and `hard_cancel_task`. Also available as a lower-level toolset via `create_subagent_toolset`.
 
 ## Agent Skills
 
-Pydantic AI supports [Agent Skills natively](on-demand.md#loading-skills-from-markdown-files) through [on-demand capabilities](on-demand.md), which collapse a skill to a one-line catalog entry until the model loads it, and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) ships [`Skills`](https://pydantic.dev/docs/ai/harness/skills/), which turns each `SKILL.md` package in a local directory into one of those deferred capabilities. As a community package that builds on `Skills` rather than replacing it:
+Pydantic AI Harness's [`Skills`](../harness/skills.md) turns each `SKILL.md` package in a workspace directory into an [on-demand capability](on-demand.md) that the model loads when it needs it. Building on `Skills`:
 
-* [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills) - `SkillsCapability` hands `SKILL.md` discovery, validation, and instruction rendering to Harness's `Skills`, so every skill stays a deferred capability that the model loads with the framework's own `load_capability` tool, and adds what `Skills` deliberately leaves out. Remote skill libraries come from `GitSkillsRegistry` and `S3SkillsRegistry`, materialized to local directories before `Skills` reads them and composable by filtering, prefixing, renaming, and merging. A skill's bundled `references/`, `assets/`, and `scripts/` files become reachable through `read_skill_resource` and `run_skill_script` tools that by default refuse to touch a skill the model has not loaded yet, with `${SKILL_DIR}` placeholders substituted for real paths, so packages that ship reference documents and scripts (such as [Anthropic's](https://github.com/anthropics/skills)) run as written. Scripts execute through a pluggable `SkillScriptExecutor`, with container and virtual-filesystem sandboxes for keeping untrusted skills off the host. Skills can also be defined programmatically in Python, and `include`/`exclude` control which ones reach the catalog. Works with [agent specs](../agent-spec.md), so it can be loaded via [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] / [`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec]. Compatible with [agentskills.io](https://agentskills.io).
+* [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills) by [Doug Trajano](https://github.com/DougTrajano) - `SkillsCapability` hands `SKILL.md` discovery, validation, and instruction rendering to `Skills` and adds what it leaves out. `read_skill_resource` and `run_skill_script` tools reach a loaded skill's bundled `references/`, `assets/`, and `scripts/` files, with `${SKILL_DIR}` placeholders substituted for real paths, and scripts run through a pluggable executor with container and virtual-filesystem sandboxes. Remote skill libraries come from `GitSkillsRegistry` and `S3SkillsRegistry`, and skills defined in Python can sit in the same catalog as `SKILL.md` skills.
 
 ## Data & Analytics {#data-analytics}
 

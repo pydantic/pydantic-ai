@@ -39,11 +39,11 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 
 judge = ToolCallJudge(
-    'anthropic:claude-haiku-5-5',
+    '{{ anthropic:small }}',
     tools=['delete_file'],
     question='Would running this destroy data, spend money, or leak secrets?',
 )
-agent = Agent('anthropic:claude-fable-5-1', capabilities=[judge])
+agent = Agent('{{ anthropic:xlarge }}', capabilities=[judge])
 
 
 @agent.tool_plain
@@ -93,13 +93,13 @@ from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 
 judge = ToolCallJudge(
-    'anthropic:claude-haiku-5-5',
+    '{{ anthropic:small }}',
     tools=['delete_file'],
     question='Would this destroy data?',
     on_uncertain='ask',
 )
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    '{{ anthropic:xlarge }}',
     capabilities=[judge],
     output_type=[str, DeferredToolRequests],
 )
@@ -119,7 +119,7 @@ That ordering follows from where each gate sits in the agent loop rather than fr
 
 What the judge cannot do is ask again. A person's approval answers the `'ask'` question for that call, so on an approved call an `on_uncertain='ask'` policy allows it rather than raising a second approval request. Without that, a judge that stays uncertain -- one that is down, or one whose question the call genuinely cannot settle -- would hand the same person the same question after every approval and the call would never run. This applies to the judge's own escalation and to a `requires_approval=True` tool alike; `yes` still blocks either.
 
-Use the combination when a person approves the intent and the judge checks the arguments -- a reviewer approving "yes, clean up the old exports" does not want to re-read every path. Use `on_uncertain='ask'` instead of `requires_approval=True` when you want the judge to decide which calls are worth a person's attention. To have a model approve calls before a person sees them instead, use [`ApprovalReviewer`](approval-reviewer.md).
+Use the combination when a person approves the intent and the judge checks the arguments -- a reviewer approving "yes, clean up the old exports" does not want to re-read every path. Use `on_uncertain='ask'` instead of `requires_approval=True` when you want the judge to decide which calls are worth a person's attention. To have a model approve calls before a person sees them instead, use [`ApprovalReviewer`](approval-reviewer.md). To have one approve this judge's escalations first, see [working with Tool Call Judge](approval-reviewer.md#working-with-tool-call-judge).
 
 ## What the judge sees
 
@@ -136,7 +136,7 @@ The cost of that default is real: a question like "is this deletion something th
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 
 judge = ToolCallJudge(
-    'anthropic:claude-haiku-5-5',
+    '{{ anthropic:small }}',
     tools=['delete_file'],
     question='Does this deletion go beyond what the user asked for?',
     include_conversation=True,
@@ -146,7 +146,7 @@ judge = ToolCallJudge(
 
 The judge then also receives a `<conversation>` block: user messages, assistant messages, tool calls, and tool results rendered as a transcript and clamped to the most recent `conversation_window` tokens (estimated at ~4 characters per token). System prompts and thinking parts are left out, so the judge is shown observable behavior rather than the agent's configuration or private reasoning.
 
-Turning it on widens the judge's own prompt-injection surface, because that transcript includes third-party content. The judge instructions label both blocks as untrusted data, and both are escaped before they are embedded. That reduces the risk rather than removing it: content-derived instructions are exactly what a model is least able to discount, which is why the judge is one filter among the controls a sensitive tool needs.
+Turning it on widens the judge's own prompt-injection surface, because that transcript includes third-party content. The judge instructions label both blocks as untrusted data, and the `<` of every opening or closing framework tag inside either block is escaped (`<tool_call>`, `<conversation>`, and Pydantic AI framing tags such as `<system>`), so content cannot end its block or forge another. Everything else is embedded as written. That reduces the risk rather than removing it: content-derived instructions are exactly what a model is least able to discount, which is why the judge is one filter among the controls a sensitive tool needs.
 
 Either way, what the judge is shown leaves the process. The whole validated argument dict goes to the judging model's provider before the verdict comes back, so a call is disclosed even when it is then blocked. Where a tool's arguments can carry credentials or customer data, scope `tools` away from it, or route the judge to a provider you already trust with that data.
 
@@ -161,17 +161,17 @@ from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    '{{ anthropic:xlarge }}',
     output_type=[str, DeferredToolRequests],
     capabilities=[
         ToolCallJudge(
-            'anthropic:claude-haiku-5-5',
+            '{{ anthropic:small }}',
             tools={'risk': 'high'},
             question='Is there any chance this is destructive or irreversible?',
             on_uncertain='ask',
         ),
         ToolCallJudge(
-            'anthropic:claude-haiku-5-5',
+            '{{ anthropic:small }}',
             tools='all',
             question='Is this call clearly outside what the user asked for?',
             on_uncertain='allow',
@@ -204,7 +204,7 @@ A durable operation is addressed by the capability's `id`, and `ToolCallJudge` h
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 
 judge = ToolCallJudge(
-    'anthropic:claude-haiku-5-5',
+    '{{ anthropic:small }}',
     id='refund-judge',
     tools=['issue_refund'],
     question='Would this refund more than the original charge?',
@@ -238,7 +238,7 @@ from pydantic_ai_harness.tool_call_judge import ToolCallJudge, ToolCallVerdict
 
 verdicts: list[ToolCallVerdict] = []
 judge = ToolCallJudge(
-    'anthropic:claude-haiku-5-5',
+    '{{ anthropic:small }}',
     tools=['delete_file'],
     question='Would this destroy data?',
     on_verdict=verdicts.append,

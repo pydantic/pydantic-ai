@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.docs_model_aliases import resolve_model_aliases
+
 _ROOT = Path(__file__).parents[2] / 'src' / 'pydantic_ai_harness'
 _PACKAGE = _ROOT / 'pydantic_ai_harness'
 
@@ -96,17 +98,17 @@ def test_capability_linked_from_top_readme(package: Path) -> None:
 
 _DOCS_DIR = _ROOT / '../../docs/harness'
 # `media.md` documents Step Persistence's storage plumbing (see `_NOT_A_CAPABILITY` above),
-# `gh-aw.md` walks through the gh-aw engine definition under `gh-aw/`, and `durable-execution.md` is a
-# guide across capabilities, so the capability-page checks do not apply to them. `AGENTS.md` (and its
-# `CLAUDE.md` link) holds the directory's agent instructions.
+# `gh-aw.md` walks through the gh-aw engine definition under `gh-aw/`, and `integrations.md` is the overview of the
+# integration capabilities, so the capability-page checks do not apply
+# to them. `AGENTS.md` (and its `CLAUDE.md` link) holds the directory's agent instructions.
 _NON_CAPABILITY_PAGES = {
     'AGENTS.md',
     'CLAUDE.md',
     'clai2.md',
-    'durable-execution.md',
     'examples.md',
     'gh-aw.md',
     'index.md',
+    'integrations.md',
     'media.md',
     'mutation-testing.md',
 }
@@ -118,7 +120,16 @@ _EXPERIMENTAL_MARKERS = ('HarnessExperimentalWarning', 'removed in any release',
 # Lifecycle hook names must not lead a page -- mechanism goes below the purpose.
 _LEAD_HOOK_NAMES = ('before_model_request', 'after_model_request', 'before_tool_execute', 'after_tool_execute')
 # ClassName-style headings are a smell, except where the class name IS the name.
-_ALLOWED_CLASSNAME_HEADINGS = {'FileSystem', 'GitHub', 'Linear', 'LocalStack', 'Notion', 'PostHog', 'StackOne'}
+_ALLOWED_CLASSNAME_HEADINGS = {
+    'BoxLite',
+    'FileSystem',
+    'GitHub',
+    'Linear',
+    'LocalStack',
+    'Notion',
+    'PostHog',
+    'StackOne',
+}
 _FORBIDDEN_HEADINGS = {'overflow', 'authoring', 'overflow capability', 'compaction capabilities'}
 
 
@@ -144,12 +155,16 @@ _CAPABILITY_PAGE_META = {
     'skills.md': ('skills', 'Skills'),
     'filesystem.md': ('filesystem', 'FileSystem'),
     'shell.md': ('shell', 'Shell'),
+    'smart-search.md': ('smart_search', 'Smart Search'),
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
     'memory.md': ('memory', 'Memory'),
     'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),
+    'docker-sandbox.md': ('docker_sandbox', 'Docker Sandbox'),
     'e2b-sandbox.md': ('e2b_sandbox', 'E2B Sandbox'),
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
+    'daytona-sandbox.md': ('daytona_sandbox', 'Daytona Sandbox'),
     'smol-sandbox.md': ('smol_sandbox', 'Smol Sandbox'),
+    'boxlite-sandbox.md': ('boxlite_sandbox', 'BoxLite Sandbox'),
     'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),
     'bubblewrap-sandbox.md': ('bubblewrap_sandbox', 'Bubblewrap Sandbox'),
     'repo-context.md': ('repo_context', 'Repo Context'),
@@ -385,7 +400,8 @@ _BLOWN_OUT_SURFACES = (
 
 
 def _blown_out_block(path: Path) -> str:
-    text = path.read_text(encoding='utf-8')
+    # Docs pages name models by alias; the READMEs, which GitHub renders, name the models themselves.
+    text = resolve_model_aliases(path.read_text(encoding='utf-8'))
     assert _BLOWN_OUT_MARKER in text, f'{path.relative_to(_ROOT)} lost its blown-out keep-in-sync marker'
     after = text.split(_BLOWN_OUT_MARKER, 1)[1]
     match = re.search(r'```python[^\n]*\n(.*?)```', after, flags=re.DOTALL)

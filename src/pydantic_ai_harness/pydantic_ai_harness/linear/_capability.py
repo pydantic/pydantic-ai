@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, one_connection, read_only_toolset
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._mcp import credential, per_run_connection, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -25,14 +26,17 @@ class Linear(AbstractCapability[AgentDepsT]):
     """Give an agent the tools of Linear's hosted MCP server, with the permissions of the connected user."""
 
     id: str | None = _ID
-    """Stable capability and toolset ID, so `defer_loading=True` needs none.
+    """Stable capability ID, also used for the Linear MCP toolset, so `defer_loading=True` needs none.
 
-    One `Linear` is one connection to one account, like `StackOne`'s linked account. Two sharing this `id` are
-    one connection stated twice when they agree, and an error when they differ; give each its own `id` to keep both.
+    Each `Linear` is one connection to one Linear account. Two with the same `id` and settings are one connection, and
+    two with the same `id` but different settings raise. Give each its own `id` to keep both. With `None` or `''`
+    the toolset still uses `linear`, but the capability is not combined with others.
     """
     description: str | None = 'Use Linear issues, projects, and teams.'
-    auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
-    """A Linear API key or token, or a function of the run context that returns one.
+    auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
+        default=None, repr=False
+    )
+    """A Linear API key or token, or a sync or async function of the run context that returns one.
 
     `'oauth'` signs in through the browser on your own machine.
 
@@ -47,40 +51,31 @@ class Linear(AbstractCapability[AgentDepsT]):
     """Your own MCP client or transport, for full control of the connection. It cannot be combined with `auth`."""
 
     def __post_init__(self) -> None:
-        if self.client is not None and self.auth is not None:
+        if self.client is not None and self.auth:
             raise UserError('`client` owns the connection, so it cannot be combined with `auth`.')
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one connection stated twice; two that disagree raise rather than merge."""
-        return one_connection(capabilities)
+        return one_per_id(capabilities)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the Linear tools."""
-        id = self.id or _ID
         if self.client is not None:
             toolset: AbstractToolset[AgentDepsT] = MCPToolset(
-                self.client, id=id, include_instructions=self.include_instructions
+                self.client, id=self.id or _ID, include_instructions=self.include_instructions
             )
             if self.read_only:
                 return read_only_toolset(toolset)
             return toolset
         if callable(self.auth):
-            return DynamicToolset(self._connect_for_run, per_run_step=False, id=id)
+            return per_run_connection(self.auth, self._connect, id=self.id or _ID)
         return self._connect(self.auth)
-
-    def _connect_for_run(self, ctx: RunContext[AgentDepsT]) -> MCPToolset[AgentDepsT] | None:
-        auth = self.auth(ctx) if callable(self.auth) else self.auth
-        if auth == 'oauth':
-            # FastMCP reads 'oauth' as "log in through a browser", which would hang a server run.
-            raise UserError("The `auth` function must return an API key or token, not 'oauth'.")
-        return self._connect(auth) if auth else None
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
         return MCPToolset(
             'https://mcp.linear.app/mcp/readonly' if self.read_only else 'https://mcp.linear.app/mcp',
             id=self.id or _ID,
             auth=credential(auth, env='LINEAR_ACCESS_TOKEN', service='Linear'),
-            headers=None,
             include_instructions=self.include_instructions,
         )

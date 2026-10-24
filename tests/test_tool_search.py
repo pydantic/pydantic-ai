@@ -41,6 +41,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelRetry, ToolRetryError, Un
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CompactionPart,
+    InstructionBaselinePart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -52,7 +53,6 @@ from pydantic_ai.messages import (
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
     PartStartEvent,
-    RetryPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolPartKind,
@@ -88,7 +88,7 @@ from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .cassette_utils import request_json
-from .conftest import iter_message_parts, message, message_part, try_import
+from .conftest import RequestCapture, iter_message_parts, message, message_part, try_import
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
@@ -138,11 +138,13 @@ with try_import() as anthropic_available:
     from pydantic_ai.models.anthropic import (
         AnthropicModel,
         AnthropicModelSettings,
-        _build_custom_tool_search_replay_blocks,  # pyright: ignore[reportPrivateUsage]
-        _build_tool_search_replay_block,  # pyright: ignore[reportPrivateUsage]
-        _finalize_streamed_tool_search_call_part,  # pyright: ignore[reportPrivateUsage]
-        _map_server_tool_use_block,  # pyright: ignore[reportPrivateUsage]
-        _map_tool_search_tool_result_block,  # pyright: ignore[reportPrivateUsage]
+    )
+    from pydantic_ai.models.anthropic._native_tools import (
+        build_custom_tool_search_replay_blocks,
+        build_tool_search_replay_block,
+        finalize_streamed_tool_search_call_part,
+        map_server_tool_use_block,
+        map_tool_search_tool_result_block,
     )
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -2158,7 +2160,7 @@ async def test_anthropic_regex_strategy_replay_preserves_variant(allow_model_req
         type='server_tool_use',
         caller=BetaDirectCaller(type='direct'),
     )
-    call_part = _map_server_tool_use_block(regex_block, 'anthropic')
+    call_part = map_server_tool_use_block(regex_block, 'anthropic')
     assert isinstance(call_part, NativeToolCallPart)
     assert call_part.provider_details == {'strategy': 'regex'}
     # Cross-provider canonical shape collects the regex into the `queries` slot.
@@ -2914,6 +2916,37 @@ async def test_openai_deferred_capability_runs_on_model_without_native_tool_sear
     assert [p.content for p in bar_returns] == [1]
 
 
+@pytest.mark.vcr
+async def test_openai_gpt_5_4_nano_deferred_tool_uses_local_search(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    """`gpt-5.4-nano` rejects native `tool_search` with a 400, unlike the rest of the gpt-5.4 family,
+    so a deferred tool is discovered through local `search_tools` and the run completes.
+    """
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    agent = Agent(OpenAIResponsesModel('gpt-5.4-nano', provider=provider))
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:
+        """Get the current weather for a city."""
+        return f'Sunny in {city}'
+
+    result = await agent.run('What is the weather in Paris? Find a tool for it.')
+
+    messages = result.all_messages()
+    assert list(iter_message_parts(messages, ModelResponse, ToolSearchCallPart))
+    assert not list(iter_message_parts(messages, ModelResponse, NativeToolSearchCallPart))
+    weather_returns = [
+        p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart) if p.tool_name == 'get_weather'
+    ]
+    assert [p.content for p in weather_returns] == ['Sunny in Paris']
+    first_request_tools = request_capture.body('/responses')['tools']
+    assert isinstance(first_request_tools, list)
+    assert [(tool.get('type'), tool.get('name')) for tool in first_request_tools if isinstance(tool, dict)] == [
+        ('function', 'search_tools')
+    ]
+
+
 def _cross_provider_tool_search_agent(model: AnthropicModel | OpenAIResponsesModel) -> Agent[None, str]:
     agent: Agent[None, str] = Agent(
         model,
@@ -3072,6 +3105,9 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
     for msg in messages:
         part_trace: list[dict[str, Any]] = []
         for part in msg.parts:
+            if isinstance(part, InstructionBaselinePart):
+                # Records the instructions the request was sent, not a step of the conversation.
+                continue
             if isinstance(part, UserPromptPart):
                 part_info: dict[str, Any] = {'type': 'user', 'content': part.content}
             elif isinstance(part, LoadCapabilityCallPart):
@@ -3465,6 +3501,8 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
         for msg in messages:
             part_trace: list[dict[str, Any]] = []
             for part in msg.parts:
+                if isinstance(part, InstructionBaselinePart):
+                    continue
                 if isinstance(part, UserPromptPart):
                     part_info: dict[str, Any] = {'type': 'user', 'content': part.content}
                 elif isinstance(part, LoadCapabilityCallPart):
@@ -3704,7 +3742,7 @@ def test_anthropic_tool_search_result_error_block_mapping():
             type='tool_search_tool_result_error',
         ),
     )
-    part = _map_tool_search_tool_result_block(error_block, 'anthropic')
+    part = map_tool_search_tool_result_block(error_block, 'anthropic')
     assert part.tool_name == 'tool_search'
     assert part.metadata is None
 
@@ -3717,7 +3755,7 @@ def test_anthropic_custom_replay_blocks_malformed_content():
     pytest.importorskip('anthropic')
 
     malformed = ToolReturnPart(tool_name='search_tools', content='not a typed return', tool_call_id='c1')
-    refs, message = _build_custom_tool_search_replay_blocks(
+    refs, message = build_custom_tool_search_replay_blocks(
         malformed, deferred_tools_active=True, declared_tool_names=set()
     )
     assert refs is None and message is None
@@ -3742,7 +3780,7 @@ def test_anthropic_build_tool_search_replay_block_error_branch():
         content={'discovered_tools': []},
         provider_details={'error_code': 'unavailable', 'error_message': 'temporary outage'},
     )
-    block = _build_tool_search_replay_block(return_part, 'srv_err', declared_tool_names=set())
+    block = build_tool_search_replay_block(return_part, 'srv_err', declared_tool_names=set())
     assert block == {
         'tool_use_id': 'srv_err',
         'type': 'tool_search_tool_result',
@@ -5712,6 +5750,20 @@ def test_synthesize_local_promotes_base_tool_return_with_tool_kind_in_request() 
     assert part.content == {'discovered_tools': [{'name': 'foo'}]}
 
 
+def test_synthesize_local_leaves_a_failed_tool_search_return_a_base_part() -> None:
+    """A tool-search return that isn't a success keeps its `tool_kind` but its content is an error,
+    so the request-side promotion leaves it a base `ToolReturnPart` unchanged."""
+    failed = ToolReturnPart(
+        tool_name='search_tools', content='search failed', tool_call_id='c1', tool_kind='tool-search', outcome='failed'
+    )
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['a']}, tool_call_id='c1')]),
+        ModelRequest(parts=[failed]),
+    ]
+    translated = synthesize_local_tool_search_messages(history)
+    assert translated[1].parts == [failed]
+
+
 async def test_tool_search_toolset_uses_custom_parameter_description() -> None:
     """`ToolSearch(parameter_description=...)` flows through to the local `search_tools`
     function tool's `queries` parameter description on the wire — verifies the
@@ -6296,10 +6348,8 @@ def test_discriminator_unknown_tool_kind_falls_through_to_part_kind() -> None:
     doesn't contain `(part_kind, 'unknown-kind')`, so the discriminator returns the bare
     `part_kind` rather than a typed-subclass tag.
 
-    Calls the discriminator directly because constructing a valid ModelMessage with
-    `tool_kind='unknown-kind'` would fail Pydantic's `ToolPartKind` Literal validation
-    upstream — the registry-miss branch is internal logic, not a deserialization path
-    that any well-formed input would take.
+    Calls the discriminator directly; the deserialization path for unregistered kinds is
+    covered in `tests/test_typed_tool_parts.py`.
     """
 
     return_raw = {
@@ -6421,9 +6471,7 @@ def test_anthropic_custom_replay_blocks_returns_message_on_empty_discovered() ->
         content={'discovered_tools': [], 'message': 'No matches; try other keywords.'},
         tool_call_id='c1',
     )
-    refs, message = _build_custom_tool_search_replay_blocks(
-        empty, deferred_tools_active=True, declared_tool_names=set()
-    )
+    refs, message = build_custom_tool_search_replay_blocks(empty, deferred_tools_active=True, declared_tool_names=set())
     assert refs == []
     assert message == 'No matches; try other keywords.'
 
@@ -6439,7 +6487,7 @@ def test_anthropic_custom_replay_blocks_skips_non_typed_returns() -> None:
         content={'discovered_tools': [{'name': 'foo'}]},
         tool_call_id='c1',
     )
-    refs, message = _build_custom_tool_search_replay_blocks(
+    refs, message = build_custom_tool_search_replay_blocks(
         base_part, deferred_tools_active=True, declared_tool_names={'foo'}
     )
     assert refs is None and message is None
@@ -6460,7 +6508,7 @@ def test_anthropic_replay_filters_stale_tool_references() -> None:
     content: ToolSearchReturnContent = {'discovered_tools': discovered}
 
     custom_part = ToolSearchReturnPart(content=content, tool_call_id='c1')
-    refs, _ = _build_custom_tool_search_replay_blocks(
+    refs, _ = build_custom_tool_search_replay_blocks(
         custom_part, deferred_tools_active=True, declared_tool_names={'still_here'}
     )
     assert refs == [{'tool_name': 'still_here', 'type': 'tool_reference'}]
@@ -6470,7 +6518,7 @@ def test_anthropic_replay_filters_stale_tool_references() -> None:
         tool_call_id='srv_ok',
         content=content,
     )
-    block = _build_tool_search_replay_block(native_part, 'srv_ok', declared_tool_names={'still_here'})
+    block = build_tool_search_replay_block(native_part, 'srv_ok', declared_tool_names={'still_here'})
     assert block == {
         'tool_use_id': 'srv_ok',
         'type': 'tool_search_tool_result',
@@ -6492,7 +6540,7 @@ def test_anthropic_finalize_streamed_tool_search_call_part_with_canonical_dict_a
         provider_name='anthropic',
         provider_details={'strategy': 'bm25'},
     )
-    result = _finalize_streamed_tool_search_call_part(part)
+    result = finalize_streamed_tool_search_call_part(part)
     assert result.args == {'queries': ['mortgage']}
 
 
@@ -6501,7 +6549,7 @@ def test_anthropic_finalize_streamed_tool_search_call_part_with_none_args() -> N
     pytest.importorskip('anthropic')
 
     part = NativeToolSearchCallPart(args=None, tool_call_id='c1', provider_name='anthropic')
-    result = _finalize_streamed_tool_search_call_part(part)
+    result = finalize_streamed_tool_search_call_part(part)
     assert isinstance(result.args, dict) and 'queries' in result.args
 
 
@@ -7625,8 +7673,10 @@ async def _call_capability_tool_directly(
         return 'refunded'  # pragma: no cover
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
-            refusals.append(part.content if isinstance(part.content, str) else str(part.content))
+        for part in iter_message_parts(messages, ModelRequest, ToolReturnPart):
+            if part.outcome != 'retried':
+                continue
+            refusals.append(str(part.content))
             return ModelResponse(parts=[TextPart('done')])
         return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
 
@@ -7743,8 +7793,10 @@ async def test_pre_compaction_tool_is_refused_until_rediscovered() -> None:
     refusals: list[str] = []
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
-            refusals.append(part.content if isinstance(part.content, str) else str(part.content))
+        for part in iter_message_parts(messages, ModelRequest, ToolReturnPart):
+            if part.outcome != 'retried':
+                continue
+            refusals.append(str(part.content))
             return ModelResponse(parts=[TextPart('done')])
         return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
 

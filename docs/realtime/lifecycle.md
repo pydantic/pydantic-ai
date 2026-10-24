@@ -41,9 +41,9 @@ ends the session, including from [a tool that hangs up](tools.md#ending-the-sess
 
 The connection is opened when the `session()` context is entered, and the shared
 `handshake_timeout` setting (default 30 seconds) bounds how long the session waits for the
-provider handshake: each handshake event on OpenAI, Azure OpenAI, and xAI, and the whole session
-setup on Gemini. A handshake that times out raises
-[`RealtimeError`][pydantic_ai.realtime.RealtimeError]; a rejected WebSocket upgrade raises
+provider handshake: each handshake event on OpenAI, Azure OpenAI, and xAI, the whole session
+setup on Gemini, and the conversation initiation metadata on ElevenLabs Agents. A handshake that times
+out raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError]; a rejected WebSocket upgrade raises
 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] (see [Errors](#errors)).
 
 ## Reconnecting
@@ -59,7 +59,7 @@ from pydantic_ai import Agent
 
 agent = Agent()
 realtime = agent.realtime(
-    'openai:gpt-realtime',
+    '{{ openai:realtime }}',
     model_settings={'reconnect': {'max_attempts': 5}},
 )
 ```
@@ -111,11 +111,12 @@ and cannot be persisted for another process.
 reports whether the reconnect carried the conversation through without cutting a turn off.
 
 How a reply the drop caught in flight is handled depends on the mechanism. Gemini reports
-`True` once the server has issued a resumption handle (shortly after connect; a drop before that
-reports `False` and cancels running tools) but closes the cut reply as an interrupted response
-(keeping any partial transcript in history) before the
+`True` once the server has issued a resumption handle (shortly after connect) but closes the cut
+reply as an interrupted response (keeping any partial transcript in history) before the
 [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] and stays
-quiet until the next input. Gemini issues no handle while a tool call is running, so a resumed
+quiet until the next input. A drop before the first handle reports `False`, cancels running tools,
+and dials a fresh session: the model loses the earlier turns, though the session's
+[message history](history.md) keeps them. Gemini issues no handle while a tool call is running, so a resumed
 session never has a call still running at the drop, and never answers its result. Such a call is
 cancelled with an interrupted return, like a call Gemini cancels itself, the resumed session is told
 the call was interrupted, and `state_restored` is `False`. Gemini 2.5 also withholds handles while it
@@ -142,10 +143,15 @@ those limits. Exact limits and provider behavior can change, so provider pages a
 - [OpenAI session behavior](openai.md#feature-support-and-limitations)
 - [Azure OpenAI session behavior](azure.md#feature-support-and-limitations)
 - [Gemini session resumption](gemini.md#session-resumption)
-- [xAI session behavior](xai.md#feature-support-and-limitations)
+- [xAI session length](xai.md#session-length)
+- [ElevenLabs Agents session behavior](elevenlabs.md#feature-support-and-limitations)
 
 Gemini sends `GoAway` shortly before its cap but Pydantic AI currently reconnects only after the
 connection drops, so a long call can briefly drop mid-turn.
+
+ElevenLabs Agents is the exception to surviving the cap with a policy: a conversation ends at the agent's
+configured maximum duration and cannot be resumed, so `reconnect` raises there rather than
+silently opening a conversation that remembers nothing.
 
 ## Ending a call
 
@@ -177,7 +183,7 @@ async def close_after(session: RealtimeSession, seconds: float) -> None:
 
 
 async def main():
-    async with agent.realtime('openai:gpt-realtime').session() as session:
+    async with agent.realtime('{{ openai:realtime }}').session() as session:
         watchdog = asyncio.create_task(close_after(session, 300))
         try:
             async for event in session:
@@ -191,8 +197,8 @@ For an idle rather than absolute timeout, reset the watchdog on
 [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent], which providers
 whose profile declares
 [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]
-send. Where that flag is unset, as on Gemini, reset the watchdog from your own input path as
-well — whenever you send audio that is not silence — plus assistant
+send. Where that flag is unset, as on Gemini, GPT-Live, and ElevenLabs Agents, reset the watchdog
+from your own input path as well — whenever you send audio that is not silence — plus assistant
 [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] activity and
 [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent]; resetting on output
 alone would hang up on a person mid-sentence. With input transcription enabled, user parts from
@@ -227,11 +233,19 @@ is removed from history, and a refused request for a response stops
 that doesn't identify an input changes neither, because the reply can still come: on OpenAI and xAI,
 a request for a response sent after a refused item is still answered.
 
+One refusal only means "not yet": OpenAI Realtime and Azure OpenAI refuse a request for a response while
+another is under way, as when server-side voice activity detection starts answering the user's speech just
+as you send text. That response never saw the text, so the session asks for the text's reply again once it
+ends, and reports nothing. It asks up to three times in a row; if the provider refuses the request a fourth
+time, the refusal is reported like any other, and `wait_for_reply()` stops waiting for that reply.
+
 Failures surface from the responsible call where possible; a failed `send_audio()` raises there.
 Receive-loop and tool failures are raised from `async for` while the event stream is being
-iterated. Otherwise the audio and transcript views end, and the failure is raised when the `async
-with` block exits (from [`close()`][pydantic_ai.realtime.RealtimeSession.close]). If the receive side
-has already failed, the next outbound session method raises that failure instead; it is delivered
-only once.
+iterated. A receive-loop failure ends the session; a tool failure doesn't (on most providers it ends
+only the exchange it was part of), so a consumer that catches it and iterates again keeps a working
+session (see [Tools](tools.md#function-tools)). Without an active iterator, the session stops receiving, the audio
+and transcript views end, and the failure is raised when the `async with` block exits (from
+[`close()`][pydantic_ai.realtime.RealtimeSession.close]). If the receive side has already failed, the
+next outbound session method raises that failure instead; it is delivered only once.
 
 For symptom-first debugging, see [Troubleshooting](troubleshooting.md).

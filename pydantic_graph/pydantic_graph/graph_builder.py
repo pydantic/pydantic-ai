@@ -477,7 +477,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
             node_id=StartNode.id, inputs=inputs, fork_stack=initial_fork_stack, task_id=self._get_next_task_id()
         )
         self._iterator_task_group = create_task_group()
-        self._iterator_instance = _GraphIterator[StateT, DepsT, OutputT](
+        self._iterator_instance: _GraphIterator[StateT, DepsT, OutputT] | None = _GraphIterator(
             self.graph,
             self.state,
             self.deps,
@@ -497,10 +497,15 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any):
-        await self._async_exit_stack.__aexit__(exc_type, exc_val, exc_tb)
+        try:
+            await self._async_exit_stack.__aexit__(exc_type, exc_val, exc_tb)
+        finally:
+            # Iterator callbacks refer back to this run; release them after its tasks finish.
+            self._iterator_instance = None
 
     @asynccontextmanager
-    async def _iterator_context(self):
+    async def _iterator_context(self) -> AsyncGenerator[None]:
+        assert self._iterator_instance is not None
         try:
             yield
         finally:
@@ -939,7 +944,15 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 if branch_source in {Any, object}:
                     inputs_match = True
                 elif get_origin(branch_source) is Literal:
-                    inputs_match = inputs in get_args(branch_source)
+                    literal_values = get_args(branch_source)
+                    if isinstance(inputs, int):
+                        # `True == 1`, but `Literal[True]` and `Literal[1]` are distinct choices: match bools only to bools.
+                        literal_values = tuple(
+                            v
+                            for v in literal_values
+                            if not isinstance(v, int) or isinstance(v, bool) == isinstance(inputs, bool)
+                        )
+                    inputs_match = inputs in literal_values
                 else:
                     try:
                         inputs_match = isinstance(inputs, branch_source)

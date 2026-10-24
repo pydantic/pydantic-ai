@@ -356,6 +356,8 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     """The trace ID of the evaluation."""
     span_id: str | None = None
     """The span ID of the evaluation."""
+    dataset_name: str | None = None
+    """The name of the dataset that produced this report, if it has one."""
 
     def case_groups(self) -> list[ReportCaseGroup[InputsT, OutputT, MetadataT]] | None:
         """Group cases by source_case_name and compute per-group aggregates.

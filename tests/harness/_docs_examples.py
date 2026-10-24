@@ -40,7 +40,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -48,6 +47,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.workspaces import WorkspaceRef
+from tests.docs_model_aliases import resolve_model_aliases
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
 _ROOT = Path(__file__).parents[2]  # the repository root, above `tests/harness`
@@ -76,9 +76,9 @@ class ScriptedRun:
 
 
 def python_blocks(*paths: str) -> list[CodeExample]:
-    """Every ```python block in the markdown files at `paths`, relative to the repo root."""
+    """Every ```python block in the markdown files at `paths`, relative to the repo root, with model aliases resolved."""
     os.chdir(_ROOT)  # `find_examples` wants paths relative to the cwd, like `test_doc_snippets.py`.
-    return list(find_examples(*paths))
+    return [replace(example, source=resolve_model_aliases(example.source)) for example in find_examples(*paths)]
 
 
 def run_block(
@@ -197,7 +197,7 @@ def _script(
         run.expected = {name: expected for name, _, expected in calls}
         for message in this_run:
             for part in message.parts:
-                if isinstance(part, (ToolReturnPart, RetryPromptPart)) and part.tool_name:
+                if isinstance(part, ToolReturnPart):
                     run.outputs[part.tool_name] = str(part.content)
         runs.append(run)
         return ModelResponse(parts=[TextPart('Done.')])

@@ -31,7 +31,7 @@ The second package installs the OpenAI provider the example uses. For another mo
 from pydantic_ai import Agent
 from pydantic_ai_harness import Pylon
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[Pylon()])
+agent = Agent('{{ openai:medium }}', capabilities=[Pylon()])
 result = agent.run_sync('Summarize my open Pylon issues')
 print(result.output)
 ```
@@ -47,7 +47,7 @@ Set `PYLON_ACCESS_TOKEN` to a Pylon access token, or pass `auth=` a token. On yo
 | Not set, `None`, or `''` | `PYLON_ACCESS_TOKEN`. If that is not set either, creating the agent raises an error. |
 | An access token | That token, for every run. |
 | `'oauth'` | The account you sign in to through the browser. This only works on your own machine. |
-| A function | Called at the start of each run. The token it returns is used for that run. If it returns `None` or `''`, that run has no Pylon tools. A function never uses `PYLON_ACCESS_TOKEN`, and must not return `'oauth'`. |
+| A function | Called at the start of each run, and can be async. The token it returns is used for that run. If it returns `None` or `''`, that run has no Pylon tools. A function never uses `PYLON_ACCESS_TOKEN`, and must not return `'oauth'`. |
 
 A fixed token or `PYLON_ACCESS_TOKEN` suits a script or an agent on your own machine, where every run is the same account.
 
@@ -69,12 +69,12 @@ def pylon_token(ctx: RunContext[Deps]) -> str | None:
     return ctx.deps.pylon_token
 
 
-agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[Pylon(auth=pylon_token)])
+agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[Pylon(auth=pylon_token)])
 ```
 
 Each run connects as its own user, so concurrent runs never share an account.
 
-Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Pylon" button that runs the OAuth flow from [Before you start](#before-you-start) and saves the token to their account. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
+Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Pylon" button that runs the OAuth flow from [Before you start](#before-you-start) and saves the token to their account. Before each run, put it in the deps, or load it in an async `auth` function.
 
 With durable execution such as Temporal, read the token from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `pylon`, so `defer_loading=True` works without one. To add more than one `Pylon` to an agent, give each a distinct `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same; two that share an `id` but differ raise an error.
 
@@ -91,7 +91,7 @@ from pydantic_ai_harness import Pylon
 
 capability = Pylon()
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     toolsets=[capability.get_toolset().approval_required()],
     output_type=[str, DeferredToolRequests],
 )
@@ -119,7 +119,7 @@ pip/uv-add "pydantic-ai-slim[spec]"
 
 ```yaml
 # agent.yaml
-model: openai:gpt-5.6-sol
+model: {{ openai:medium }}
 capabilities:
   - Pylon: {}
 ```

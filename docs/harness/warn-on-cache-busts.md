@@ -23,7 +23,7 @@ from pydantic_ai.capabilities import Caching
 from pydantic_ai_harness import WarnOnCacheBusts
 
 # `Caching()` enables caching; `WarnOnCacheBusts()` only observes it.
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[Caching(), WarnOnCacheBusts()])
+agent = Agent('{{ anthropic:large }}', capabilities=[Caching(), WarnOnCacheBusts()])
 result = await agent.run('...')  # a CacheBustWarning fires if a cached prefix collapses mid-run
 # ...and on the next turn, if the prefix the first turn cached no longer reads back:
 await agent.run('...', message_history=result.all_messages())

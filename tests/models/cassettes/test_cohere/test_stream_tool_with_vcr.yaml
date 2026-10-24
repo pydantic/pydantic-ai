@@ -1,0 +1,262 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.cohere.com/v2/chat
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "665"
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    body:
+      type: json
+      content:
+        model: command-r7b-12-2024
+        messages:
+        - role: user
+          content: Use get_temperature to find the temperature in Paris, then report the result.
+        - role: assistant
+          tool_calls:
+          - id: get_temperature_2faxbq9b1fnm
+            type: function
+            function:
+              name: get_temperature
+              arguments: "{\"city\":\"Paris\"}"
+        - role: tool
+          tool_call_id: get_temperature_2faxbq9b1fnm
+          content: 24 degrees Celsius
+        tools:
+        - type: function
+          function:
+            name: get_temperature
+            description: Get the current temperature in a city.
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+        stream: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-type:
+      - text/event-stream
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 GMT
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: text
+      content: |+
+        event: message-start
+        data: {"id":"f0becd6d-5bff-42b1-9b4d-598f083891d0","type":"message-start","delta":{"message":{"role":"assistant","content":[],"tool_plan":"","tool_calls":[],"citations":[]}}}
+
+        event: content-start
+        data: {"type":"content-start","index":0,"delta":{"message":{"content":{"type":"text","text":""}}}}
+
+        event: content-delta
+        data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":"The"}}}}
+
+        event: content-delta
+        data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":" temperature"}}}}
+
+        event: content-delta
+        data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":" in"}}}}
+
+        event: content-delta
+        data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":" Paris"}}}}
+
+        event: content-delta
+        data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":" is"}}}}
+
+        event: content-delta
+        data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":" "}}}}
+
+        event: content-delta
+        data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":"2"}}}}
+
+        event: content-delta
+        data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":"4"}}}}
+
+        event: content-delta
+        data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":" degrees"}}}}
+
+        event: content-delta
+        data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":" Celsius"}}}}
+
+        event: content-delta
+        data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":"."}}}}
+
+        event: citation-start
+        data: {"type":"citation-start","index":0,"delta":{"message":{"citations":{"start":28,"end":47,"text":"24 degrees Celsius.","sources":[{"type":"tool","id":"get_temperature_2faxbq9b1fnm:0","tool_output":{"content":"24 degrees Celsius"}}],"type":"TEXT_CONTENT"}}}}
+
+        event: citation-end
+        data: {"type":"citation-end","index":0}
+
+        event: content-end
+        data: {"type":"content-end","index":0}
+
+        event: message-end
+        data: {"type":"message-end","delta":{"finish_reason":"COMPLETE","usage":{"billed_units":{"input_tokens":57,"output_tokens":11},"tokens":{"input_tokens":1538,"output_tokens":23},"cached_tokens":1024}}}
+
+        data: [DONE]
+
+  recorded_at: 2026-10-24T18:40:33.372510+00:00
+- request:
+    method: POST
+    uri: https://api.cohere.com/v2/chat
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "407"
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    body:
+      type: json
+      content:
+        model: command-r7b-12-2024
+        messages:
+        - role: user
+          content: Use get_temperature to find the temperature in Paris, then report the result.
+        tools:
+        - type: function
+          function:
+            name: get_temperature
+            description: Get the current temperature in a city.
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+        stream: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-type:
+      - text/event-stream
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 GMT
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: text
+      content: |+
+        event: message-start
+        data: {"id":"1defc2f3-bc25-4cdb-9042-90340d7e547b","type":"message-start","delta":{"message":{"role":"assistant","content":[],"tool_plan":"","tool_calls":[],"citations":[]}}}
+
+        event: tool-plan-delta
+        data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":"I"}}}
+
+        event: tool-plan-delta
+        data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" will"}}}
+
+        event: tool-plan-delta
+        data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" use"}}}
+
+        event: tool-plan-delta
+        data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" the"}}}
+
+        event: tool-plan-delta
+        data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" get"}}}
+
+        event: tool-plan-delta
+        data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":"_"}}}
+
+        event: tool-plan-delta
+        data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":"temperature"}}}
+
+        event: tool-plan-delta
+        data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" tool"}}}
+
+        event: tool-plan-delta
+        data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" to"}}}
+
+        event: tool-plan-delta
+        data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" find"}}}
+
+        event: tool-plan-delta
+        data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" the"}}}
+
+        event: tool-plan-delta
+        data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" temperature"}}}
+
+        event: tool-plan-delta
+        data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" in"}}}
+
+        event: tool-plan-delta
+        data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" Paris"}}}
+
+        event: tool-plan-delta
+        data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":"."}}}
+
+        event: tool-call-start
+        data: {"type":"tool-call-start","index":0,"delta":{"message":{"tool_calls":{"id":"get_temperature_2faxbq9b1fnm","type":"function","function":{"name":"get_temperature","arguments":""}}}}}
+
+        event: tool-call-delta
+        data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"{\""}}}}}
+
+        event: tool-call-delta
+        data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"city"}}}}}
+
+        event: tool-call-delta
+        data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"\":"}}}}}
+
+        event: tool-call-delta
+        data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":" \""}}}}}
+
+        event: tool-call-delta
+        data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"Paris"}}}}}
+
+        event: tool-call-delta
+        data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"\"}"}}}}}
+
+        event: tool-call-end
+        data: {"type":"tool-call-end","index":0}
+
+        event: message-end
+        data: {"type":"message-end","delta":{"finish_reason":"TOOL_CALL","usage":{"billed_units":{"input_tokens":50,"output_tokens":23},"tokens":{"input_tokens":1450,"output_tokens":53},"cached_tokens":1024}}}
+
+        data: [DONE]
+
+  recorded_at: 2026-10-24T18:40:32.493319+00:00

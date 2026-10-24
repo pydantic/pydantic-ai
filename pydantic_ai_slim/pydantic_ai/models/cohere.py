@@ -1,15 +1,19 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable
+from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from types import EllipsisType
-from typing import Any, Literal, assert_never, cast
+from typing import Literal, assert_never, cast
 
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+)
 
-from .. import ModelHTTPError, usage
+from .. import _model_errors, usage
 from .._run_context import RunContext
 from .._utils import (
     PeekableAsyncStream as _PeekableAsyncStream,
@@ -23,6 +27,8 @@ from ..messages import (
     CompactionPart,
     FilePart,
     FinishReason,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -30,27 +36,28 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingEffort
 from ..tools import ToolDefinition
 from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
 from ._tool_choice import resolve_tool_choice
@@ -64,11 +71,11 @@ try:
         ChatMessageV2,
         Content as CohereContent,
         ContentDeltaV2ChatStreamResponse,
-        ContentStartV2ChatStreamResponse,
         MessageEndV2ChatStreamResponse,
         SystemChatMessageV2,
         TextAssistantMessageV2ContentOneItem,
         TextContent as CohereTextContent,
+        Thinking as CohereThinking,
         ThinkingAssistantMessageV2ContentOneItem,
         ToolCallDeltaV2ChatStreamResponse,
         ToolCallStartV2ChatStreamResponse,
@@ -83,6 +90,7 @@ try:
         V2ChatStreamResponse,
     )
     from cohere.core.api_error import ApiError
+    from cohere.core.request_options import RequestOptions
     from cohere.v2.client import OMIT
 except ImportError as _import_error:
     raise ImportError(
@@ -119,12 +127,36 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         yield
     except ApiError as e:
         if (status_code := e.status_code) and status_code >= 400:
-            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.body, headers=e.headers) from e
+            message = e.body.get('message') if _is_str_dict(e.body) else None
+            category = _model_errors.http_status_category(status_code, message)
+            # Cohere reports a context window overflow as a 400 identifiable only by its message, like
+            # `too many tokens: size limit exceeded by N tokens`.
+            if status_code == 400 and isinstance(message, str) and message.lower().startswith('too many tokens'):
+                category = ModelContextWindowExceededError
+            raise ModelHTTPError.for_category(
+                category, status_code=status_code, model_name=model_name, body=e.body, headers=e.headers
+            ) from e
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
     except httpx.TransportError as e:
         # `cohere` doesn't wrap connection errors and timeouts in its own exceptions.
-        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
+        timeout = isinstance(e, httpx.TimeoutException)
+        message = transport_error_message(e)
+        raise _model_errors.connection_error(model_name, message, e, timeout=timeout) from e
 
+
+_THINKING_TOKEN_BUDGETS: dict[ThinkingEffort, int] = {
+    'minimal': 512,
+    'low': 2048,
+    'medium': 8192,
+    'high': 16384,
+    # Cohere suggests a 31K budget for maximum reasoning, leaving at least 1K tokens for the response.
+    'xhigh': 31000,
+    'max': 31000,
+}
+"""Maps unified thinking effort levels to Cohere's `thinking.token_budget`.
+
+See [the Cohere docs](https://docs.cohere.com/docs/reasoning).
+"""
 
 _FINISH_REASON_MAP: dict[ChatFinishReason, FinishReason] = {
     'COMPLETE': 'stop',
@@ -152,6 +184,13 @@ class CohereModel(Model[AsyncClientV2]):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
+
+    # Cohere's chat API takes text only.
+    _unsupported_file_inputs = frozenset({'image', 'document', 'audio', 'video'})
+
+    unsupported_settings = frozenset(
+        {'extra_body', 'extra_headers', 'logit_bias', 'parallel_tool_calls', 'service_tier', 'timeout'}
+    )
 
     _model_name: CohereModelName = field(repr=False)
     _provider: Provider[AsyncClientV2] = field(repr=False)
@@ -223,14 +262,14 @@ class CohereModel(Model[AsyncClientV2]):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-        run_context: RunContext[Any] | None = None,
+        run_context: RunContext[object] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
         )
-        cohere_settings = cast(CohereModelSettings, model_settings or {})
+        cohere_settings: CohereModelSettings = model_settings or {}
         tools, tool_choice = self._get_tool_choice(model_request_parameters, cohere_settings)
         cohere_messages = self._map_messages(messages, model_request_parameters)
         with _map_api_errors(self.model_name):
@@ -239,6 +278,7 @@ class CohereModel(Model[AsyncClientV2]):
                 messages=cohere_messages,
                 tools=tools or OMIT,
                 tool_choice=tool_choice,
+                thinking=self._translate_thinking(model_request_parameters) or OMIT,
                 max_tokens=cohere_settings.get('max_tokens', OMIT),
                 stop_sequences=cohere_settings.get('stop_sequences', OMIT),
                 temperature=cohere_settings.get('temperature', OMIT),
@@ -247,6 +287,11 @@ class CohereModel(Model[AsyncClientV2]):
                 seed=cohere_settings.get('seed', OMIT),
                 presence_penalty=cohere_settings.get('presence_penalty', OMIT),
                 frequency_penalty=cohere_settings.get('frequency_penalty', OMIT),
+                request_options=(
+                    None
+                    if (max_retries := cohere_settings.get('max_retries')) is None
+                    else RequestOptions(max_retries=max_retries)
+                ),
             )
         peekable_response: _PeekableAsyncStream[V2ChatStreamResponse, AsyncIterator[V2ChatStreamResponse]] = (
             _PeekableAsyncStream(response_iter)
@@ -260,12 +305,8 @@ class CohereModel(Model[AsyncClientV2]):
                 _response=peekable_response,
             )
         finally:
-            # `chat_stream` is an async generator wrapping the SDK's `async with` on the HTTP
-            # response, so abandoning it early (a `break`, or an exception) leaves the connection
-            # open until GC unless we close it here. Same shape as `GoogleModel.request_stream`.
-            aclose = getattr(response_iter, 'aclose', None)
-            if aclose is not None:  # pragma: no branch
-                await aclose()
+            # The wrapper cancels an active pull before closing the SDK generator.
+            await peekable_response.aclose()
 
     async def _chat(
         self,
@@ -282,6 +323,7 @@ class CohereModel(Model[AsyncClientV2]):
                 messages=cohere_messages,
                 tools=tools or OMIT,
                 tool_choice=tool_choice,
+                thinking=self._translate_thinking(model_request_parameters) or OMIT,
                 max_tokens=model_settings.get('max_tokens', OMIT),
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),
@@ -290,7 +332,27 @@ class CohereModel(Model[AsyncClientV2]):
                 seed=model_settings.get('seed', OMIT),
                 presence_penalty=model_settings.get('presence_penalty', OMIT),
                 frequency_penalty=model_settings.get('frequency_penalty', OMIT),
+                request_options=(
+                    None
+                    if (max_retries := model_settings.get('max_retries')) is None
+                    else RequestOptions(max_retries=max_retries)
+                ),
             )
+
+    def _translate_thinking(self, model_request_parameters: ModelRequestParameters) -> CohereThinking | None:
+        """Map the unified `thinking` setting to Cohere's `thinking` parameter.
+
+        Reasoning models think by default; `thinking=False` turns that off, and an effort level caps the
+        thinking at a `token_budget`.
+        """
+        thinking = model_request_parameters.thinking
+        if thinking is None:
+            return None
+        if thinking is False:
+            return CohereThinking(type='disabled')
+        if thinking is True:
+            return CohereThinking(type='enabled')
+        return CohereThinking(type='enabled', token_budget=_THINKING_TOKEN_BUDGETS[thinking])
 
     def _get_tool_choice(
         self,
@@ -444,7 +506,7 @@ class CohereModel(Model[AsyncClientV2]):
 
     @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[ChatMessageV2]:
-        for part in message.parts:
+        for part in _sendable_request_parts(message.parts):
             if isinstance(part, SystemPromptPart):
                 yield SystemChatMessageV2(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
@@ -461,22 +523,17 @@ class CohereModel(Model[AsyncClientV2]):
                             raise RuntimeError('Cohere does not yet support multi-modal inputs.')
                     yield UserChatMessageV2(role='user', content=cohere_content)
             elif isinstance(part, ToolReturnPart):
+                if part.files:
+                    raise NotImplementedError('Files are not supported in Cohere tool returns')
                 yield ToolChatMessageV2(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part),
                     content=part.model_response_str(),
                 )
-            elif isinstance(part, RetryPromptPart):
-                if part.tool_name is None:
-                    yield UserChatMessageV2(role='user', content=part.model_response())
-                else:
-                    yield ToolChatMessageV2(
-                        role='tool',
-                        tool_call_id=_guard_tool_call_id(t=part),
-                        content=part.model_response(),
-                    )
-            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                raise _unprojected_instruction_delta_error()
+            elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                raise _unprepared_part_error(part)
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                 raise _unconverted_speech_part_error()
@@ -487,16 +544,12 @@ class CohereModel(Model[AsyncClientV2]):
 def _map_usage(response: V2ChatResponse, provider: str, provider_url: str, model: str) -> usage.RequestUsage:
     u = response.usage
     if u is None:
-        return usage.RequestUsage()
+        return usage.RequestUsage(unmeasured_requests=1)
     return _map_cohere_usage(u, provider, provider_url, model)
 
 
 def _map_cohere_usage(u: CohereUsage, provider: str, provider_url: str, model: str) -> usage.RequestUsage:
-    """Map a bare Cohere `Usage` object to a `RequestUsage`.
-
-    Split out of `_map_usage` so the streaming path can reuse it: `MessageEndV2ChatStreamResponse`
-    carries a `Usage` directly rather than a full `V2ChatResponse`.
-    """
+    """Map usage shared by chat responses and message-end stream events."""
     details: dict[str, int] = {}
     if u.billed_units is not None:
         if u.billed_units.input_tokens:  # pragma: no branch
@@ -540,43 +593,17 @@ class CohereStreamedResponse(StreamedResponse):
     _provider_url: str
     _response: _PeekableAsyncStream[V2ChatStreamResponse, AsyncIterator[V2ChatStreamResponse]]
     _timestamp: datetime = field(default_factory=_now_utc)
+    _usage_received: bool | None = field(default=False, init=False)
 
     async def close_stream(self) -> None:
         await self._response.aclose()
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        thinking_indices: set[int] = set()
-
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name):
             async for event in self._response:
-                if isinstance(event, ContentStartV2ChatStreamResponse):
-                    if event.index is not None:
-                        content_type = (
-                            event.delta
-                            and event.delta.message
-                            and event.delta.message.content
-                            and event.delta.message.content.type
-                        )
-                        if content_type == 'thinking':
-                            thinking_indices.add(event.index)
-
-                elif isinstance(event, ContentDeltaV2ChatStreamResponse):
-                    if event.index is not None and event.delta and event.delta.message and event.delta.message.content:
-                        mc = event.delta.message.content
-                        if event.index in thinking_indices:
-                            if thinking := mc.thinking:
-                                for ev in self._parts_manager.handle_thinking_delta(
-                                    vendor_part_id=event.index,
-                                    content=thinking,
-                                ):
-                                    yield ev
-                        else:
-                            if text := mc.text:
-                                for ev in self._parts_manager.handle_text_delta(
-                                    vendor_part_id=event.index,
-                                    content=text,
-                                ):
-                                    yield ev
+                if isinstance(event, ContentDeltaV2ChatStreamResponse):
+                    for part_event in self._handle_content_delta(event):
+                        yield part_event
 
                 elif isinstance(event, ToolCallStartV2ChatStreamResponse):
                     if (
@@ -587,7 +614,7 @@ class CohereStreamedResponse(StreamedResponse):
                     ):
                         tc = event.delta.message.tool_calls
                         maybe_event = self._parts_manager.handle_tool_call_delta(
-                            vendor_part_id=event.index,
+                            vendor_part_id=('tool', event.index),
                             tool_name=tc.function.name if tc.function else None,
                             tool_call_id=tc.id,
                         )
@@ -603,7 +630,7 @@ class CohereStreamedResponse(StreamedResponse):
                     ):
                         tc = event.delta.message.tool_calls
                         maybe_event = self._parts_manager.handle_tool_call_delta(
-                            vendor_part_id=event.index,
+                            vendor_part_id=('tool', event.index),
                             args=tc.function.arguments if tc.function else None,
                         )
                         if maybe_event is not None:
@@ -618,9 +645,22 @@ class CohereStreamedResponse(StreamedResponse):
                             }
                             self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
                         if event.delta.usage:
-                            self._usage += _map_cohere_usage(
-                                event.delta.usage, self._provider_name, self._provider_url, self._model_name
+                            self._add_usage(
+                                _map_cohere_usage(
+                                    event.delta.usage, self._provider_name, self._provider_url, self._model_name
+                                ),
+                                reported=True,
                             )
+
+    def _handle_content_delta(self, event: ContentDeltaV2ChatStreamResponse) -> Iterator[ModelResponseStreamEvent]:
+        if event.delta and event.delta.message and event.delta.message.content:
+            content = event.delta.message.content
+            if thinking := content.thinking:
+                yield from self._parts_manager.handle_thinking_delta(
+                    vendor_part_id=('thinking', event.index), content=thinking
+                )
+            elif text := content.text:
+                yield from self._parts_manager.handle_text_delta(vendor_part_id=('text', event.index), content=text)
 
     @property
     def model_name(self) -> CohereModelName:

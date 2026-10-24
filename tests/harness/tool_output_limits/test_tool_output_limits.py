@@ -31,6 +31,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.tool_output_limits import (
+    READ_TOOL_RESULT_KIND,
     Band,
     LocalFileStore,
     Passthrough,
@@ -92,6 +93,9 @@ def _make_ctx(
         model: Any = dataclasses.field(default_factory=_FakeModel)
         deps: None = None
         conversation_id: str | None = None
+
+        def tool_name_for_kind(self, kind: object) -> str | None:
+            return None
 
     ctx = _FakeCtx(usage=RunUsage(), run_id=run_id, retry=retry, usage_limits=usage_limits)
     if model is not None:
@@ -171,6 +175,11 @@ class TestPayloadHelpers:
 
     def test_json_lines_empty_list(self):
         assert json_lines([]) == ''
+
+    def test_presets_render_bytes_that_are_not_utf8_as_base64(self):
+        assert indented_json({'text': b'hi'}) == '{\n  "text": "hi"\n}'
+        assert indented_json({'blob': b'\xff', 'text': b'hi'}) == '{\n  "blob": "_w==",\n  "text": "aGk="\n}'
+        assert json_lines([{'text': b'hi'}, {'blob': b'\xff'}]) == '{"text":"hi"}\n{"blob":"_w=="}'
 
     def test_presets_escape_line_separator_chars(self):
         rendered = json_lines([{'text': 'a\N{LINE SEPARATOR}b'}, {'ok': True}])
@@ -430,10 +439,21 @@ class TestConstruction:
 
 
 class TestPassthrough:
-    async def test_read_tool_exempt(self):
+    async def test_read_tool_exempt_by_kind(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=1, action=Truncate(max_chars=2))])
+        out = await cap.after_tool_execute(
+            _make_ctx(),
+            call=_call('renamed_reader'),
+            tool_def=ToolDefinition(name='renamed_reader', tool_kind=READ_TOOL_RESULT_KIND),
+            args={},
+            result='x' * 100,
+        )
+        assert out == 'x' * 100
+
+    async def test_read_tool_name_alone_is_not_exempt(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=1, action=Truncate(max_chars=2))])
         out = await _run(cap, 'x' * 100, tool_name=READ_TOOL_NAME)
-        assert out == 'x' * 100
+        assert out != 'x' * 100
 
     async def test_tool_filter_skips_unmatched(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(
@@ -1090,7 +1110,7 @@ class TestInternals:
 
     def test_build_spill_preview_tokens_unit(self):
         unit = _Unit(binary=False, text='x' * 100, data=b'x' * 100, value='x' * 100, suffix='')
-        assert 'tokens' in _build_spill_preview('h/1.0', unit, 20, over_tokens=True)
+        assert 'tokens' in _build_spill_preview('h/1.0', unit, 20, over_tokens=True, read_hint='')
 
 
 # ---------------------------------------------------------------------------
@@ -1213,6 +1233,25 @@ class TestAgentIntegration:
         assert part.metadata is not None
         assert part.metadata['original_metadata'] == 'app-request-id-123'
         assert 'overflow_handle' in part.metadata
+
+    async def test_structured_return_with_bytes_that_are_not_utf8(self, anyio_backend: str):
+        """Binary in a structured return is measured as base64 rather than failing the run."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[_call('read_blob')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=1000))])
+        agent = Agent(FunctionModel(respond), capabilities=[cap])
+
+        @agent.tool_plain
+        def read_blob() -> dict[str, bytes]:
+            return {'blob': b'\xff' * 3}
+
+        result = await agent.run('go')
+        returns = [p.content for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert returns == ['{"blob":"____"}']
 
     async def test_small_output_untouched(self, tmp_path: Path, anyio_backend: str):
         cap: ToolOutputLimits[object] = ToolOutputLimits(

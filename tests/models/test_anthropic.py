@@ -11,7 +11,7 @@ from enum import Enum
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 if TYPE_CHECKING:
     from cassetter import Cassette
@@ -25,12 +25,18 @@ from pydantic_ai import (
     Agent,
     BinaryContent,
     CachePoint,
+    Citation,
+    CitationSource,
+    ContentCitationAnchor,
+    DocumentCitationSource,
     DocumentUrl,
     FinalResultEvent,
     ImageUrl,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelMessage,
+    ModelOverloadedError,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -39,7 +45,8 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     SystemPromptPart,
     TextContent,
@@ -55,11 +62,13 @@ from pydantic_ai import (
     ToolReturnPart,
     UsageLimitExceeded,
     UseEnumMemberDocstrings,
+    UserContent,
     UserPromptPart,
+    WebCitationSource,
 )
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._utils import PeekableAsyncStream
-from pydantic_ai.capabilities import Capability, NativeTool, ToolSearch
+from pydantic_ai.capabilities import AbstractCapability, Capability, Citations, NativeTool, ToolSearch
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
@@ -93,17 +102,26 @@ from ..cassette_utils import single_request_body
 from ..conftest import (
     IsDatetime,
     IsInstance,
+    IsList,
     IsNow,
     IsStr,
     RequestCapture,
     TestEnv,
     iter_message_parts,
+    legacy_retry_prompt_part,
     message,
     raise_if_exception,
     try_import,
 )
 from ..parts_from_messages import part_types_from_messages
-from .conftest import AnthropicModelFactory, cache_breakpoints, content_blocks, json_objects, message_shape
+from .citation_utils import IsCitationList
+from .conftest import (
+    AnthropicModelFactory,
+    cache_breakpoints,
+    content_blocks,
+    json_objects,
+    message_shape,
+)
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -120,6 +138,7 @@ with try_import() as imports_successful:
         AsyncStream,
         omit as OMIT,
     )
+    from anthropic._models import construct_type
     from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
@@ -128,6 +147,12 @@ with try_import() as imports_successful:
         BetaAdvisorResultBlock,
         BetaAdvisorToolResultBlock,
         BetaAdvisorToolResultError,
+        BetaBase64PDFSource,
+        BetaCitationCharLocation,
+        BetaCitationContentBlockLocation,
+        BetaCitationsDelta,
+        BetaCitationSearchResultLocation,
+        BetaCitationsWebSearchResultLocation,
         BetaCodeExecutionResultBlock,
         BetaCodeExecutionToolResultBlock,
         BetaCompactionBlock,
@@ -135,6 +160,7 @@ with try_import() as imports_successful:
         BetaCompactionIterationUsage,
         BetaContentBlock,
         BetaDirectCaller,
+        BetaDocumentBlock,
         BetaInputJSONDelta,
         BetaMemoryTool20250818CreateCommand,
         BetaMemoryTool20250818DeleteCommand,
@@ -148,6 +174,7 @@ with try_import() as imports_successful:
         BetaMessageParam,
         BetaMessageTokensCount,
         BetaOutputTokensDetails,
+        BetaPlainTextSource,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
         BetaRawContentBlockStopEvent,
@@ -160,6 +187,9 @@ with try_import() as imports_successful:
         BetaTextDelta,
         BetaToolUseBlock,
         BetaUsage,
+        BetaWebFetchBlock,
+        BetaWebFetchToolResultBlock,
+        BetaWebFetchToolResultErrorBlock,
         BetaWebSearchResultBlock,
         BetaWebSearchToolResultBlock,
     )
@@ -174,9 +204,10 @@ with try_import() as imports_successful:
         AnthropicModel,
         AnthropicModelSettings,
         AnthropicStreamedResponse,
-        _is_expired_container_error,  # pyright: ignore[reportPrivateUsage]
-        _map_usage,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.models.anthropic._citations import fetched_page, map_citations
+    from pydantic_ai.models.anthropic._errors import is_expired_container_error
+    from pydantic_ai.models.anthropic._response import map_usage
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.profiles.anthropic import anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -198,6 +229,483 @@ pytestmark = [
         "ignore:The model 'claude-sonnet-4-0' is deprecated and will reach end-of-life.*:DeprecationWarning"
     ),
 ]
+
+
+def _citation_delta_event(index: int) -> PartDeltaEvent:
+    return PartDeltaEvent(
+        index=index,
+        delta=TextPartDelta(
+            content_delta='',
+            provider_name='anthropic',
+            provider_details={'citations': IsList(length=(1, ...))},
+            citations_delta=IsCitationList(),
+        ),
+    )
+
+
+def test_anthropic_content_block_citation_is_a_document_citation():
+    """A citation of a custom content document's blocks becomes a document citation of the whole text part.
+
+    Unit test: no recording cites a custom content document.
+    """
+    citation = BetaCitationContentBlockLocation(
+        cited_text='block excerpt',
+        document_index=0,
+        document_title='Report',
+        file_id='file-1',
+        start_block_index=1,
+        end_block_index=2,
+        type='content_block_location',
+    )
+
+    # The location is inside the cited document, not the answer, so it stays in the raw citation data.
+    assert map_citations([citation], 'answer') == [
+        Citation(
+            sources=[DocumentCitationSource(document_id='file-1', title='Report', excerpts=['block excerpt'])],
+            anchor=ContentCitationAnchor(start=0, end=6),
+        )
+    ]
+
+
+_ANTHROPIC_WEB_SEARCH_CITATION: dict[str, Any] = {
+    'type': 'web_search_result_location',
+    'cited_text': 'web excerpt',
+    'url': 'https://example.com',
+    'title': 'Example',
+    'encrypted_index': 'encrypted',
+}
+
+
+@pytest.mark.parametrize(
+    'citation,provider_name,kept',
+    [
+        pytest.param(_ANTHROPIC_WEB_SEARCH_CITATION, 'anthropic', True, id='web-search'),
+        pytest.param('not a citation', 'anthropic', False, id='not-a-dict'),
+        pytest.param(
+            {key: value for key, value in _ANTHROPIC_WEB_SEARCH_CITATION.items() if key != 'encrypted_index'},
+            'anthropic',
+            False,
+            id='web-search-without-encrypted-index',
+        ),
+        # A document citation names its document by position, which edited history can point at another document.
+        pytest.param(
+            {
+                'type': 'char_location',
+                'cited_text': 'thirty days',
+                'document_index': 0,
+                'document_title': None,
+                'start_char_index': 21,
+                'end_char_index': 32,
+            },
+            'anthropic',
+            False,
+            id='document',
+        ),
+        pytest.param(_ANTHROPIC_WEB_SEARCH_CITATION, 'bedrock', False, id='other-provider'),
+    ],
+)
+@pytest.mark.parametrize(
+    ('content', 'anchor', 'fits'),
+    [
+        pytest.param('An answer.', ContentCitationAnchor(start=0, end=10), True, id='unchanged'),
+        pytest.param('An edited answer.', ContentCitationAnchor(start=0, end=10), False, id='edited'),
+        # A UI adapter joined this block with the text before it.
+        pytest.param('Before. An answer.', ContentCitationAnchor(start=8, end=18), False, id='joined'),
+        pytest.param('An answer.', None, False, id='citations-removed'),
+    ],
+)
+async def test_anthropic_replays_only_web_search_citations(
+    citation: Any, provider_name: str, kept: bool, content: str, anchor: ContentCitationAnchor | None, fits: bool
+):
+    """Web search citations go back to Anthropic while they still cover the whole text, which Anthropic cited.
+
+    Document citations go back as plain text. Unit test: recordings in `test_citations.py` only hold valid web search
+    citations of unchanged text.
+    """
+    citations = [Citation(sources=[WebCitationSource(url='https://example.com')], anchor=anchor)] if anchor else None
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='mock-api-key'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Search the web.')]),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    content,
+                    provider_name=provider_name,
+                    provider_details={'citations': [citation]},
+                    citations=citations,
+                )
+            ],
+            provider_name=provider_name,
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), AnthropicModelSettings()
+    )
+
+    [replayed] = cast(list[dict[str, Any]], messages[1]['content'])
+    assert replayed.get('citations') == ([_ANTHROPIC_WEB_SEARCH_CITATION] if kept and fits else None)
+
+
+async def test_anthropic_web_search_citations_not_replayed_without_web_search():
+    """Clients without web search, such as Bedrock, reject web search citations, so they go back as plain text.
+
+    Checked live: Bedrock rejects `web_search_result_location` with a 400. Unit test: it pins the request.
+    """
+    from anthropic import AsyncAnthropicBedrock
+
+    client = mock_anthropic_client(AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com')
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Search the web.')]),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'An answer.',
+                    provider_name='anthropic',
+                    provider_details={'citations': [_ANTHROPIC_WEB_SEARCH_CITATION]},
+                    citations=[
+                        Citation(
+                            sources=[WebCitationSource(url='https://example.com')],
+                            anchor=ContentCitationAnchor(start=0, end=10),
+                        )
+                    ],
+                )
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), AnthropicModelSettings()
+    )
+
+    assert messages[1]['content'] == [{'text': 'An answer.', 'type': 'text'}]
+
+
+@pytest.mark.parametrize('source', ['result-123', 'https://example.com/result'])
+def test_anthropic_client_search_result_citation_is_not_normalized(source: str):
+    """Unit test: no recording sends client-provided search results."""
+    citation = BetaCitationSearchResultLocation(
+        cited_text='search excerpt',
+        search_result_index=0,
+        source=source,
+        title='Search result',
+        start_block_index=0,
+        end_block_index=1,
+        type='search_result_location',
+    )
+
+    assert map_citations([citation], 'answer') is None
+
+
+def _web_fetch_result(content: BetaWebFetchBlock | BetaWebFetchToolResultErrorBlock) -> BetaWebFetchToolResultBlock:
+    return BetaWebFetchToolResultBlock(type='web_fetch_tool_result', tool_use_id='srvtoolu_1', content=content)
+
+
+def test_anthropic_pdf_or_failed_fetch_is_not_a_fetched_page():
+    """Unit test: no recording fetches a PDF or fails a fetch."""
+    pdf = BetaWebFetchBlock(
+        type='web_fetch_result',
+        url='https://example.com/page',
+        content=BetaDocumentBlock(
+            type='document',
+            source=BetaBase64PDFSource(type='base64', media_type='application/pdf', data='JVBERi0='),
+            title='Page',
+            citations=None,
+        ),
+    )
+    error = BetaWebFetchToolResultErrorBlock(type='web_fetch_tool_result_error', error_code='url_not_accessible')
+
+    assert fetched_page(_web_fetch_result(pdf)) is None
+    assert fetched_page(_web_fetch_result(error)) is None
+
+
+@pytest.mark.parametrize('stream', [pytest.param(False, id='request'), pytest.param(True, id='stream')])
+async def test_anthropic_citation_of_page_fetched_in_earlier_turn(allow_model_requests: None, stream: bool):
+    """A page Web Fetch fetched in an earlier turn is still cited as a web page with its URL.
+
+    Unit test: no recording cites a page fetched in an earlier response.
+    """
+    page = BetaWebFetchBlock(
+        type='web_fetch_result',
+        url='https://example.com/page',
+        content=BetaDocumentBlock(
+            type='document',
+            source=BetaPlainTextSource(type='text', media_type='text/plain', data='Page text'),
+            title='Page',
+            citations=None,
+        ),
+    )
+    pdf = page.model_copy(
+        update={
+            'url': 'https://example.com/pdf',
+            'content': page.content.model_copy(
+                update={'source': BetaBase64PDFSource(type='base64', media_type='application/pdf', data='JVBERi0=')}
+            ),
+        }
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Fetch the pages.')]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart('web_fetch', {'url': 'https://example.com/page'}, provider_name='anthropic'),
+                *(
+                    NativeToolReturnPart(
+                        'web_fetch',
+                        fetched.model_dump(mode='json'),
+                        tool_call_id=f'srvtoolu_{i}',
+                        provider_name='anthropic',
+                    )
+                    for i, fetched in enumerate([pdf, page])
+                ),
+                # A failed fetch isn't a page.
+                NativeToolReturnPart(
+                    'web_fetch',
+                    {'type': 'web_fetch_tool_error', 'error_code': 'url_not_accessible'},
+                    tool_call_id='srvtoolu_2',
+                    provider_name='anthropic',
+                ),
+                TextPart('Fetched.'),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart('What does the page say?')]),
+    ]
+    citation = BetaCitationCharLocation(
+        cited_text='Page text',
+        document_index=1,
+        document_title='Page',
+        start_char_index=0,
+        end_char_index=9,
+        type='char_location',
+    )
+    if stream:
+        client = MockAnthropic.create_stream_mock(
+            [
+                BetaRawMessageStartEvent(
+                    type='message_start',
+                    message=BetaMessage(
+                        id='message-1',
+                        model='claude-sonnet-4-5',
+                        role='assistant',
+                        type='message',
+                        content=[],
+                        stop_reason=None,
+                        usage=BetaUsage(input_tokens=1, output_tokens=0),
+                    ),
+                ),
+                BetaRawContentBlockStartEvent(
+                    type='content_block_start', index=0, content_block=BetaTextBlock(type='text', text='It says so.')
+                ),
+                BetaRawContentBlockDeltaEvent(
+                    type='content_block_delta',
+                    index=0,
+                    delta=BetaCitationsDelta(type='citations_delta', citation=citation),
+                ),
+                BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+                BetaRawMessageStopEvent(type='message_stop'),
+            ]
+        )
+    else:
+        client = MockAnthropic.create_mock(
+            completion_message(
+                [BetaTextBlock(text='It says so.', type='text', citations=[citation])],
+                BetaUsage(input_tokens=5, output_tokens=6),
+            )
+        )
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+
+    if stream:
+        async with model.request_stream(history, None, ModelRequestParameters()) as response:
+            async for _ in response:
+                pass
+        parts = response.get().parts
+    else:
+        parts = (await model.request(history, None, ModelRequestParameters())).parts
+
+    assert parts == [
+        TextPart(
+            content='It says so.',
+            provider_name='anthropic',
+            provider_details={'citations': [citation.model_dump()]},
+            citations=[
+                Citation(
+                    sources=[WebCitationSource(url='https://example.com/page', title='Page', excerpts=['Page text'])],
+                    anchor=ContentCitationAnchor(start=0, end=11),
+                )
+            ],
+        )
+    ]
+
+
+def test_anthropic_character_citation_not_on_fetched_page_is_a_document_citation():
+    """Unit test: no recording cites a document next to a fetched page."""
+    citation = BetaCitationCharLocation(
+        cited_text='Other text',
+        document_index=0,
+        document_title='Page',
+        start_char_index=0,
+        end_char_index=10,
+        type='char_location',
+    )
+
+    assert map_citations([citation], 'answer', [('https://example.com/page', 'Page text')]) == [
+        Citation(
+            sources=[DocumentCitationSource(title='Page', excerpts=['Other text'])],
+            anchor=ContentCitationAnchor(start=0, end=6),
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ('pages', 'url'),
+    [
+        pytest.param(
+            [('https://example.com/a', 'Terms: 30 days.'), ('https://example.com/a', 'Terms: 30 days.')],
+            'https://example.com/a',
+            id='same-page-fetched-twice',
+        ),
+        pytest.param(
+            [('https://example.com/a', 'Terms: 30 days.'), ('https://example.com/b', 'Terms: 30 days.')],
+            None,
+            id='two-pages-match',
+        ),
+    ],
+)
+def test_anthropic_fetched_page_url_only_when_one_page_matches(pages: list[tuple[str, str]], url: str | None):
+    """A citation only gets a fetched page's URL when one page matches; otherwise it stays a document source.
+
+    Unit test: no recording fetches two pages with the same text.
+    """
+    citation = BetaCitationCharLocation(
+        cited_text='Terms',
+        document_index=1,
+        document_title='Terms',
+        start_char_index=0,
+        end_char_index=5,
+        type='char_location',
+    )
+
+    [mapped] = map_citations([citation], 'answer', pages) or []
+
+    expected: CitationSource = (
+        WebCitationSource(url, title='Terms', excerpts=['Terms'])
+        if url
+        else DocumentCitationSource(title='Terms', excerpts=['Terms'])
+    )
+    assert mapped.sources == [expected]
+
+
+def test_anthropic_citation_without_source_fields_is_skipped():
+    """Unit test: no recording has a citation with no title, file or cited text."""
+    citation = BetaCitationCharLocation(
+        cited_text='', document_index=0, start_char_index=0, end_char_index=0, type='char_location'
+    )
+
+    assert map_citations([citation], 'answer') is None
+
+
+def test_anthropic_citation_of_unknown_type_is_skipped():
+    """Unit test: no recording has a citation type the SDK doesn't know."""
+    # Built the way the SDK builds a response: an unknown type becomes one of its classes, without validation.
+    block = cast(
+        BetaTextBlock,
+        construct_type(
+            type_=BetaTextBlock,
+            value={'type': 'text', 'text': 'answer', 'citations': [{'type': 'future_location', 'cited_text': 'x'}]},
+        ),
+    )
+
+    assert map_citations(block.citations or [], block.text) is None
+
+
+def test_anthropic_citation_of_empty_text_is_unanchored():
+    """Unit test: no recording cites an empty text block."""
+    citation = BetaCitationsWebSearchResultLocation(
+        type='web_search_result_location', url='https://example.com', cited_text='', encrypted_index='opaque-index'
+    )
+
+    assert map_citations([citation], '') == [Citation(sources=[WebCitationSource(url='https://example.com')])]
+
+
+async def test_anthropic_stream_mixed_web_and_document_citations(allow_model_requests: None):
+    """Web and document citations streamed onto one text block become one citation with both sources.
+
+    Unit test: no recording cites a web result and a document in the same text block.
+    """
+    stream = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='message-1',
+                model='claude-sonnet-4-5',
+                role='assistant',
+                type='message',
+                content=[],
+                stop_reason=None,
+                usage=BetaUsage(input_tokens=1, output_tokens=0),
+            ),
+        ),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start', index=0, content_block=BetaTextBlock(type='text', text='answer')
+        ),
+        BetaRawContentBlockDeltaEvent(
+            type='content_block_delta',
+            index=0,
+            delta=BetaCitationsDelta(
+                type='citations_delta',
+                citation=BetaCitationsWebSearchResultLocation(
+                    type='web_search_result_location',
+                    url='https://example.com',
+                    title='Example',
+                    cited_text='web excerpt',
+                    encrypted_index='opaque-index',
+                ),
+            ),
+        ),
+        BetaRawContentBlockDeltaEvent(
+            type='content_block_delta',
+            index=0,
+            delta=BetaCitationsDelta(
+                type='citations_delta',
+                citation=BetaCitationCharLocation(
+                    cited_text='document excerpt',
+                    document_index=0,
+                    document_title='Report',
+                    start_char_index=0,
+                    end_char_index=16,
+                    type='char_location',
+                ),
+            ),
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(stream)),
+    )
+
+    async with Agent(model).run_stream('question') as result:
+        await result.get_output()
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[0]
+    assert isinstance(part, TextPart)
+    assert part.citations == [
+        Citation(
+            sources=[
+                WebCitationSource(url='https://example.com', title='Example', excerpts=['web excerpt']),
+                DocumentCitationSource(title='Report', excerpts=['document excerpt']),
+            ],
+            anchor=ContentCitationAnchor(start=0, end=6),
+        )
+    ]
+
 
 # Type variable for generic AsyncStream
 T = TypeVar('T')
@@ -498,6 +1006,7 @@ async def test_async_request_thinking_tokens(allow_model_requests: None):
             requests=1,
             input_tokens=3,
             output_tokens=100,
+            output_reasoning_tokens=40,
             details={'input_tokens': 3, 'output_tokens': 100, 'thinking_tokens': 40},
             cost=Decimal('0.0004024'),
         )
@@ -583,6 +1092,105 @@ async def test_cache_point_as_first_content_raises_error(allow_model_requests: N
         ),
     ):
         await agent.run([CachePoint(), 'This should fail'])
+
+
+def _replayed_mcp_tool_result_history(padding: str) -> list[ModelMessage]:
+    """A conversation whose assistant turn ends in a replayed DeepWiki MCP tool result.
+
+    The opening prompt is padded past the model's minimum cacheable prefix, so a breakpoint on the
+    MCP result writes a cache entry the next request can read back. Each test pads with its own
+    sentence so one test's recording can't read the cache entry another one wrote.
+    """
+    return [
+        ModelRequest(
+            parts=[UserPromptPart(content=f'{padding} ' * 150 + '\nWhat is the pydantic/pydantic-ai repository?')]
+        ),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name='mcp_server:deepwiki',
+                    args={
+                        'action': 'call_tool',
+                        'tool_name': 'ask_question',
+                        'tool_args': {'repoName': 'pydantic/pydantic-ai', 'question': 'What is it?'},
+                    },
+                    tool_call_id='mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
+                    provider_name='anthropic',
+                ),
+                NativeToolReturnPart(
+                    tool_name='mcp_server:deepwiki',
+                    content={
+                        'content': [{'citations': None, 'text': 'Pydantic AI is an agent framework.', 'type': 'text'}],
+                        'is_error': False,
+                    },
+                    tool_call_id='mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
+                    provider_name='anthropic',
+                ),
+            ],
+            provider_name='anthropic',
+        ),
+    ]
+
+
+@pytest.mark.vcr()
+async def test_cache_point_after_replayed_mcp_tool_result(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """A `CachePoint` opening a user message puts its boundary on a replayed MCP tool result ending the previous turn.
+
+    Run twice: the second request reads back the prefix the first one wrote, which pins that the API
+    accepts and honors `cache_control` on an `mcp_tool_result` block.
+    """
+    agent = Agent(
+        anthropic_model('claude-sonnet-4-5', capture=True),
+        capabilities=[NativeTool(MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'))],
+    )
+
+    usages: list[RunUsage] = []
+    for _ in range(2):
+        result = await agent.run(
+            [CachePoint(), 'Summarize that in five words.'],
+            message_history=_replayed_mcp_tool_result_history(
+                'A leading cache point lands on the replayed MCP result.'
+            ),
+        )
+        usages.append(result.usage)
+
+    assert cache_breakpoints(request_capture.body('/v1/messages')) == snapshot((None, ['messages[1].content[1]']))
+    assert content_blocks(request_capture.body('/v1/messages'), 'mcp_tool_result') == snapshot(
+        [
+            {
+                'content': [{'citations': None, 'text': 'Pydantic AI is an agent framework.', 'type': 'text'}],
+                'is_error': False,
+                'tool_use_id': 'mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
+                'type': 'mcp_tool_result',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            }
+        ]
+    )
+    assert [(usage.cache_write_tokens, usage.cache_read_tokens) for usage in usages] == snapshot([(2907, 0), (0, 2907)])
+
+
+@pytest.mark.vcr()
+async def test_cache_messages_with_trailing_replayed_mcp_tool_result(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """Automatic caching handles a history ending in an assistant turn whose last block is a replayed MCP tool result.
+
+    The breakpoint lands on the MCP result and the API writes the prefix it ends to the cache.
+    `max_tokens` stops the continuation before the model can call the MCP server again, which would
+    fold that call's own cache traffic into the usage.
+    """
+    model = anthropic_model('claude-sonnet-4-5', capture=True)
+
+    response = await model.request(
+        _replayed_mcp_tool_result_history('Automatic message caching ends on the replayed MCP result.'),
+        AnthropicModelSettings(anthropic_cache_messages=True, max_tokens=5),
+        ModelRequestParameters(native_tools=[MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp')]),
+    )
+
+    assert cache_breakpoints(request_capture.body('/v1/messages')) == snapshot((None, ['messages[1].content[1]']))
+    assert (response.usage.cache_write_tokens, response.usage.cache_read_tokens) == snapshot((3057, 0))
 
 
 async def test_cache_point_with_image_content(allow_model_requests: None):
@@ -722,7 +1330,8 @@ def test_anthropic_model_resolves_profile_for_bedrock_model_ids(model_name: str,
 @pytest.mark.parametrize(
     ('client', 'model_name', 'supports_json_schema_output'),
     [
-        pytest.param('bedrock', 'us.anthropic.claude-opus-4-7', False, id='bedrock-withheld-geo'),
+        pytest.param('bedrock', 'us.anthropic.claude-fable-5', False, id='bedrock-withheld-geo'),
+        pytest.param('bedrock', 'us.anthropic.claude-haiku-5-5', True, id='bedrock-served-geo'),
         pytest.param('bedrock-mantle', 'anthropic.claude-sonnet-5', True, id='bedrock-mantle'),
         pytest.param('claude-api', 'claude-sonnet-5', True, id='direct'),
     ],
@@ -750,7 +1359,7 @@ def test_anthropic_structured_output_follows_legacy_bedrock_support(
     'model_name,expected',
     [
         pytest.param(
-            'global.anthropic.claude-sonnet-5',
+            'global.anthropic.claude-fable-5',
             snapshot(
                 {
                     'output_config': None,
@@ -761,7 +1370,7 @@ def test_anthropic_structured_output_follows_legacy_bedrock_support(
             id='withheld',
         ),
         pytest.param(
-            'global.anthropic.claude-sonnet-4-6',
+            'global.anthropic.claude-haiku-5-5',
             snapshot(
                 {
                     'output_config': {
@@ -788,10 +1397,10 @@ async def test_anthropic_legacy_bedrock_structured_output_request(
 ):
     """On `AsyncAnthropicBedrock`, a model Bedrock withholds structured output from gets Tool Output and no `strict`.
 
-    Bedrock answers `output_config.format` on Claude Sonnet 5 with a 400:
-    https://github.com/pydantic/pydantic-ai/issues/9878. Claude Sonnet 4.6, which Bedrock serves structured output
-    for, keeps Native Output and `strict`. A mock transport stands in for a cassette because the recording
-    account has no access to the models Bedrock withholds structured output from.
+    Bedrock answers `output_config.format` on the models it withholds structured output from with a 400:
+    https://github.com/pydantic/pydantic-ai/issues/9878. Claude Haiku 5.5, which Bedrock serves structured output
+    for, keeps Native Output and `strict`: https://github.com/pydantic/pydantic-ai/issues/10697. A mock transport
+    stands in for a cassette because the recording account has no access to Claude Fable 5.
     """
     bodies: list[dict[str, JsonValue]] = []
 
@@ -815,7 +1424,7 @@ async def test_anthropic_legacy_bedrock_structured_output_request(
         def add(a: int, b: int) -> int:
             raise NotImplementedError
 
-        # Claude Sonnet 5 thinks by default; Sonnet 4.6 needs the setting to reach the same output mode choice.
+        # Both models think by default; the setting keeps the output mode choice independent of that.
         with pytest.raises(ModelHTTPError):
             await agent.run('1+1', model_settings={'thinking': True})
 
@@ -840,7 +1449,11 @@ def _tool_search_param(client_cls: Any, base_url: str, tool: ToolSearchTool) -> 
 
 
 def test_anthropic_tool_search_defaults_to_regex_on_legacy_bedrock():
-    """The legacy Bedrock InvokeModel API doesn't support `bm25`, so the default strategy is `regex` there."""
+    """An unset strategy resolves to `regex` on the legacy Bedrock InvokeModel API.
+
+    Pins the outgoing tool parameter directly, which a cassette's default matchers wouldn't catch. An explicit
+    `bm25` is covered by `test_anthropic_tool_search_bm25_on_legacy_bedrock`.
+    """
     base_url = 'https://bedrock-runtime.us-east-1.amazonaws.com'
     param = _tool_search_param(AsyncAnthropicBedrock, base_url, ToolSearchTool())
     assert param == {'type': 'tool_search_tool_regex_20251119', 'name': 'tool_search_tool_regex'}
@@ -849,80 +1462,13 @@ def test_anthropic_tool_search_defaults_to_regex_on_legacy_bedrock():
     assert param == {'type': 'tool_search_tool_regex_20251119', 'name': 'tool_search_tool_regex'}
 
 
-def test_anthropic_tool_search_bm25_rejected_on_legacy_bedrock():
-    """An explicit `bm25` strategy on the legacy Bedrock InvokeModel API is a `UserError`, not an opaque 400."""
-    m = AnthropicModel(
-        'claude-haiku-4-5',
-        provider=AnthropicProvider(
-            anthropic_client=mock_anthropic_client(
-                AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com'
-            )
-        ),
-    )
-    with pytest.raises(
-        UserError, match="ToolSearch\\(strategy='bm25'\\) is not supported by the `AsyncAnthropicBedrock` client"
-    ):
-        m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
-            [], ModelRequestParameters(native_tools=[ToolSearchTool(strategy='bm25')]), AnthropicModelSettings()
-        )
-
-
 def test_anthropic_tool_search_defaults_to_bm25_on_non_legacy_bedrock_clients():
-    """`bm25` stays the default on clients not in `_BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS` —
+    """`bm25` stays the default on clients not in `_REGEX_DEFAULT_TOOL_SEARCH_CLIENTS` —
     e.g. the (Messages-API-based) Bedrock Mantle client, like the direct Anthropic API."""
     param = _tool_search_param(
         AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws', ToolSearchTool()
     )
     assert param == {'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'}
-
-
-@pytest.mark.parametrize(
-    'cache_value,expected_ttl',
-    [
-        pytest.param(True, '5m', id='default-5m'),
-        pytest.param('1h', '1h', id='custom-1h'),
-    ],
-)
-@pytest.mark.parametrize(
-    'client_cls,base_url',
-    [
-        pytest.param(AsyncAnthropicBedrock, 'https://bedrock.amazonaws.com', id='bedrock'),
-        pytest.param(AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com', id='vertex'),
-    ],
-)
-async def test_anthropic_cache_fallback_on_unsupported_clients(
-    allow_model_requests: None,
-    cache_value: bool | Literal['1h'],
-    expected_ttl: str,
-    client_cls: type[Any],
-    base_url: str,
-):
-    """Test that anthropic_cache falls back to per-block caching on Bedrock and Vertex.
-
-    On these platforms the top-level cache_control parameter is not supported,
-    so per-block cache_control is applied to the last user message instead.
-    """
-    from unittest.mock import AsyncMock, MagicMock
-
-    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
-
-    mock_client = MagicMock()
-    mock_client.timeout = DEFAULT_TIMEOUT
-    mock_client.__class__ = client_cls
-    mock_client.base_url = base_url
-    mock_client.beta.messages.create = AsyncMock(return_value=c)
-
-    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(model, model_settings=AnthropicModelSettings(anthropic_cache=cache_value))
-
-    result = await agent.run('Hello')
-    assert result.output == 'Response'
-
-    call_kwargs = mock_client.beta.messages.create.call_args.kwargs
-    assert call_kwargs['cache_control'] is OMIT
-    last_user_msg = call_kwargs['messages'][-1]
-    content = last_user_msg['content']
-    assert content[-1]['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
 
 
 @pytest.mark.parametrize(
@@ -2356,9 +2902,9 @@ async def test_earlier_cache_breakpoints_raised_in_count_tokens(allow_model_requ
 @pytest.mark.parametrize(
     ('client_cls', 'expected_ttls'),
     [
-        # Bedrock and Vertex don't take the top-level `cache_control`, so it goes on the last block instead.
+        # The legacy Bedrock client doesn't take the top-level `cache_control`, so it goes on the last block instead.
         pytest.param(AsyncAnthropicBedrock, ['1h', '1h'], id='bedrock'),
-        pytest.param(AsyncAnthropicVertex, ['1h', '1h'], id='vertex'),
+        pytest.param(AsyncAnthropicVertex, ['1h', '1h (automatic)'], id='vertex'),
         pytest.param(AsyncAnthropicFoundry, ['1h', '1h (automatic)'], id='foundry'),
     ],
 )
@@ -2653,11 +3199,13 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 instructions='this is the system prompt',
@@ -3413,9 +3961,12 @@ def test_model_error_reported_in_stream(
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     with pytest.raises(expected) as exc_info:
         Agent(m).run_sync('hello')
-    assert type(exc_info.value) is expected
+    assert isinstance(exc_info.value, expected)
     if isinstance(exc_info.value, ModelHTTPError):
         assert exc_info.value.status_code == 529
+        assert isinstance(exc_info.value, ModelOverloadedError)
+    else:
+        assert type(exc_info.value) is ModelAPIError
 
 
 @pytest.mark.parametrize(
@@ -3457,7 +4008,7 @@ def test_expired_container_error(status_code: int, error_type: str | None, messa
         response=httpx2.Response(status_code=status_code, request=httpx2.Request('POST', 'https://example.com/v1')),
         body=body,
     )
-    assert _is_expired_container_error(error) is expected
+    assert is_expired_container_error(error) is expected
 
 
 def test_model_connection_error(allow_model_requests: None) -> None:
@@ -3514,7 +4065,8 @@ async def test_stream_transport_error_mid_stream(allow_model_requests: None) -> 
             async with agent.run_stream('hello') as result:
                 await result.get_output()
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == 'read'
     assert exc_info.value.message == 'connection reset'
     assert isinstance(exc_info.value.__cause__, httpx2.ReadError)
 
@@ -3543,6 +4095,214 @@ async def test_document_binary_content_input(
     result = await agent.run(['What is the main content on this document?', document_content])
     assert result.output == snapshot(
         'The main content on this document is simply the text "Dummy PDF file" displayed as a heading. The document appears to be a placeholder or test PDF file with minimal content - just a single title/heading and otherwise blank space.'
+    )
+
+
+@pytest.mark.parametrize(
+    'citations,enable_citations,web_fetch_citations',
+    [
+        pytest.param(False, False, None, id='off'),
+        pytest.param(True, False, {'enabled': True}, id='on'),
+        pytest.param(False, True, {'enabled': True}, id='off-web-fetch-on'),
+    ],
+)
+async def test_anthropic_citations_request_setting(
+    allow_model_requests: None,
+    citations: bool,
+    enable_citations: bool,
+    web_fetch_citations: dict[str, bool] | None,
+) -> None:
+    """The shared setting enables citations on every Anthropic document block and on Web Fetch, as Web Fetch's own flag does.
+
+    Unit test: it pins the request body, which the default cassette matchers ignore.
+    """
+    response = completion_message(
+        [BetaTextBlock(text='The policy allows thirty days.', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=6),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    await Agent(
+        model,
+        capabilities=[NativeTool(WebFetchTool(enable_citations=enable_citations))],
+        model_settings=ModelSettings(citations=citations),
+    ).run(
+        [
+            'What is the return window?',
+            BinaryContent(data=b'Returns are allowed within thirty days.', media_type='text/plain'),
+        ]
+    )
+
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    document = request['messages'][0]['content'][1]
+    assert document.get('citations') == ({'enabled': True} if citations else None)
+    web_fetch_tool = next(tool for tool in request['tools'] if tool['name'] == 'web_fetch')
+    assert web_fetch_tool.get('citations') == web_fetch_citations
+
+
+@pytest.mark.parametrize(
+    'output_type',
+    [
+        pytest.param(ToolOutput(int), id='tool'),
+        pytest.param(NativeOutput(int), id='native'),
+        pytest.param(PromptedOutput(int), id='prompted'),
+    ],
+)
+async def test_anthropic_citations_off_for_structured_output(
+    allow_model_requests: None, output_type: ToolOutput[int] | NativeOutput[int] | PromptedOutput[int]
+) -> None:
+    """The `citations` setting doesn't turn on document or Web Fetch citations when the output isn't text.
+
+    Anthropic rejects citations with native output, and writes its `<cite>` markup into tool and prompted output.
+    Unit test: it pins the request body, which the default cassette matchers ignore.
+    """
+    response = completion_message(
+        [BetaToolUseBlock(id='1', name='final_result', input={'response': 30}, type='tool_use')]
+        if isinstance(output_type, ToolOutput)
+        else [BetaTextBlock(text='{"response": 30}', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=6),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    await Agent(
+        model,
+        output_type=output_type,
+        capabilities=[NativeTool(WebFetchTool())],
+        model_settings=ModelSettings(citations=True),
+    ).run(
+        [
+            'What is the return window?',
+            BinaryContent(data=b'Returns are allowed within thirty days.', media_type='text/plain'),
+        ]
+    )
+
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'citations' not in request['messages'][0]['content'][1]
+    web_fetch_tool = next(tool for tool in request['tools'] if tool['name'] == 'web_fetch')
+    assert web_fetch_tool.get('citations') is None
+
+
+@dataclass
+class _ForceToolOnFirstStep(AbstractCapability[Any]):
+    """Forces a tool call on the first step, as in the docs' "force a tool on the first step" example."""
+
+    tool_choice: Literal['required'] | list[str]
+
+    def get_model_settings(self) -> Callable[[RunContext[Any]], ModelSettings]:
+        return lambda ctx: ModelSettings(tool_choice=self.tool_choice) if ctx.run_step == 1 else ModelSettings()
+
+
+@pytest.mark.parametrize(
+    'tool_choice',
+    [pytest.param('required', id='required'), pytest.param(['save_summary'], id='named-tool')],
+)
+@pytest.mark.parametrize(
+    'cited',
+    [
+        pytest.param(
+            BinaryContent(data=b'Returns are allowed within thirty days.', media_type='text/plain'), id='document'
+        ),
+        pytest.param(NativeTool(WebFetchTool()), id='web-fetch'),
+    ],
+)
+async def test_anthropic_citations_with_forced_tool_raises(
+    allow_model_requests: None, tool_choice: Literal['required'] | list[str], cited: BinaryContent | NativeTool
+) -> None:
+    """With a forced tool call, Anthropic writes its `<cite>` markup into the tool's arguments, so it's an error.
+
+    Unit test: the error is raised before any request is sent.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=5, output_tokens=6))
+    )
+    agent = Agent(
+        AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client)),
+        capabilities=[
+            Citations(),
+            _ForceToolOnFirstStep(tool_choice),
+            *([cited] if isinstance(cited, NativeTool) else []),
+        ],
+    )
+
+    @agent.tool_plain
+    def save_summary(summary: str) -> str:  # pragma: no cover
+        return summary
+
+    prompt: list[UserContent] = ['Summarise the policy.', *([cited] if isinstance(cited, BinaryContent) else [])]
+    with pytest.raises(UserError, match="`Citations\\(\\)` can't be used with a `tool_choice` that forces a tool call"):
+        await agent.run(prompt)
+    assert get_mock_chat_completion_kwargs(mock_client) == []
+
+
+async def test_anthropic_citations_with_forced_tool_and_nothing_to_cite(allow_model_requests: None) -> None:
+    """With no document or Web Fetch tool, the setting doesn't change the request, so a forced tool call is allowed.
+
+    Unit test: it pins that the run goes ahead.
+    """
+    mock_client = MockAnthropic.create_mock(
+        [
+            completion_message(
+                [BetaToolUseBlock(id='1', name='save_summary', input={'summary': 'Thirty days.'}, type='tool_use')],
+                BetaUsage(input_tokens=5, output_tokens=6),
+            ),
+            completion_message([BetaTextBlock(text='Saved.', type='text')], BetaUsage(input_tokens=5, output_tokens=6)),
+        ]
+    )
+    agent = Agent(
+        AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client)),
+        capabilities=[Citations(), _ForceToolOnFirstStep('required')],
+    )
+
+    @agent.tool_plain
+    def save_summary(summary: str) -> str:
+        return summary
+
+    result = await agent.run('Save a summary of the returns policy.')
+
+    assert result.output == 'Saved.'
+
+
+@pytest.mark.parametrize('citations', [pytest.param(False, id='off'), pytest.param(True, id='on')])
+async def test_anthropic_citations_tool_return_documents(allow_model_requests: None, citations: bool) -> None:
+    """Anthropic requires citations on all of a request's documents or none, so tool-returned documents get them too.
+
+    Unit test: no recording returns an uploaded file or a downloaded PDF from a tool. A tool-returned
+    `BinaryContent` document is recorded in `test_anthropic_tool_return_document_citations`.
+    """
+    response = completion_message(
+        [BetaTextBlock(text='The policy allows thirty days.', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=6),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('What is the return window?')]),
+        ModelResponse(parts=[ToolCallPart('read_policy', {}, tool_call_id='call-1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'read_policy',
+                    [
+                        UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/pdf'),
+                        # An `ImageUrl` that downloads as a PDF is sent as a document, so it gets citations too.
+                        ImageUrl('https://example.com/policy', media_type='application/pdf', force_download=True),
+                    ],
+                    tool_call_id='call-1',
+                )
+            ]
+        ),
+    ]
+
+    with patch('pydantic_ai.models.anthropic.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {'data': b'%PDF-1.4 policy', 'content_type': 'application/pdf'}
+        await Agent(model, model_settings=ModelSettings(citations=citations)).run(message_history=history)
+
+    tool_result = get_mock_chat_completion_kwargs(mock_client)[0]['messages'][-1]['content'][0]
+    documents = [block for block in tool_result['content'] if block['type'] == 'document']
+    assert [document.get('citations') for document in documents] == (
+        [{'enabled': True}] * 2 if citations else [None] * 2
     )
 
 
@@ -4019,6 +4779,7 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                         'output_tokens': 277,
                         'thinking_tokens': 32,
                     },
+                    output_reasoning_tokens=32,
                     cost=Decimal('0.004284'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -4078,6 +4839,7 @@ I should provide practical advice for crossing a river safely.\
                         'output_tokens': 440,
                         'thinking_tokens': 98,
                     },
+                    output_reasoning_tokens=98,
                     cost=Decimal('0.007521'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -4097,7 +4859,9 @@ I should provide practical advice for crossing a river safely.\
 async def test_anthropic_model_empty_thinking_signature_sent_as_text(allow_model_requests: None):
     """A thinking part with an empty signature (e.g. left behind by an interrupted stream)
     must not be replayed as a `thinking` block: the API rejects empty signatures with a 400.
-    It falls back to tagged text instead, like thinking parts from other providers.
+    It goes back as tagged text instead, carried in a user message ahead of the turn it was
+    produced in like any other reasoning that can't ride the native channel — see
+    `ModelProfile.mimics_assistant_message_formatting`.
     """
     c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
@@ -4119,13 +4883,13 @@ async def test_anthropic_model_empty_thinking_signature_sent_as_text(allow_model
         [
             {'role': 'user', 'content': [{'text': 'Think about crossing the street.', 'type': 'text'}]},
             {
-                'role': 'assistant',
+                'role': 'user',
                 'content': [
                     {
                         'text': """\
-<thinking>
+<assistant_thinking>
 I was interrupted mid-thought
-</thinking>\
+</assistant_thinking>\
 """,
                         'type': 'text',
                     }
@@ -4285,6 +5049,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         'output_tokens': 91,
                         'thinking_tokens': 42,
                     },
+                    output_reasoning_tokens=42,
                     cost=Decimal('0.001644'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -4727,6 +5492,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         'output_tokens': 274,
                         'thinking_tokens': 160,
                     },
+                    output_reasoning_tokens=160,
                     cost=Decimal('0.004548'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -5505,19 +6271,66 @@ async def test_anthropic_opus_5_5_features(allow_model_requests: None, anthropic
     assert any(isinstance(p, TextPart) for p in response.parts)
 
 
-async def test_anthropic_opus_5_5_thinking_false_omits_thinking(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+@pytest.mark.parametrize('model_name', ['claude-opus-5-5', 'claude-fable-5', 'claude-fable-5-1'])
+async def test_anthropic_thinking_false_uses_lowest_effort_where_thinking_cant_be_turned_off(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, model_name: str
 ):
-    """Claude Opus 5.5 rejects `thinking: {'type': 'disabled'}`, and unified `thinking=False` never sends it.
-
-    With no `thinking` field the model thinks adaptively at its default effort, so the request succeeds.
+    """Claude Opus 5.5 and Fable reject `thinking: {'type': 'disabled'}` and `{'type': 'between_tools'}`, so unified
+    `thinking=False` asks for the least thinking they accept: adaptive thinking at `low` effort.
     """
-    m = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, model_settings={'thinking': False})
 
     result = await agent.run('What is 2+2?')
-    assert result.output == snapshot('2 + 2 = **4**')
-    assert 'thinking' not in single_request_body(vcr)
+    assert '4' in result.output
+    request_body = single_request_body(vcr)
+    assert {k: request_body.get(k) for k in ('thinking', 'output_config')} == snapshot(
+        {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'low'}}
+    )
+
+
+async def test_anthropic_sonnet_5_5_thinking_false_sends_between_tools(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+):
+    """Claude Sonnet 5.5 rejects `thinking: {'type': 'disabled'}`, so unified `thinking=False` sends `between_tools`,
+    which turns thinking off before the response."""
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings={'thinking': False})
+
+    result = await agent.run('What is 2+2?')
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert not any(isinstance(p, ThinkingPart) for p in response.parts)
+    request_body = single_request_body(vcr)
+    assert request_body['thinking'] == snapshot({'type': 'between_tools'})
+    assert 'output_config' not in request_body
+
+
+@pytest.mark.parametrize(
+    'settings',
+    [
+        pytest.param({'thinking': False, 'anthropic_effort': 'xhigh'}, id='unified'),
+        pytest.param(
+            {'anthropic_thinking': {'type': 'between_tools'}, 'anthropic_effort': 'max'}, id='anthropic_thinking'
+        ),
+    ],
+)
+async def test_anthropic_sonnet_5_5_rejects_top_effort_when_thinking_disabled(
+    allow_model_requests: None, settings: AnthropicModelSettings
+):
+    """Claude Sonnet 5.5 caps effort at `high` with `between_tools`, like Opus 5 with `disabled`.
+
+    Verified live: `claude-sonnet-5-5` returns a 400 (`output_config.effort 'xhigh' is not supported when thinking
+    is disabled on this model`) for `xhigh` and `max` with `between_tools`, and accepts `low` to `high`.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Hello!', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    )
+    model = AnthropicModel(
+        'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=mock_client), settings=settings
+    )
+
+    with pytest.raises(UserError, match=r"while thinking is disabled .*'between_tools'"):
+        await Agent(model).run('Hello')
 
 
 async def test_anthropic_sonnet_5_5_between_tools(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
@@ -5685,8 +6498,10 @@ async def test_anthropic_unified_thinking_non_adaptive_model(allow_model_request
     assert kwargs.get('output_config') is None or kwargs['output_config'] is OMIT
 
 
-async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests: None):
-    """Verify that thinking=False does not send a thinking parameter at all."""
+@pytest.mark.parametrize('model_name', ['claude-opus-4-6', 'claude-mythos-preview'])
+async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests: None, model_name: str):
+    """Verify that thinking=False sends no thinking parameter on a model that doesn't think by default, or on one
+    that can't turn thinking off and has no effort setting to lower (Claude Mythos Preview)."""
     from anthropic._types import omit as OMIT
 
     responses = [
@@ -5696,14 +6511,14 @@ async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests
         ),
     ]
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=ModelSettings(thinking=False))
 
     await agent.run('What is 2+2?')
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    # thinking=False on always-thinking model is silently ignored — thinking param is OMIT
     assert kwargs.get('thinking') is OMIT
+    assert kwargs.get('output_config') is OMIT
 
 
 @pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
@@ -6089,7 +6904,7 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
 def test_usage(
     message_callback: Callable[[], BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent], usage: RunUsage
 ):
-    assert _map_usage(message_callback(), 'anthropic', '', 'unknown') == usage
+    assert map_usage(message_callback(), 'anthropic', '', 'unknown') == usage
 
 
 def test_usage_otel_attributes_omit_first_class_token_details_with_compaction():
@@ -6121,7 +6936,7 @@ def test_usage_otel_attributes_omit_first_class_token_details_with_compaction():
             ],
         )
     )
-    mapped = _map_usage(message, 'anthropic', '', 'unknown')
+    mapped = map_usage(message, 'anthropic', '', 'unknown')
     assert mapped.input_tokens == 212
     assert mapped.details['input_tokens'] == 23  # still accessible on `details`
     attributes = mapped.opentelemetry_attributes()
@@ -6147,9 +6962,9 @@ def test_usage_otel_attributes_omit_first_class_token_details_with_compaction():
 
 def test_streaming_usage():
     start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
-    initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
+    initial_usage = map_usage(start, 'anthropic', '', 'unknown')
     delta = BetaRawMessageDeltaEvent(delta=Delta(), usage=BetaMessageDeltaUsage(output_tokens=5), type='message_delta')
-    final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
+    final_usage = map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
     assert final_usage == snapshot(
         RequestUsage(input_tokens=1, output_tokens=5, details={'input_tokens': 1, 'output_tokens': 5})
     )
@@ -6162,18 +6977,19 @@ def test_streaming_usage_thinking_tokens():
     cassette cannot protect because the matcher replays whatever delta was recorded regardless.
     """
     start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
-    initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
+    initial_usage = map_usage(start, 'anthropic', '', 'unknown')
     delta = BetaRawMessageDeltaEvent(
         delta=Delta(),
         usage=BetaMessageDeltaUsage(output_tokens=5, output_tokens_details=BetaOutputTokensDetails(thinking_tokens=3)),
         type='message_delta',
     )
-    final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
+    final_usage = map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
     assert final_usage == snapshot(
         RequestUsage(
             input_tokens=1,
             output_tokens=5,
             details={'input_tokens': 1, 'output_tokens': 5, 'thinking_tokens': 3},
+            output_reasoning_tokens=3,
         )
     )
 
@@ -6181,17 +6997,17 @@ def test_streaming_usage_thinking_tokens():
 def test_map_usage_bedrock_start_event_without_message():
     """On Bedrock the SDK drops SSE event types, so Bedrock-only chunks are non-validating
     `construct_type`d into `BetaRawMessageStartEvent(message=None)`, violating the annotation.
-    `_map_usage` must not dereference `message.message.usage` on such events (https://github.com/pydantic/pydantic-ai/issues/5774).
+    `map_usage` must not dereference `message.message.usage` on such events (https://github.com/pydantic/pydantic-ai/issues/5774).
 
     A unit test rather than VCR: the `message=None` event is an SDK construct artifact, not a
     server response shape, so it can't be elicited from a recorded request.
     """
     # `model_construct` skips validation, mirroring the SDK's `construct_type` on Bedrock.
     start = BetaRawMessageStartEvent.model_construct(type='message_start', message=None)
-    assert _map_usage(start, 'anthropic', '', 'unknown') == snapshot(RequestUsage())
+    assert map_usage(start, 'anthropic', '', 'unknown') == snapshot(RequestUsage())
 
     existing = RequestUsage(input_tokens=7, output_tokens=3)
-    assert _map_usage(start, 'anthropic', '', 'unknown', existing_usage=existing) == existing
+    assert map_usage(start, 'anthropic', '', 'unknown', existing_usage=existing) == existing
 
 
 async def test_streaming_bedrock_start_event_without_message_is_skipped(allow_model_requests: None):
@@ -6270,11 +7086,11 @@ def test_streaming_usage_with_compaction():
         ),
         type='message_start',
     )
-    initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
+    initial_usage = map_usage(start, 'anthropic', '', 'unknown')
     delta = BetaRawMessageDeltaEvent(
         delta=Delta(), usage=BetaMessageDeltaUsage(input_tokens=23, output_tokens=500), type='message_delta'
     )
-    final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
+    final_usage = map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
     assert final_usage == snapshot(
         RequestUsage(
             input_tokens=212,
@@ -6355,7 +7171,8 @@ async def test_anthropic_web_search_tool(
             None,
         )
     )
-    assert result.all_messages() == snapshot(
+    messages = result.all_messages()
+    assert messages == snapshot(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the weather in San Francisco today?', timestamp=IsDatetime())],
@@ -6466,21 +7283,36 @@ Based on the search results, here's the weather information for San Francisco to
 - \
 """
                     ),
-                    TextPart(content='Temperature: 66°F with clear skies'),
+                    TextPart(
+                        content='Temperature: 66°F with clear skies',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
 - \
 """
                     ),
-                    TextPart(content='Wind: W at 3 mph with gusts up to 5 mph'),
+                    TextPart(
+                        content='Wind: W at 3 mph with gusts up to 5 mph',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
 - \
 """
                     ),
-                    TextPart(content='Air quality is poor and unhealthy for sensitive groups'),
+                    TextPart(
+                        content='Air quality is poor and unhealthy for sensitive groups',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
@@ -6489,21 +7321,12 @@ Based on the search results, here's the weather information for San Francisco to
 - \
 """
                     ),
-                    TextPart(content='High: 78°F with partly cloudy skies'),
                     TextPart(
-                        content="""\
-
-- \
-"""
+                        content='High: 78°F with partly cloudy skies',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
-                    TextPart(content='Winds W at 10 to 20 mph'),
-                    TextPart(
-                        content="""\
-
-- \
-"""
-                    ),
-                    TextPart(content='8% chance of precipitation'),
                     TextPart(
                         content="""\
 
@@ -6511,7 +7334,34 @@ Based on the search results, here's the weather information for San Francisco to
 """
                     ),
                     TextPart(
-                        content='Some clouds in the morning will give way to mainly sunny skies for the afternoon'
+                        content='Winds W at 10 to 20 mph',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
+                    ),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(
+                        content='8% chance of precipitation',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
+                    ),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(
+                        content='Some clouds in the morning will give way to mainly sunny skies for the afternoon',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                     TextPart(
                         content="""\
@@ -6521,14 +7371,24 @@ Based on the search results, here's the weather information for San Francisco to
 - \
 """
                     ),
-                    TextPart(content='Low: 57°F with clear to partly cloudy conditions'),
+                    TextPart(
+                        content='Low: 57°F with clear to partly cloudy conditions',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
 - \
 """
                     ),
-                    TextPart(content='Winds W at 10 to 20 mph'),
+                    TextPart(
+                        content='Winds W at 10 to 20 mph',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
@@ -6563,7 +7423,6 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
         ]
     )
 
-    messages = result.all_messages()
     result = await agent.run(user_prompt='how about Mexico City?', message_history=messages)
     assert result.new_messages() == snapshot(
         [
@@ -6677,21 +7536,36 @@ Based on the search results, here's the weather information for Mexico City toda
 - \
 """
                     ),
-                    TextPart(content='Temperature: 59°F (15°C) with clouds and sun'),
+                    TextPart(
+                        content='Temperature: 59°F (15°C) with clouds and sun',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
 - \
 """
                     ),
-                    TextPart(content='Wind: NNE at 6 mph with gusts up to 6 mph'),
+                    TextPart(
+                        content='Wind: NNE at 6 mph with gusts up to 6 mph',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
 - \
 """
                     ),
-                    TextPart(content='Air quality is poor and unhealthy for sensitive groups'),
+                    TextPart(
+                        content='Air quality is poor and unhealthy for sensitive groups',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
@@ -6700,15 +7574,11 @@ Based on the search results, here's the weather information for Mexico City toda
 - \
 """
                     ),
-                    TextPart(content='High: 72°F (22°C) - mostly cloudy with a touch of rain this afternoon'),
                     TextPart(
-                        content="""\
-
-- \
-"""
-                    ),
-                    TextPart(
-                        content='High 73F with partly cloudy conditions early followed by scattered thunderstorms. Winds NNE at 10 to 15 mph, 70% chance of rain'
+                        content='High: 72°F (22°C) - mostly cloudy with a touch of rain this afternoon',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                     TextPart(
                         content="""\
@@ -6717,7 +7587,22 @@ Based on the search results, here's the weather information for Mexico City toda
 """
                     ),
                     TextPart(
-                        content='Scattered thunderstorms developing during the afternoon. High near 75F with winds NNE at 10 to 15 mph and 70% chance of rain'
+                        content='High 73F with partly cloudy conditions early followed by scattered thunderstorms. Winds NNE at 10 to 15 mph, 70% chance of rain',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
+                    ),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(
+                        content='Scattered thunderstorms developing during the afternoon. High near 75F with winds NNE at 10 to 15 mph and 70% chance of rain',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                     TextPart(
                         content="""\
@@ -6727,14 +7612,24 @@ Based on the search results, here's the weather information for Mexico City toda
 - \
 """
                     ),
-                    TextPart(content='Low: 58°F with cloudy conditions and a couple of showers'),
+                    TextPart(
+                        content='Low: 58°F with cloudy conditions and a couple of showers',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
 - \
 """
                     ),
-                    TextPart(content='Cloudy overnight with low 57F and winds NNW at 10 to 15 mph'),
+                    TextPart(
+                        content='Cloudy overnight with low 57F and winds NNW at 10 to 15 mph',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
@@ -7004,7 +7899,12 @@ Based on the search results, I can provide you with information about San Franci
 According to AccuWeather's forecast, \
 """
                     ),
-                    TextPart(content='today (September 16) shows a high of 76°F and low of 59°F'),
+                    TextPart(
+                        content='today (September 16) shows a high of 76°F and low of 59°F',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
  for San Francisco.
@@ -7012,7 +7912,12 @@ According to AccuWeather's forecast, \
 From the recent San Francisco Chronicle weather report, \
 """
                     ),
-                    TextPart(content='average mid-September highs in San Francisco are around 70 degrees'),
+                    TextPart(
+                        content='average mid-September highs in San Francisco are around 70 degrees',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 , so today's forecast of 76°F is slightly above the typical temperature for this time of year.
@@ -7022,7 +7927,10 @@ The general weather pattern for San Francisco in September includes:
 """
                     ),
                     TextPart(
-                        content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C (55°F) at night'
+                        content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C (55°F) at night',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                     TextPart(
                         content="""\
@@ -7031,7 +7939,10 @@ The general weather pattern for San Francisco in September includes:
 """
                     ),
                     TextPart(
-                        content='There are normally 9 hours of bright sunshine each day in San Francisco in September'
+                        content='There are normally 9 hours of bright sunshine each day in San Francisco in September',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                     TextPart(
                         content="""\
@@ -7040,7 +7951,10 @@ The general weather pattern for San Francisco in September includes:
 """
                     ),
                     TextPart(
-                        content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm. Typically, there are no rainy days during this month'
+                        content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm. Typically, there are no rainy days during this month',
+                        provider_name='anthropic',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                     TextPart(
                         content="""\
@@ -7460,9 +8374,15 @@ According to AccuWeather's forecast, \
                 part=TextPart(content='today (September 16) shows a high of 76°F and low of 59°F'),
                 previous_part_kind='text',
             ),
+            _citation_delta_event(7),
             PartEndEvent(
                 index=7,
-                part=TextPart(content='today (September 16) shows a high of 76°F and low of 59°F'),
+                part=TextPart(
+                    content='today (September 16) shows a high of 76°F and low of 59°F',
+                    provider_name='anthropic',
+                    provider_details={'citations': IsList(length=(1, ...))},
+                    citations=IsCitationList(),
+                ),
                 next_part_kind='text',
             ),
             PartStartEvent(
@@ -7493,9 +8413,15 @@ From the recent San Francisco Chronicle weather report, \
                 part=TextPart(content='average mid-September highs in San Francisco are around 70 degrees'),
                 previous_part_kind='text',
             ),
+            _citation_delta_event(9),
             PartEndEvent(
                 index=9,
-                part=TextPart(content='average mid-September highs in San Francisco are around 70 degrees'),
+                part=TextPart(
+                    content='average mid-September highs in San Francisco are around 70 degrees',
+                    provider_name='anthropic',
+                    provider_details={'citations': IsList(length=(1, ...))},
+                    citations=IsCitationList(),
+                ),
                 next_part_kind='text',
             ),
             PartStartEvent(
@@ -7540,10 +8466,14 @@ The general weather pattern for San Francisco in September includes:
                 previous_part_kind='text',
             ),
             PartDeltaEvent(index=11, delta=TextPartDelta(content_delta=' (55°F) at night')),
+            _citation_delta_event(11),
             PartEndEvent(
                 index=11,
                 part=TextPart(
-                    content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C (55°F) at night'
+                    content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C (55°F) at night',
+                    provider_name='anthropic',
+                    provider_details={'citations': IsList(length=(1, ...))},
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -7573,10 +8503,14 @@ The general weather pattern for San Francisco in September includes:
                 previous_part_kind='text',
             ),
             PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' September')),
+            _citation_delta_event(13),
             PartEndEvent(
                 index=13,
                 part=TextPart(
-                    content='There are normally 9 hours of bright sunshine each day in San Francisco in September'
+                    content='There are normally 9 hours of bright sunshine each day in San Francisco in September',
+                    provider_name='anthropic',
+                    provider_details={'citations': IsList(length=(1, ...))},
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -7609,10 +8543,14 @@ The general weather pattern for San Francisco in September includes:
             ),
             PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' Typically, there are no rainy days')),
             PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' during this month')),
+            _citation_delta_event(15),
             PartEndEvent(
                 index=15,
                 part=TextPart(
-                    content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm. Typically, there are no rainy days during this month'
+                    content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm. Typically, there are no rainy days during this month',
+                    provider_name='anthropic',
+                    provider_details={'citations': IsList(length=(1, ...))},
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -8735,7 +9673,7 @@ async def test_anthropic_advisor_usage_iterations():
             ),
         ],
     )
-    mapped = _map_usage(
+    mapped = map_usage(
         completion_message([BetaTextBlock(text='ok', type='text')], usage_with_advisor),
         'anthropic',
         'https://api.anthropic.com',
@@ -9632,6 +10570,7 @@ async def test_anthropic_code_execution_tool(
                         'output_tokens': 113,
                         'thinking_tokens': 18,
                     },
+                    output_reasoning_tokens=18,
                     cost=Decimal('0.015801'),
                 ),
                 model_name='claude-sonnet-4-6',
@@ -9701,6 +10640,7 @@ async def test_anthropic_code_execution_tool(
                         'output_tokens': 103,
                         'thinking_tokens': 18,
                     },
+                    output_reasoning_tokens=18,
                     cost=Decimal('0.015615'),
                 ),
                 model_name='claude-sonnet-4-6',
@@ -12136,10 +13076,14 @@ Based on the search results, I can identify the top 3 major news stories from ar
             PartDeltaEvent(index=6, delta=TextPartDelta(content_delta="enskyy and NATO's chief ahea")),
             PartDeltaEvent(index=6, delta=TextPartDelta(content_delta="d of Friday's U.S.-")),
             PartDeltaEvent(index=6, delta=TextPartDelta(content_delta='Russia summit')),
+            _citation_delta_event(6),
             PartEndEvent(
                 index=6,
                 part=TextPart(
-                    content="European leaders held a high-stakes meeting Wednesday with President Trump, Vice President Vance, Ukraine's Volodymyr Zelenskyy and NATO's chief ahead of Friday's U.S.-Russia summit"
+                    content="European leaders held a high-stakes meeting Wednesday with President Trump, Vice President Vance, Ukraine's Volodymyr Zelenskyy and NATO's chief ahead of Friday's U.S.-Russia summit",
+                    provider_name='anthropic',
+                    provider_details={'citations': IsList(length=(1, ...))},
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -12151,10 +13095,14 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 previous_part_kind='text',
             ),
             PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' the Trump-Putin summit on Friday')),
+            _citation_delta_event(8),
             PartEndEvent(
                 index=8,
                 part=TextPart(
-                    content='The White House lowered its expectations surrounding the Trump-Putin summit on Friday'
+                    content='The White House lowered its expectations surrounding the Trump-Putin summit on Friday',
+                    provider_name='anthropic',
+                    provider_details={'citations': IsList(length=(1, ...))},
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -12169,10 +13117,14 @@ Based on the search results, I can identify the top 3 major news stories from ar
             PartDeltaEvent(index=10, delta=TextPartDelta(content_delta="-EU PM Tusk for Poland's new president –")),
             PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=" a political ally who once opposed Ukraine's")),
             PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=' NATO and EU bids')),
+            _citation_delta_event(10),
             PartEndEvent(
                 index=10,
                 part=TextPart(
-                    content="In a surprise move just days before the Trump-Putin summit, the White House swapped out pro-EU PM Tusk for Poland's new president – a political ally who once opposed Ukraine's NATO and EU bids"
+                    content="In a surprise move just days before the Trump-Putin summit, the White House swapped out pro-EU PM Tusk for Poland's new president – a political ally who once opposed Ukraine's NATO and EU bids",
+                    provider_name='anthropic',
+                    provider_details={'citations': IsList(length=(1, ...))},
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -12209,10 +13161,14 @@ Based on the search results, I can identify the top 3 major news stories from ar
             ),
             PartDeltaEvent(index=12, delta=TextPartDelta(content_delta="eover of the city's police entered its thir")),
             PartDeltaEvent(index=12, delta=TextPartDelta(content_delta='d night')),
+            _citation_delta_event(12),
             PartEndEvent(
                 index=12,
                 part=TextPart(
-                    content="Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's takeover of the city's police entered its third night"
+                    content="Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's takeover of the city's police entered its third night",
+                    provider_name='anthropic',
+                    provider_details={'citations': IsList(length=(1, ...))},
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -12229,10 +13185,14 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 index=14, delta=TextPartDelta(content_delta='d federalization of local police to crack down on crime')
             ),
             PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=" in the nation's capital")),
+            _citation_delta_event(14),
             PartEndEvent(
                 index=14,
                 part=TextPart(
-                    content="National Guard troops arrived in Washington, D.C., following President Trump's deployment and federalization of local police to crack down on crime in the nation's capital"
+                    content="National Guard troops arrived in Washington, D.C., following President Trump's deployment and federalization of local police to crack down on crime in the nation's capital",
+                    provider_name='anthropic',
+                    provider_details={'citations': IsList(length=(1, ...))},
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -12244,10 +13204,14 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 previous_part_kind='text',
             ),
             PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=" Trump's federal takeover")),
+            _citation_delta_event(16),
             PartEndEvent(
                 index=16,
                 part=TextPart(
-                    content="Over 100 arrests made as National Guard rolls into DC under Trump's federal takeover"
+                    content="Over 100 arrests made as National Guard rolls into DC under Trump's federal takeover",
+                    provider_name='anthropic',
+                    provider_details={'citations': IsList(length=(1, ...))},
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -12282,10 +13246,14 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 ),
                 previous_part_kind='text',
             ),
+            _citation_delta_event(18),
             PartEndEvent(
                 index=18,
                 part=TextPart(
-                    content='Air Canada plans to lock out its flight attendants and cancel all flights starting this weekend'
+                    content='Air Canada plans to lock out its flight attendants and cancel all flights starting this weekend',
+                    provider_name='anthropic',
+                    provider_details={'citations': IsList(length=(1, ...))},
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -12308,10 +13276,14 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 index=20, delta=TextPartDelta(content_delta=' Saturday as it faces a potential work stoppage by')
             ),
             PartDeltaEvent(index=20, delta=TextPartDelta(content_delta=' its flight attendants')),
+            _citation_delta_event(20),
             PartEndEvent(
                 index=20,
                 part=TextPart(
-                    content="Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations with a complete cessation of flights for the country's largest airline by Saturday as it faces a potential work stoppage by its flight attendants"
+                    content="Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations with a complete cessation of flights for the country's largest airline by Saturday as it faces a potential work stoppage by its flight attendants",
+                    provider_name='anthropic',
+                    provider_details={'citations': IsList(length=(1, ...))},
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -12338,6 +13310,34 @@ These stories represent major international diplomatic developments, significant
 """
                 ),
             ),
+        ]
+    )
+
+    # Anthropic cites the ABC News result with an empty `cited_text`, which is not an excerpt.
+    cited_part = next(
+        event.part
+        for event in event_parts
+        if isinstance(event, PartEndEvent)
+        and isinstance(event.part, TextPart)
+        and event.part.content.startswith('European leaders held')
+    )
+    assert cited_part.citations == snapshot(
+        [
+            Citation(
+                sources=[
+                    WebCitationSource(
+                        url='https://www.npr.org/sections/news/',
+                        title='News: U.S. and World News Headlines : NPR',
+                        excerpts=[
+                            'Filip Singer/Getty Images Europe hide caption toggle caption Filip Singer/Getty Images Europe · August 13, 2025 \x95 President Trump will join European l...'
+                        ],
+                    ),
+                    WebCitationSource(
+                        url='https://abcnews.go.com/', title='ABC News – Breaking News, Latest News and Videos'
+                    ),
+                ],
+                anchor=ContentCitationAnchor(start=0, end=181),
+            )
         ]
     )
 
@@ -13594,7 +14594,7 @@ def test_anthropic_synthesized_reveal_does_not_cross_unrelated_parts() -> None:
                 parts=[
                     ToolReturnPart(tool_name='reveal', content='ready', tool_call_id='reveal'),
                     ToolAvailabilityDeltaPart(tools_added=['delete_map']),
-                    RetryPromptPart(content='Retry the final output.'),
+                    RetryFeedbackPart(content='Retry the final output.', retry=RetryInfo(cause='model_retry')),
                     ToolAvailabilityDeltaPart(tools_added=['archive_map']),
                     UserPromptPart(content='Continue.'),
                 ]
@@ -13606,7 +14606,9 @@ def test_anthropic_synthesized_reveal_does_not_cross_unrelated_parts() -> None:
     assert [[type(part) for part in message.parts] for message in messages] == [
         [ToolReturnPart],
         [ToolSearchCallPart],
-        [ToolSearchReturnPart, RetryPromptPart],
+        # The feedback projects to the `<system>`-tagged `UserPromptPart` this profile gives a
+        # mid-conversation system prompt; what this test pins is where it lands, not its voice.
+        [ToolSearchReturnPart, UserPromptPart],
         [ToolSearchCallPart],
         [ToolSearchReturnPart, UserPromptPart],
     ]
@@ -13623,7 +14625,7 @@ def test_anthropic_synthesized_reveals_follow_parallel_results() -> None:
                 parts=[
                     ToolReturnPart(tool_name='reveal', content='x', tool_call_id='reveal'),
                     ToolAvailabilityDeltaPart(tools_added=['delete_map']),
-                    RetryPromptPart(tool_name='list_maps', content='retry', tool_call_id='list_maps'),
+                    ToolReturnPart(tool_name='list_maps', content='retry', tool_call_id='list_maps', outcome='retried'),
                     ToolAvailabilityDeltaPart(tools_added=['archive_map']),
                     ToolReturnPart(tool_name='status', content='ready', tool_call_id='status'),
                     UserPromptPart(content='continue'),
@@ -13634,7 +14636,7 @@ def test_anthropic_synthesized_reveals_follow_parallel_results() -> None:
     )
 
     assert [[type(part) for part in message.parts] for message in messages] == [
-        [ToolReturnPart, RetryPromptPart, ToolReturnPart],
+        [ToolReturnPart, ToolReturnPart, ToolReturnPart],
         [ToolSearchCallPart],
         [ToolSearchReturnPart],
         [ToolSearchCallPart],
@@ -13734,8 +14736,11 @@ async def test_anthropic_explicit_tool_search_keeps_search_surface(
             {
                 'type': 'text',
                 'text': """\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:
-- refunds: Refund policy tools.\
+- refunds: Refund policy tools.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             }
         ]
@@ -13815,8 +14820,11 @@ async def test_anthropic_deferred_capability_tool_callable_without_tool_search(
             {
                 'type': 'text',
                 'text': """\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- refunds: Refund policy tools. Load this capability before looking up refund policy.\
+- refunds: Refund policy tools. Load this capability before looking up refund policy.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             }
         ]
@@ -13889,17 +14897,18 @@ async def test_anthropic_deferred_capability_without_tool_search_across_models(
             ('lookup_refund_policy', True, ''),
         ]
     )
-    assert request_capture.body()['system'] == snapshot(
-        [
-            {
-                'type': 'text',
-                'text': """\
+    assert request_capture.body()['system'] == [
+        {
+            'type': 'text',
+            'text': """\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- refunds: Refund policy tools. Load this capability before looking up refund policy.\
+- refunds: Refund policy tools. Load this capability before looking up refund policy.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
-            }
-        ]
-    )
+        }
+    ]
 
     request_bodies = [json.loads(request.body) for request in vcr.requests]
     assert len(request_bodies) >= 2
@@ -14363,6 +15372,9 @@ async def test_anthropic_cache_write_ttl_pricing(
 
     response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.usage == expected_usage
+    # The one-hour writes are a typed subset of all cache writes, and the run total carries them too.
+    assert 0 < response.usage.cache_write_1h_tokens < response.usage.cache_write_tokens
+    assert result.usage.cache_write_1h_tokens == response.usage.cache_write_1h_tokens
 
 
 @pytest.mark.vcr()
@@ -14896,7 +15908,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
         ),
         ModelRequest(
             parts=[
-                RetryPromptPart(
+                legacy_retry_prompt_part(
                     tool_name='search_knowledge',
                     tool_call_id='toolu_123',
                     content='Invalid JSON: expected `,` or `}` at line 1 column 99',
@@ -14929,7 +15941,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    legacy_retry_prompt_part(
                         content='Invalid JSON: expected `,` or `}` at line 1 column 99',
                         tool_name='search_knowledge',
                         tool_call_id='toolu_123',
@@ -14990,11 +16002,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
                     {
                         'tool_use_id': 'toolu_123',
                         'type': 'tool_result',
-                        'content': """\
-Invalid JSON: expected `,` or `}` at line 1 column 99
-
-Fix the errors and try again.\
-""",
+                        'content': [{'text': 'Invalid JSON: expected `,` or `}` at line 1 column 99', 'type': 'text'}],
                         'is_error': True,
                     },
                     {'text': 'Please fix the tool call and try again.', 'type': 'text'},
@@ -15633,7 +16641,7 @@ async def test_anthropic_compaction_usage_with_cache(
     The Anthropic compaction docs only say top-level `input_tokens`/`output_tokens` exclude
     compaction iteration usage — they're silent on cache tokens. This cassette pins the real
     shape: top-level `cache_creation_input_tokens` is `0` even though the compaction iteration
-    wrote ~55k tokens to cache, so `_map_usage` must sum the compaction cache back in to avoid
+    wrote ~55k tokens to cache, so `map_usage` must sum the compaction cache back in to avoid
     understating the real cost. The compaction iteration writes with the request's TTL, so with a
     one-hour TTL its writes are also one-hour writes, priced at the one-hour rate.
 
@@ -15678,7 +16686,7 @@ def test_anthropic_compaction_1h_cache_write_survives_the_streamed_merge() -> No
             parsed = BetaRawMessageDeltaEvent.model_validate(event)
         else:
             continue
-        request_usage = _map_usage(parsed, 'anthropic', 'https://api.anthropic.com', 'claude-sonnet-4-6', request_usage)
+        request_usage = map_usage(parsed, 'anthropic', 'https://api.anthropic.com', 'claude-sonnet-4-6', request_usage)
 
     assert request_usage == snapshot(
         RequestUsage(
@@ -16131,9 +17139,9 @@ I'm here to help! How can I assist you today?\
         [
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],

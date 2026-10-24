@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
@@ -495,16 +496,28 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 tool_defs = await capability.prepare_output_tools(cap_ctx, tool_defs)
         return tool_defs
 
-    def _default_run_id(self) -> str | None:
+    def get_default_run_id(self) -> str | None:
         for capability in reversed(self.capabilities):
-            if (run_id := capability._default_run_id()) is not None:
+            if (run_id := capability.get_default_run_id()) is not None:
                 return run_id
         return None
 
-    def _default_conversation_id(self, run_id: str) -> str | None:
+    def get_default_conversation_id(self, run_id: str) -> str | None:
         for capability in reversed(self.capabilities):
-            if (conversation_id := capability._default_conversation_id(run_id)) is not None:
+            if (conversation_id := capability.get_default_conversation_id(run_id)) is not None:
                 return conversation_id
+        return None
+
+    def get_run_clock(self) -> Callable[[], datetime] | None:
+        for capability in reversed(self.capabilities):
+            if (clock := capability.get_run_clock()) is not None:
+                return clock
+        return None
+
+    async def get_run_start_time(self, run_id: str) -> datetime | None:
+        for capability in reversed(self.capabilities):
+            if (start := await capability.get_run_start_time(run_id)) is not None:
+                return start
         return None
 
     # --- Run lifecycle hooks ---

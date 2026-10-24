@@ -26,6 +26,7 @@ Provider-adaptive capabilities to reach for first:
 - `WebSearch`
 - `WebFetch`
 - `ImageGeneration`
+- `FileUnderstanding`
 - `MCP`
 
 For stricter safety handling, use `RaiseContentFilterError` to raise `ContentFilterError` whenever a model response has `finish_reason='content_filter'`, including responses with partial text.
@@ -53,6 +54,9 @@ Supported effort values:
 - `'medium'`
 - `'high'`
 - `'xhigh'`
+- `'max'`
+
+Thinking is model parity, not a per-model feature: a `ThinkingPart` from message history is sent back to whatever model you switch to. It rides the provider's own reasoning channel where the part is still usable there — it has to carry the credential that channel checks (a signature, a reasoning-item id) and have come from that same provider — and goes as text where it isn't: in the model's thinking tags for most models, and for the Anthropic family in a `user` message ahead of the assistant turn, wrapped in `<assistant_thinking>`, because Claude copies formatting it finds in assistant turns into the answers your users read. You do not have to strip thinking from history before switching models; the one profile that can turn the send-back off is `openai_chat_send_back_thinking_parts=False`, which no shipped model sets.
 
 ## Configure Prompt Caching Across Providers
 
@@ -134,6 +138,17 @@ Important hook families:
 For each stage, the entire `wrap_*` chain encloses the `before_*` chain, the core operation with `on_*_error` recovery, and the `after_*` chain. A wrapper that returns without calling its handler skips everything inside, so mandatory authorization belongs in an outer wrapper or outside a short-circuitable cache. Recovered core failures are hidden from wrappers; hook failures and unrecovered core failures propagate through them. The exception is `agent.run_stream()` node handling: `before_node_run` fires before streaming, non-final nodes wrap only later graph advancement, and the final streamed `ModelRequestNode` skips `wrap_node_run`/`after_node_run`.
 
 In `run_stream()`, `ContextVar` values set by an async `before_model_request` hook are available to later tool, output, and run hooks, as in non-streamed runs. Values set later in that model request may not be; use a mutable attribute on `ctx.deps` for state that must be shared throughout the run.
+
+Changing what the model sees from `before_model_request`:
+
+- Steering message the model sees now and that stays in the conversation: `ctx.enqueue(part)`. It goes into the request being prepared and into history, as its own `ModelRequest`.
+- Reminder true only for this request: `ctx.enqueue(SystemPromptPart(..., scope='request'))`. Anthropic sends it with `clear_at` and stops showing it once its request has been answered; elsewhere it's sent with its own request only. It stays in history either way.
+- State the model should track (todo list, notes): instructions with `on_change='append'`, via `@capability.instructions(name='state', on_change='append')` on a `Capability` with an `id`. Each change is appended to history as a replacement, so the cached prefix survives. Only for operator-controlled text: never tool arguments, tool output or user input. A callable returned from `get_instructions` opts in by returning `InstructionPart(..., name='state', on_change='append')`. With the default `'rewrite'` each change re-sends everything after the instructions uncached.
+- Change only this request (trim, filter, redact): assign a new list to `request_context.messages`. Build new messages and parts; mutating shared ones in place changes history too.
+- Rewrite history (compaction): `ctx.messages[:] = ...`, plus assign `request_context.messages` if this request should be sent it.
+- `request_context.messages.append(...)` also writes history, deprecated with a warning; use `ctx.enqueue(...)`.
+
+A request-only change that drops or alters content earlier requests sent moves the cached prefix, and on models with preserved thinking (Claude Opus 5.5, Sonnet 5.5, Fable 5.1) invalidates earlier reasoning. So enqueue reminders, request-scoped when one-off; never make them per-request copies.
 
 From tool-validation and tool-execution hooks you can raise `ModelRetry` (the model should retry the call) or `ToolFailed` (the call is done and failed — the model sees the result and adapts, without consuming the retry budget) to redirect a tool call in one place instead of per tool.
 
@@ -249,7 +264,7 @@ Use `for_agent(agent)` when a capability needs the agent's model, name, or tools
 
 ## Select a Model Dynamically
 
-Implement `get_model()` when reusable policy should choose the model, or use `SelectModel(selector)` for the common callable-only case. Return a model or model ID for a static choice, or return a sync/async callable accepting `ModelSelectionContext` to choose before every request step. The context exposes the agent, run dependencies, lower-precedence configured model on step one (then the previous step's model), step number, the run's prompt, the messages the selected model will be sent (ending with the request being routed, before its instructions are added), and accumulated usage. Keep `get_model()` cheap; put I/O in an async selector. Static choices are resolved once per run, while a selector runs once per new logical request step and not again for same-step continuation. A model-less agent can be bootstrapped by a selector because the callable is first evaluated during run setup, after dependencies and history are available.
+Implement `get_model()` when reusable policy should choose the model, or use `SelectModel(selector)` for the common callable-only case. Return a model or model ID for a static choice, or return a sync/async callable accepting `ModelSelectionContext` to choose before every request step. The context exposes the agent, run dependencies, lower-precedence configured model on step one (then the previous step's model), step number, the run's prompt, the messages the selected model will be sent (ending with the request being routed, before its instructions are added), accumulated usage, the run's `usage_limits`, `deadline`, `run_id` and `conversation_id`, and its output retry count and budget (`retry`, `max_retries`), which a selector can use to escalate to a stronger model after output validation failures. Keep `get_model()` cheap; put I/O in an async selector. Static choices are resolved once per run, while a selector runs once per new logical request step and not again for same-step continuation. A model-less agent can be bootstrapped by a selector because the callable is first evaluated during run setup, after dependencies and history are available.
 
 Explicit `run(model=...)`, run-spec, and `agent.override(model=...)` choices win and skip capability selection. Later capabilities override earlier model contributions. Same-step continuation remains pinned to its selected model; pass an explicit model when resuming a suspended provider-side request in another run.
 
