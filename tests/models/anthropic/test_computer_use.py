@@ -12,6 +12,7 @@ from pydantic_ai import Agent, Tool
 from pydantic_ai.computer_use import COMPUTER_KIND, DISPLAY_SIZE, ComputerToolAction
 from pydantic_ai.exceptions import ToolFailed
 from pydantic_ai.messages import (
+    BinaryImage,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -610,6 +611,26 @@ async def test_a_result_without_metadata_or_screenshot_runs_every_call_and_ends_
     assert [(r['tool_use_id'], r.get('is_error'), r.get('content')) for r in results] == [
         ('toolu_1', False, [{'text': 'OK', 'type': 'text'}]),
         ('toolu_2', False, [{'text': 'Ran 2 actions. [Older screenshot removed.]', 'type': 'text'}]),
+    ]
+
+
+async def test_a_result_without_metadata_tells_the_last_call_what_happened() -> None:
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key='unused'))
+    blocks: list[dict[str, Any]] = [
+        {'id': 'toolu_1', 'name': 'left_click', 'input': {}},
+        {'id': 'toolu_2', 'name': 'type', 'input': {'text': 'hi'}},
+    ]
+    # As a UI rebuilds it: the metadata that says which calls ran is gone, the summary still says.
+    summary = 'Action 2 of 2 (type) failed: no keyboard. Screenshot attached (1280x800).'
+    part = ToolReturnPart(
+        'computer', [summary, BinaryImage(data=b'png', media_type='image/png')], tool_call_id='toolu_1'
+    )
+
+    results = await model._map_computer_results(part, blocks)  # pyright: ignore[reportPrivateUsage]
+
+    assert [(r['tool_use_id'], r.get('is_error'), list(r.get('content', []))[0]) for r in results] == [
+        ('toolu_1', False, {'text': 'OK', 'type': 'text'}),
+        ('toolu_2', False, {'text': summary, 'type': 'text'}),
     ]
 
 

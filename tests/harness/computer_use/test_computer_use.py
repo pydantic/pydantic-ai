@@ -15,6 +15,7 @@ from pydantic_ai import (
     DeferredToolResults,
     ModelMessage,
     ModelResponse,
+    RunContext,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -23,10 +24,11 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import AbstractCapability, SelectModel
 from pydantic_ai.computer_use import SAFETY_CHECKS
 from pydantic_ai.messages import BinaryContent, BinaryImage
-from pydantic_ai.models import Model, ModelSelectionContext
+from pydantic_ai.models import Model, ModelRequestContext, ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import (
     Click,
     ComputerAction,
@@ -129,6 +131,14 @@ class TestComputerUse:
             pytest.param([{'type': 'click', 'x': 1, 'y': 1}], [0.5], id='settles-after-acting'),
             pytest.param(
                 [{'type': 'click', 'x': 1, 'y': 1}, {'type': 'wait', 'seconds': 2}], [2], id='a-final-wait-is-enough'
+            ),
+            pytest.param(
+                [{'type': 'click', 'x': 1, 'y': 1}, {'type': 'wait', 'seconds': 2}, {'type': 'screenshot'}],
+                [2],
+                id='a-wait-before-looking-is-enough',
+            ),
+            pytest.param(
+                [{'type': 'wait', 'seconds': 1}, {'type': 'click', 'x': 1, 'y': 1}], [1, 0.5], id='acting-after-a-wait'
             ),
             pytest.param([{'type': 'screenshot'}], [], id='looking-needs-no-settling'),
         ],
@@ -344,6 +354,94 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert len(computer_returns) == 28
         assert all(part.content_items()[1] == SCREENSHOT for part in computer_returns)
 
+    async def test_agents_sharing_a_display_take_turns_a_whole_call_at_a_time(self) -> None:
+        class SlowDisplay(ProviderBackend):
+            async def act(self, action: ComputerAction) -> None:
+                await anyio.sleep(0.01)  # long enough for the other agent's call to start
+                await super().act(action)
+
+        provider = InMemoryProvider()
+        backend = SlowDisplay(provider, None)
+        agents = [
+            Agent(
+                _scripted([{'type': 'click', 'x': x, 'y': 1}, {'type': 'type', 'text': text}]),
+                capabilities=[ComputerUse(settle_seconds=0)],
+            )
+            for x, text in [(1, 'first'), (2, 'second')]
+        ]
+
+        async def run(agent: Agent[None, str]) -> None:
+            await agent.run('Go.', workspace=backend)
+
+        async with anyio.create_task_group() as tg:
+            for agent in agents:
+                tg.start_soon(run, agent)
+
+        assert provider.actions in (
+            [Click(x=1, y=1), TypeText(text='first'), Click(x=2, y=1), TypeText(text='second')],
+            [Click(x=2, y=1), TypeText(text='second'), Click(x=1, y=1), TypeText(text='first')],
+        )
+
+    async def test_compaction_listed_after_it_does_not_bring_dropped_screenshots_back(self) -> None:
+        from pydantic_ai_harness.compaction import ClampOversizedMessages
+
+        sent: list[int] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            returns = _returns(messages)
+            sent.append(sum(isinstance(item, BinaryContent) for part in returns for item in part.content_items()))
+            if len(returns) < 27:
+                return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        # Compaction rebuilds each request from the history, so it has to run before the screenshots are dropped.
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[
+                InMemoryProvider().capability(),
+                ComputerUse(keep_screenshots=2, settle_seconds=0),
+                ClampOversizedMessages(max_part_chars=10**6),
+            ],
+        )
+        await agent.run('Look.')
+        assert sent[-1] == 2
+
+    @pytest.mark.parametrize(
+        'padding,calls,first_drop',
+        [
+            pytest.param(0, 101, 101, id='100-screenshots'),
+            pytest.param(1_000_000 - len(FAKE_SCREENSHOT), 16, 16, id='15-mb-of-screenshots'),
+        ],
+    )
+    async def test_without_keep_screenshots_a_request_stays_within_provider_limits(
+        self, padding: int, calls: int, first_drop: int
+    ) -> None:
+        screen = FAKE_SCREENSHOT + b'\x00' * padding
+
+        class Screen(ProviderBackend):
+            async def screenshot(self) -> bytes:
+                return screen
+
+        class Provider(InMemoryProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
+                return Screen(self, ref)
+
+        sent: list[int] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            returns = _returns(messages)
+            sent.append(sum(isinstance(item, BinaryContent) for part in returns for item in part.content_items()))
+            if len(returns) < calls:
+                return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(respond), capabilities=[Provider().capability(), ComputerUse(settle_seconds=0)])
+        await agent.run('Look.', usage_limits=UsageLimits(request_limit=None))
+
+        # Every screenshot is sent until one more would pass the limit; then the oldest go, 25 at a time.
+        assert sent[first_drop - 1] == first_drop - 1
+        assert sent[first_drop] == max(1, first_drop - 25)
+
     async def test_a_batch_over_20_actions_is_sent_back_to_the_model(self) -> None:
         agent = Agent(
             _scripted([{'type': 'screenshot'}] * 21),
@@ -378,17 +476,27 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         with pytest.raises(UserError, match='`ComputerUse` needs a workspace with a display'):
             await agent.run('Go.')
 
-    async def test_a_fallback_model_runs_the_tool_in_pixels(self) -> None:
-        # A fallback model has no profile of its own, so the grid of the models inside it is not read: (5, 6) stays pixels.
+    @pytest.mark.parametrize(
+        'fallback_grid,click',
+        [
+            pytest.param(1000, Click(x=640, y=400), id='models-on-one-grid-use-it'),
+            pytest.param(None, Click(x=500, y=500), id='models-that-differ-use-pixels'),
+        ],
+    )
+    async def test_a_fallback_model_points_on_a_grid_only_when_all_its_models_do(
+        self, fallback_grid: int | None, click: Click
+    ) -> None:
         provider = InMemoryProvider()
-        scripted = _scripted(
-            [{'type': 'click', 'x': 5, 'y': 6}], profile=ModelProfile(computer_use_coordinate_grid=1000)
+        grid = ModelProfile(computer_use_coordinate_grid=1000)
+        scripted = _scripted([{'type': 'click', 'x': 500, 'y': 500}], profile=grid)
+        fallback = _scripted(
+            [], profile=ModelProfile(computer_use_coordinate_grid=fallback_grid) if fallback_grid else None
         )
         agent = Agent(
-            FallbackModel(scripted, scripted), capabilities=[provider.capability(), ComputerUse(settle_seconds=0)]
+            FallbackModel(scripted, fallback), capabilities=[provider.capability(), ComputerUse(settle_seconds=0)]
         )
         assert (await agent.run('Go.')).output == 'done'
-        assert provider.actions == [Click(x=5, y=6)]
+        assert provider.actions == [click]
 
     async def test_a_model_selected_later_without_image_input_is_refused_before_its_request(self) -> None:
         text_only = FunctionModel(
@@ -526,3 +634,57 @@ You can see and control a computer screen with the `computer` tool. Each call ru
     def test_keep_screenshots_is_checked(self) -> None:
         with pytest.raises(UserError, match='`keep_screenshots` must be at least 1'):
             ComputerUse(keep_screenshots=0)
+
+    def test_requires_approval_only_takes_action_types_that_change_the_screen(self) -> None:
+        with pytest.raises(UserError, match="has 'clik', 'zoom', which are not action types that change the screen"):
+            ComputerUse(requires_approval={'clik', 'zoom', 'type'})
+        with pytest.raises(UserError, match='takes `True` or a collection of action types'):
+            ComputerUse(requires_approval='click')
+
+    @pytest.mark.parametrize(
+        'settings,cache',
+        [
+            pytest.param(None, True, id='on-by-default'),
+            pytest.param({'cache': False}, False, id='the-run-settings-win'),
+        ],
+    )
+    async def test_prompt_caching_is_on_unless_the_settings_say_otherwise(
+        self, settings: dict[str, Any] | None, cache: bool
+    ) -> None:
+        seen: list[Any] = []
+
+        class Spy(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                seen.append((request_context.model_settings or {}).get('cache'))
+                return request_context
+
+        agent = Agent(
+            _scripted(),
+            capabilities=[InMemoryProvider().capability(), ComputerUse(), Spy()],
+            model_settings=cast(Any, settings),
+        )
+        await agent.run('Go.')
+        assert seen == [cache]
+
+    async def test_coder_output_limits_leave_the_screenshot_an_image(self) -> None:
+        from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
+
+        # A real screen's PNG is larger than the 64k characters output limits would otherwise cut it to.
+        big = BinaryImage(data=FAKE_SCREENSHOT + b'\x00' * 200_000, media_type='image/png')
+
+        class BigScreen(ProviderBackend):
+            async def screenshot(self) -> bytes:
+                return big.data
+
+        class Provider(InMemoryProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
+                return BigScreen(self, ref)
+
+        agent = Agent(
+            _scripted([{'type': 'screenshot'}]),
+            capabilities=[Provider().capability(), ComputerUse(settle_seconds=0), ToolOutputLimits()],
+        )
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+        assert tool_return.content == ['Ran 1 action. Screenshot attached (1280x800).', big]
