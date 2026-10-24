@@ -16,12 +16,52 @@ Agentic Workflow.
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
 | Checkpoint every model/tool step in Postgres with Absurd | `AbsurdDurability` |
 | Checkpoint every model/tool step in Postgres with pgtask | `PGTaskDurability` |
+| Run agent operations as activities in native Azure Durable Task orchestrators | `AzureDurableTaskDurability` and `run_durable` (`pydantic_ai_harness.azure_durable_task`, `[azure-durable-task]`) |
 | Use or evaluate Render Workflows for background agents with separate model/tool retries, timeouts, and compute | [`RenderWorkflows`](#renderworkflows); retrying the entry task run restarts the agent |
 | Edit, version, and roll out the system prompt from Logfire without redeploying | `ManagedPrompt` |
 | Let the agent write new capabilities that load on the next run | `CapabilityCreation` |
 | Define the agent in YAML/JSON with harness capabilities | `Agent.from_file(..., custom_capability_types=[...])` |
 | Use the agent inside Zed or another ACP editor | `pydantic_ai_harness.experimental.acp` |
 | Run the agent headless on GitHub issues/PRs/schedules | the gh-aw `pydantic-ai` engine |
+
+## AzureDurableTaskDurability
+
+Attach `AzureDurableTaskDurability()` to a named agent. Retrieve the bound copy with
+`AzureDurableTaskDurability.from_agent(agent)` and enter its `register(worker)` context
+before starting the native SDK worker; exit after the worker stops and drains.
+Register your own orchestrator and call
+`yield from run_durable(ctx, lambda: agent.run(prompt))`. Start, inspect and signal runs
+through the SDK client. Dependencies must be JSON-serializable and are reconstructed
+using `deps_type`; worker-local resource factories are planned separately.
+
+Handle `DeferredToolRequests` in your orchestrator: wait for an external event and resume
+with full message history, cumulative usage and `DeferredToolResults`. Preserve the
+reviewed pause, not the latest pause. Durable Task folds event names, so keep case-sensitive
+call IDs as payload keys on a per-pause event, or hex-encode them in individual event names.
+Orchestrator-side code must be deterministic and I/O-free. Tool effects must be idempotent.
+`RoleBasedOperationConfig.resolve_tool` returns a native policy, `None` to disable retries
+(including overriding a base policy), or `False` for an inline deterministic function tool.
+See [Azure Durable Task](https://pydantic.dev/docs/ai/harness/azure-durable-task/).
+
+For long runs, configure `AzureDurableTaskDurability(continue_as_new=handler)`,
+mirroring Temporal's sync/async callback before a model request. Return to defer or
+raise `ContinueAsNew(json_input)`; catch it around `yield from run_durable(...)`,
+call SDK `continue_as_new` and return. The callback owns a deterministic threshold:
+this SDK has no server-suggestion API. Carry messages, cumulative usage, usage limits,
+conversation ID and a fresh deterministic run ID in application input. Resume
+`Agent.run` with that history and no prompt. Default continuation is disabled;
+ordinary `UsageLimits(request_limit=50)` still bounds a logical run when carried.
+There is no library limits/state/resume protocol, history compaction or arbitrary
+async-state checkpointing.
+
+Configure SDK `VersioningOptions`, client `version=` and `ctx.version` dispatch
+yourself, using numeric versions such as `1.0`, not `v1`. Use
+`register(worker, previous_versions={'1.0': old_agent})` to retain old activity
+implementations under their original names; every retained version needs distinct
+generated names. Native `CURRENT_OR_OLDER` supports drain-in-place; `STRICT` and
+`REJECT` support separate fleets. Explicit paused migration uses a bound application
+event and `continue_as_new(new_version=...)`, retaining pending calls but advancing
+review identity and requiring fresh decisions. There is no agent/run/client wrapper.
 
 ## StepPersistence
 

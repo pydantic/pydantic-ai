@@ -1,0 +1,335 @@
+from __future__ import annotations
+
+# The SDK exposes no public in-process executor. Keep this coupling confined to the test fixture.
+# pyright: reportPrivateUsage=false
+import logging
+from collections import deque
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any, Literal, TypeVar
+from unittest.mock import MagicMock
+
+import pytest
+from durabletask import client, task, worker
+from durabletask.internal import helpers as ph, orchestrator_service_pb2 as pb
+from durabletask.internal.exceptions import AbandonOrchestrationError
+from durabletask.serialization import DEFAULT_DATA_CONVERTER
+from google.protobuf.json_format import ParseDict
+from pydantic import JsonValue, TypeAdapter
+from pydantic_core import to_jsonable_python
+
+from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.durable_exec import CacheIdentity, ParameterTransport, ResultCodec
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
+
+DepsT = TypeVar('DepsT')
+OutputT = TypeVar('OutputT')
+ParamsT = TypeVar('ParamsT')
+ResultT = TypeVar('ResultT')
+_JSON = TypeAdapter[JsonValue](JsonValue)
+
+
+@dataclass
+class _Instance:
+    name: str
+    input: str | None
+    history: list[pb.HistoryEvent] = field(default_factory=list[pb.HistoryEvent])
+    new_events: list[pb.HistoryEvent] = field(default_factory=list[pb.HistoryEvent])
+    status: client.OrchestrationStatus = client.OrchestrationStatus.RUNNING
+    output: str | None = None
+    custom_status: str | None = None
+    failure: task.FailureDetails | None = None
+    version: str | None = None
+    generations: list[list[pb.HistoryEvent]] = field(default_factory=list[list[pb.HistoryEvent]])
+
+
+class _Executor(worker._OrchestrationExecutor):
+    context: worker._RuntimeOrchestrationContext | None = None
+
+    def process_event(self, ctx: worker._RuntimeOrchestrationContext, event: pb.HistoryEvent) -> None:
+        self.context = ctx
+        super().process_event(ctx, event)
+
+    def close(self) -> None:
+        if self.context is not None and self.context._generator is not None:
+            self.context._generator.close()
+
+
+class InMemoryWorker(worker.TaskHubGrpcWorker):
+    """Replay real SDK histories in process, without gRPC, service threads or wall-clock waits."""
+
+    def __init__(self) -> None:
+        self._registry = worker._Registry()
+        self._logger = logging.getLogger(__name__)
+        self._data_converter = DEFAULT_DATA_CONVERTER
+        self._is_running = False
+        self.now = datetime(2026, 1, 1)
+        self.instances: dict[str, _Instance] = {}
+        self.activity_queue: deque[tuple[str, str, int, str | None]] = deque()
+        self.activity_calls: list[str] = []
+        self.timers: list[tuple[str, int, pb.CreateTimerAction]] = []
+        mock_client = MagicMock(spec=client.TaskHubGrpcClient)
+        mock_client.schedule_new_orchestration.side_effect = self.schedule
+        mock_client.get_orchestration_state.side_effect = self.state
+        mock_client.wait_for_orchestration_completion.side_effect = self.wait
+        mock_client.raise_orchestration_event.side_effect = self.raise_event
+        self.client_mock = mock_client
+        self.client: client.TaskHubGrpcClient = mock_client
+
+    def schedule(
+        self,
+        orchestrator: Callable[..., object] | str,
+        *,
+        input: object = None,
+        instance_id: str | None = None,
+        version: str | None = None,
+    ) -> str:
+        name = orchestrator if isinstance(orchestrator, str) else orchestrator.__name__
+        instance_id = instance_id or f'run-{len(self.instances)}'
+        encoded = self._data_converter.serialize(input)
+        record = _Instance(name=name, input=encoded, version=version)
+        record.new_events.append(ph.new_execution_started_event(name, instance_id, encoded, version=version))
+        self.instances[instance_id] = record
+        return instance_id
+
+    def event(self, **kwargs: Any) -> pb.HistoryEvent:
+        event = pb.HistoryEvent(eventId=-1, **kwargs)
+        event.timestamp.FromDatetime(self.now)
+        return event
+
+    def step(self) -> bool:
+        for instance_id, record in self.instances.items():
+            if record.new_events:
+                self.orchestration_turn(instance_id)
+                return True
+        if self.activity_queue:
+            self.activity_turn(*self.activity_queue.popleft())
+            return True
+        return False
+
+    def run_until_idle(self) -> None:
+        for _ in range(200):
+            if not self.step():
+                return
+        pytest.fail('Durable Task fixture did not become idle after 200 turns')
+
+    def orchestration_turn(self, instance_id: str) -> None:
+        record = self.instances[instance_id]
+        events = [self.event(orchestratorStarted=pb.OrchestratorStartedEvent()), *record.new_events]
+        record.new_events.clear()
+        executor = _Executor(self._registry, self._logger, data_converter=self._data_converter)
+        try:
+            result = executor.execute(instance_id, record.history, events)
+        except AbandonOrchestrationError:
+            record.new_events[:0] = events[1:]
+            raise
+        finally:
+            executor.close()
+        record.history.extend(events)
+        record.custom_status = result.encoded_custom_status
+        for action in result.actions:
+            self.apply_action(instance_id, action)
+
+    def apply_action(self, instance_id: str, action: pb.OrchestratorAction) -> None:
+        record = self.instances[instance_id]
+        if action.HasField('scheduleTask'):
+            scheduled = action.scheduleTask
+            event = self.event(taskScheduled=pb.TaskScheduledEvent(name=scheduled.name, input=scheduled.input))
+            event.eventId = action.id
+            record.history.append(event)
+            self.activity_queue.append((instance_id, scheduled.name, action.id, scheduled.input.value))
+        elif action.HasField('createTimer'):
+            event = self.event(timerCreated=pb.TimerCreatedEvent(fireAt=action.createTimer.fireAt))
+            event.eventId = action.id
+            record.history.append(event)
+            self.timers.append((instance_id, action.id, action.createTimer))
+        elif action.HasField('completeOrchestration'):
+            completed = action.completeOrchestration
+            record.output = completed.result.value
+            if completed.orchestrationStatus == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW:
+                record.generations.append(record.history)
+                record.history = []
+                record.input = completed.result.value
+                if completed.HasField('newVersion'):
+                    record.version = completed.newVersion.value
+                record.new_events.extend(
+                    [
+                        ph.new_execution_started_event(record.name, instance_id, record.input, version=record.version),
+                        *completed.carryoverEvents,
+                    ]
+                )
+            elif completed.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED:
+                record.status = client.OrchestrationStatus.COMPLETED
+            else:
+                record.status = client.OrchestrationStatus.FAILED
+                details = completed.failureDetails
+                record.failure = task.FailureDetails(details.errorMessage, details.errorType, None)
+        else:
+            pytest.fail(f'Unsupported SDK action in fixture: {action}')
+
+    def replay_history(self, recording: dict[str, Any]) -> list[pb.OrchestratorAction]:
+        """Replay an immutable history captured by an earlier integration version."""
+        history = [ParseDict(event, pb.HistoryEvent()) for event in recording['history']]
+        executor = _Executor(self._registry, self._logger, data_converter=self._data_converter)
+        try:
+            result = executor.execute(
+                recording['instance_id'], history, [self.event(orchestratorStarted=pb.OrchestratorStartedEvent())]
+            )
+        finally:
+            executor.close()
+        return list(result.actions)
+
+    def activity_turn(self, instance_id: str, name: str, task_id: int, encoded: str | None) -> None:
+        self.activity_calls.append(name)
+        executor = worker._ActivityExecutor(self._registry, self._logger, self._data_converter)
+        try:
+            result = executor.execute(instance_id, name, task_id, encoded)
+        except Exception as exc:
+            event = self.event(
+                taskFailed=pb.TaskFailedEvent(taskScheduledId=task_id, failureDetails=ph.new_failure_details(exc))
+            )
+        else:
+            event = self.event(
+                taskCompleted=pb.TaskCompletedEvent(taskScheduledId=task_id, result=ph.get_string_value(result))
+            )
+        self.instances[instance_id].new_events.append(event)
+
+    def fire_timers(self) -> None:
+        deadline = min(timer.fireAt.ToDatetime() for _, _, timer in self.timers)
+        timers = [item for item in self.timers if item[2].fireAt.ToDatetime() == deadline]
+        self.timers = [item for item in self.timers if item[2].fireAt.ToDatetime() != deadline]
+        for instance_id, timer_id, timer in timers:
+            self.now = max(self.now, timer.fireAt.ToDatetime())
+            self.instances[instance_id].new_events.append(
+                self.event(timerFired=pb.TimerFiredEvent(timerId=timer_id, fireAt=timer.fireAt))
+            )
+
+    def state(self, instance_id: str, **kwargs: object) -> client.OrchestrationState | None:
+        if (record := self.instances.get(instance_id)) is None:
+            return None
+        return client.OrchestrationState(
+            instance_id=instance_id,
+            name=record.name,
+            runtime_status=record.status,
+            created_at=self.now.replace(tzinfo=UTC),
+            last_updated_at=self.now.replace(tzinfo=UTC),
+            serialized_input=record.input,
+            serialized_output=record.output,
+            serialized_custom_status=record.custom_status,
+            failure_details=record.failure,
+        )
+
+    def wait(self, instance_id: str, **kwargs: object) -> client.OrchestrationState | None:
+        self.run_until_idle()
+        state = self.state(instance_id)
+        if state is not None and state.runtime_status not in (
+            client.OrchestrationStatus.COMPLETED,
+            client.OrchestrationStatus.FAILED,
+            client.OrchestrationStatus.TERMINATED,
+        ):
+            raise TimeoutError(f'Orchestration {instance_id!r} has not completed.')
+        return state
+
+    def raise_event(self, instance_id: str, event_name: str, *, data: object = None) -> None:
+        self.instances[instance_id].new_events.append(
+            ph.new_event_raised_event(event_name, self._data_converter.serialize(data))
+        )
+
+
+@contextmanager
+def registered_agent(worker: InMemoryWorker, agent: AbstractAgent[DepsT, OutputT]) -> Generator[None]:
+    capability = AzureDurableTaskDurability.from_agent(agent)
+    assert capability is not None
+    with capability.register(worker):
+        yield
+
+
+def agent_orchestrator(
+    agent: AbstractAgent[DepsT, OutputT],
+    prompt: str = 'Hi',
+    *,
+    deps: DepsT,
+    timeout: float | None = None,
+    results: list[AgentRunResult[OutputT]] | None = None,
+) -> Callable[[task.OrchestrationContext, object], Generator[task.Task[object], object, JsonValue]]:
+    def orchestrator(
+        context: task.OrchestrationContext, payload: object
+    ) -> Generator[task.Task[object], object, JsonValue]:
+        result = yield from run_durable(context, lambda: agent.run(prompt, deps=deps, timeout=timeout))
+        if results is not None:
+            results.append(result)
+        return _JSON.validate_python(to_jsonable_python(result.output, round_trip=True))
+
+    assert agent.name is not None
+    orchestrator.__name__ = f'{agent.name}_workflow'
+    return orchestrator
+
+
+def schedule_agent(
+    worker: InMemoryWorker,
+    agent: AbstractAgent[DepsT, OutputT],
+    prompt: str = 'Hi',
+    *,
+    deps: DepsT,
+    instance_id: str | None = None,
+    timeout: float | None = None,
+    results: list[AgentRunResult[OutputT]] | None = None,
+) -> str:
+    orchestrator = agent_orchestrator(agent, prompt, deps=deps, timeout=timeout, results=results)
+    worker.add_orchestrator(orchestrator)
+    return worker.client.schedule_new_orchestration(orchestrator, instance_id=instance_id)
+
+
+def completed(worker: InMemoryWorker, instance_id: str) -> JsonValue:
+    state = worker.client.wait_for_orchestration_completion(instance_id)
+    assert state is not None
+    state.raise_if_failed()
+    return _JSON.validate_python(state.get_output())
+
+
+def run_agent(
+    worker: InMemoryWorker,
+    agent: AbstractAgent[DepsT, OutputT],
+    prompt: str = 'Hi',
+    *,
+    deps: DepsT,
+    instance_id: str | None = None,
+    timeout: float | None = None,
+) -> AgentRunResult[OutputT]:
+    """Observe the actual agent result in the orchestrator, without reconstructing it on a client."""
+    results: list[AgentRunResult[OutputT]] = []
+    instance_id = schedule_agent(
+        worker, agent, prompt, deps=deps, instance_id=instance_id, timeout=timeout, results=results
+    )
+    completed(worker, instance_id)
+    assert len(results) == 1
+    return results[0]
+
+
+class IdentityTransport(ParameterTransport[ParamsT, ParamsT]):
+    def dump(self, params: ParamsT) -> ParamsT:
+        return params
+
+    def load(self, payload: ParamsT, *, runtime: object) -> ParamsT:
+        return payload
+
+
+class EmptyCacheIdentity(CacheIdentity[ParamsT]):
+    def project(self, params: ParamsT) -> tuple[()]:
+        # Registered backends do not consult cache identities.
+        return ()  # pragma: no cover
+
+
+class JsonResultCodec(ResultCodec[ResultT]):
+    def __init__(self, result_type: object, *, mode: Literal['json', 'identity'] = 'json') -> None:
+        self._adapter = TypeAdapter[ResultT](result_type)
+        self._mode = mode
+
+    def dump(self, value: ResultT) -> object:
+        return self._adapter.dump_python(value, mode='json') if self._mode == 'json' else value
+
+    def load(self, payload: object) -> ResultT:
+        return self._adapter.validate_python(payload)
