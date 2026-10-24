@@ -11,12 +11,14 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelContextWindowExceededError,
     ModelHTTPError,
+    UnexpectedModelBehavior,
 )
 
 from .. import _model_errors, usage
 from .._run_context import RunContext
 from .._utils import (
     PeekableAsyncStream as _PeekableAsyncStream,
+    Unset as _Unset,
     generate_tool_call_id as _generate_tool_call_id,
     guard_tool_call_id as _guard_tool_call_id,
     is_str_dict as _is_str_dict,
@@ -275,6 +277,10 @@ class CohereModel(Model[AsyncClientV2]):
             _PeekableAsyncStream(response_iter)
         )
         try:
+            with _map_api_errors(self.model_name):
+                first_event = await peekable_response.peek()
+            if isinstance(first_event, _Unset):
+                raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
             yield CohereStreamedResponse(
                 model_request_parameters=model_request_parameters,
                 _model_name=self._model_name,

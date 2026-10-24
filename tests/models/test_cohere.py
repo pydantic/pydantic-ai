@@ -35,9 +35,13 @@ from pydantic_ai import (
     UploadedFile,
     UserPromptPart,
 )
-from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import ModelContextWindowExceededError, ModelRateLimitError, UserError
+from pydantic_ai.exceptions import (
+    ModelContextWindowExceededError,
+    ModelRateLimitError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.messages import MultiModalContent
 from pydantic_ai.models import ModelRequestParameters, StreamedResponse, ToolDefinition
 from pydantic_ai.native_tools import WebSearchTool
@@ -48,7 +52,6 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
-from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     import cohere
@@ -84,24 +87,15 @@ with try_import() as imports_successful:
     )
     from cohere.core.api_error import ApiError
 
-    from pydantic_ai.models.cohere import CohereModel, CohereStreamedResponse
+    from pydantic_ai.models.cohere import CohereModel
     from pydantic_ai.providers.cohere import CohereProvider
 
     MockChatResponse = ChatResponse | Exception
-    MockStreamEvent = (
-        ContentStartV2ChatStreamResponse
-        | ContentDeltaV2ChatStreamResponse
-        | ToolCallStartV2ChatStreamResponse
-        | ToolCallDeltaV2ChatStreamResponse
-        | MessageEndV2ChatStreamResponse
-        | Exception
-    )
+    MockStreamEvent = V2ChatStreamResponse | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='cohere not installed'),
 ]
-
-READINESS_WAIT_TIMEOUT = 10
 
 
 def test_init():
@@ -1189,6 +1183,27 @@ async def test_stream_request_status_error(allow_model_requests: None) -> None:
     assert str(exc_info.value) == snapshot("status_code: 500, model_name: command-r, body: {'error': 'test error'}")
 
 
+@pytest.mark.parametrize('status, expected', [(401, ModelHTTPError), (429, ModelRateLimitError)])
+async def test_request_stream_error_on_entry(
+    allow_model_requests: None, status: int, expected: type[ModelAPIError]
+) -> None:
+    error = ApiError(status_code=status, body={'message': 'request failed'})
+    client = MockAsyncClientV2.create_stream_mock(error)
+    model = CohereModel('command-r', provider=CohereProvider(cohere_client=client))
+    with pytest.raises(expected) as exc_info:
+        async with model.request_stream([], None, ModelRequestParameters()):
+            pass  # pragma: no cover
+    assert exc_info.value.__cause__ is error
+
+
+async def test_request_stream_empty(allow_model_requests: None) -> None:
+    client = MockAsyncClientV2.create_stream_mock([])
+    model = CohereModel('command-r', provider=CohereProvider(cohere_client=client))
+    with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without content or tool calls'):
+        async with model.request_stream([], None, ModelRequestParameters()):
+            pass  # pragma: no cover
+
+
 async def test_stream_request_non_http_error(allow_model_requests: None) -> None:
     mock_client = MockAsyncClientV2.create_stream_mock(
         ApiError(status_code=None, body={'error': 'connection error'}),
@@ -1203,8 +1218,8 @@ async def test_stream_request_non_http_error(allow_model_requests: None) -> None
 
 async def test_stream_request_status_error_mid_stream(allow_model_requests: None) -> None:
     """Regression: `chat_stream()` returns an async iterator without making any request, so an
-    `ApiError` from the underlying HTTP call only ever surfaces once the stream is iterated, not
-    when it's opened. It must still be mapped to `ModelHTTPError` like the call-opening case above.
+    `ApiError` can also surface after the first chunk was peeked on context entry. It must still
+    be mapped to `ModelHTTPError` like the call-opening case above.
     """
     events: list[MockStreamEvent] = [
         *_text_stream_events(['hello '])[:-1],  # content-start + content-delta, no message-end yet
@@ -1264,7 +1279,7 @@ async def test_stream_error_categories(
     assert exc_info.value.__cause__ is error
 
 
-async def test_stream_event_edge_cases():
+async def test_stream_event_edge_cases(allow_model_requests: None):
     """Regression: boundary conditions in `_get_event_iterator` that must yield no part event."""
     events: list[V2ChatStreamResponse] = [
         # Metadata-only events and empty deltas produce no parts.
@@ -1322,46 +1337,14 @@ async def test_stream_event_edge_cases():
         # MessageEnd with a delta but no finish_reason and no usage.
         MessageEndV2ChatStreamResponse(delta=ChatMessageEndEventDelta(finish_reason=None, usage=None)),
     ]
-    response = CohereStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
-        _model_name='command-r7b-12-2024',
-        _provider_name='cohere',
-        _provider_url='https://api.cohere.com',
-        _response=PeekableAsyncStream(MockAsyncStream(iter(events))),
-    )
-
-    part_events = [e async for e in response]
+    client = MockAsyncClientV2.create_stream_mock(events)
+    model = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=client))
+    async with model.request_stream([], None, ModelRequestParameters()) as response:
+        part_events = [e async for e in response]
 
     assert part_events == []
     assert response.finish_reason is None
     assert response.provider_details is None
-
-
-async def test_close_stream_closes_underlying_source():
-    """`close_stream` must close the provider stream, not silently no-op."""
-    closed = anyio.Event()
-
-    async def source() -> AsyncIterator[V2ChatStreamResponse]:
-        try:
-            yield MessageEndV2ChatStreamResponse(delta=None)
-            await anyio.sleep_forever()  # pragma: no cover
-        finally:
-            closed.set()
-
-    peekable: PeekableAsyncStream[V2ChatStreamResponse, AsyncIterator[V2ChatStreamResponse]] = PeekableAsyncStream(
-        source()
-    )
-    response = CohereStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
-        _model_name='command-r7b-12-2024',
-        _provider_name='cohere',
-        _provider_url='https://api.cohere.com',
-        _response=peekable,
-    )
-
-    assert await anext(aiter(peekable)) is not None
-    await response.close_stream()
-    assert closed.is_set()
 
 
 @pytest.mark.parametrize('active_pull', [False, True])
@@ -1419,7 +1402,7 @@ async def test_request_stream_closes_source_on_early_exit(
                 break
             if active_pull:
                 group.start_soon(consume, response)
-                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                with anyio.fail_after(10):
                     await pulling.wait()
 
     assert closed.is_set()
@@ -1439,12 +1422,22 @@ async def test_stream_content_index(allow_model_requests: None, index: int | Non
     assert result.response.parts == [TextPart('hello world')]
 
 
-@pytest.mark.parametrize('reported, has_tokens', [(False, False), (True, False), (True, True)])
-async def test_stream_usage(allow_model_requests: None, reported: bool, has_tokens: bool):
+@pytest.mark.parametrize(
+    'reported, has_tokens, expected',
+    [
+        (False, False, RequestUsage(unmeasured_requests=1)),
+        (True, False, RequestUsage()),
+        (True, True, RequestUsage(input_tokens=2, output_tokens=3)),
+    ],
+)
+async def test_stream_usage(allow_model_requests: None, reported: bool, has_tokens: bool, expected: RequestUsage):
     """Missing usage cannot be reliably requested from the real API."""
-    reported_usage = (
-        Usage(tokens=UsageTokens(input_tokens=2, output_tokens=3) if has_tokens else None) if reported else None
-    )
+    if not reported:
+        reported_usage = None
+    elif has_tokens:
+        reported_usage = Usage(tokens=UsageTokens(input_tokens=2, output_tokens=3))
+    else:
+        reported_usage = Usage()
     events = _text_stream_events(['hello'])
     events[-1] = MessageEndV2ChatStreamResponse(
         delta=ChatMessageEndEventDelta(finish_reason='COMPLETE', usage=reported_usage)
@@ -1454,13 +1447,6 @@ async def test_stream_usage(allow_model_requests: None, reported: bool, has_toke
     async with model.request_stream([], None, ModelRequestParameters()) as response:
         async for _ in response:
             pass
-    expected = (
-        RequestUsage(unmeasured_requests=1)
-        if not reported
-        else RequestUsage(input_tokens=2, output_tokens=3)
-        if has_tokens
-        else RequestUsage()
-    )
     assert response.get().usage == expected
     assert response.get().state == 'complete'
 
