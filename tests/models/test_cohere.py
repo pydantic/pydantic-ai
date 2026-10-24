@@ -1506,7 +1506,7 @@ async def test_stream_tool_with_vcr(allow_model_requests: None, co_api_key: str)
     async with agent.run_stream(
         'Use get_temperature to find the temperature in Paris, then report the result.'
     ) as result:
-        await result.get_output()
+        assert await result.get_output() == 'The temperature in Paris is 24 degrees Celsius.'
     assert calls == ['Paris']
     assert result.all_messages() == snapshot(
         [
@@ -1599,7 +1599,7 @@ async def test_stream_thinking_with_vcr(allow_model_requests: None, co_api_key: 
     ) as result:
         async for _ in result.stream_response(debounce_by=None):
             pass
-        await result.get_output()
+        assert await result.get_output() == '323'
     assert result.response == snapshot(
         ModelResponse(
             parts=[
