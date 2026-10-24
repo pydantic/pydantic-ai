@@ -1,8 +1,9 @@
 from __future__ import annotations as _annotations
 
 import base64
+import itertools
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -12,7 +13,7 @@ from typing import Any, Literal, TypeAlias, TypeGuard, assert_never, cast, overl
 import httpx2
 import pydantic_core
 from opentelemetry.trace import get_current_span
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._context_size import mark_context_input_tokens, marked_context_input_tokens
@@ -22,7 +23,7 @@ from .._thinking_part import render_replayed_thinking
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ..capabilities.abstract import AbstractCapability
-from ..computer_use import ComputerResult, computer_tool_name
+from ..computer_use import DISPLAY_SIZE, ComputerResult, computer_tool_name
 from ..exceptions import (
     ModelAPIError,
     ModelContextWindowExceededError,
@@ -37,7 +38,11 @@ from ..messages import (
     AudioUrl,
     BinaryContent,
     CachePoint,
+    Citation,
+    CitationSource,
     CompactionPart,
+    ContentCitationAnchor,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -49,6 +54,7 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
     NativeToolSearchCallPart,
@@ -65,6 +71,7 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
     _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
@@ -89,6 +96,7 @@ from ..profiles.anthropic import (
     ANTHROPIC_SAMPLING_PARAMS,
     ANTHROPIC_THINKING_BUDGET_MAP,
     AnthropicCodeExecutionToolVersion,
+    AnthropicComputerToolVersion,
     AnthropicEffort,
     AnthropicModelProfile,
     resolve_anthropic_effort,
@@ -146,6 +154,170 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
 }
 
 
+def _fetched_page(block: BetaWebFetchToolResultBlock) -> tuple[str, str] | None:
+    """Return the URL and text of a page Web Fetch fetched, or `None` for a failed fetch or a PDF."""
+    if isinstance(block.content, BetaWebFetchBlock) and isinstance(block.content.content.source, BetaPlainTextSource):
+        return block.content.url, block.content.content.source.data
+    return None
+
+
+_CITATIONS_WITH_FORCED_TOOL_ERROR = (
+    "`Citations()` can't be used with a `tool_choice` that forces a tool call on Anthropic models: "
+    "the model writes its citation markup into the tool's arguments. "
+    'Remove `Citations()`, or let the model choose whether to call the tool.'
+)
+
+
+def _include_citations(model_settings: ModelSettings, model_request_parameters: ModelRequestParameters) -> bool:
+    """Whether the `citations` setting turns on document and Web Fetch citations for this request.
+
+    Anthropic rejects citations with native structured output, and writes its `<cite>` markup into tool and prompted
+    output, so they're only turned on for text output.
+    """
+    return model_settings.get('citations', False) and model_request_parameters.output_mode == 'text'
+
+
+def _check_citations_tool_choice(
+    model_settings: ModelSettings,
+    model_request_parameters: ModelRequestParameters,
+    messages: list[BetaMessageParam],
+    include_citations: bool,
+) -> None:
+    """Raise if the `citations` setting turned on citations for a request that forces a function tool call.
+
+    The model writes its `<cite>` markup into a forced tool call's arguments. A request with nothing to cite, no
+    document and no Web Fetch tool, is unchanged by the setting, so it's allowed.
+    """
+    if not include_citations:
+        return
+    tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+    if not (tool_choice == 'required' or (isinstance(tool_choice, tuple) and tool_choice[0] == 'required')):
+        return
+    if any(isinstance(tool, WebFetchTool) for tool in model_request_parameters.native_tools) or _has_cited_document(
+        messages
+    ):
+        raise UserError(_CITATIONS_WITH_FORCED_TOOL_ERROR)
+
+
+def _has_cited_document(value: object) -> bool:
+    """Whether a request's messages hold a document block with citations turned on, including in tool results."""
+    if isinstance(value, list):
+        return any(_has_cited_document(item) for item in cast(list[object], value))
+    if _utils.is_str_dict(value):
+        if value.get('type') == 'document' and value.get('citations'):
+            return True
+        return any(_has_cited_document(item) for item in value.values())
+    return False
+
+
+def _history_fetched_pages(messages: Sequence[ModelMessage]) -> list[tuple[str, str]]:
+    """Return the URL and text of each page Web Fetch fetched earlier in the conversation, which a new answer can cite."""
+    pages: list[tuple[str, str]] = []
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            for part in message.parts:
+                if isinstance(part, NativeToolReturnPart) and part.tool_name == WebFetchTool.kind:
+                    try:
+                        page = BetaWebFetchBlock.model_validate(part.content)
+                    except ValidationError:
+                        continue
+                    if isinstance(page.content.source, BetaPlainTextSource):
+                        pages.append((page.url, page.content.source.data))
+    return pages
+
+
+def _fetched_page_url(citation: BetaCitationCharLocation, fetched_pages: Sequence[tuple[str, str]]) -> str | None:
+    """Return the URL of the fetched page a character citation quotes, if exactly one page matches.
+
+    Anthropic cites a fetched page like a document, by index and character range, without its URL. When pages with
+    different URLs hold the same text at that range, the citation stays a document source rather than guess.
+    """
+    if not citation.cited_text:
+        return None
+    start, end = citation.start_char_index, citation.end_char_index
+    urls = {url for url, page in fetched_pages if page[start:end] == citation.cited_text}
+    return next(iter(urls)) if len(urls) == 1 else None
+
+
+_CITATION_TYPES = frozenset({'web_search_result_location', 'char_location', 'page_location', 'content_block_location'})
+
+
+def _map_citations(
+    citations: Sequence[BetaTextCitation], text: str, fetched_pages: Sequence[tuple[str, str]] = ()
+) -> list[Citation] | None:
+    sources: list[CitationSource] = []
+    for citation in citations:
+        # The SDK doesn't validate responses, so it builds a citation of a type it doesn't know into one of its classes.
+        if citation.type not in _CITATION_TYPES:
+            continue
+        excerpts = [citation.cited_text] if citation.cited_text else []
+        if isinstance(citation, BetaCitationsWebSearchResultLocation):
+            sources.append(WebCitationSource(url=citation.url, title=citation.title, excerpts=excerpts))
+        elif isinstance(citation, BetaCitationCharLocation) and (url := _fetched_page_url(citation, fetched_pages)):
+            sources.append(WebCitationSource(url=url, title=citation.document_title, excerpts=excerpts))
+        elif isinstance(
+            citation,
+            (BetaCitationCharLocation, BetaCitationPageLocation, BetaCitationContentBlockLocation),
+        ) and (citation.file_id or citation.document_title or excerpts):
+            # These locations select evidence inside the input document, so they stay in the raw citation data.
+            sources.append(
+                DocumentCitationSource(document_id=citation.file_id, title=citation.document_title, excerpts=excerpts)
+            )
+    if not sources:
+        return None
+    # Anthropic splits its answer into text blocks and cites whole blocks, so the citation covers the whole part.
+    return [Citation(sources=sources, anchor=ContentCitationAnchor(start=0, end=len(text)) if text else None)]
+
+
+def _citations_provider_details(citations: Sequence[BetaTextCitation]) -> dict[str, Any]:
+    return {'citations': [citation.model_dump(mode='json') for citation in citations]}
+
+
+def _citations_fit_text(part: TextPart) -> bool:
+    """Whether a text part is still the block Anthropic cited, so its citations can be sent back.
+
+    Anthropic cites whole blocks, so each citation covers the whole text. One that doesn't, because the text was
+    edited or joined with other text, such as by a UI adapter, would vouch for text it never cited.
+    """
+    return bool(part.citations) and all(
+        citation.anchor == ContentCitationAnchor(start=0, end=len(part.content)) for citation in part.citations or []
+    )
+
+
+def _map_citation_for_replay(citation: dict[str, Any]) -> BetaCitationWebSearchResultLocationParam | None:
+    """Rebuild a web search citation Anthropic returned from its raw data on the text part, or return `None`.
+
+    Document citations aren't sent back: they name their document by its position in the request, which changes when
+    history is edited, and the citation can't tell which document it was.
+    """
+    if citation.get('type') != 'web_search_result_location':
+        return None
+    cited_text, url, title = citation.get('cited_text'), citation.get('url'), citation.get('title')
+    encrypted_index = citation.get('encrypted_index')
+    if (
+        not isinstance(cited_text, str)
+        or not isinstance(url, str)
+        or not isinstance(title, str | None)
+        or not isinstance(encrypted_index, str)
+    ):
+        return None
+    return BetaCitationWebSearchResultLocationParam(
+        type='web_search_result_location',
+        url=url,
+        title=title,
+        cited_text=cited_text,
+        encrypted_index=encrypted_index,
+    )
+
+
+def _with_document_citations(
+    block: BetaRequestDocumentBlockParam, include_citations: bool
+) -> BetaRequestDocumentBlockParam:
+    if include_citations:
+        block['citations'] = BetaCitationsConfigParamParam(enabled=True)
+    return block
+
+
 def _native_tool_is_a_tools_entry(tool: AbstractNativeTool) -> bool:
     """Whether `_add_native_tools` sends this native tool as an entry in the request's `tools`.
 
@@ -164,13 +336,20 @@ def _revealed_deferred_tool_order(
 
     Deferred entries are outside Anthropic's cache key, so this is a determinism rule, not a cache rule.
     A mid-run newcomer (`introduced_tool_names`) is declared deferred for the same reason and joins them.
+
+    Without a tool-search surface, `resolve_request_tools` declares a deferred tool from the first request,
+    so its reveal leaves it where earlier requests sent it: moving it would reorder entries already sent.
     """
     tool_defs = model_request_parameters.tool_defs
+    pre_declared = not any(isinstance(tool, ToolSearchTool) for tool in model_request_parameters.native_tools)
     return [
         name
         for name in discovered_tool_names_in_order(messages)
         if name in tool_defs
-        and (tool_defs[name].defer_loading or name in model_request_parameters.introduced_tool_names)
+        and (
+            name in model_request_parameters.introduced_tool_names
+            or (tool_defs[name].defer_loading and not pre_declared)
+        )
         and tool_defs[name].with_native is None
         and model_request_parameters.visibility_of(name) == 'deferred'
     ]
@@ -211,8 +390,13 @@ try:
         BetaBashCodeExecutionToolResultBlock,
         BetaBashCodeExecutionToolResultBlockParam,
         BetaCacheControlEphemeralParam,
+        BetaCitationCharLocation,
+        BetaCitationContentBlockLocation,
+        BetaCitationPageLocation,
         BetaCitationsConfigParamParam,
         BetaCitationsDelta,
+        BetaCitationsWebSearchResultLocation,
+        BetaCitationWebSearchResultLocationParam,
         BetaCodeExecutionTool20250825Param,
         BetaCodeExecutionTool20260120Param,
         BetaCodeExecutionToolResultBlock,
@@ -223,7 +407,6 @@ try:
         BetaCompactionBlockParam,
         BetaCompactionContentBlockDelta,
         BetaComputerToolset20260801Param,
-        BetaComputerToolsetConfigsParam,
         BetaContainerParams,
         BetaContainerUploadBlockParam,
         BetaContentBlock,
@@ -247,6 +430,7 @@ try:
         BetaMessageTokensCount,
         BetaMetadataParam,
         BetaOutputConfigParam,
+        BetaPlainTextSource,
         BetaPlainTextSourceParam,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
@@ -269,6 +453,7 @@ try:
         BetaStopReason,
         BetaTextBlock,
         BetaTextBlockParam,
+        BetaTextCitation,
         BetaTextDelta,
         BetaTextEditorCodeExecutionToolResultBlock,
         BetaTextEditorCodeExecutionToolResultBlockParam,
@@ -279,6 +464,8 @@ try:
         BetaThinkingDelta,
         BetaTokenTaskBudgetParam,
         BetaToolChoiceParam,
+        BetaToolComputerUse20250124Param,
+        BetaToolComputerUse20251124Param,
         BetaToolParam,
         BetaToolReferenceBlockParam,
         BetaToolSearchToolBm25_20251119Param,
@@ -291,6 +478,7 @@ try:
         BetaToolUseBlock,
         BetaToolUseBlockParam,
         BetaUsage,
+        BetaWebFetchBlock,
         BetaWebFetchTool20250910Param,
         BetaWebFetchTool20260209Param,
         BetaWebFetchToolResultBlock,
@@ -347,14 +535,9 @@ _FAST_MODE_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
-# Verified on the Claude API only; Anthropic's own reference agent says Vertex and Bedrock don't serve the toolset yet,
-# so the other clients get the `computer` tool as a function.
-_COMPUTER_TOOLSET_UNSUPPORTED_CLIENTS = (
-    AsyncAnthropicBedrock,
-    AsyncAnthropicBedrockMantle,
-    AsyncAnthropicFoundry,
-    AsyncAnthropicVertex,
-)
+# These platforms serve computer use only through the earlier beta tool versions; Claude Models on Google Cloud serves
+# the toolset like the Claude API. https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool
+_COMPUTER_BETA_TOOLS_ONLY_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicFoundry)
 # `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
 # `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag. Anthropic documents
 # the binding beta for Amazon Bedrock and Google Cloud, and the SDK carries it through the legacy
@@ -1213,8 +1396,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 and supports_inline_system_prompts,
                 anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
                 and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
-                anthropic_supports_computer_toolset=_profile.get('anthropic_supports_computer_toolset', False)
-                and not isinstance(client, _COMPUTER_TOOLSET_UNSUPPORTED_CLIENTS),
+                anthropic_computer_tool_version=_computer_tool_version_for_client(
+                    _profile.get('anthropic_computer_tool_version'), client, self.model_name
+                ),
             ),
         )
         if isinstance(client, AsyncAnthropicBedrock):
@@ -1281,13 +1465,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response = await self._messages_create(messages, False, model_settings, model_request_parameters)
         response = check_json_response(self.model_name, response)
         if isinstance(response, BetaMessage):
-            model_response = self._process_response(response, model_request_parameters, model_settings)
+            model_response = self._process_response(
+                response, model_request_parameters, model_settings, _history_fetched_pages(messages)
+            )
         else:
             # The request was streamed behind the scenes, see `_messages_create`. `_map_api_errors` maps a transport
             # error that breaks the stream off, both while it opens and while it's read.
             async with response.source:
                 streamed_response = await self._process_streamed_response(
-                    response, model_request_parameters, model_settings
+                    response, model_request_parameters, model_settings, _history_fetched_pages(messages)
                 )
                 async for _ in streamed_response:
                     pass
@@ -1330,7 +1516,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response = await self._messages_create(messages, True, model_settings, model_request_parameters)
         async with response.source:
             streamed_response = await self._process_streamed_response(
-                response, model_request_parameters, model_settings
+                response, model_request_parameters, model_settings, _history_fetched_pages(messages)
             )
             yield streamed_response
             _mark_continuation_context_input_tokens(messages, streamed_response)
@@ -1440,11 +1626,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if anthropic_thinking := model_settings.get('anthropic_thinking'):
             return anthropic_thinking
         thinking = model_request_parameters.thinking
-        if thinking is False and self.profile.get('thinking_enabled_by_default', False):
-            # Omitting `thinking` leaves it on for these models. `Model.prepare_request` has already dropped
-            # `False` for models that can't turn thinking off.
-            return {'type': 'disabled'}
-        if thinking is None or thinking is False:
+        if thinking is False:
+            if self.profile.get('thinking_always_enabled', False):
+                # A model that can't turn thinking off thinks as little as it can: adaptively at the lowest effort,
+                # which `_build_output_config` adds. A model without an effort setting is left at its default.
+                if self.profile.get('anthropic_supports_effort', False):
+                    return {'type': 'adaptive'}
+                return OMIT  # type: ignore[return-value]
+            if self.profile.get('anthropic_disables_thinking_with_between_tools', False):
+                return {'type': 'between_tools'}
+            if self.profile.get('thinking_enabled_by_default', False):
+                # Omitting `thinking` leaves it on for these models.
+                return {'type': 'disabled'}
+            return OMIT  # type: ignore[return-value]
+        if thinking is None:
             return OMIT  # type: ignore[return-value]
         if self.profile.get('anthropic_supports_adaptive_thinking', False):
             return {'type': 'adaptive'}
@@ -1713,6 +1908,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         if self._messages_use_anthropic_uploaded_file(messages):
             betas.add(_ANTHROPIC_FILES_API_BETA)
+        if (native_computer := self._native_computer(model_request_parameters)) and (
+            beta := _COMPUTER_TOOL_BETAS.get(native_computer.version)
+        ):
+            betas.add(beta)
         # `prepare_messages` converts local search returns into availability deltas before this
         # scan. Native search returns replay under the tool-search beta, so delta parts are the
         # complete trigger set for the mid-conversation-tool-changes beta.
@@ -2007,6 +2206,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response: BetaMessage,
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
+        history_fetched_pages: Sequence[tuple[str, str]] = (),
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
@@ -2026,12 +2226,30 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 | BetaAdvisorToolResultBlock,
             )
         }
-        computer_name = computer_tool_name(model_request_parameters)
+        fetched_pages = [
+            *history_fetched_pages,
+            *(
+                page
+                for item in response.content
+                if isinstance(item, BetaWebFetchToolResultBlock) and (page := _fetched_page(item))
+            ),
+        ]
+        native_computer = self._native_computer(model_request_parameters)
         computer_blocks: list[dict[str, Any]] = []
         computer_index = 0
         for item in response.content:
             if isinstance(item, BetaTextBlock):
-                items.append(TextPart(content=item.text))
+                if citations := _map_citations(item.citations or [], item.text, fetched_pages):
+                    items.append(
+                        TextPart(
+                            content=item.text,
+                            provider_name=self.system,
+                            provider_details=_citations_provider_details(item.citations or []),
+                            citations=citations,
+                        )
+                    )
+                else:
+                    items.append(TextPart(content=item.text))
             elif isinstance(item, BetaServerToolUseBlock):
                 if item.name not in enabled_server_tool_names and item.id not in server_tool_result_ids:
                     continue
@@ -2075,10 +2293,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 )
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
-                if _is_computer_member(item, computer_name):
+                if native_computer and native_computer.answers(item):
+                    block = {'id': item.id, 'name': item.name, 'input': item.input}
+                    if not native_computer.is_toolset:
+                        # Each call of an earlier computer use tool is a call of its own.
+                        items.append(native_computer.call_part([block], self.system))
+                        continue
                     if not computer_blocks:
                         computer_index = len(items)
-                    computer_blocks.append({'id': item.id, 'name': item.name, 'input': item.input})
+                    computer_blocks.append(block)
                     continue
                 items.append(
                     ToolCallPart(
@@ -2088,10 +2311,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     )
                 )
 
-        if computer_name is not None and computer_blocks:
-            # A response's member calls are one batch, run in order and stopped at the first failure, so they
+        if native_computer and computer_blocks:
+            # A response's toolset member calls are one batch, run in order and stopped at the first failure, so they
             # become one `computer` call where the first of them was, whatever other blocks sit between them.
-            items.insert(computer_index, _computer_call_part(computer_blocks, computer_name, self.system))
+            items.insert(computer_index, native_computer.call_part(computer_blocks, self.system))
 
         finish_reason: FinishReason | None = None
         provider_details: dict[str, Any] | None = None
@@ -2159,6 +2382,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response: _AnthropicEventStream,
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
+        history_fetched_pages: Sequence[tuple[str, str]] = (),
     ) -> AnthropicStreamedResponse:
         first_chunk = await response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -2181,6 +2405,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
             _enabled_server_tool_names=self._get_enabled_server_tool_names(model_request_parameters, model_settings),
+            _history_fetched_pages=history_fetched_pages,
+            _native_computer=self._native_computer(model_request_parameters),
         )
 
     def _get_code_execution_tool_version(
@@ -2236,9 +2462,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     def _map_web_fetch_tool(
-        tool: WebFetchTool, supports_dynamic_filtering: bool
+        tool: WebFetchTool, supports_dynamic_filtering: bool, include_citations: bool
     ) -> tuple[BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param, str | None]:
-        citations = BetaCitationsConfigParamParam(enabled=tool.enable_citations) if tool.enable_citations else None
+        enable_citations = tool.enable_citations or include_citations
+        citations = BetaCitationsConfigParamParam(enabled=True) if enable_citations else None
         if supports_dynamic_filtering:
             return (
                 BetaWebFetchTool20260209Param(
@@ -2286,7 +2513,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if tool.files and any(file.provider_name == self.system for file in tool.files):
                     beta_features.add('files-api-2025-04-14')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
-                web_fetch_tool, beta_feature = self._map_web_fetch_tool(tool, supports_dynamic_filtering)
+                web_fetch_tool, beta_feature = self._map_web_fetch_tool(
+                    tool, supports_dynamic_filtering, _include_citations(model_settings, model_request_parameters)
+                )
                 tools.append(web_fetch_tool)
                 if beta_feature is not None:
                     beta_features.add(beta_feature)
@@ -2349,7 +2578,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """The tool definitions to declare, after any `tool_choice` restriction, and the API `tool_choice` value."""
         tool_defs = model_request_parameters.declared_tool_defs
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        computer_name = self._native_computer_name(model_request_parameters)
+        native_computer = self._native_computer(model_request_parameters)
+        # The toolset has no name to force it by.
+        unnamed = native_computer.name if native_computer and native_computer.is_toolset else None
 
         tool_choice: BetaToolChoiceParam
 
@@ -2362,8 +2593,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             supports = _support_tool_forcing(self.model_name, self.profile, model_settings, model_request_parameters)
-            if tool_choice_mode == 'required' and len(tool_names) == 1 and supports and computer_name not in tool_names:
-                tool_choice = {'type': 'tool', 'name': next(iter(tool_names))}
+            if tool_choice_mode == 'required' and len(tool_names) == 1 and supports and unnamed not in tool_names:
+                name = next(iter(tool_names))
+                # An earlier computer use tool is always named `computer`.
+                tool_choice = {
+                    'type': 'tool',
+                    'name': 'computer' if native_computer and name == native_computer.name else name,
+                }
             else:
                 # Breaks caching, but Anthropic doesn't support limiting tools via API arg. A tool that can't be
                 # named, such as the computer toolset, or any tool where forcing isn't supported (extended thinking,
@@ -2416,13 +2652,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             self._map_tool_definition(t, model_settings, visibility=model_request_parameters.visibility_of(t.name))
             for t in tool_defs.values()
         ]
-        computer_name = self._native_computer_name(model_request_parameters)
-        if computer_name in tool_defs:
-            # The toolset stands in for the `computer` tool; `_computer_call_part` maps its calls back.
-            tools = [tool for tool in tools if tool.get('name') != computer_name]
-            tools.append(
-                BetaComputerToolset20260801Param(type='computer_toolset_20260801', configs=_COMPUTER_TOOLSET_CONFIGS)
-            )
+        native_computer = self._native_computer(model_request_parameters)
+        if native_computer and native_computer.name in tool_defs:
+            # Anthropic's computer use tool stands in for the `computer` tool; `_computer_call_part` maps its calls back.
+            tools = [tool for tool in tools if tool.get('name') != native_computer.name]
+            tools.append(native_computer.tool_param(tool_defs[native_computer.name]))
 
         # Add cache_control to the last non-deferred tool if enabled. Anthropic rejects
         # `cache_control` on tools with `defer_loading=True` (`Tools with defer_loading
@@ -2449,9 +2683,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         messages = self._trim_before_compaction(messages)
         declared_tools = self._tool_choice_declarations(model_settings, model_request_parameters)[0]
-        computer_name = self._native_computer_name(model_request_parameters)
+        native_computer = self._native_computer(model_request_parameters)
         map_context = _MapMessagesContext(
             model_request_parameters=model_request_parameters,
+            include_citations=_include_citations(model_settings, model_request_parameters),
             # Whenever this request withholds a tool's schema, render any local-shape `search_tools`
             # history exchanges as Anthropic's "client-side" tool-search wire — `tool_use` paired with a
             # `tool_result` whose `content` is a `tool_reference` array. That block is the reveal: it
@@ -2494,8 +2729,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # one of those would be just as unknown as one naming a tool that's gone.
             declared_tool_names=set(declared_tools),
             tool_defs_by_name={tool.name: tool for tool in model_request_parameters.function_tools},
-            # The same test `_prepare_tools_and_tool_choice` uses to send the toolset.
-            computer_toolset_sent=computer_name in declared_tools,
+            # The same test `_prepare_tools_and_tool_choice` uses to send it.
+            computer_tool_sent=native_computer.version
+            if native_computer and native_computer.name in declared_tools
+            else None,
         )
         leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
         for m in messages:
@@ -2512,6 +2749,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         _place_system_messages_before_generation(anthropic_messages)
         _anchor_system_messages(anthropic_messages)
         self._add_container_uploads(anthropic_messages, model_request_parameters)
+        _check_citations_tool_choice(
+            model_settings, model_request_parameters, anthropic_messages, map_context.include_citations
+        )
         system_prompt = self._build_system_prompt(
             map_context.system_prompt_parts, messages, model_request_parameters, model_settings
         )
@@ -2640,7 +2880,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self, part: UserPromptPart, request_context: _MapModelRequestContext, map_context: _MapMessagesContext
     ) -> None:
         user_content_params = request_context.user_content_params
-        async for content in self._map_user_prompt(part):
+        async for content in self._map_user_prompt(part, include_citations=map_context.include_citations):
             if not isinstance(content, CachePoint):
                 user_content_params.append(content)
             elif request_context.mid_conversation_system_prompts or request_context.tool_availability_blocks:
@@ -2785,9 +3025,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     )
                 elif item.media_type.startswith(('text/', 'application/')):
                     tool_result_content.append(
-                        BetaRequestDocumentBlockParam(
-                            source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
-                            type='document',
+                        _with_document_citations(
+                            BetaRequestDocumentBlockParam(
+                                source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
+                                type='document',
+                            ),
+                            map_context.include_citations,
                         )
                     )
                 else:
@@ -2796,7 +3039,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         'Only image and document (text/application) types are supported.'
                     )
             elif is_multi_modal_content(item):
-                tool_result_content.append(await self._map_file_to_content_block(item, 'tool returns'))  # pyright: ignore[reportArgumentType]
+                tool_result_content.append(
+                    await self._map_file_to_content_block(
+                        item,  # pyright: ignore[reportArgumentType]
+                        'tool returns',
+                        include_citations=map_context.include_citations,
+                    )
+                )
             elif isinstance(item, str):  # pragma: no branch
                 tool_result_content.append(BetaTextBlockParam(text=item, type='text'))
 
@@ -2814,25 +3063,54 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         for response_part in message.parts:
             if isinstance(response_part, TextPart):
                 if response_part.content:
-                    assistant_content_params.append(BetaTextBlockParam(text=response_part.content, type='text'))
-            elif isinstance(response_part, ToolCallPart):
-                if (
-                    map_context.computer_toolset_sent
-                    and response_part.provider_name == self.system
-                    and (blocks := (response_part.provider_details or {}).get('computer_blocks'))
-                ):
-                    # Sent back as the member calls they came as, so each result can echo its toolset.
-                    map_context.computer_calls[_guard_tool_call_id(t=response_part)] = blocks
-                    assistant_content_params.extend(
-                        BetaToolUseBlockParam(
-                            id=block['id'],
-                            type='tool_use',
-                            name=block['name'],
-                            input=block['input'],
-                            toolset_name='computer',
+                    text_block = BetaTextBlockParam(text=response_part.content, type='text')
+                    raw_citations = (response_part.provider_details or {}).get('citations')
+                    if (
+                        response_part.provider_name == self.system
+                        and isinstance(raw_citations, list)
+                        and _citations_fit_text(response_part)
+                        # Only web search citations are sent back, and clients without web search, such as Bedrock,
+                        # reject them.
+                        and WebSearchTool in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+                        and (
+                            citations := [
+                                param
+                                for citation in cast(list[object], raw_citations)
+                                if _utils.is_str_dict(citation) and (param := _map_citation_for_replay(citation))
+                            ]
                         )
-                        for block in blocks
-                    )
+                    ):
+                        text_block['citations'] = citations
+                    assistant_content_params.append(text_block)
+            elif isinstance(response_part, ToolCallPart):
+                details = response_part.provider_details or {}
+                if (
+                    map_context.computer_tool_sent
+                    and response_part.provider_name == self.system
+                    and (blocks := details.get('computer_blocks'))
+                    # Calls of another computer use tool version go back as plain calls.
+                    and details.get('computer_tool', 'computer_toolset_20260801') == map_context.computer_tool_sent
+                ):
+                    # Sent back as the calls they came as; toolset member calls each need their own result.
+                    if map_context.computer_tool_sent == 'computer_toolset_20260801':
+                        map_context.computer_calls[_guard_tool_call_id(t=response_part)] = blocks
+                        assistant_content_params.extend(
+                            BetaToolUseBlockParam(
+                                id=block['id'],
+                                type='tool_use',
+                                name=block['name'],
+                                input=block['input'],
+                                toolset_name='computer',
+                            )
+                            for block in blocks
+                        )
+                    else:
+                        assistant_content_params.extend(
+                            BetaToolUseBlockParam(
+                                id=block['id'], type='tool_use', name=block['name'], input=block['input']
+                            )
+                            for block in blocks
+                        )
                 else:
                     assistant_content_params.append(
                         BetaToolUseBlockParam(
@@ -3303,48 +3581,68 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         _add_cache_control_param(params, self._build_cache_control(ttl))
 
     @staticmethod
-    def _map_binary_data(data: bytes, media_type: str) -> BetaImageBlockParam | BetaRequestDocumentBlockParam:
+    def _map_binary_data(
+        data: bytes, media_type: str, *, include_citations: bool = False
+    ) -> BetaImageBlockParam | BetaRequestDocumentBlockParam:
         if media_type.startswith('image/'):
             return BetaImageBlockParam(
                 source={'data': base64.b64encode(data).decode(), 'media_type': media_type, 'type': 'base64'},  # pyright: ignore[reportArgumentType]
                 type='image',
             )
         elif media_type == 'application/pdf':
-            return BetaRequestDocumentBlockParam(
-                source=BetaBase64PDFSourceParam(
-                    data=base64.b64encode(data).decode(),
-                    media_type='application/pdf',
-                    type='base64',
+            return _with_document_citations(
+                BetaRequestDocumentBlockParam(
+                    source=BetaBase64PDFSourceParam(
+                        data=base64.b64encode(data).decode(),
+                        media_type='application/pdf',
+                        type='base64',
+                    ),
+                    type='document',
                 ),
-                type='document',
+                include_citations,
             )
         elif media_type == 'text/plain':
-            return BetaRequestDocumentBlockParam(
-                source=BetaPlainTextSourceParam(data=data.decode('utf-8'), media_type=media_type, type='text'),
-                type='document',
+            return _with_document_citations(
+                BetaRequestDocumentBlockParam(
+                    source=BetaPlainTextSourceParam(data=data.decode('utf-8'), media_type=media_type, type='text'),
+                    type='document',
+                ),
+                include_citations,
             )
         else:  # pragma: no cover
             raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
 
     @staticmethod
-    async def _map_image_url(item: ImageUrl) -> BetaImageBlockParam:
+    async def _map_image_url(item: ImageUrl, *, include_citations: bool = False) -> BetaImageBlockParam:
         if item.force_download:
             downloaded = await download_item(item, data_format='bytes')
-            return AnthropicModel._map_binary_data(downloaded['data'], item.media_type)  # pyright: ignore[reportReturnType]
+            return AnthropicModel._map_binary_data(  # pyright: ignore[reportReturnType]
+                downloaded['data'], item.media_type, include_citations=include_citations
+            )
         return BetaImageBlockParam(source={'type': 'url', 'url': item.url}, type='image')
 
     @staticmethod
-    async def _map_document_url(item: DocumentUrl) -> BetaRequestDocumentBlockParam:
+    async def _map_document_url(item: DocumentUrl, *, include_citations: bool = False) -> BetaRequestDocumentBlockParam:
         if item.media_type == 'application/pdf':
             if item.force_download:
                 downloaded = await download_item(item, data_format='bytes')
-                return AnthropicModel._map_binary_data(downloaded['data'], item.media_type)  # pyright: ignore[reportReturnType]
-            return BetaRequestDocumentBlockParam(source={'url': item.url, 'type': 'url'}, type='document')
+                return AnthropicModel._map_binary_data(  # pyright: ignore[reportReturnType]
+                    downloaded['data'], item.media_type, include_citations=include_citations
+                )
+            return _with_document_citations(
+                BetaRequestDocumentBlockParam(source={'url': item.url, 'type': 'url'}, type='document'),
+                include_citations,
+            )
         elif item.media_type == 'text/plain':
             downloaded_item = await download_item(item, data_format='text')
-            return BetaRequestDocumentBlockParam(
-                source=BetaPlainTextSourceParam(data=downloaded_item['data'], media_type=item.media_type, type='text'),
-                type='document',
+            return _with_document_citations(
+                BetaRequestDocumentBlockParam(
+                    source=BetaPlainTextSourceParam(
+                        data=downloaded_item['data'], media_type=item.media_type, type='text'
+                    ),
+                    type='document',
+                ),
+                include_citations,
             )
         else:  # pragma: no cover
             raise RuntimeError(f'Unsupported document media type: {item.media_type}')
@@ -3353,16 +3651,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     async def _map_file_to_content_block(
         item: BinaryContent | ImageUrl | DocumentUrl | AudioUrl | VideoUrl,
         context: str,
+        *,
+        include_citations: bool = False,
     ) -> BetaImageBlockParam | BetaRequestDocumentBlockParam:
         """Map a multimodal file item to its Anthropic API content block."""
         if isinstance(item, BinaryContent):
             if item.is_image or item.is_document:
-                return AnthropicModel._map_binary_data(item.data, item.media_type)
+                return AnthropicModel._map_binary_data(item.data, item.media_type, include_citations=include_citations)
             raise NotImplementedError(f'Unsupported binary content type in Anthropic {context}: {item.media_type}')
         elif isinstance(item, ImageUrl):
-            return await AnthropicModel._map_image_url(item)
+            return await AnthropicModel._map_image_url(item, include_citations=include_citations)
         elif isinstance(item, DocumentUrl):
-            return await AnthropicModel._map_document_url(item)
+            return await AnthropicModel._map_document_url(item, include_citations=include_citations)
         elif isinstance(item, AudioUrl):
             raise NotImplementedError(f'AudioUrl is not supported in Anthropic {context}')
         else:
@@ -3371,6 +3671,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     async def _map_user_prompt(
         self,
         part: UserPromptPart,
+        *,
+        include_citations: bool = False,
     ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
         if isinstance(part.content, str):
             if part.content:  # Only yield non-empty text
@@ -3391,9 +3693,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             type='image',
                         )
                     elif item.media_type.startswith(('text/', 'application/')):
-                        yield BetaRequestDocumentBlockParam(
-                            source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
-                            type='document',
+                        yield _with_document_citations(
+                            BetaRequestDocumentBlockParam(
+                                source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
+                                type='document',
+                            ),
+                            include_citations,
                         )
                     else:
                         raise UserError(
@@ -3401,62 +3706,94 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             'Only image and document (text/application) types are supported.'
                         )
                 elif is_multi_modal_content(item):
-                    yield await AnthropicModel._map_file_to_content_block(item, 'user prompts')  # pyright: ignore[reportArgumentType]
+                    yield await AnthropicModel._map_file_to_content_block(
+                        item,  # pyright: ignore[reportArgumentType]
+                        'user prompts',
+                        include_citations=include_citations,
+                    )
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
-    def _native_computer_name(self, model_request_parameters: ModelRequestParameters) -> str | None:
-        """The `computer` tool's name when this model takes Anthropic's computer toolset in its place."""
-        if not self.profile.get('anthropic_supports_computer_toolset', False):
+    def _native_computer(self, model_request_parameters: ModelRequestParameters) -> _NativeComputer | None:
+        """The `computer` tool's name and the Anthropic computer use tool this model takes in its place."""
+        version = self.profile.get('anthropic_computer_tool_version')
+        name = computer_tool_name(model_request_parameters) if version else None
+        if version is None or name is None:
             return None
-        return computer_tool_name(model_request_parameters)
+        # The earlier tools declare the display size, which the `computer` tool gives in its metadata.
+        if version != 'computer_toolset_20260801' and DISPLAY_SIZE not in (
+            model_request_parameters.tool_defs[name].metadata or {}
+        ):
+            return None
+        return _NativeComputer(name, version)
 
     async def _map_computer_results(
         self, part: ToolReturnPart, blocks: list[dict[str, Any]]
     ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
-        """One result per member call, as the toolset requires.
+        """One result per toolset member call, as the toolset requires.
 
-        The calls that ran get `OK`, with the screenshot on the last of them, since an error result can hold only
-        text; the failed call gets its error and the rest Anthropic's not-executed text. A failed or denied result
-        doesn't say which calls ran, so each gets its text.
+        The calls that ran get `OK` and what they returned (a zoom's image, the pointer's position), and the last of
+        them the screenshot, since an error result can hold only text; the failed call gets its error and the rest
+        Anthropic's not-executed text. A failed or denied result doesn't say which calls ran, so each gets its text.
         """
 
-        def result(block: dict[str, Any], text: str, is_error: bool, extra: list[beta_tool_result_block_param.Content]):
+        def result(block: dict[str, Any], is_error: bool, *content: beta_tool_result_block_param.Content):
             return beta_tool_result_block_param.BetaToolResultBlockParam(
                 tool_use_id=block['id'],
                 type='tool_result',
-                content=[BetaTextBlockParam(text=text, type='text'), *extra],
+                content=list(content),
                 is_error=is_error,
                 toolset_name='computer',
             )
 
+        async def content_block(item: str | MultiModalContent) -> beta_tool_result_block_param.Content:
+            if isinstance(item, str):
+                return BetaTextBlockParam(text=item, type='text')
+            # The `computer` tool returns only text and images.
+            image = await self._map_file_to_content_block(cast(BinaryContent, item), 'tool returns')
+            return cast(beta_tool_result_block_param.Content, image)
+
         if part.outcome != 'success':
-            text = part.model_response_str(wrap_if_error=False)
-            return [result(block, text, True, []) for block in blocks]
+            text = BetaTextBlockParam(text=part.model_response_str(wrap_if_error=False), type='text')
+            return [result(block, True, text) for block in blocks]
+        # Each member may have become several actions, such as a key sequence.
+        member_actions = [_map_computer_member(*_member(block, 'computer_toolset_20260801')) for block in blocks]
+        ends = list(itertools.accumulate(len(actions) for actions in member_actions))
         raw_metadata: Any = part.metadata
         # A result without its metadata, such as one rebuilt by a UI, reads as every call having run.
         metadata: ComputerResult = (
-            cast(ComputerResult, raw_metadata) if isinstance(raw_metadata, dict) else {'performed': len(blocks)}
+            cast(ComputerResult, raw_metadata) if isinstance(raw_metadata, dict) else {'performed': ends[-1]}
         )
-        performed = metadata.get('performed', len(blocks))
+        performed = metadata.get('performed', ends[-1])
         error = metadata.get('error')
-        screenshot = [
-            await self._map_file_to_content_block(file, 'tool returns')
-            for file in part.files
-            if isinstance(file, BinaryContent) and file.is_image
-        ]
+        # The content is a summary, what zoom and cursor-position actions returned, then the screen (or the note that
+        # replaced it in this request).
+        content = part.content_items(mode='str')
+        outputs = list(content[1:-1])
+        screen = content[-1] if len(content) > 1 else None
+        last_ran = max((index for index, end in enumerate(ends) if end <= performed), default=-1)
         results: list[beta_tool_result_block_param.BetaToolResultBlockParam] = []
-        for index, block in enumerate(blocks):
-            if index < performed - 1:
-                results.append(result(block, 'OK', False, []))
-            elif index == performed - 1:
-                # The last that ran carries the screenshot, or the text saying why it was left out of this request.
-                text = 'OK' if screenshot else ' '.join(item for item in part.content_items() if isinstance(item, str))
-                results.append(result(block, text, False, cast(list[beta_tool_result_block_param.Content], screenshot)))
-            elif index == performed and error is not None:
-                results.append(result(block, error, True, []))
+        for index, (block, actions) in enumerate(zip(blocks, member_actions)):
+            start = ends[index] - len(actions)
+            if ends[index] <= performed:
+                returned = [
+                    await content_block(outputs.pop(0))
+                    for action in actions
+                    if action['type'] in ('zoom', 'cursor_position') and outputs
+                ]
+                if index == last_ran and isinstance(screen, str):
+                    # The screenshot was left out of this request: the call gets the text saying why.
+                    text = ' '.join(item for item in (content[0], screen) if isinstance(item, str))
+                    results.append(result(block, False, BetaTextBlockParam(text=text, type='text'), *returned))
+                elif index == last_ran and screen is not None:
+                    ok = BetaTextBlockParam(text='OK', type='text')
+                    results.append(result(block, False, ok, *returned, await content_block(screen)))
+                else:
+                    results.append(result(block, False, BetaTextBlockParam(text='OK', type='text'), *returned))
+            elif start <= performed and error is not None:
+                results.append(result(block, True, BetaTextBlockParam(text=error, type='text')))
             else:
-                results.append(result(block, _COMPUTER_NOT_EXECUTED, True, []))
+                results.append(result(block, True, BetaTextBlockParam(text=_COMPUTER_NOT_EXECUTED, type='text')))
         return results
 
     def _map_tool_definition(
@@ -3491,16 +3828,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         effort: AnthropicEffort | None = model_settings.get('anthropic_effort')
         # Fall back to unified thinking effort level when anthropic_effort is not set
         # Only map effort level strings; bare True just enables thinking without a specific effort
-        if (
-            effort is None
-            and self.profile.get('anthropic_supports_effort', False)
-            and isinstance(model_request_parameters.thinking, str)
-        ):
-            effort = resolve_anthropic_effort(
-                model_request_parameters.thinking,
-                supports_xhigh=self.profile.get('anthropic_supports_xhigh_effort', False),
-                supports_max=self.profile.get('anthropic_supports_max_effort', True),
-            )
+        thinking = model_request_parameters.thinking
+        if effort is None and self.profile.get('anthropic_supports_effort', False):
+            if isinstance(thinking, str):
+                effort = resolve_anthropic_effort(
+                    thinking,
+                    supports_xhigh=self.profile.get('anthropic_supports_xhigh_effort', False),
+                    supports_max=self.profile.get('anthropic_supports_max_effort', True),
+                )
+            elif thinking is False and self.profile.get('thinking_always_enabled', False):
+                # The least thinking a model that can't turn it off accepts.
+                effort = 'low'
 
         if effort is not None:
             # Validate what reaches the wire, where a caller's `extra_body` thinking wins.
@@ -3528,19 +3866,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> None:
         """Reject `xhigh`/`max` effort combined with explicitly disabled thinking.
 
-        Claude Opus 5 and Haiku 5.5 cap effort at `high` once thinking is disabled, while Claude Opus 4.8 accepts
-        every effort level in that combination. Fail fast with a helpful message rather than letting
-        the API return an opaque 400.
+        Claude Opus 5 and Haiku 5.5 cap effort at `high` once thinking is disabled, as does Claude Sonnet 5.5 with
+        `between_tools`, while Claude Opus 4.8 accepts every effort level in that combination. Fail fast with a
+        helpful message rather than letting the API return an opaque 400.
         """
         if effort not in ('xhigh', 'max'):
             return
         if not self.profile.get('anthropic_disallows_top_effort_when_thinking_disabled', False):
             return
-        if isinstance(thinking, Omit) or thinking.get('type') != 'disabled':
+        if isinstance(thinking, Omit) or (thinking_type := thinking.get('type')) not in ('disabled', 'between_tools'):
             return
         raise UserError(
             f'Model {self.model_name!r} does not support `anthropic_effort={effort!r}` while thinking is '
-            "disabled (`thinking=False` or `anthropic_thinking={'type': 'disabled'}`). "
+            f"disabled (`thinking=False` or `anthropic_thinking={{'type': {thinking_type!r}}}`). "
             "Use an effort of 'high' or below, or enable thinking."
         )
 
@@ -3852,6 +4190,8 @@ class AnthropicStreamedResponse(StreamedResponse):
     _provider_url: str
     _enabled_server_tool_names: frozenset[str]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _history_fetched_pages: Sequence[tuple[str, str]] = ()
+    _native_computer: _NativeComputer | None = None
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name, self._model_id_namespace):
@@ -3859,9 +4199,12 @@ class AnthropicStreamedResponse(StreamedResponse):
             ignored_server_tool_use_indices: set[int] = set()
             # A response's computer toolset calls are one batch: they stream as one `computer` call where the first
             # of them was, updated as each one completes.
-            computer_name = computer_tool_name(self.model_request_parameters)
+            native_computer = self._native_computer
             computer_blocks: list[dict[str, Any]] = []
             computer_input: list[str] = []
+            pending_citations: dict[int, list[BetaTextCitation]] = {}
+            # Web Fetch citations name their page only by its text, so the fetched pages are kept to find their URLs.
+            fetched_pages: list[tuple[str, str]] = list(self._history_fetched_pages)
 
             builtin_tool_calls: dict[str, NativeToolCallPart] = {}
             async for event in MapStreamDecodeErrors(self._response, self._model_name):
@@ -3891,7 +4234,7 @@ class AnthropicStreamedResponse(StreamedResponse):
 
                 elif isinstance(event, BetaRawContentBlockStartEvent):
                     current_block = event.content_block
-                    if _is_computer_member(current_block, computer_name):
+                    if native_computer and native_computer.answers(current_block):
                         computer_input = []
                         continue
                     if isinstance(current_block, BetaTextBlock) and current_block.text:
@@ -3972,6 +4315,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                             part=_map_text_editor_code_execution_tool_result_block(current_block, self.provider_name),
                         )
                     elif isinstance(current_block, BetaWebFetchToolResultBlock):  # pragma: lax no cover
+                        if page := _fetched_page(current_block):
+                            fetched_pages.append(page)
                         yield self._parts_manager.handle_part(
                             vendor_part_id=event.index,
                             part=_map_web_fetch_tool_result_block(current_block, self.provider_name),
@@ -4041,8 +4386,10 @@ class AnthropicStreamedResponse(StreamedResponse):
                             provider_name=self.provider_name,
                         ):
                             yield event_
-                    elif isinstance(event.delta, BetaInputJSONDelta) and _is_computer_member(
-                        current_block, computer_name
+                    elif (
+                        isinstance(event.delta, BetaInputJSONDelta)
+                        and native_computer
+                        and native_computer.answers(current_block)
                     ):
                         computer_input.append(event.delta.partial_json)
                     elif isinstance(event.delta, BetaInputJSONDelta):
@@ -4063,9 +4410,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                                     provider_details=_compaction_provider_details(event.delta.encrypted_content),
                                 ),
                             )
-                    # TODO(Marcelo): We need to handle citations.
-                    elif isinstance(event.delta, BetaCitationsDelta):
-                        pass
+                    elif isinstance(event.delta, BetaCitationsDelta):  # pragma: no branch
+                        pending_citations.setdefault(event.index, []).append(event.delta.citation)
 
                 elif isinstance(event, BetaRawMessageDeltaEvent):
                     self._usage = _map_usage(
@@ -4097,19 +4443,32 @@ class AnthropicStreamedResponse(StreamedResponse):
                         )
 
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
-                    if computer_name is not None and _is_computer_member(current_block, computer_name):
-                        # A member cut off mid-input (`max_tokens`) keeps what parsed; validation refuses what's missing.
+                    block_citations = pending_citations.pop(event.index, [])
+                    part = self._parts_manager.get_part_by_vendor_id(event.index)
+                    if isinstance(part, TextPart) and (
+                        citations := _map_citations(block_citations, part.content, fetched_pages)
+                    ):
+                        for event_ in self._parts_manager.handle_text_delta(
+                            vendor_part_id=event.index,
+                            content='',
+                            provider_name=self.provider_name,
+                            provider_details=_citations_provider_details(block_citations),
+                            citations=citations,
+                        ):
+                            yield event_
+                    if native_computer and native_computer.answers(current_block):
+                        # A call cut off mid-input (`max_tokens`) keeps what parsed; validation refuses what's missing.
                         computer_input_json = ''.join(computer_input) or '{}'
-                        computer_blocks.append(
-                            {
-                                'id': current_block.id,
-                                'name': current_block.name,
-                                'input': pydantic_core.from_json(computer_input_json, allow_partial=True),
-                            }
-                        )
+                        block = {
+                            'id': current_block.id,
+                            'name': current_block.name,
+                            'input': pydantic_core.from_json(computer_input_json, allow_partial=True),
+                        }
+                        blocks = [*computer_blocks, block] if native_computer.is_toolset else [block]
+                        if native_computer.is_toolset:
+                            computer_blocks = blocks
                         yield self._parts_manager.handle_part(
-                            vendor_part_id=computer_blocks[0]['id'],
-                            part=_computer_call_part(computer_blocks, computer_name, self.provider_name),
+                            vendor_part_id=blocks[0]['id'], part=native_computer.call_part(blocks, self.provider_name)
                         )
                     elif event.index in ignored_server_tool_use_indices:
                         ignored_server_tool_use_indices.remove(event.index)
@@ -4168,13 +4527,15 @@ class _MapMessagesContext:
     """The request-wide facts `AnthropicModel._map_message` maps each message against, and what it builds across them."""
 
     model_request_parameters: ModelRequestParameters
+    # Anthropic requires citations on all of a request's documents or none.
+    include_citations: bool
     deferred_tools_active: bool
     advisor_active: bool
     bm25_requested: bool
     declared_tool_names: set[str]
     tool_defs_by_name: dict[str, ToolDefinition]
-    # Without the toolset in this request, past computer toolset calls are sent back as plain `computer` calls.
-    computer_toolset_sent: bool
+    # Without the same computer use tool in this request, past calls of it are sent back as plain `computer` calls.
+    computer_tool_sent: AnthropicComputerToolVersion | None
     system_prompt_parts: list[str] = field(default_factory=list[str])
     anthropic_messages: list[BetaMessageParam] = field(default_factory=list[BetaMessageParam])
     rendered_tool_additions: set[str] = field(default_factory=set[str])
@@ -4865,7 +5226,8 @@ def _effective_thinking_type(
     the model then answers without thinking. Unified thinking maps to `adaptive` when the profile advertises it
     and to `enabled` otherwise, the same mapping `_translate_thinking` uses to build the wire payload. With no
     thinking setting, models that think by default resolve to `adaptive`, as does `thinking=False` on a model
-    that can't turn thinking off. Returns `None` when the request won't think.
+    that can't turn thinking off, which then thinks at its lowest effort. Returns `None` when the request won't
+    think, including Claude Sonnet 5.5's `between_tools`, which doesn't think before responding.
     """
     if anthropic_thinking:
         thinking_type = anthropic_thinking.get('type')
@@ -4973,11 +5335,83 @@ def _last_cacheable_block_has_cache_control(anthropic_messages: list[BetaMessage
     return last is not None and 'cache_control' in last
 
 
-_COMPUTER_TOOLSET_CONFIGS: BetaComputerToolsetConfigsParam = {
-    'zoom': {'enabled': False},
-    'cursor_position': {'enabled': False},
+_COMPUTER_TOOL_BETAS: dict[str, str] = {
+    'computer_20251124': 'computer-use-2025-11-24',
+    'computer_20250124': 'computer-use-2025-01-24',
 }
-"""Members the `computer` tool can't serve: both return data the one-screenshot result has no room for."""
+"""The beta header each earlier computer use tool needs."""
+
+
+def _computer_tool_version_for_client(
+    version: AnthropicComputerToolVersion | None, client: AsyncAnthropicClient, model_name: str
+) -> AnthropicComputerToolVersion | None:
+    """The computer use tool a client serves for this model: Bedrock and Foundry have only the earlier beta tools."""
+    if version != 'computer_toolset_20260801' or not isinstance(client, _COMPUTER_BETA_TOOLS_ONLY_CLIENTS):
+        return version
+    # The toolset models take `computer_20251124` there, but the Claude 5.5 models only on Bedrock.
+    if '-5-5' in model_name and isinstance(client, AsyncAnthropicFoundry):
+        return None
+    return 'computer_20251124'
+
+
+@dataclass(frozen=True)
+class _NativeComputer:
+    """The `computer` tool and the Anthropic computer use tool sent in its place."""
+
+    name: str
+    version: AnthropicComputerToolVersion
+
+    @property
+    def is_toolset(self) -> bool:
+        return self.version == 'computer_toolset_20260801'
+
+    def tool_param(self, tool_def: ToolDefinition) -> BetaToolUnionParam:
+        if self.is_toolset:
+            return BetaComputerToolset20260801Param(type='computer_toolset_20260801')
+        width, height = (tool_def.metadata or {})[DISPLAY_SIZE]
+        if self.version == 'computer_20251124':
+            return BetaToolComputerUse20251124Param(
+                type='computer_20251124',
+                name='computer',
+                display_width_px=width,
+                display_height_px=height,
+                enable_zoom=True,
+            )
+        return BetaToolComputerUse20250124Param(
+            type='computer_20250124', name='computer', display_width_px=width, display_height_px=height
+        )
+
+    def answers(self, block: BetaContentBlock | None) -> TypeGuard[BetaToolUseBlock]:
+        """Whether a block is a call of the computer use tool sent for the `computer` tool."""
+        if not isinstance(block, BetaToolUseBlock):
+            return False
+        if self.is_toolset:
+            return block.toolset_name == 'computer'
+        return block.name == 'computer' and block.toolset_name is None
+
+    def call_part(self, blocks: list[dict[str, Any]], provider_name: str) -> ToolCallPart:
+        """Calls of the computer use tool as one `computer` call, keeping them to send back as they were."""
+        actions = [action for block in blocks for action in _map_computer_member(*_member(block, self.version))]
+        provider_details: dict[str, Any] = {'computer_blocks': blocks}
+        if not self.is_toolset:
+            provider_details['computer_tool'] = self.version
+        return ToolCallPart(
+            self.name,
+            # A field Claude left out takes the `computer` tool's default.
+            {'actions': [{key: value for key, value in action.items() if value is not None} for action in actions]},
+            tool_call_id=blocks[0]['id'],
+            provider_name=provider_name,
+            provider_details=provider_details,
+        )
+
+
+def _member(block: dict[str, Any], version: AnthropicComputerToolVersion) -> tuple[str, dict[str, Any]]:
+    """A call's member and input: the earlier tools name the member in the input's `action`."""
+    if version == 'computer_toolset_20260801':
+        return block['name'], block['input']
+    input = {key: value for key, value in block['input'].items() if key != 'action'}
+    return block['input'].get('action', ''), input
+
 
 _COMPUTER_NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
 """The result Anthropic asks for on each member call after one that failed."""
@@ -4989,11 +5423,6 @@ _COMPUTER_CLICKS = {
     'double_click': ('left', 2),
     'triple_click': ('left', 3),
 }
-
-
-def _is_computer_member(block: BetaContentBlock | None, computer_name: str | None) -> TypeGuard[BetaToolUseBlock]:
-    """Whether a block is a computer toolset call that the `computer` tool answers."""
-    return computer_name is not None and isinstance(block, BetaToolUseBlock) and block.toolset_name == 'computer'
 
 
 def _point(coordinate: Any) -> dict[str, Any]:
@@ -5009,52 +5438,44 @@ def _point(coordinate: Any) -> dict[str, Any]:
     return {'x': coordinate}
 
 
-def _map_computer_member(name: str, input: dict[str, Any]) -> dict[str, Any]:
-    """One computer toolset call as a `computer` tool action; an unknown member fails validation, so the model retries."""
+def _map_computer_member(name: str, input: dict[str, Any]) -> list[dict[str, Any]]:
+    """One computer use call as `computer` tool actions; an unknown member fails validation, so the model retries."""
     position = _point(input.get('coordinate'))
     modifiers = [input['text']] if input.get('text') else []  # keys held during a click, move, scroll or drag
     if name in _COMPUTER_CLICKS:
         button, count = _COMPUTER_CLICKS[name]
-        return {'type': 'click', **position, 'button': button, 'count': count, 'modifiers': modifiers}
+        return [{'type': 'click', **position, 'button': button, 'count': count, 'modifiers': modifiers}]
     match name:
         case 'mouse_move':
-            return {'type': 'move', **position, 'modifiers': modifiers}
+            return [{'type': 'move', **position, 'modifiers': modifiers}]
         case 'left_click_drag':
             # A missing end leaves the path too short to validate, so the model is asked again.
             ends = [input.get('start_coordinate'), input.get('coordinate')]
             path = [_point(point) for point in ends if point is not None]
-            return {'type': 'drag', 'path': path, 'modifiers': modifiers}
+            return [{'type': 'drag', 'path': path, 'modifiers': modifiers}]
         case 'left_mouse_down':
-            return {'type': 'mouse_down'}
+            return [{'type': 'mouse_down'}]
         case 'left_mouse_up':
-            return {'type': 'mouse_up'}
+            return [{'type': 'mouse_up'}]
         case 'scroll':
             direction = input.get('scroll_direction')
             amount = input.get('scroll_amount')
-            return {'type': 'scroll', **position, 'direction': direction, 'amount': amount, 'modifiers': modifiers}
+            return [{'type': 'scroll', **position, 'direction': direction, 'amount': amount, 'modifiers': modifiers}]
         case 'type':
-            return {'type': 'type', 'text': input.get('text', '')}
+            return [{'type': 'type', 'text': input.get('text', '')}]
         case 'key':
-            return {'type': 'keypress', 'keys': [input.get('text', '')], 'repeat': input.get('repeat')}
+            # xdotool syntax, which Claude writes: chords separated by spaces are pressed one after another.
+            chords = str(input.get('text', '')).split() or ['']
+            return [{'type': 'keypress', 'keys': [chord], 'repeat': input.get('repeat')} for chord in chords]
         case 'hold_key':
-            return {'type': 'hold_key', 'keys': [input.get('text', '')], 'seconds': input.get('duration')}
+            return [{'type': 'hold_key', 'keys': [input.get('text', '')], 'seconds': input.get('duration')}]
         case 'wait':
-            return {'type': 'wait', 'seconds': input.get('duration')}
-        # Claude calls `zoom` even when the toolset disables it; the full screenshot holds every pixel it asked for.
-        case 'screenshot' | 'zoom':
-            return {'type': 'screenshot'}
-        case _:
-            return {**input, 'type': name}
-
-
-def _computer_call_part(blocks: list[dict[str, Any]], tool_name: str, provider_name: str) -> ToolCallPart:
-    """A turn's computer toolset calls as one `computer` call, keeping the calls to send back as they were."""
-    actions = [_map_computer_member(block['name'], block['input']) for block in blocks]
-    return ToolCallPart(
-        tool_name,
-        # A field Claude left out takes the `computer` tool's default.
-        {'actions': [{key: value for key, value in action.items() if value is not None} for action in actions]},
-        tool_call_id=blocks[0]['id'],
-        provider_name=provider_name,
-        provider_details={'computer_blocks': blocks},
-    )
+            return [{'type': 'wait', 'seconds': input.get('duration')}]
+        case 'zoom':
+            region = input.get('region')
+            if isinstance(region, list) and len(cast(list[Any], region)) == 4:
+                left, top, right, bottom = cast(list[Any], region)
+                return [{'type': 'zoom', 'region': {'left': left, 'top': top, 'right': right, 'bottom': bottom}}]
+            return [{'type': 'zoom', 'region': region}]
+        case _:  # `screenshot` and `cursor_position` have the tool's own shape; anything else fails validation.
+            return [{**input, 'type': name}]

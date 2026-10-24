@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Annotated, Any, cast
 
@@ -10,7 +10,17 @@ import anyio
 from pydantic import Field
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.computer_use import COMPUTER_KIND, SAFETY_CHECKS, ComputerResult, ComputerToolAction, Wait
+from pydantic_ai.computer_use import (
+    COMPUTER_KIND,
+    DISPLAY_SIZE,
+    SAFETY_CHECKS,
+    ComputerResult,
+    ComputerToolAction,
+    CursorPosition,
+    Screenshot,
+    Wait,
+    Zoom,
+)
 from pydantic_ai.exceptions import ApprovalRequired, ToolFailed, UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -25,7 +35,16 @@ from pydantic_ai.models import Model
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai.workspaces import Click, Drag, MoveMouse, Point, Scroll, WorkspaceError, WorkspaceUnavailableError
+from pydantic_ai.workspaces import (
+    Click,
+    Drag,
+    MoveMouse,
+    Point,
+    Region,
+    Scroll,
+    WorkspaceError,
+    WorkspaceUnavailableError,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
@@ -59,8 +78,8 @@ _SCREENSHOT_REMOVED = '[Older screenshot removed to save context; the latest scr
 
 _PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
 
-_OBSERVING_ACTIONS = frozenset({'wait', 'screenshot'})
-"""Action types that change nothing on the screen, so `require_approval` lets them through."""
+_OBSERVING_ACTIONS = frozenset({'wait', 'screenshot', 'zoom', 'cursor_position'})
+"""Action types that change nothing on the screen, so `requires_approval` lets them through."""
 
 
 def _profile(model: Any) -> ModelProfile:
@@ -82,6 +101,9 @@ def _points(action: ComputerToolAction) -> Sequence[Point]:
             return (Point(x=x, y=y),)
         case Drag(path=path):
             return path
+        case Zoom(region=region):
+            # The right and bottom edges may be the screen's own.
+            return (Point(x=region.left, y=region.top), Point(x=region.right - 1, y=region.bottom - 1))
         case _:
             return ()
 
@@ -107,6 +129,14 @@ def _to_pixels(action: ComputerToolAction, width: int, height: int, grid: int) -
             return replace(action, x=scale(x, width), y=scale(y, height))
         case Drag(path=path):
             return replace(action, path=tuple(Point(x=scale(p.x, width), y=scale(p.y, height)) for p in path))
+        case Zoom(region=r):
+            region = Region(
+                left=scale(r.left, width),
+                top=scale(r.top, height),
+                right=scale(r.right, width),
+                bottom=scale(r.bottom, height),
+            )
+            return replace(action, region=region)
         case _:
             return action
 
@@ -118,19 +148,60 @@ def _png_size(png: bytes) -> tuple[int, int] | None:
     return int.from_bytes(png[16:20], 'big'), int.from_bytes(png[20:24], 'big')
 
 
-async def _perform(ctx: RunContext[Any], actions: list[ComputerToolAction]) -> tuple[int, str | None]:
-    """Run the actions in order until one fails: how many ran, and why the next one failed."""
+async def _perform(
+    ctx: RunContext[Any], actions: list[ComputerToolAction], grid: int | None
+) -> tuple[int, str | None, list[str | BinaryImage]]:
+    """Run the actions in order until one fails: how many ran, why the next one failed, and what they returned."""
+    outputs: list[str | BinaryImage] = []
     for performed, action in enumerate(actions):
         try:
-            if isinstance(action, Wait):
-                await anyio.sleep(action.seconds)
-            elif action.type != 'screenshot':
-                await ctx.workspace.act(action)
+            match action:
+                case Wait(seconds=seconds):
+                    await anyio.sleep(seconds)
+                case Zoom(region=region):
+                    outputs.append(BinaryImage(data=await ctx.workspace.zoom(region), media_type='image/png'))
+                case CursorPosition():
+                    point = await ctx.workspace.cursor_position()
+                    if grid is not None:
+                        width, height = await ctx.workspace.display_size()
+                        point = Point(x=point.x * grid // width, y=point.y * grid // height)
+                    outputs.append(f'The pointer is at ({point.x}, {point.y}).')
+                case Screenshot():
+                    pass
+                case _:
+                    await ctx.workspace.act(action)
         except WorkspaceUnavailableError:
             raise
         except WorkspaceError as e:
-            return performed, str(e) or type(e).__name__
-    return len(actions), None
+            return performed, str(e) or type(e).__name__, outputs
+    return len(actions), None, outputs
+
+
+def _last_screenshot_size(messages: list[ModelMessage]) -> tuple[int, int] | None:
+    for message in reversed(messages):
+        if isinstance(message, ModelRequest):
+            for part in reversed(message.parts):
+                metadata: Any = part.metadata if isinstance(part, ToolReturnPart) else None
+                size: Any = (
+                    cast(dict[str, Any], metadata).get('screenshot_size') if isinstance(metadata, dict) else None
+                )
+                if size is not None:
+                    width, height = size  # a list once the history has been through JSON
+                    return width, height
+    return None
+
+
+async def _with_display_size(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition:
+    """Give the tool the display's size, for providers whose native tool declares it."""
+    size = _last_screenshot_size(ctx.messages)
+    if size is None:
+        try:
+            size = await ctx.workspace.display_size()
+        except WorkspaceUnavailableError:
+            raise
+        except WorkspaceError:
+            return tool_def  # the call itself will report the display's error
+    return replace(tool_def, metadata={**(tool_def.metadata or {}), DISPLAY_SIZE: size})
 
 
 def _plural(count: int, noun: str) -> str:
@@ -151,8 +222,12 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     _: KW_ONLY
 
-    require_approval: bool = False
-    """Ask for approval before any call that does more than look or wait, so the run needs a deferred tool handler."""
+    requires_approval: bool | Collection[str] = False
+    """Ask for approval before a call that changes the screen, so the run needs a deferred tool handler.
+
+    `True` asks before any call that does more than look, zoom or wait. A collection of action types, such as
+    `{'type', 'keypress', 'hold_key'}` for keyboard input, asks only before calls with one of them.
+    """
 
     settle_seconds: float = 0.5
     """Pause after the last action before the closing screenshot, so animations and page loads can finish."""
@@ -182,6 +257,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             tool_kind=COMPUTER_KIND,
             # Each workspace call is then its own activity or task, with its own timeout and retries.
             metadata={'temporal': False, 'prefect': False},
+            prepare=_with_display_size,
         )
         self._toolset = FunctionToolset([tool], id=self.id)
 
@@ -197,11 +273,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             ),
         ],
     ) -> ToolReturn:
-        if (
-            self.require_approval
-            and not ctx.tool_call_approved
-            and any(action.type not in _OBSERVING_ACTIONS for action in actions)
-        ):
+        if not ctx.tool_call_approved and any(self._needs_approval(action.type) for action in actions):
             raise ApprovalRequired
         grid = _coordinate_grid(ctx)
         if any(_points(action) for action in actions):
@@ -217,12 +289,14 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             if grid is not None:
                 actions = [_to_pixels(action, width, height, grid) for action in actions]
 
-        performed, error = await _perform(ctx, actions)
+        performed, error, outputs = await _perform(ctx, actions, grid)
         acted = any(action.type not in _OBSERVING_ACTIONS for action in actions[:performed])
         if acted and self.settle_seconds and actions[performed - 1].type != 'wait':
             await anyio.sleep(self.settle_seconds)
 
         result = ComputerResult(performed=performed)
+        if grid is not None:
+            result['coordinate_grid'] = grid
         if error is None:
             summary = [f'Ran {_plural(len(actions), "action")}.']
         else:
@@ -240,21 +314,30 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         size = _png_size(png)
         if size is None:
             raise ToolFailed(' '.join([*summary, 'The screenshot was not a PNG.']))
+        result['screenshot_size'] = size
         # A grid model points on its grid, so the size in pixels would only invite pixel coordinates.
         summary.append('Screenshot attached.' if grid else f'Screenshot attached ({size[0]}x{size[1]}).')
-        return ToolReturn([' '.join(summary), BinaryImage(data=png, media_type='image/png')], metadata=result)
+        content = [' '.join(summary), *outputs, BinaryImage(data=png, media_type='image/png')]
+        return ToolReturn(content, metadata=result)
+
+    def _needs_approval(self, action_type: str) -> bool:
+        if self.requires_approval is True:
+            return action_type not in _OBSERVING_ACTIONS
+        return bool(self.requires_approval) and action_type in self.requires_approval
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """One display: the later configuration wins, but a restriction either states survives.
 
-        Approval is required if any asks for it, and the fewest kept screenshots apply.
+        Approval is required for what any of them asks it for, and the fewest kept screenshots apply.
         """
         combined = cast(list[ComputerUse[AgentDepsT]], list(capabilities))
         kept = [c.keep_screenshots for c in combined if c.keep_screenshots is not None]
+        approvals = [c.requires_approval for c in combined]
+        action_types = frozenset[str]().union(*(a for a in approvals if not isinstance(a, bool)))
         return replace(
             combined[-1],
-            require_approval=any(c.require_approval for c in combined),
+            requires_approval=True if True in approvals else action_types or False,
             keep_screenshots=min(kept) if kept else None,
         )
 

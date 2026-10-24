@@ -25,10 +25,11 @@ from pydantic_ai.durable_exec._operation import (
     ModelCancelSuspendedResponseParams,
     ModelCompactMessagesParams,
     ModelRequestParams,
+    ParameterTransports,
     ToolsetCallToolParams,
     ToolsetGetToolsParams,
 )
-from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult
+from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult, revalidate_function_call
 from pydantic_ai.durable_exec._workspace import WorkspaceCall, WorkspaceCallParams, WorkspaceCallResult
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
@@ -42,12 +43,14 @@ from pydantic_ai.toolsets.function import FunctionToolsetTool
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._operation_backend import TemporalParameterTransport
+from ._spec import TEMPORAL_ENGINE_SPEC
 from ._toolset import CallToolParams, GetToolsParams
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.output import OutputDataT
     from pydantic_ai.tools import AgentDepsT
+    from pydantic_ai.toolsets import DynamicToolset
 
     from ._durability import TemporalDurability
 
@@ -505,3 +508,51 @@ class _WorkspaceCallTransport(TemporalParameterTransport[WorkspaceCallParams, tu
         wire, deps = payload
         ctx = self._durability.deserialize_operation_run_context(wire.serialized_run_context, deps)
         return WorkspaceCallParams(run_context=ctx, ref=wire.ref, call=wire.call)
+
+
+class TemporalParameterTransports(ParameterTransports):
+    """Carry every operation's parameters into a Temporal activity."""
+
+    def __init__(self, durability: TemporalDurability[Any]) -> None:
+        self._durability = durability
+
+    def model_request(self, result_type: object) -> _ModelRequestTransport:
+        return _ModelRequestTransport(self._durability, result_type=result_type)
+
+    def compact_messages(self) -> _CompactMessagesTransport:
+        return _CompactMessagesTransport(self._durability)
+
+    def cancel_suspended_response(self) -> _CancelTransport:
+        return _CancelTransport(self._durability)
+
+    def event_stream_handler(self) -> _EventStreamHandlerTransport:
+        return _EventStreamHandlerTransport(self._durability)
+
+    def capability_operation(self, declaration: CapabilityMethodDeclaration) -> _CapabilityOperationTransport:
+        return _CapabilityOperationTransport(self._durability, declaration)
+
+    def workspace_call(self) -> _WorkspaceCallTransport:
+        return _WorkspaceCallTransport(self._durability)
+
+    def function_call(self, toolset: FunctionToolset[Any]) -> _FunctionCallTransport:
+        return _FunctionCallTransport(self._durability, toolset)
+
+    async def prepare_function_call(
+        self, toolset: FunctionToolset[Any], params: ToolsetCallToolParams
+    ) -> ToolsetCallToolParams:
+        return await revalidate_function_call(toolset, params, engine_spec=TEMPORAL_ENGINE_SPEC)
+
+    def mcp_call(self, toolset: AbstractToolset[Any]) -> _MCPCallTransport:
+        return _MCPCallTransport(self._durability, toolset)
+
+    def get_tools(self, toolset: AbstractToolset[Any]) -> _GetToolsTransport:
+        return _GetToolsTransport(self._durability)
+
+    def get_instructions(self, toolset: AbstractToolset[Any]) -> _GetToolsTransport:
+        return _GetToolsTransport(self._durability)
+
+    def dynamic_get_tools(self, toolset: DynamicToolset[Any]) -> _DynamicGetToolsTransport:
+        return _DynamicGetToolsTransport(self._durability)
+
+    def dynamic_call(self, toolset: DynamicToolset[Any]) -> _DynamicCallTransport:
+        return _DynamicCallTransport(self._durability)

@@ -790,9 +790,17 @@ The response's usage, and so its cost, stays the sum of the passes either way.
 
 ## Computer use
 
-Computer use is provided by the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. On the
-Claude API, Claude Opus 4.8 and Claude 5 models get its `computer` tool as Anthropic's computer toolset; on Bedrock,
-Vertex and Foundry, and for other models, it is a function tool.
+Computer use is provided by the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. Its
+`computer` tool is sent as the computer use tool each Claude model was trained on:
+
+| Models | Claude API and Claude Models on Google Cloud | Bedrock and Foundry |
+|---|---|---|
+| Claude Opus 4.8 and Claude 5 | `computer_toolset_20260801` | `computer_20251124` (on Foundry, not the 5.5 models) |
+| Claude Opus 4.7, 4.6 and 4.5, Sonnet 4.6 | `computer_20251124` | `computer_20251124` |
+| Claude Sonnet 4.5, Haiku 4.5, Opus 4.1, Opus 4, Sonnet 4 | `computer_20250124` | `computer_20250124` |
+
+Other models get a function tool. The toolset was tested live on the Claude API and the earlier tools on the Claude
+API and Bedrock; Claude Models on Google Cloud and Foundry were not tested live.
 
 ## Code Execution Tool Version
 

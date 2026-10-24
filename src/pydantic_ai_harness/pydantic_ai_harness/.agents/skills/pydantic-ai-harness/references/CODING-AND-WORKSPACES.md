@@ -254,10 +254,14 @@ Tool arguments: `run_command(command, timeout_seconds=None)`, `start_command(com
 Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `shutdown`, `reboot`,
 `halt`, `poweroff`, `init`), `denied_operators`, `default_timeout=30.0`, `max_output_chars=50_000`
 (keeps the **tail**; `shell` already returns at most the last 16,000 bytes), `max_file_bytes=None`
-(per-file `ulimit -f`), `persist_cwd=False` (sticky `cd`), `allow_interactive=False`, `env`,
-`denied_env_patterns`.
+(per-file `ulimit -f`), `max_log_bytes=100_000_000` (see below), `persist_cwd=False` (sticky `cd`),
+`allow_interactive=False`, `env`, `denied_env_patterns`.
 
-- `ValueError` for: both `allowed_commands` and non-empty `denied_commands`; `max_file_bytes` with
+- `max_log_bytes` bounds `start_command` and `shell` logs, including with `tools=['shell']`: a log past
+  it is emptied and gets a `[Log exceeded max_log_bytes=...]` notice while the command keeps running.
+  `None` turns it off.
+- `ValueError` for: non-positive `max_file_bytes` or `max_log_bytes`; both `allowed_commands` and
+  non-empty `denied_commands`; `max_file_bytes` with
   `persist_cwd=True` or `tools=['shell']`; `tools=['shell']` with `default_timeout` outside (0, 270].
 - Only the first token is checked: `python`, `git`, `make`, `uv` can spawn anything.
 - `denied_env_patterns` does **not** filter `LocalWorkspace(env=)`.
@@ -538,9 +542,11 @@ agent's host. No extra. Tools: `aws_cli` (command without `aws` or `--endpoint-u
 and `localstack_health`.
 
 `LocalStack(allowed_services=['s3', 'dynamodb'])` connects to an instance you started;
-`LocalStack(manage_container=True)` starts a fresh Docker container per run. `allowed_services`/`denied_services` are mutually exclusive. The default image needs
-`LOCALSTACK_AUTH_TOKEN` (forwarded automatically); concurrent managed runs need distinct ports. The AWS
-CLI can read and write host files (`file://`, `s3 cp`).
+`LocalStack(manage_container=True)` starts a fresh Docker container per run on the `endpoint_url` port, so
+concurrent runs must share one inside `async with agent:`. `allowed_services`/`denied_services` are mutually
+exclusive. The default image needs `LOCALSTACK_AUTH_TOKEN` (forwarded automatically). The AWS CLI can read
+and write host files (`file://`, `s3 cp`), but gets its own empty AWS config and credentials files instead of
+`~/.aws/config` and `~/.aws/credentials`.
 
 ## CLAI 2
 

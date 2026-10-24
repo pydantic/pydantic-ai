@@ -770,8 +770,11 @@ async def test_webrtc_call_continues_the_bound_history(
                     if isinstance(event, RealtimeTurnCompleteEvent):
                         break
 
-    # The sideband seeded nothing: Live replayed the history the offer started the session with.
-    assert [i for i in cassette.interactions if isinstance(i, CassetteMessage) and i.direction == 'sent'] == []
+    # The sideband seeded nothing: Live replayed the history the offer started the session with. All it sent
+    # is the empty update that reports the session, however late the sideband attaches.
+    assert [i.data for i in cassette.interactions if isinstance(i, CassetteMessage) and i.direction == 'sent'] == [
+        {'type': 'session.update', 'session': {}}
+    ]
     messages = session.all_messages()
     assert messages[:2] == history
     spoken = ' '.join(

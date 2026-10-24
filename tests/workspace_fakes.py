@@ -10,17 +10,30 @@ import anyio
 
 from pydantic_ai import RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.computer_use import COMPUTER_KIND, ComputerResult, ComputerToolAction, Screenshot, Wait
+from pydantic_ai.computer_use import (
+    COMPUTER_KIND,
+    DISPLAY_SIZE,
+    ComputerResult,
+    ComputerToolAction,
+    CursorPosition,
+    Screenshot,
+    Wait,
+    Zoom,
+)
 from pydantic_ai.messages import BinaryImage, ToolReturn
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import (
     CommandResult,
     ComputerAction,
     FileEntry,
+    Point,
     ReadOnlyWorkspace,
+    Region,
     SupportsCommands,
+    SupportsCursorPosition,
     SupportsDisplay,
     SupportsFilesystem,
+    SupportsZoom,
     UnsupportedComputerActionError,
     Workspace,
     WorkspaceBackend,
@@ -375,7 +388,9 @@ class InMemoryProvider:
         return ProviderWorkspaces(self, read_only=read_only)
 
 
-class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsDisplay):
+class ProviderBackend(
+    WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsDisplay, SupportsZoom, SupportsCursorPosition
+):
     def __init__(self, provider: InMemoryProvider, ref: WorkspaceRef | None) -> None:
         self._provider = provider
         self._ref = ref
@@ -483,6 +498,14 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, Su
             raise UnsupportedComputerActionError(f'the fake display cannot perform {action.type!r}')
         self._provider.actions.append(action)
 
+    async def zoom(self, region: Region) -> bytes:
+        await self._files()
+        return _png(region.right - region.left, region.bottom - region.top)
+
+    async def cursor_position(self) -> Point:
+        await self._files()
+        return Point(x=640, y=400)
+
 
 class ProviderWorkspaces(AbstractCapability[Any]):
     """Supplies `InMemoryProvider` environments: a fresh one without a ref, the named one with."""
@@ -498,28 +521,42 @@ class ProviderWorkspaces(AbstractCapability[Any]):
         return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend
 
 
-def computer_toolset(*, requires_approval: bool = False) -> FunctionToolset[Any]:
+def computer_toolset(
+    *, requires_approval: bool = False, display_size: tuple[int, int] | None = None
+) -> FunctionToolset[Any]:
     """A `computer` tool that keeps the tool's contract and nothing more, for testing model adapters.
 
-    It runs the actions on the workspace's display until one fails, then returns a summary and a screenshot, with
-    the outcome in the result's metadata.
+    It runs the actions on the workspace's display until one fails, then returns a summary, what zoom and
+    cursor-position actions returned, and a screenshot, with the outcome in the result's metadata.
     """
 
     async def computer(ctx: RunContext[Any], actions: list[ComputerToolAction]) -> ToolReturn:
         result = ComputerResult(performed=0)
+        outputs: list[str | BinaryImage] = []
         for action in actions:
-            if not isinstance(action, Wait | Screenshot):
-                try:
+            try:
+                if isinstance(action, Zoom):
+                    outputs.append(BinaryImage(data=await ctx.workspace.zoom(action.region), media_type='image/png'))
+                elif isinstance(action, CursorPosition):
+                    point = await ctx.workspace.cursor_position()
+                    outputs.append(f'The pointer is at ({point.x}, {point.y}).')
+                elif not isinstance(action, Wait | Screenshot):
                     await ctx.workspace.act(action)
-                except WorkspaceError as error:
-                    result['error'] = str(error)
-                    break
+            except WorkspaceError as error:
+                result['error'] = str(error)
+                break
             result['performed'] += 1
         summary = f'Ran {result["performed"]} of {len(actions)} actions.'
         if 'error' in result:
             summary += f' The next one failed: {result["error"]}'
         screenshot = BinaryImage(data=await ctx.workspace.screenshot(), media_type='image/png')
-        return ToolReturn([summary, screenshot], metadata=result)
+        return ToolReturn([summary, *outputs, screenshot], metadata=result)
 
-    tool = Tool(computer, name='computer', tool_kind=COMPUTER_KIND, requires_approval=requires_approval)
+    tool = Tool(
+        computer,
+        name='computer',
+        tool_kind=COMPUTER_KIND,
+        requires_approval=requires_approval,
+        metadata={DISPLAY_SIZE: display_size} if display_size else None,
+    )
     return FunctionToolset([tool])

@@ -47,9 +47,10 @@ workspace the agent can take screenshots but not act.
 
 The model must accept images. Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them.
 
-Two model families get `computer` as their provider's native computer tool, the format they were trained on:
-Claude Opus 4.8 and Claude 5 models on the Claude API (not Bedrock, Vertex or Foundry), and GPT-5.4 and later, except
-GPT-5.4 nano, on OpenAI's own API. Every other model that accepts images gets it as a function tool.
+Claude 4 and later models and GPT-5.4 and later (except GPT-5.4 nano) get `computer` as their provider's native
+computer tool, the format they were trained on; see [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use) and
+[OpenAI](https://pydantic.dev/docs/ai/models/openai/) for which tool and platforms. Every other model that accepts images gets it as a function
+tool.
 
 ## Computer use, Playwright, or Browser Use
 
@@ -63,11 +64,11 @@ GPT-5.4 nano, on OpenAI's own API. Every other model that accepts images gets it
 
 | Setting | Default | What it does |
 |---|---|---|
-| `require_approval` | `False` | Ask before any call that clicks or types; needs a [deferred tool handler](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval). Turn it on for anything you'd regret an agent clicking. |
+| `requires_approval` | `False` | `True` asks before any call that clicks or types; a set of action types, such as `{'type', 'keypress', 'hold_key'}`, asks only before those. Needs a [deferred tool handler](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval). Turn it on for anything you'd regret an agent clicking. |
 | `keep_screenshots` | `None` | Send only the most recent N screenshots (between N and N+24, so prompt caching keeps working); the run's history keeps all of them. Use it to bound long runs, but not on Claude Fable 5.1 or the Claude 5.5 models: dropping a screenshot makes Claude lose its earlier reasoning. |
 | `settle_seconds` | `0.5` | Pause after acting before the screenshot, so animations and page loads can finish. |
 
-A call its provider flags with safety checks, as OpenAI does, needs approval even with `require_approval=False`.
+A call its provider flags with safety checks, as OpenAI does, needs approval even with `requires_approval=False`.
 Give such an agent a deferred tool handler, such as [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/); without one,
 a flagged call ends the run with an error. The checks are on the call's `provider_details`.
 

@@ -1,0 +1,22 @@
+--- expected
++++ actual
+@@ -164,0 +165,4 @@
++     "text": "<system>The job runs in the background.</system>",
++     "type": "text"
++    },
++    {
+@@ -174,4 +177,0 @@
+-    },
+-    {
+-     "text": "<system>The job runs in the background.</system>",
+-     "type": "text"
+@@ -255,0 +256,4 @@
++    {
++     "text": "<system>The job runs in the background.</system>",
++     "type": "text"
++    },
+@@ -266,4 +269,0 @@
+-    },
+-    {
+-     "text": "<system>The job runs in the background.</system>",
+-     "type": "text"
