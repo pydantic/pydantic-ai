@@ -29,6 +29,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.workspaces import (
     Click,
+    ComputerAction,
     Drag,
     MoveMouse,
     Point,
@@ -413,10 +414,34 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         ],
         ids=['act', 'look', 'size'],
     )
-    async def test_an_environment_that_is_gone_ends_the_run(self, actions: list[dict[str, Any]]) -> None:
-        provider = InMemoryProvider()
-        model = _scripted(actions)
-        agent = Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)])
+    async def test_an_environment_that_goes_away_mid_run_ends_it(self, actions: list[dict[str, Any]]) -> None:
+        class Vanishing(ProviderBackend):
+            """Gone once the run has started: the first read of the display size works, nothing after it does."""
+
+            started = False
+
+            async def display_size(self) -> tuple[int, int]:
+                if self.started:
+                    raise WorkspaceUnavailableError('the environment is gone')
+                self.started = True
+                return await super().display_size()
+
+            async def act(self, action: ComputerAction) -> None:
+                raise WorkspaceUnavailableError('the environment is gone')
+
+            async def screenshot(self) -> bytes:
+                raise WorkspaceUnavailableError('the environment is gone')
+
+        class Provider(InMemoryProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
+                return Vanishing(self, ref)
+
+        agent = Agent(_scripted(actions), capabilities=[Provider().capability(), ComputerUse(settle_seconds=0)])
+        with pytest.raises(WorkspaceUnavailableError, match='the environment is gone'):
+            await agent.run('Go.')
+
+    async def test_an_environment_that_is_gone_ends_the_run_at_its_start(self) -> None:
+        agent = Agent(_scripted([]), capabilities=[InMemoryProvider().capability(), ComputerUse()])
         with pytest.raises(WorkspaceUnavailableError, match="environment 'expired' does not exist"):
             await agent.run('Go.', workspace=WorkspaceRef(provider='fake', id='expired'))
 
