@@ -6,7 +6,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import TypeAdapter, ValidationError
 
-from pydantic_ai import Agent, FunctionToolset, ModelMessagesTypeAdapter, RunContext, _utils
+from pydantic_ai import Agent, ModelMessagesTypeAdapter, RunContext, _utils
 from pydantic_ai._deferred_capabilities import (
     LoadCapabilityArgs,
     LoadCapabilityCallPart,
@@ -35,6 +35,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import ExternalToolset
 
 
 @pytest.mark.parametrize(
@@ -146,11 +147,7 @@ def test_extra_keys_do_not_relax_known_field_validation(payload_type: type[objec
 
 async def test_agent_emitted_extra_args_survive_live_history_and_round_trip() -> None:
     """Live search calls retain original args, including keys rejected by tool execution."""
-    toolset = FunctionToolset()
-
-    @toolset.tool_plain(defer_loading=True)
-    def get_payment(amount: int) -> int:
-        return amount * 12
+    toolset = ExternalToolset[object]([ToolDefinition(name='get_payment', defer_loading=True)])
 
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
