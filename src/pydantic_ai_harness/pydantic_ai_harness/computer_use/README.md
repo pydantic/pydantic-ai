@@ -48,8 +48,8 @@ async def main():
 
 The model must accept images. Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them.
 
-GPT-5.4 and later, except GPT-5.4 nano, on OpenAI's own API get `computer` as OpenAI's native computer tool, the
-format they were trained on. Every other model that accepts images gets it as a function tool.
+GPT-5.4 and later, except GPT-5.4 nano, on OpenAI, Azure OpenAI and Bedrock Mantle get `computer` as OpenAI's native
+computer tool, the format they were trained on. Every other model that accepts images gets it as a function tool.
 
 ## Computer use, Playwright, or Browser Use
 
